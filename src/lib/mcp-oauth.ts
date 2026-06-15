@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "crypto";
 import { deleteInternalSetting, getInternalSetting, setInternalSetting } from "./db";
 
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
@@ -52,9 +51,9 @@ export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
 export async function buildMcpAuthorizationUrl(): Promise<string> {
   const config = requireOAuthConfig();
   const client = await getOrRegisterClient(config);
-  const state = base64Url(randomBytes(32));
-  const codeVerifier = base64Url(randomBytes(64));
-  const codeChallenge = base64Url(createHash("sha256").update(codeVerifier).digest());
+  const state = randomBase64Url(32);
+  const codeVerifier = randomBase64Url(64);
+  const codeChallenge = await sha256Base64Url(codeVerifier);
 
   setInternalSetting(`${STATE_PREFIX}${state}`, {
     state,
@@ -204,6 +203,20 @@ function requireOAuthConfig(): McpOAuthConfig {
   return config;
 }
 
-function base64Url(input: Buffer): string {
-  return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function randomBase64Url(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return base64Url(bytes);
+}
+
+async function sha256Base64Url(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return base64Url(new Uint8Array(digest));
+}
+
+function base64Url(input: Uint8Array): string {
+  let binary = "";
+  for (const byte of input) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }

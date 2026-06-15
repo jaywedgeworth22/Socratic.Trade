@@ -800,9 +800,10 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
   // Back-compat shim: older stored policies used `dryRun` instead of `paperMode`.
   const legacy = policy as Partial<TradingPolicy> & { dryRun?: boolean };
   const paperMode = policy.paperMode ?? legacy.dryRun ?? DEFAULT_POLICY.paperMode;
+  const { dryRun: _legacyDryRun, ...policyWithoutLegacyDryRun } = legacy;
   const merged: TradingPolicy = {
     ...DEFAULT_POLICY,
-    ...policy,
+    ...policyWithoutLegacyDryRun,
     paperMode,
     scoringWeights: normalizeScoringWeights(policy.scoringWeights ?? DEFAULT_POLICY.scoringWeights),
     sectorCaps: policy.sectorCaps ?? DEFAULT_POLICY.sectorCaps,

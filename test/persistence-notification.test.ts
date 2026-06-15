@@ -46,6 +46,16 @@ describe("persistence and notifications", () => {
     releaseStrategyLock();
   });
 
+  it("maps legacy dryRun policy storage to paperMode without leaking dryRun", async () => {
+    const { getPolicy, setSetting } = await import("../src/lib/db");
+    setSetting("policy", { ...DEFAULT_POLICY, dryRun: true, paperMode: undefined });
+
+    const policy = getPolicy() as typeof DEFAULT_POLICY & { dryRun?: boolean };
+
+    expect(policy.paperMode).toBe(true);
+    expect(policy.dryRun).toBeUndefined();
+  });
+
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
