@@ -1,0 +1,15 @@
+.DS_Store
+.claude/
+.env
+.env*.local
+.next/
+node_modules/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
