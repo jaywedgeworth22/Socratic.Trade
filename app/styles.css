@@ -25,6 +25,7 @@ body {
     linear-gradient(135deg, #eef1ea 0%, #f8f2e2 48%, #e9eee9 100%);
   color: var(--text);
   font-family: "Avenir Next", "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  zoom: 0.9;
 }
 
 button,
@@ -111,9 +112,9 @@ label {
 }
 
 .cockpit-shell {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  grid-template-rows: auto minmax(0, 1fr) minmax(150px, 24vh);
   height: 100dvh;
   margin: 0 auto;
   max-width: 1800px;
@@ -122,6 +123,7 @@ label {
 }
 
 .cockpit-command {
+  flex-shrink: 0;
   align-items: stretch;
   background: rgba(255, 254, 250, 0.82);
   border: 1px solid rgba(16, 21, 16, 0.1);
@@ -226,10 +228,33 @@ label {
 }
 
 .cockpit-grid {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(250px, 0.72fr) minmax(0, 1.7fr) minmax(310px, 0.82fr);
+  display: flex;
   min-height: 0;
+  height: 100%;
+}
+
+.panel-resize-handle-horizontal {
+  width: 10px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.panel-resize-handle-horizontal:hover,
+.panel-resize-handle-horizontal[data-resize-handle-active] {
+  background: rgba(17, 107, 75, 0.15);
+}
+
+.panel-resize-handle-vertical {
+  height: 10px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.panel-resize-handle-vertical:hover,
+.panel-resize-handle-vertical[data-resize-handle-active] {
+  background: rgba(17, 107, 75, 0.15);
 }
 
 .cockpit-rail,
@@ -249,6 +274,7 @@ label {
   gap: 8px;
   grid-template-rows: auto minmax(0, 1fr) minmax(0, 0.85fr);
   padding: 8px;
+  height: 100%;
 }
 
 .rail-card {
@@ -279,6 +305,7 @@ label {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   padding: 8px;
+  height: 100%;
 }
 
 .tab-bar {

@@ -1,7 +1,8 @@
 "use client";
 
-import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, X, XCircle, Zap, Settings } from "lucide-react";
+import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, X, XCircle, Zap, Settings, LayoutDashboard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { cellTitle, companyTitle, enrichPositionsForDisplay, formatShareQuantity, quoteTitle, ratingTitle, scanQuoteAsOf, sentimentTitle } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
@@ -49,6 +50,24 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
+
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [showLeftRail, setShowLeftRail] = useState(true);
+  const [showCenterWorkspace, setShowCenterWorkspace] = useState(true);
+  const [showRightInspector, setShowRightInspector] = useState(true);
+  const [showBottomDrawer, setShowBottomDrawer] = useState(true);
+
+  // Close dropdown when clicking outside
+  const layoutMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (layoutMenuRef.current && !layoutMenuRef.current.contains(event.target as Node)) {
+        setLayoutMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     setSectorCapsDraft(formatSectorCaps(snapshot.policy.sectorCaps));
@@ -270,6 +289,32 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           <StatusTile label="Allowed" value={policy.universe === "sp500" ? "S&P 500" : `${allowedCount}`} />
         </div>
         <div className="command-actions">
+          <div ref={layoutMenuRef} style={{ position: "relative" }}>
+            <button className="ghost sm" onClick={() => setLayoutMenuOpen(!layoutMenuOpen)}>
+              <LayoutDashboard size={14} />
+              Layout
+            </button>
+            {layoutMenuOpen && (
+              <div style={{ position: "absolute", top: "100%", right: 0, marginTop: "8px", background: "white", border: "1px solid var(--line)", borderRadius: "8px", padding: "8px", zIndex: 100, minWidth: "180px", boxShadow: "var(--shadow)", display: "grid", gap: "8px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showLeftRail ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={showLeftRail} onChange={(e) => setShowLeftRail(e.target.checked)} />
+                  Left Rail
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showCenterWorkspace ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={showCenterWorkspace} onChange={(e) => setShowCenterWorkspace(e.target.checked)} />
+                  Center Workspace
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showRightInspector ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={showRightInspector} onChange={(e) => setShowRightInspector(e.target.checked)} />
+                  Right Inspector
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showBottomDrawer ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={showBottomDrawer} onChange={(e) => setShowBottomDrawer(e.target.checked)} />
+                  Bottom Drawer
+                </label>
+              </div>
+            )}
+          </div>
           <button className="ghost sm" onClick={() => load()} disabled={busy}>
             <RefreshCw size={14} />
             Refresh
@@ -300,151 +345,181 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         </section>
       )}
 
-      <section className="cockpit-grid">
-        <aside className="cockpit-rail">
-          <div className="rail-card rail-summary">
-            <span>Today</span>
-            <strong>{dailyStats.orderCount} / {policy.maxDailyOrders} orders</strong>
-            <button className="ghost sm" onClick={() => setShowNotionalSettings(true)}>
-              Edit daily limits
-            </button>
-          </div>
-          <PositionsTable positions={snapshot.positions} portfolio={snapshot.portfolio} symbolMetaBySymbol={symbolMetaBySymbol} />
-          {snapshot.pendingProposals.length > 0 ? (
-            <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
-          ) : (
-            <OrdersPanel orders={snapshot.orders} symbolMetaBySymbol={symbolMetaBySymbol} />
-          )}
-        </aside>
-
-        <section className="cockpit-workbench">
-          <TabBar
-            tabs={[
-              { id: "decision", label: "Decision" },
-              { id: "market", label: "Market Scan" },
-              { id: "performance", label: "Performance" },
-              { id: "strategy", label: "Strategy" }
-            ]}
-            active={workspaceTab}
-            onSelect={(tab) => setWorkspaceTab(tab)}
-          />
-          <div className="workspace-pane">
-            {workspaceTab === "decision" && (
-              <>
-                <LatestDecision decision={snapshot.latestStrategyRun} symbolMetaBySymbol={symbolMetaBySymbol} />
-                {snapshot.policy.strategyAuthority === "propose" && snapshot.pendingProposals.length > 0 && (
-                  <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
+      {(showLeftRail || showCenterWorkspace || showRightInspector || showBottomDrawer) && (
+        <PanelGroup orientation="vertical">
+          {(showLeftRail || showCenterWorkspace || showRightInspector) && (
+            <Panel defaultSize={showBottomDrawer ? 75 : 100} minSize={20}>
+              <PanelGroup orientation="horizontal" className="cockpit-grid">
+                {showLeftRail && (
+                  <Panel defaultSize={20} minSize={10}>
+                    <aside className="cockpit-rail">
+                      <div className="rail-card rail-summary">
+                        <span>Today</span>
+                        <strong>{dailyStats.orderCount} / {policy.maxDailyOrders} orders</strong>
+                        <button className="ghost sm" onClick={() => setShowNotionalSettings(true)}>
+                          Edit daily limits
+                        </button>
+                      </div>
+                      <PositionsTable positions={snapshot.positions} portfolio={snapshot.portfolio} symbolMetaBySymbol={symbolMetaBySymbol} />
+                      {snapshot.pendingProposals.length > 0 ? (
+                        <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
+                      ) : (
+                        <OrdersPanel orders={snapshot.orders} symbolMetaBySymbol={symbolMetaBySymbol} />
+                      )}
+                    </aside>
+                  </Panel>
                 )}
-              </>
-            )}
-            {workspaceTab === "market" && <MarketScanPanel decision={snapshot.latestStrategyRun} />}
-            {workspaceTab === "performance" && (
-              <div className="workspace-stack">
-                <PerformancePanel performance={snapshot.performance} mode={mode} />
-                <section className="panel">
-                  <div className="panel-head">
-                    <h2>Allocation{mode === "paper" ? " (Paper Mode)" : ""}</h2>
-                  </div>
-                  <AllocationDonut positions={snapshot.positions} portfolio={snapshot.portfolio} mode={mode} />
-                </section>
-              </div>
-            )}
-            {workspaceTab === "strategy" && (
-              <StrategyStudioPanel
-                snapshot={snapshot}
-                policy={policy}
-                strategyTuning={strategyTuning}
-                tuningBusy={tuningBusy}
-                tuningError={tuningError}
-                editStrategyPrompt={editStrategyPrompt}
-                resetStrategyPrompt={() => {
-                  setSnapshot((current) => ({ ...current, strategyPrompt: DEFAULT_STRATEGY_PROMPT }));
-                  void saveStrategyPrompt(DEFAULT_STRATEGY_PROMPT);
-                }}
-                requestStrategyTuning={requestStrategyTuning}
-                applyStrategyTuning={applyStrategyTuning}
-                updatePolicy={updatePolicy}
-              />
-            )}
-          </div>
-        </section>
-
-        <aside className="cockpit-inspector">
-          <TabBar
-            tabs={[
-              { id: "operate", label: "Operate" },
-              { id: "risk", label: "Risk" },
-              { id: "profile", label: "Profile" }
-            ]}
-            active={inspectorTab}
-            onSelect={(tab) => setInspectorTab(tab)}
-          />
-          <div className="inspector-pane">
-            {inspectorTab === "operate" && (
-              <ControlsPanel
-                snapshot={snapshot}
-                policy={policy}
-                allowedCount={allowedCount}
-                enableBlockedReason={enableBlockedReason}
-                busy={busy}
-                updatePolicy={updatePolicy}
-                runStrategy={runStrategy}
-              />
-            )}
-            {inspectorTab === "risk" && (
-              <RiskPanel
-                policy={policy}
-                remainingNotional={remainingNotional}
-                remainingOrders={remainingOrders}
-                sectorCapsDraft={sectorCapsDraft}
-                setSectorCapsDraft={setSectorCapsDraft}
-                updatePolicy={updatePolicy}
-              />
-            )}
-            {inspectorTab === "profile" && (
-              <ProfilePanel
-                snapshot={snapshot}
-                newProfileName={newProfileName}
-                setNewProfileName={setNewProfileName}
-                activateProfile={activateProfile}
-                createProfile={createProfile}
-              />
-            )}
-          </div>
-        </aside>
-      </section>
-
-      <section className="cockpit-bottom">
-        <TabBar
-          tabs={[
-            { id: "activity", label: "Activity" },
-            { id: "runs", label: "Runs" },
-            { id: "notifications", label: "Notifications" }
-          ]}
-          active={bottomTab}
-          onSelect={(tab) => setBottomTab(tab)}
-        />
-        <div className="bottom-pane">
-          {bottomTab === "activity" && (
-            <UnifiedActivityFeedPanel
-              unifiedFeed={snapshot.unifiedFeed}
-              configured={snapshot.notificationStatus.configured}
-              symbolMetaBySymbol={symbolMetaBySymbol}
-              policy={snapshot.policy}
-              updatePolicy={updatePolicy}
-            />
+                {showLeftRail && (showCenterWorkspace || showRightInspector) && (
+                  <PanelResizeHandle className="panel-resize-handle-horizontal" />
+                )}
+                {showCenterWorkspace && (
+                  <Panel defaultSize={55} minSize={20}>
+                    <section className="cockpit-workbench">
+                      <TabBar
+                        tabs={[
+                          { id: "decision", label: "Decision" },
+                          { id: "market", label: "Market Scan" },
+                          { id: "performance", label: "Performance" },
+                          { id: "strategy", label: "Strategy" }
+                        ]}
+                        active={workspaceTab}
+                        onSelect={(tab) => setWorkspaceTab(tab)}
+                      />
+                      <div className="workspace-pane">
+                        {workspaceTab === "decision" && (
+                          <>
+                            <LatestDecision decision={snapshot.latestStrategyRun} symbolMetaBySymbol={symbolMetaBySymbol} />
+                            {snapshot.policy.strategyAuthority === "propose" && snapshot.pendingProposals.length > 0 && (
+                              <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
+                            )}
+                          </>
+                        )}
+                        {workspaceTab === "market" && <MarketScanPanel decision={snapshot.latestStrategyRun} />}
+                        {workspaceTab === "performance" && (
+                          <div className="workspace-stack">
+                            <PerformancePanel performance={snapshot.performance} mode={mode} />
+                            <section className="panel">
+                              <div className="panel-head">
+                                <h2>Allocation{mode === "paper" ? " (Paper Mode)" : ""}</h2>
+                              </div>
+                              <AllocationDonut positions={snapshot.positions} portfolio={snapshot.portfolio} mode={mode} />
+                            </section>
+                          </div>
+                        )}
+                        {workspaceTab === "strategy" && (
+                          <StrategyStudioPanel
+                            snapshot={snapshot}
+                            policy={policy}
+                            strategyTuning={strategyTuning}
+                            tuningBusy={tuningBusy}
+                            tuningError={tuningError}
+                            editStrategyPrompt={editStrategyPrompt}
+                            resetStrategyPrompt={() => {
+                              setSnapshot((current) => ({ ...current, strategyPrompt: DEFAULT_STRATEGY_PROMPT }));
+                              void saveStrategyPrompt(DEFAULT_STRATEGY_PROMPT);
+                            }}
+                            requestStrategyTuning={requestStrategyTuning}
+                            applyStrategyTuning={applyStrategyTuning}
+                            updatePolicy={updatePolicy}
+                          />
+                        )}
+                      </div>
+                    </section>
+                  </Panel>
+                )}
+                {showCenterWorkspace && showRightInspector && (
+                  <PanelResizeHandle className="panel-resize-handle-horizontal" />
+                )}
+                {showRightInspector && (
+                  <Panel defaultSize={25} minSize={10}>
+                    <aside className="cockpit-inspector">
+                      <TabBar
+                        tabs={[
+                          { id: "operate", label: "Operate" },
+                          { id: "risk", label: "Risk" },
+                          { id: "profile", label: "Profile" }
+                        ]}
+                        active={inspectorTab}
+                        onSelect={(tab) => setInspectorTab(tab)}
+                      />
+                      <div className="inspector-pane">
+                        {inspectorTab === "operate" && (
+                          <ControlsPanel
+                            snapshot={snapshot}
+                            policy={policy}
+                            allowedCount={allowedCount}
+                            enableBlockedReason={enableBlockedReason}
+                            busy={busy}
+                            updatePolicy={updatePolicy}
+                            runStrategy={runStrategy}
+                          />
+                        )}
+                        {inspectorTab === "risk" && (
+                          <RiskPanel
+                            policy={policy}
+                            remainingNotional={remainingNotional}
+                            remainingOrders={remainingOrders}
+                            sectorCapsDraft={sectorCapsDraft}
+                            setSectorCapsDraft={setSectorCapsDraft}
+                            updatePolicy={updatePolicy}
+                          />
+                        )}
+                        {inspectorTab === "profile" && (
+                          <ProfilePanel
+                            snapshot={snapshot}
+                            newProfileName={newProfileName}
+                            setNewProfileName={setNewProfileName}
+                            activateProfile={activateProfile}
+                            createProfile={createProfile}
+                          />
+                        )}
+                      </div>
+                    </aside>
+                  </Panel>
+                )}
+              </PanelGroup>
+            </Panel>
           )}
-          {bottomTab === "runs" && <RunHistory runs={snapshot.strategyRuns} />}
-          {bottomTab === "notifications" && (
-            <NotificationPanel
+          {(showLeftRail || showCenterWorkspace || showRightInspector) && showBottomDrawer && (
+            <PanelResizeHandle className="panel-resize-handle-vertical" />
+          )}
+          {showBottomDrawer && (
+            <Panel defaultSize={25} minSize={10}>
+              <section className="cockpit-bottom">
+                <TabBar
+                  tabs={[
+                    { id: "activity", label: "Activity" },
+                    { id: "runs", label: "Runs" },
+                    { id: "notifications", label: "Notifications" }
+                  ]}
+                  active={bottomTab}
+                  onSelect={(tab) => setBottomTab(tab)}
+                />
+                <div className="bottom-pane">
+                  {bottomTab === "activity" && (
+                    <UnifiedActivityFeedPanel
+                      unifiedFeed={snapshot.unifiedFeed}
+                      configured={snapshot.notificationStatus.configured}
+                      symbolMetaBySymbol={symbolMetaBySymbol}
+                      policy={snapshot.policy}
+                      updatePolicy={updatePolicy}
+                    />
+                  )}
+                  {bottomTab === "runs" && <RunHistory runs={snapshot.strategyRuns} />}
+                  {bottomTab === "notifications" && (
+                    <NotificationPanel
               notifications={snapshot.notifications}
               configured={snapshot.notificationStatus.configured}
               symbolMetaBySymbol={symbolMetaBySymbol}
               mode={mode}
             />
           )}
-        </div>
-      </section>
+              </div>
+            </section>
+          </Panel>
+        )}
+        </PanelGroup>
+      )}
 
       {showNotionalSettings && (
         <div className="alert-modal-overlay">
