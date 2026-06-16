@@ -145,7 +145,7 @@ export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAU
 
 export function mergeQuoteData(
   scan: MarketScan,
-  quoteData: Record<string, { bid?: number; ask?: number; price?: number; asOf?: string; provider?: string }>
+  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string }>
 ): MarketScan {
   const normalize = (quote: MarketQuote): MarketQuote => {
     const extra = quoteData[quote.symbol];
@@ -155,6 +155,8 @@ export function mergeQuoteData(
       bid: positiveNumber(extra.bid) ?? quote.bid,
       ask: positiveNumber(extra.ask) ?? quote.ask,
       price: positiveNumber(extra.price) ?? quote.price,
+      // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
+      volume: (extra.volume && extra.volume > 0 ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
       asOf: extra.asOf ?? quote.asOf,
       provider: extra.provider ?? quote.provider
     };

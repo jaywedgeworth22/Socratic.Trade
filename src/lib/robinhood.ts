@@ -299,6 +299,7 @@ class MockRobinhoodGateway implements RobinhoodGateway {
                 price: yf.price,
                 bid: yf.bid,
                 ask: yf.ask,
+                volume: yf.volume > 0 ? yf.volume : undefined,
                 asOf: new Date().toISOString(),
                 provider: "yahoo-finance"
               }
@@ -420,8 +421,10 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<{ price: n
     const price = meta.regularMarketPrice;
     if (typeof price !== "number" || price <= 0) return undefined;
     const prevClose = meta.chartPreviousClose ?? price;
+    // Prefer regularMarketVolume (always present, includes full day even after close).
+    // Fall back to the candle array volume if the meta field is absent.
     const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
-    const volume = Number(quote?.volume?.[0] ?? 0);
+    const volume = Number(meta.regularMarketVolume ?? quote?.volume?.[0] ?? 0);
     return {
       price,
       bid: price * 0.999,

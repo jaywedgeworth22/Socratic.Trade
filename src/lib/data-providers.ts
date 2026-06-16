@@ -239,10 +239,11 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               if (profile?.sector) sector = profile.sector;
             }
 
-            // Basic financials → P/E, dividend yield, EPS
+            // Basic financials → P/E, dividend yield, EPS, average volume
             let peRatio: number | undefined;
             let dividendYield: number | undefined;
             let eps: number | undefined;
+            let volumeFromMetric: number | undefined;
             if (metricRaw.status === "fulfilled") {
               const metric = (metricRaw.value as any)?.metric ?? {};
               const pe = metric.peBasicExclExtraTTM ?? metric.peTTM;
@@ -251,8 +252,13 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               if (typeof dy === "number" && dy >= 0) dividendYield = dy;
               const epsVal = metric.epsBasicExclExtraItemsTTM ?? metric.epsAnnual;
               if (typeof epsVal === "number") eps = epsVal;
+              // Average trading volume in millions (10-day avg preferred, fall back to 3-month).
+              const avgVolM = metric["10DayAverageTradingVolume"] ?? metric["3MonthAverageTradingVolume"];
+              if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
             }
 
+            // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
+            const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
             const data: SymbolEnrichment = {
               ...(sentiment !== undefined && { sentiment }),
               ...(headlines.length > 0 && { headlines }),
@@ -260,7 +266,7 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               ...(analystRating !== undefined && { analystRating }),
               ...(sector !== undefined && { sector }),
               ...(industry !== undefined && { industry }),
-              ...(volume !== undefined && { volume }),
+              ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
               ...(dividendYield !== undefined && { dividendYield }),
               ...(eps !== undefined && { eps })
             };

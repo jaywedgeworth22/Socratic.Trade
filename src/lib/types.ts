@@ -73,6 +73,7 @@ export interface BrokerQuote {
   price?: number;
   bid?: number;
   ask?: number;
+  volume?: number;
   asOf?: string;
   provider?: string;
 }
