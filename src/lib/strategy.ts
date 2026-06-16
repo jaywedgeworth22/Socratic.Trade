@@ -102,7 +102,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
         await sendNotification(
           {
             type: "block",
-            title: `${normalizedProposal.side === "buy" ? "Buy" : "Sell"} ${normalizedProposal.symbol} blocked`,
+            title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
             payload: { runId, proposalId, decision, proposal: normalizedProposal }
           },
           { policy }
@@ -129,7 +129,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
         await sendNotification(
           {
             type: "block",
-            title: `${normalizedProposal.side === "buy" ? "Buy" : "Sell"} ${normalizedProposal.symbol} blocked`,
+            title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
             payload: { runId, proposalId, decision, review, proposal: normalizedProposal }
           },
           { policy }
@@ -165,7 +165,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
         await sendNotification(
           {
             type: "fill",
-            title: `${normalizedProposal.symbol} ${normalizedProposal.side === "buy" ? "Paper Buy" : "Paper Sell"}`,
+            title: `${normalizedProposal.symbol} Paper ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
             payload: { runId, proposalId, fill }
           },
           { policy }
@@ -302,7 +302,7 @@ export async function executeProposal(proposalId: string): Promise<{
     await sendNotification(
       {
         type: "block",
-        title: `${proposal.side === "buy" ? "Buy" : "Sell"} ${proposal.symbol} blocked`,
+        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
         payload: { proposalId, reason, proposal }
       },
       { policy }
@@ -335,7 +335,7 @@ export async function executeProposal(proposalId: string): Promise<{
     await sendNotification(
       {
         type: "block",
-        title: `${proposal.side === "buy" ? "Buy" : "Sell"} ${proposal.symbol} blocked`,
+        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
         payload: { proposalId, decision, review, proposal }
       },
       { policy }
@@ -371,7 +371,7 @@ export async function executeProposal(proposalId: string): Promise<{
     await sendNotification(
       {
         type: "fill",
-        title: `${proposal.symbol} ${proposal.side === "buy" ? "Paper Buy" : "Paper Sell"}`,
+        title: `${proposal.symbol} Paper ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
         payload: { proposalId, fill }
       },
       { policy }
@@ -404,7 +404,7 @@ export async function executeProposal(proposalId: string): Promise<{
   await sendNotification(
     {
       type: "fill",
-      title: `${proposal.side === "buy" ? "Buy" : "Sell"} ${proposal.symbol} ${execution.state}`,
+      title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
       payload: { proposalId, fill }
     },
     { policy }
@@ -531,7 +531,9 @@ async function proposeTrades(input: {
           ],
           properties: {
             symbol: { type: "string" },
-            side: { enum: ["buy", "sell", "short", "cover"] },
+            // SHORT_SELLING: Change to ["buy", "sell", "short", "cover"] when
+            // policy.shortSellingEnabled is implemented and broker supports it.
+            side: { enum: ["buy", "sell"] },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
@@ -640,7 +642,9 @@ async function proposeTrades(input: {
           ],
           properties: {
             symbol: { type: "string" },
-            side: { enum: ["buy", "sell", "short", "cover"] },
+            // SHORT_SELLING: Change to ["buy", "sell", "short", "cover"] when
+            // policy.shortSellingEnabled is implemented and broker supports it.
+            side: { enum: ["buy", "sell"] },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },

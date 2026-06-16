@@ -31,6 +31,21 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
+  // SHORT_SELLING: Feature gate. When shortSellingEnabled is true, short/cover
+  // proposals pass through to the guardrails below. When false (default), they
+  // are unconditionally rejected. Flip this flag + implement the SHORT_SELLING
+  // TODOs below + confirm broker support before enabling.
+  if (proposal.side !== "buy" && proposal.side !== "sell") {
+    if (!context.policy.shortSellingEnabled) {
+      reasons.push(`Order side "${proposal.side}" is not supported. Only "buy" and "sell" are permitted.`);
+    }
+    // SHORT_SELLING TODO: When enabled, add short-specific guardrails here:
+    // - Validate that short proposals carry a mandatory stop-loss
+    //   (policy.riskRules.shortStopLossPct must be set and > 0)
+    // - Apply stricter per-order notional cap (policy.maxShortOrderNotional)
+    // - Enforce max total short exposure (policy.maxShortExposurePct)
+    // - Verify broker adapter supports short/cover (Robinhood MCP does not as of 2026-06)
+  }
   if (proposal.side === "buy" && estimatedNotional > context.policy.maxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum cumulative daily order limit of $${context.policy.maxOrderNotional}`);
   }
@@ -95,6 +110,10 @@ function projectedExposurePct(
   const symbol = normalizeSymbol(proposal.symbol);
   const current = positions.find((item) => normalizeSymbol(item.symbol) === symbol)?.marketValue ?? 0;
   const projected = proposal.side === "buy" ? current + notional : Math.max(0, current - notional);
+  // SHORT_SELLING TODO: Opening a short *increases* risk exposure (like buy), not
+  // decreases it. When enabled, use:
+  //   const isOpening = proposal.side === "buy" || proposal.side === "short";
+  //   const projected = isOpening ? current + notional : Math.max(0, current - notional);
   if (portfolio.totalMarketValue <= 0) return 0;
   return (projected / portfolio.totalMarketValue) * 100;
 }
@@ -105,6 +124,9 @@ function projectedSectorExposurePct(
   notional: number
 ): { sector: string; projectedPct: number; cap: number } | undefined {
   if (proposal.side !== "buy" && proposal.side !== "sell") return undefined;
+  // SHORT_SELLING TODO: When enabled, include short/cover in sector exposure
+  // calculations. Opening a short increases sector exposure; covering decreases it.
+  // Remove the early return above and handle all four sides.
   const symbol = normalizeSymbol(proposal.symbol);
   const sector = sectorForSymbol(symbol, context.positions, context.marketScan);
   if (!sector) return undefined;
@@ -121,6 +143,9 @@ function projectedSectorExposurePct(
 
 function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string | undefined {
   if (proposal.side !== "buy") return undefined;
+  // SHORT_SELLING TODO: When enabled, apply riskRules.shortStopLossPct to
+  // short positions. A short that has moved *up* past shortStopLossPct should
+  // be blocked from adding (or trigger a proactive cover).
   const position = context.positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
   if (!position || position.averageCost <= 0) return undefined;
   const currentPrice = currentPriceForPosition(position, context.marketScan);

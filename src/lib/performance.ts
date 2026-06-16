@@ -143,6 +143,10 @@ export function getPaperPortfolioProjection(input: {
     const symbol = normalizeSymbol(fill.symbol);
     const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
     if (fill.side === "buy") {
+      // SHORT_SELLING TODO: "cover" also opens a lot (buying back to close a short).
+      // When enabled, treat cover like buy for FIFO lot creation.
+      // A "short" fill should open a *short lot* (negative position) — consider
+      // a separate short-lots map or a signed-quantity approach.
       const fillCost = fill.quantity * fill.price;
       const currentCost = current.averageCost * current.quantity;
       const nextQuantity = current.quantity + fill.quantity;
@@ -150,6 +154,9 @@ export function getPaperPortfolioProjection(input: {
       positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
       cash -= fillCost;
     } else {
+      // Currently handles "sell". SHORT_SELLING TODO: "short" opens a new
+      // short position (not a close of a long). When enabled, route "short"
+      // fills to a short-lot map instead of matching against long lots.
       const soldQuantity = Math.min(current.quantity, fill.quantity);
       const nextQuantity = Math.max(0, current.quantity - soldQuantity);
       if (nextQuantity <= 0.000001) positions.delete(symbol);
@@ -192,11 +199,16 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     if (!lots.has(symbol)) lots.set(symbol, []);
 
     if (fill.side === "buy") {
+      // SHORT_SELLING TODO: "cover" also adds quantity (buying back a short).
+      // When enabled, close the short position and realize P&L.
       lots.get(symbol)!.push({ quantity: fill.quantity, price: fill.price, runId: fill.runId });
       addAttribution(attribution, fill, 0);
       continue;
     }
 
+    // Currently handles "sell". SHORT_SELLING TODO: A "short" fill should
+    // open a short lot (short sell proceeds = fill.price × fill.quantity).
+    // P&L on a short is realized when covering: (shortPrice - coverPrice) × qty.
     let remaining = fill.quantity;
     while (remaining > 0 && lots.get(symbol)!.length > 0) {
       const lot = lots.get(symbol)![0];

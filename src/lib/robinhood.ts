@@ -375,6 +375,12 @@ class MockRobinhoodGateway implements RobinhoodGateway {
   }
 }
 
+// SHORT_SELLING: Robinhood's MCP place_equity_order only accepts side "buy" or
+// "sell" (review_equity_order docs explicitly state "no short sells"). If
+// Robinhood adds equity shorting, this function will need to translate "short"
+// to whatever broker-side value they use, and may require additional parameters
+// (e.g. borrow/locate confirmation). Until then, policy.ts blocks short/cover
+// before this code is reached.
 function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
   return {
     account_number: input.accountNumber,

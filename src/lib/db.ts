@@ -375,7 +375,7 @@ export function dailyExecutionStats(accountNumber: string, now = new Date()): { 
   return rows.reduce(
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
-      const isBuy = proposal.side === "buy";
+      const isBuy = proposal.side === "buy" || proposal.side === "short";
       // Prefer the persisted estimated_notional; fall back to proposal fields for old rows.
       const notional = isBuy
         ? (row.estimated_notional != null
@@ -995,7 +995,15 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   const envMap: Record<string, string> = {
     finnhub: "FINNHUB_API_KEY",
     fmp: "FMP_API_KEY",
-    openai: "OPENAI_API_KEY"
+    openai: "OPENAI_API_KEY",
+    marketstack: "MARKETSTACK_API_KEY",
+    alphavantage: "ALPHAVANTAGE_API_KEY",
+    tradier: "TRADIER_API_KEY",
+    massive: "MASSIVE_API_KEY",
+    massive_s3_endpoint: "MASSIVE_S3_ENDPOINT",
+    massive_bucket: "MASSIVE_BUCKET",
+    massive_access_key_id: "MASSIVE_ACCESS_KEY_ID",
+    massive_secret_access_key: "MASSIVE_SECRET_ACCESS_KEY"
   };
   const envVar = envMap[service.toLowerCase()];
   return envVar ? process.env[envVar] : undefined;

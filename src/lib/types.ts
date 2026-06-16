@@ -22,6 +22,9 @@ export interface RiskRules {
   stopLossPct?: number;
   takeProfitPct?: number;
   trailingStopPct?: number;
+  // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
+  // Required on any short proposal per docs/phase-7-strategy.md §C.
+  shortStopLossPct?: number;
 }
 
 export interface NotificationSettings {
@@ -101,6 +104,17 @@ export interface TradingPolicy {
   riskRules: RiskRules;
   notificationSettings: NotificationSettings;
   activeProfileId?: string;
+  // SHORT_SELLING: Feature gate for short/cover order sides.
+  // When true, policy.ts will allow short/cover proposals through (with stricter
+  // guardrails). When false or absent, short/cover proposals are unconditionally
+  // rejected. Requires broker-side support (Robinhood does not currently support
+  // equity shorting via MCP). See docs/phase-7-strategy.md §C.
+  shortSellingEnabled?: boolean;
+  // SHORT_SELLING: Per-order notional cap for short positions. Should be lower
+  // than maxOrderNotional per the design doc's risk guidance.
+  maxShortOrderNotional?: number;
+  // SHORT_SELLING: Max total short exposure as a percentage of portfolio value.
+  maxShortExposurePct?: number;
 }
 
 export interface TradeProposal {

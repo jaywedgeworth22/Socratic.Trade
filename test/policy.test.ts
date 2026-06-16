@@ -151,6 +151,24 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("Kill switch");
   });
+
+  it("rejects short proposals", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, side: "short" },
+      context()
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain('Order side "short" is not supported');
+  });
+
+  it("rejects cover proposals", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, side: "cover" },
+      context()
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain('Order side "cover" is not supported');
+  });
 });
 
 function context(estimatedNotional = 10) {
