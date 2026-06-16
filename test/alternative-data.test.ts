@@ -107,19 +107,15 @@ describe("FRED Macroeconomic Data", () => {
 });
 
 describe("Finnhub News Enrichment", () => {
-  it("uses mock enrichment provider when no API key is configured", async () => {
+  it("uses Yahoo Finance provider when no API key is configured", async () => {
     delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
 
     const provider = getEnrichmentProvider();
-    // Mock tier is always configured — columns always have data.
+    // Yahoo Finance is the final real tier — always configured, no API key required.
     expect(provider.configured).toBe(true);
-    expect(provider.name).toBe("mock-enrichment");
-    const enriched = await provider.enrich(["AAPL"]);
-    expect(enriched.AAPL).toBeDefined();
-    expect(enriched.AAPL?.sector).toBe("Technology");
-    expect(enriched.AAPL?.analystRating).toBe("Buy");
+    expect(provider.name).toBe("yahoo-finance");
   });
 
   it("fetches and scores company news from Finnhub when key is configured", async () => {
@@ -144,7 +140,7 @@ describe("Finnhub News Enrichment", () => {
 
     const provider = getEnrichmentProvider();
     expect(provider.configured).toBe(true);
-    // With Finnhub key the cascade is finnhub+mock-enrichment.
+    // With Finnhub key the cascade is finnhub+yahoo-finance.
     expect(provider.name).toContain("finnhub");
 
     const result = await provider.enrich(["AAPL"]);

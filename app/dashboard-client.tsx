@@ -785,18 +785,18 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
         <thead>
           <tr>
             {marketHeader("Symbol", "symbol", sort, setSort, "Sourced from Nasdaq Stock Screener API")}
-            {marketHeader("Price", "price", sort, setSort, "Sourced from Robinhood/Mock quotes or Yahoo Finance fallback")}
-            {marketHeader("Bid", "bid", sort, setSort, "Sourced from Robinhood/Mock quotes or Yahoo Finance fallback")}
-            {marketHeader("Ask", "ask", sort, setSort, "Sourced from Robinhood/Mock quotes or Yahoo Finance fallback")}
+            {marketHeader("Price", "price", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes")}
+            {marketHeader("Bid", "bid", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes")}
+            {marketHeader("Ask", "ask", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes")}
             {marketHeader("Change", "intradayChangePct", sort, setSort, "Sourced from Nasdaq Stock Screener (intraday delay)")}
             {marketHeader("Volume", "volume", sort, setSort, "Sourced from Nasdaq, Finnhub, or Yahoo Finance")}
             {marketHeader("Mkt Cap", "marketCap", sort, setSort, "Market capitalization from Nasdaq Screener")}
-            {marketHeader("P/E", "peRatio", sort, setSort, "Sourced from Finnhub API or Fallback Company Fundamentals")}
-            {marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % from Finnhub basic financials")}
-            {marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) from Finnhub basic financials")}
-            {marketHeader("Sentiment", "sentiment", sort, setSort, "Calculated from recent company headlines / news tone analysis")}
-            {marketHeader("Rating", "analystRating", sort, setSort, "Sourced from Finnhub analyst recommendation consensus or mock metrics")}
-            {marketHeader("Sector", "sector", sort, setSort, "Sourced from Nasdaq Screener or company profile metadata")}
+            {marketHeader("P/E", "peRatio", sort, setSort, "Price-to-earnings ratio from Finnhub, FMP, or Yahoo Finance")}
+            {marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % from Finnhub or Yahoo Finance")}
+            {marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) from Finnhub or Yahoo Finance")}
+            {marketHeader("Sentiment", "sentiment", sort, setSort, "Derived from analyst consensus or news headline sentiment scoring")}
+            {marketHeader("Rating", "analystRating", sort, setSort, "Analyst consensus from Finnhub, FMP, or Yahoo Finance")}
+            {marketHeader("Sector", "sector", sort, setSort, "Sourced from Nasdaq Screener, Finnhub, or Yahoo Finance profile")}
             {marketHeader("Score", "score", sort, setSort, "Calculated dynamically based on active scoring weights")}
           </tr>
         </thead>
@@ -805,7 +805,7 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
             const sourceName = candidate.provider === "yahoo-finance" ? "Yahoo Finance" : candidate.provider ?? "unknown";
             const quoteSource = `Source: ${sourceName}`;
             const sentimentTitle = typeof candidate.sentiment === "number"
-              ? `Sentiment Score: ${candidate.sentiment}/100 (from Finnhub News or Fallback)\n\nRecent Headlines:\n${candidate.headlines?.map(h => `• ${h}`).join("\n") ?? "None"}`
+              ? `Sentiment Score: ${candidate.sentiment}/100 (from analyst consensus or news scoring)\n\nRecent Headlines:\n${candidate.headlines?.map(h => `• ${h}`).join("\n") ?? "None"}`
               : "No sentiment data";
             return (
               <tr key={candidate.symbol}>
@@ -816,11 +816,11 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
                 <td title="Intraday price change (from Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
                 <td title="Daily trading volume (from Nasdaq, Finnhub, or Yahoo Finance)">{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
                 <td title="Market capitalization (from Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
-                <td title="Price-to-Earnings Ratio (from Finnhub or Fallback)">{candidate.peRatio ? candidate.peRatio.toFixed(1) : "-"}</td>
+                <td title="Price-to-Earnings Ratio (Finnhub / FMP / Yahoo Finance)">{candidate.peRatio ? candidate.peRatio.toFixed(1) : "-"}</td>
                 <td title="Annual Dividend Yield % (from Finnhub basic financials)">{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
                 <td title="Earnings Per Share TTM (from Finnhub basic financials)">{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
                 <td title={sentimentTitle}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
-                <td title="Analyst consensus rating (from Finnhub or Fallback)">{candidate.analystRating ?? "-"}</td>
+                <td title="Analyst consensus rating (Finnhub / FMP / Yahoo Finance)">{candidate.analystRating ?? "-"}</td>
                 <td title="Stock Sector (from Nasdaq Screener or profile metadata)">{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
                 <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>
               </tr>

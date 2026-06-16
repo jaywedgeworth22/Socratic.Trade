@@ -17,16 +17,11 @@ describe("market enrichment provider", () => {
     else delete process.env.FMP_API_KEY;
   });
 
-  it("uses mock enrichment provider when no API key is configured", async () => {
+  it("uses Yahoo Finance provider when no API key is configured", async () => {
     const provider = getEnrichmentProvider();
-    // Mock tier is always configured so columns are never empty.
+    // Yahoo Finance is always the final real tier — no API key required.
     expect(provider.configured).toBe(true);
-    expect(provider.name).toBe("mock-enrichment");
-    const enriched = await provider.enrich(["AAPL"]);
-    expect(enriched.AAPL).toBeDefined();
-    expect(enriched.AAPL?.sector).toBe("Technology");
-    expect(enriched.AAPL?.analystRating).toBe("Buy");
-    expect(enriched.AAPL?.peRatio).toBeGreaterThan(0);
+    expect(provider.name).toBe("yahoo-finance");
   });
 
   it("mock provider returns fallback data for unknown tickers", async () => {

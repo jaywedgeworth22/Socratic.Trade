@@ -2,12 +2,12 @@
 // the NASDAQ screener scan.
 //
 // Provider cascade (first non-null value wins per field):
-//   1. Finnhub        — news sentiment, analyst recs, profile, basic financials (FINNHUB_API_KEY)
-//   2. FMP stable API — P/E (ratios-ttm), analyst grades-consensus             (FMP_API_KEY)
-//   3. Mock / hash    — deterministic fallback so every symbol always has data
+//   1. Finnhub           — news sentiment, analyst recs, profile, basic financials (FINNHUB_API_KEY)
+//   2. FMP stable API    — P/E (ratios-ttm), analyst grades-consensus             (FMP_API_KEY)
+//   3. Yahoo Finance     — sector, industry, P/E, EPS, div yield, analyst rating  (no key needed)
 //
-// Each real provider is only instantiated when its env key is set. Without any key
-// the mock tier fills all fields so Paper/mock runs always show complete data.
+// Each keyed provider is only instantiated when its env key is set. Yahoo Finance is always
+// the final real tier — no API key required, uses session crumb auth.
 
 import { normalizeSymbol } from "./money";
 
@@ -92,15 +92,14 @@ function maxSymbols(): number {
 }
 
 // ── Provider factory ────────────────────────────────────────────────────────
-// Builds a cascade: [Finnhub?, FMP?] → Mock.  At least the mock tier is always
-// present so every symbol has data regardless of API key configuration.
+// Builds a cascade: [Finnhub?, FMP?] → Yahoo Finance.
+// Yahoo Finance requires no API key and is always the final real tier.
 
 export function getEnrichmentProvider(): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
   if (process.env.FINNHUB_API_KEY) providers.push(new FinnhubEnrichmentProvider(process.env.FINNHUB_API_KEY));
   if (process.env.FMP_API_KEY) providers.push(new FmpEnrichmentProvider(process.env.FMP_API_KEY));
-  // Mock is always the final tier — fills any gaps left by real providers.
-  providers.push(mockEnrichmentProvider);
+  providers.push(new YahooFinanceEnrichmentProvider());
   return providers.length === 1 ? providers[0] : new CascadingEnrichmentProvider(providers);
 }
 
@@ -160,6 +159,140 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       merged[symbol] = base;
     }
     return merged;
+  }
+}
+
+// ── Yahoo Finance provider (no API key required) ─────────────────────────────
+// Uses Yahoo Finance session-crumb auth to call v10/finance/quoteSummary.
+// Provides: sector, industry, P/E, EPS, dividend yield, analyst rating, sentiment.
+
+interface YfCreds { cookie: string; crumb: string; expiresAt: number; }
+let yfCreds: YfCreds | null = null;
+const YF_CRUMB_TTL_MS = 55 * 60_000; // 55 min (crumbs expire ~1 hr)
+const YF_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+
+class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "yahoo-finance";
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`yf:${symbol}`);
+      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    let creds: YfCreds;
+    try { creds = await this.getCreds(); } catch { return result; }
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const data = await this.fetchSymbol(symbol, creds);
+            cache.set(`yf:${symbol}`, { expiresAt: now + ttlMs(), data });
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getCreds(): Promise<YfCreds> {
+    const now = Date.now();
+    if (yfCreds && yfCreds.expiresAt > now) return yfCreds;
+
+    const cookieRes = await fetch("https://fc.yahoo.com", {
+      headers: { "user-agent": YF_UA },
+      redirect: "follow"
+    });
+    const rawCookies: string[] =
+      typeof (cookieRes.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie === "function"
+        ? (cookieRes.headers as unknown as { getSetCookie: () => string[] }).getSetCookie()
+        : [cookieRes.headers.get("set-cookie") ?? ""].filter(Boolean);
+    const cookie = rawCookies.map((c) => c.split(";")[0]).filter(Boolean).join("; ");
+
+    const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
+      headers: { "user-agent": YF_UA, "Cookie": cookie, "accept": "text/plain" }
+    });
+    if (!crumbRes.ok) throw new Error(`Yahoo Finance crumb failed: ${crumbRes.status}`);
+    const crumb = (await crumbRes.text()).trim();
+    if (!crumb || crumb.startsWith("{")) throw new Error("Invalid Yahoo Finance crumb");
+
+    yfCreds = { cookie, crumb, expiresAt: now + YF_CRUMB_TTL_MS };
+    return yfCreds;
+  }
+
+  private async fetchSymbol(symbol: string, creds: YfCreds): Promise<SymbolEnrichment> {
+    const modules = "summaryDetail,defaultKeyStatistics,financialData,assetProfile";
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=${modules}&crumb=${encodeURIComponent(creds.crumb)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(url, {
+        headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
+      const r = json?.quoteSummary?.result?.[0] as Record<string, any> | undefined;
+      if (!r) return {};
+
+      const sd = (r.summaryDetail ?? {}) as Record<string, { raw?: number }>;
+      const ks = (r.defaultKeyStatistics ?? {}) as Record<string, { raw?: number }>;
+      const fd = (r.financialData ?? {}) as Record<string, { raw?: number } | string>;
+      const ap = (r.assetProfile ?? {}) as Record<string, unknown>;
+
+      const rawPe = (sd.trailingPE as { raw?: number })?.raw;
+      const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
+      const rawEps = (ks.trailingEps as { raw?: number })?.raw;
+      const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
+      const recKey = fd.recommendationKey as string | undefined;
+
+      const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
+      // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
+      const dividendYield = typeof rawDiv === "number" && rawDiv >= 0 ? Math.round(rawDiv * 10000) / 100 : undefined;
+      const eps = typeof rawEps === "number" ? rawEps : undefined;
+      const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
+      const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
+
+      let analystRating: string | undefined;
+      let sentiment: number | undefined;
+      if (typeof rawRecMean === "number") {
+        // recommendationMean: 1=Strong Buy, 5=Strong Sell → map to 0–100.
+        sentiment = Math.max(0, Math.min(100, Math.round((5 - rawRecMean) / 4 * 100)));
+      }
+      if (recKey) {
+        const keyMap: Record<string, string> = {
+          strongbuy: "Strong Buy", buy: "Buy", hold: "Hold", sell: "Sell", strongsell: "Strong Sell"
+        };
+        analystRating = keyMap[recKey.toLowerCase().replace(/[-_\s]/g, "")] ?? capitalise(recKey);
+      }
+
+      return {
+        ...(peRatio !== undefined && { peRatio }),
+        ...(dividendYield !== undefined && { dividendYield }),
+        ...(eps !== undefined && { eps }),
+        ...(sector !== undefined && { sector }),
+        ...(industry !== undefined && { industry }),
+        ...(analystRating !== undefined && { analystRating }),
+        ...(sentiment !== undefined && { sentiment })
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -410,4 +543,5 @@ export function scoreHeadlines(headlines: string[]): number {
 
 export function clearEnrichmentCache(): void {
   cache.clear();
+  yfCreds = null;
 }
