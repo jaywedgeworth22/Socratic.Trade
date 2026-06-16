@@ -38,18 +38,26 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (proposal.side !== "buy" && proposal.side !== "sell") {
     if (!context.policy.shortSellingEnabled) {
       reasons.push(`Order side "${proposal.side}" is not supported. Only "buy" and "sell" are permitted.`);
+    } else {
+      if (proposal.side === "short") {
+        if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
+          reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
+        }
+        if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
+          reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
+        }
+      }
+      if (proposal.side === "cover" && coverQuantityExceedsShorts(proposal, context.positions)) {
+        reasons.push(`Cover quantity exceeds current ${symbol} short holdings.`);
+      }
     }
-    // SHORT_SELLING TODO: When enabled, add short-specific guardrails here:
-    // - Validate that short proposals carry a mandatory stop-loss
-    //   (policy.riskRules.shortStopLossPct must be set and > 0)
-    // - Apply stricter per-order notional cap (policy.maxShortOrderNotional)
-    // - Enforce max total short exposure (policy.maxShortExposurePct)
-    // - Verify broker adapter supports short/cover (Robinhood MCP does not as of 2026-06)
   }
-  if (proposal.side === "buy" && estimatedNotional > context.policy.maxOrderNotional) {
-    reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum cumulative daily order limit of $${context.policy.maxOrderNotional}`);
+  
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  if (isOpening && estimatedNotional > context.policy.maxOrderNotional) {
+    reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${context.policy.maxOrderNotional}`);
   }
-  if (proposal.side === "buy" && context.dailyNotionalUsed + estimatedNotional > context.policy.maxDailyNotional) {
+  if (isOpening && context.dailyNotionalUsed + estimatedNotional > context.policy.maxDailyNotional) {
     reasons.push("Daily notional limit would be exceeded.");
   }
   if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
@@ -57,6 +65,15 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
   if (proposal.side === "sell" && sellQuantityExceedsHoldings(proposal, context.positions)) {
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
+  }
+
+  if (isOpening && proposal.side === "short" && context.policy.maxShortExposurePct) {
+    const totalShortExposure = context.positions.reduce((sum, pos) => pos.quantity < 0 ? sum + Math.abs(pos.marketValue) : sum, 0);
+    const projectedShortExposure = totalShortExposure + estimatedNotional;
+    const projectedShortExposurePct = context.portfolio.totalMarketValue > 0 ? (projectedShortExposure / context.portfolio.totalMarketValue) * 100 : 0;
+    if (projectedShortExposurePct > context.policy.maxShortExposurePct) {
+      reasons.push(`Projected total short exposure ${projectedShortExposurePct.toFixed(2)}% exceeds maxShortExposurePct limit of ${context.policy.maxShortExposurePct}%.`);
+    }
   }
 
   const projectedSymbolExposurePct = projectedExposurePct(proposal, context.positions, context.portfolio, estimatedNotional);
@@ -98,7 +115,17 @@ function hasFractionalQuantity(proposal: TradeProposal): boolean {
 function sellQuantityExceedsHoldings(proposal: TradeProposal, positions: EquityPosition[]): boolean {
   if (proposal.side !== "sell" || proposal.quantity === undefined) return false;
   const position = positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
-  return (position?.quantity ?? 0) < proposal.quantity;
+  const currentQty = position?.quantity ?? 0;
+  if (currentQty <= 0) return true; // Cannot sell if flat or short
+  return currentQty < proposal.quantity;
+}
+
+function coverQuantityExceedsShorts(proposal: TradeProposal, positions: EquityPosition[]): boolean {
+  if (proposal.side !== "cover" || proposal.quantity === undefined) return false;
+  const position = positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
+  const currentQty = position?.quantity ?? 0;
+  if (currentQty >= 0) return true; // Cannot cover if flat or long
+  return Math.abs(currentQty) < proposal.quantity;
 }
 
 function projectedExposurePct(
@@ -108,12 +135,10 @@ function projectedExposurePct(
   notional: number
 ): number {
   const symbol = normalizeSymbol(proposal.symbol);
-  const current = positions.find((item) => normalizeSymbol(item.symbol) === symbol)?.marketValue ?? 0;
-  const projected = proposal.side === "buy" ? current + notional : Math.max(0, current - notional);
-  // SHORT_SELLING TODO: Opening a short *increases* risk exposure (like buy), not
-  // decreases it. When enabled, use:
-  //   const isOpening = proposal.side === "buy" || proposal.side === "short";
-  //   const projected = isOpening ? current + notional : Math.max(0, current - notional);
+  const position = positions.find((item) => normalizeSymbol(item.symbol) === symbol);
+  const current = Math.abs(position?.marketValue ?? 0);
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  const projected = isOpening ? current + notional : Math.max(0, current - notional);
   if (portfolio.totalMarketValue <= 0) return 0;
   return (projected / portfolio.totalMarketValue) * 100;
 }
@@ -123,10 +148,6 @@ function projectedSectorExposurePct(
   context: PolicyContext,
   notional: number
 ): { sector: string; projectedPct: number; cap: number } | undefined {
-  if (proposal.side !== "buy" && proposal.side !== "sell") return undefined;
-  // SHORT_SELLING TODO: When enabled, include short/cover in sector exposure
-  // calculations. Opening a short increases sector exposure; covering decreases it.
-  // Remove the early return above and handle all four sides.
   const symbol = normalizeSymbol(proposal.symbol);
   const sector = sectorForSymbol(symbol, context.positions, context.marketScan);
   if (!sector) return undefined;
@@ -135,29 +156,43 @@ function projectedSectorExposurePct(
 
   const currentValue = context.positions
     .filter((position) => sectorForSymbol(normalizeSymbol(position.symbol), context.positions, context.marketScan) === sector)
-    .reduce((sum, position) => sum + position.marketValue, 0);
-  const projectedValue = proposal.side === "buy" ? currentValue + notional : Math.max(0, currentValue - notional);
+    .reduce((sum, position) => sum + Math.abs(position.marketValue), 0);
+  
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  const isClosing = proposal.side === "sell" || proposal.side === "cover";
+  const projectedValue = isOpening ? currentValue + notional : (isClosing ? Math.max(0, currentValue - notional) : currentValue);
   const projectedPct = context.portfolio.totalMarketValue > 0 ? (projectedValue / context.portfolio.totalMarketValue) * 100 : 0;
   return { sector, projectedPct, cap };
 }
 
 function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string | undefined {
-  if (proposal.side !== "buy") return undefined;
-  // SHORT_SELLING TODO: When enabled, apply riskRules.shortStopLossPct to
-  // short positions. A short that has moved *up* past shortStopLossPct should
-  // be blocked from adding (or trigger a proactive cover).
   const position = context.positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
   if (!position || position.averageCost <= 0) return undefined;
-  const currentPrice = currentPriceForPosition(position, context.marketScan);
-  if (!currentPrice) return undefined;
-  const returnPct = ((currentPrice - position.averageCost) / position.averageCost) * 100;
-  const stopLossPct = context.policy.riskRules.stopLossPct ?? 0;
-  const takeProfitPct = context.policy.riskRules.takeProfitPct ?? 0;
-  if (stopLossPct > 0 && returnPct <= -stopLossPct) {
-    return `Stop-loss rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is down ${Math.abs(returnPct).toFixed(2)}%.`;
-  }
-  if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-    return `Take-profit rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is up ${returnPct.toFixed(2)}%.`;
+
+  if (proposal.side === "buy") {
+    if (position.quantity > 0) {
+      const avgCost = position.averageCost;
+      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const drawdownPct = ((avgCost - currentPrice) / avgCost) * 100;
+      const returnPct = ((currentPrice - avgCost) / avgCost) * 100;
+      
+      if (context.policy.riskRules?.stopLossPct && drawdownPct > context.policy.riskRules.stopLossPct) {
+        return `Stop-loss rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is down ${drawdownPct.toFixed(2)}%.`;
+      }
+      if (context.policy.riskRules?.takeProfitPct && returnPct >= context.policy.riskRules.takeProfitPct) {
+        return `Take-profit rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is up ${returnPct.toFixed(2)}%.`;
+      }
+    }
+  } else if (proposal.side === "short") {
+    if (position.quantity < 0) {
+      const avgCost = position.averageCost;
+      const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
+      const drawdownPct = ((currentPrice - avgCost) / avgCost) * 100; // Inverse math for short: price up means loss
+      
+      if (context.policy.riskRules?.shortStopLossPct && drawdownPct > context.policy.riskRules.shortStopLossPct) {
+        return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${context.policy.riskRules.shortStopLossPct}%.`;
+      }
+    }
   }
   return undefined;
 }

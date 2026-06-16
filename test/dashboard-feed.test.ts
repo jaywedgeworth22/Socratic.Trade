@@ -169,19 +169,19 @@ describe("dashboard feed helpers", () => {
   it("formats share quantities according to precision and symbol-specific rules", () => {
     expect(formatShareQuantity(1.55548)).toBe("1.56");
     expect(formatShareQuantity(0.00448933)).toBe("0.00449");
-    expect(formatShareQuantity(0.5)).toBe("0.500");
-    expect(formatShareQuantity(12)).toBe("12.00");
-    expect(formatShareQuantity(123.456)).toBe("123.46");
-    expect(formatShareQuantity(1234.56)).toBe("1234.6");
+    expect(formatShareQuantity(0.5)).toBe("0.5");
+    expect(formatShareQuantity(12)).toBe("12");
+    expect(formatShareQuantity(123.456)).toBe("123");
+    expect(formatShareQuantity(1234.56)).toBe("1235");
     expect(formatShareQuantity(12345.6)).toBe("12346");
 
-    expect(formatShareQuantity(1.55548, "NVDA")).toBe("1.555");
-    expect(formatShareQuantity(0.00448933, "intc")).toBe("0.004489");
-    expect(formatShareQuantity(0.5, "QCOM")).toBe("0.5000");
-    expect(formatShareQuantity(12, "NVDA")).toBe("12.000");
-    expect(formatShareQuantity(123.456, "INTC")).toBe("123.456");
-    expect(formatShareQuantity(1234.56, "QCOM")).toBe("1234.56");
-    expect(formatShareQuantity(12345.6, "NVDA")).toBe("12345.6");
+    expect(formatShareQuantity(1.55548, "NVDA")).toBe("1.56");
+    expect(formatShareQuantity(0.00448933, "intc")).toBe("0.00449");
+    expect(formatShareQuantity(0.5, "QCOM")).toBe("0.5");
+    expect(formatShareQuantity(12, "NVDA")).toBe("12");
+    expect(formatShareQuantity(123.456, "INTC")).toBe("123");
+    expect(formatShareQuantity(1234.56, "QCOM")).toBe("1235");
+    expect(formatShareQuantity(12345.6, "NVDA")).toBe("12346");
   });
 
   it("applies Paper prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {

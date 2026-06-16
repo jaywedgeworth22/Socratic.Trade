@@ -130,13 +130,14 @@ export interface TradeProposal {
   rationale: string;
   tradeThesisTag: string;
   entryMarketRegime: string;
+  confidenceScore?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName",
+    "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades",
     string
   >
 >;
@@ -181,6 +182,10 @@ export interface MarketQuote {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   insiderSentiment?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+  senateTrades?: number; // Net aggregate value or count
   sources?: EnrichmentSources;
 }
 
@@ -227,6 +232,10 @@ export interface MarketQuoteSummary {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   insiderSentiment?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+  senateTrades?: number;
   sources?: EnrichmentSources;
 }
 
@@ -291,6 +300,32 @@ export interface PendingProposal {
   review?: ReviewedOrder;
 }
 
+export interface StrategyOutcome {
+  proposalId?: string;
+  runId?: string;
+  accountNumber: string;
+  source: "paper" | "live";
+  symbol: string;
+  side: "buy" | "sell" | "short" | "cover";
+  rationale: string;
+  entryPrice?: number;
+  entryAt?: string;
+  exitPrice?: number;
+  exitAt?: string;
+  currentPrice?: number;
+  realizedPnl?: number;
+  unrealizedPnl?: number;
+  returnPct?: number;
+  holdingDays?: number;
+  sector?: string;
+  tradeThesisTag?: string; // e.g., Mean Reversion, Breakout, Value
+  riskExit?: "stop_loss" | "take_profit" | "trailing_stop";
+  entryMarketRegime?: any; // Snapshot of SPY, QQQ, VIX at entry
+  exitMarketRegime?: any; // Snapshot of SPY, QQQ, VIX at exit
+  mae?: number; // Maximum Adverse Excursion during holding
+  mfe?: number; // Maximum Favorable Excursion during holding
+}
+
 export interface StrategyProfile {
   id: string;
   name: string;
@@ -300,6 +335,39 @@ export interface StrategyProfile {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StrategyTuningPatch {
+  prompt?: string;
+  scoringWeights?: Partial<ScoringWeights>;
+  policy?: Partial<
+    Pick<
+      TradingPolicy,
+      | "maxOrderNotional"
+      | "maxDailyNotional"
+      | "maxSymbolExposurePct"
+      | "maxDailyOrders"
+      | "maxProposalsPerRun"
+      | "runCadenceMinutes"
+      | "universe"
+      | "strategyAuthority"
+      | "runDuringExtendedHours"
+    >
+  > & {
+    riskRules?: Partial<RiskRules>;
+    sectorCaps?: Record<string, number>;
+  };
+}
+
+export interface StrategyTuningProposal {
+  summary: string;
+  rationale: string;
+  marketContext: string;
+  performanceReadout: string;
+  proposedPatch: StrategyTuningPatch;
+  cautions: string[];
+  confidenceScore: number;
+  generatedBy: "llm" | "local_rules";
 }
 
 export interface PortfolioSnapshot {

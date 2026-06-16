@@ -38,6 +38,10 @@ export interface SymbolEnrichment {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   insiderSentiment?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+  senateTrades?: number;
   // Which provider supplied each scalar field (filled by the cascade).
   sources?: Partial<Record<EnrichmentSourcedField, string>>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
@@ -59,7 +63,11 @@ export type EnrichmentSourcedField =
   | "beta"
   | "fiftyTwoWeekHigh"
   | "fiftyTwoWeekLow"
-  | "insiderSentiment";
+  | "insiderSentiment"
+  | "fcfYield"
+  | "debtToEquity"
+  | "epsGrowth"
+  | "senateTrades";
 
 export interface MarketEnrichmentProvider {
   name: string;
@@ -187,6 +195,7 @@ async function fetchWithRetry(
 export function getEnrichmentProvider(): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
   if (process.env.FINNHUB_API_KEY) providers.push(new FinnhubEnrichmentProvider(process.env.FINNHUB_API_KEY));
+  if (process.env.ALPHAVANTAGE_API_KEY) providers.push(new AlphaVantageEnrichmentProvider(process.env.ALPHAVANTAGE_API_KEY));
   if (process.env.FMP_API_KEY) providers.push(new FmpEnrichmentProvider(process.env.FMP_API_KEY));
   providers.push(new YahooFinanceEnrichmentProvider());
   // Always wrap in the cascade — even for a single provider — so per-field source
@@ -274,6 +283,10 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("fiftyTwoWeekHigh", name, r.fiftyTwoWeekHigh);
         takeScalar("fiftyTwoWeekLow", name, r.fiftyTwoWeekLow);
         takeScalar("insiderSentiment", name, r.insiderSentiment);
+        takeScalar("fcfYield", name, r.fcfYield);
+        takeScalar("debtToEquity", name, r.debtToEquity);
+        takeScalar("epsGrowth", name, r.epsGrowth);
+        takeScalar("senateTrades", name, r.senateTrades);
         if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
         // Collect every provider's analyst read.
         if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
@@ -312,7 +325,11 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   beta: true,
   fiftyTwoWeekHigh: true,
   fiftyTwoWeekLow: true,
-  insiderSentiment: true
+  insiderSentiment: true,
+  fcfYield: true,
+  debtToEquity: true,
+  epsGrowth: true,
+  senateTrades: true
 };
 
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
@@ -417,6 +434,10 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const rawBeta = (ks.beta as { raw?: number })?.raw;
       const raw52High = (sd.fiftyTwoWeekHigh as { raw?: number })?.raw;
       const raw52Low = (sd.fiftyTwoWeekLow as { raw?: number })?.raw;
+      const rawDebtToEquity = (fd.debtToEquity as { raw?: number })?.raw;
+      const rawEarningsGrowth = (fd.earningsGrowth as { raw?: number })?.raw;
+      const rawFcf = (fd.freeCashflow as { raw?: number })?.raw;
+      const rawMarketCap = (sd.marketCap as { raw?: number })?.raw;
 
       const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
       // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
@@ -427,6 +448,12 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const beta = typeof rawBeta === "number" ? rawBeta : undefined;
       const fiftyTwoWeekHigh = typeof raw52High === "number" ? raw52High : undefined;
       const fiftyTwoWeekLow = typeof raw52Low === "number" ? raw52Low : undefined;
+      const debtToEquity = typeof rawDebtToEquity === "number" ? rawDebtToEquity : undefined;
+      const epsGrowth = typeof rawEarningsGrowth === "number" ? rawEarningsGrowth : undefined;
+      let fcfYield: number | undefined;
+      if (typeof rawFcf === "number" && typeof rawMarketCap === "number" && rawMarketCap > 0) {
+        fcfYield = Math.round((rawFcf / rawMarketCap) * 10000) / 100;
+      }
       const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
       const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
 
@@ -450,6 +477,9 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         ...(beta !== undefined && { beta }),
         ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
         ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
+        ...(debtToEquity !== undefined && { debtToEquity }),
+        ...(epsGrowth !== undefined && { epsGrowth }),
+        ...(fcfYield !== undefined && { fcfYield }),
         ...(analystBySource !== undefined && { analystBySource })
       };
     } finally {
@@ -489,17 +519,15 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
         chunk.map(async (symbol) => {
           try {
             // Run all Finnhub calls in parallel per symbol.
-            const insiderFrom = new Date(now - 180 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // Last 6 months
-            const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw, insiderRaw] = await Promise.allSettled([
+            const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
               this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
               this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
               this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`),
               this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`),
-              this.getJson(`${this.base}/stock/insider-sentiment?symbol=${symbol}&from=${insiderFrom}&to=${toDate}&token=${this.apiKey}`)
+              this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
             ]);
 
-            // News → sentiment + headlines
+            // News → headlines + fallback sentiment
             let headlines: string[] = [];
             let sentiment: number | undefined;
             if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
@@ -560,15 +588,6 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
             }
 
-            let insiderSentiment: number | undefined;
-            if (insiderRaw.status === "fulfilled" && (insiderRaw.value as any)?.data) {
-              const dataArr = (insiderRaw.value as any).data as any[];
-              if (dataArr.length > 0) {
-                const avgMspr = dataArr.reduce((sum, d) => sum + num(d.mspr), 0) / dataArr.length;
-                insiderSentiment = Math.max(0, Math.min(100, Math.round(((avgMspr + 100) / 200) * 100)));
-              }
-            }
-
             // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
             const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
             const data: SymbolEnrichment = {
@@ -581,8 +600,7 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               ...(companyName !== undefined && { companyName }),
               ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
               ...(dividendYield !== undefined && { dividendYield }),
-              ...(eps !== undefined && { eps }),
-              ...(insiderSentiment !== undefined && { insiderSentiment })
+              ...(eps !== undefined && { eps })
             };
 
             cache.set(`finnhub:${symbol}`, { expiresAt: now + ttlMs(), data });
@@ -637,9 +655,11 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
-          const [peRaw, consensusRaw] = await Promise.allSettled([
+          const [peRaw, consensusRaw, insiderRaw, senateRaw] = await Promise.allSettled([
             this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`)
+            this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
+            this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`),
+            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`)
           ]);
 
           let peRatio: number | undefined;
@@ -668,9 +688,40 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             }
           }
 
+          let insiderSentiment: number | undefined;
+          if (insiderRaw.status === "fulfilled" && Array.isArray(insiderRaw.value)) {
+            const trades = insiderRaw.value as any[];
+            let buys = 0;
+            let sells = 0;
+            for (const trade of trades.slice(0, 100)) {
+              const type = String(trade.transactionType || "").toLowerCase();
+              const acqDisp = String(trade.acquistionOrDisposition || "").toLowerCase();
+              if (type.includes("buy") || type.includes("purchase") || acqDisp === "a") buys++;
+              else if (type.includes("sell") || type.includes("sale") || acqDisp === "d") sells++;
+            }
+            const total = buys + sells;
+            if (total > 0) {
+              insiderSentiment = Math.round((buys / total) * 100);
+            }
+          }
+
+          let senateTrades: number | undefined;
+          if (senateRaw.status === "fulfilled" && Array.isArray(senateRaw.value)) {
+            const trades = senateRaw.value as any[];
+            let net = 0;
+            for (const trade of trades.slice(0, 100)) {
+              const type = String(trade.type || "").toLowerCase();
+              if (type.includes("purchase")) net++;
+              else if (type.includes("sale")) net--;
+            }
+            if (trades.length > 0) senateTrades = net;
+          }
+
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
-            ...(analystBySource !== undefined && { analystBySource })
+            ...(analystBySource !== undefined && { analystBySource }),
+            ...(insiderSentiment !== undefined && { insiderSentiment }),
+            ...(senateTrades !== undefined && { senateTrades })
           };
 
           cache.set(`fmp:${symbol}`, { expiresAt: now + ttlMs(), data });
@@ -691,6 +742,94 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     } finally {
       clearTimeout(timeout);
     }
+  }
+}
+
+// ── Alpha Vantage provider ───────────────────────────────────────────────────
+
+class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "alpha-vantage";
+  readonly configured = true;
+  private readonly base = "https://www.alphavantage.co/query";
+
+  constructor(private readonly apiKey: string) {}
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`alphavantage:${symbol}`);
+      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${this.apiKey}`;
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 6000);
+            let payload: any;
+            try {
+              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              payload = await response.json();
+            } finally {
+              clearTimeout(timeout);
+            }
+
+            let sentiment: number | undefined;
+            let headlines: string[] = [];
+
+            if (payload && Array.isArray(payload.feed)) {
+              const feed = payload.feed as any[];
+              
+              // Extract headlines
+              headlines = feed.slice(0, 5).map(item => item.title).filter(Boolean);
+
+              // Calculate average sentiment score from ticker_sentiment
+              let scoreSum = 0;
+              let scoreCount = 0;
+              
+              for (const item of feed.slice(0, 20)) { // look at top 20 news items
+                const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
+                const targetTicker = tickerArr.find((t: any) => t.ticker === symbol);
+                if (targetTicker && typeof targetTicker.ticker_sentiment_score === "string") {
+                  const score = Number(targetTicker.ticker_sentiment_score);
+                  if (Number.isFinite(score)) {
+                    scoreSum += score;
+                    scoreCount++;
+                  }
+                }
+              }
+
+              if (scoreCount > 0) {
+                const avgScore = scoreSum / scoreCount;
+                // Alpha vantage sentiment ranges roughly [-0.35, 0.35]. Map it to 0-100.
+                sentiment = Math.max(0, Math.min(100, Math.round(50 + (avgScore * 100))));
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(sentiment !== undefined && { sentiment }),
+              ...(headlines.length > 0 && { headlines })
+            };
+
+            cache.set(`alphavantage:${symbol}`, { expiresAt: now + ttlMs(), data });
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
   }
 }
 

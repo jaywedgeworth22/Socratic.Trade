@@ -110,6 +110,7 @@ describe("Finnhub News Enrichment", () => {
   it("uses Yahoo Finance provider when no API key is configured", async () => {
     delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
 
     const provider = getEnrichmentProvider();
@@ -120,19 +121,31 @@ describe("Finnhub News Enrichment", () => {
 
   it("fetches and scores company news from Finnhub when key is configured", async () => {
     process.env.FINNHUB_API_KEY = "finnhub-key";
+    process.env.ALPHAVANTAGE_API_KEY = "alpha-vantage-key";
     delete process.env.FMP_API_KEY;
     const { getEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
     vi.stubGlobal("fetch", async (url: string) => {
-      if (url.includes("company-news")) {
+      if (url.includes("NEWS_SENTIMENT")) {
         return new Response(
-          JSON.stringify([
-            { headline: "AAPL surges as new AI chip outperforms competitors" },
-            { headline: "Apple wins major patent lawsuit against rival" }
-          ]),
+          JSON.stringify({
+            feed: [
+              {
+                title: "AAPL surges as new AI chip outperforms competitors",
+                ticker_sentiment: [{ ticker: "AAPL", ticker_sentiment_score: "0.25" }] // 0.25 -> 75 sentiment
+              },
+              {
+                title: "Apple wins major patent lawsuit against rival",
+                ticker_sentiment: [{ ticker: "AAPL", ticker_sentiment_score: "0.35" }] // 0.35 -> 85 sentiment
+              }
+            ]
+          }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
+      }
+      if (url.includes("company-news")) {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url.includes("stock/recommendation")) {
         return new Response(
@@ -146,15 +159,14 @@ describe("Finnhub News Enrichment", () => {
 
     const provider = getEnrichmentProvider();
     expect(provider.configured).toBe(true);
-    // With Finnhub key the cascade is finnhub+yahoo-finance.
     expect(provider.name).toContain("finnhub");
+    expect(provider.name).toContain("alpha-vantage");
 
     const result = await provider.enrich(["AAPL"]);
     expect(result.AAPL).toBeDefined();
-    // Sentiment is news-tone (not pegged at 100) and stamped with its single source.
-    expect(result.AAPL.sentiment).toBeGreaterThan(50); // surges, outperforms, wins → positive
-    expect(result.AAPL.sentiment).toBeLessThan(100);
-    expect(result.AAPL.sources?.sentiment).toBe("finnhub");
+    // Sentiment is from Alpha Vantage now
+    expect(result.AAPL.sentiment).toBe(80); // (0.25 + 0.35) / 2 = 0.30 -> mapped to 80
+    expect(result.AAPL.sources?.sentiment).toBe("alpha-vantage");
     expect(result.AAPL.headlines).toHaveLength(2);
     expect(result.AAPL.headlines?.[0]).toContain("AAPL surges");
     // Analyst recommendation → blended 0–100 score + per-source breakdown.
@@ -170,9 +182,9 @@ describe("Discord Rich Notification Webhook", () => {
     const { DEFAULT_POLICY } = await import("../src/lib/defaults");
 
     let capturedBody: any = null;
-    const mockFetcher = async (url: string, init?: RequestInit) => {
+    const mockFetcher = async (url: any, init?: RequestInit) => {
       capturedBody = JSON.parse(init?.body as string);
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: 204 }) as any;
     };
 
     const policy = {
