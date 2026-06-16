@@ -19,24 +19,17 @@ the hard way.
   `docs/*.md` and the latest matching note under `docs/rollouts/` before making
   a non-trivial change.
 
-## Documentation workflow
+## Pre-Commit / Handoff Protocol (Claude, Codex, Antigravity, Cursor, etc.)
 
-- `AGENTS.md` is for durable repo rules and cross-file traps only. Do not put
-  turn-specific status or a running changelog here.
-- `STATUS.md` is the current snapshot. Update it when the project's active
-  focus, risks, verification state, or next steps materially change.
-- `docs/*.md` are design docs. Use them for architecture, invariants, tradeoffs,
-  and implementation sequencing for a feature area or phase.
-- `docs/rollouts/YYYY-MM-DD-short-slug.md` are chronological handoff notes.
-  Add or update one when a non-trivial change lands, a design direction shifts,
-  or important verification/blockers need to be preserved for the next tool.
-- `PLAN.md` remains the high-level roadmap. Do not use it as a substitute for
-  rollout notes or current status.
-- If you replace an existing design doc, call that out explicitly in both the
-  commit message and the relevant rollout note.
-- Prefer short factual notes with exact file paths, exact commands, and explicit
-  follow-ups over long narrative summaries.
-- Separate pre-existing failures from failures introduced by your change.
+Before every commit/push to the GitHub repo, you MUST update the following:
+1. **`STATUS.md`** — current state, blockers, next action.
+2. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
+3. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
+4. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
+5. **Other touched docs** — README, architecture docs, API specs, etc.
+6. **Commit Messages** — every commit message should reference which docs were updated.
+
+`AGENTS.md` is for durable repo rules and cross-file traps only. Do not put turn-specific status or a running changelog here.
 
 ## Rollout note minimums
 
