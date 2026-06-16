@@ -107,21 +107,24 @@ describe("FRED Macroeconomic Data", () => {
 });
 
 describe("Finnhub News Enrichment", () => {
-  it("falls back to fallback-enricher provider when key is missing", async () => {
+  it("uses mock enrichment provider when no API key is configured", async () => {
     delete process.env.FINNHUB_API_KEY;
+    delete process.env.FMP_API_KEY;
     const { getEnrichmentProvider } = await import("../src/lib/data-providers");
 
     const provider = getEnrichmentProvider();
-    expect(provider.configured).toBe(false);
-    expect(provider.name).toBe("fallback-enricher");
+    // Mock tier is always configured — columns always have data.
+    expect(provider.configured).toBe(true);
+    expect(provider.name).toBe("mock-enrichment");
     const enriched = await provider.enrich(["AAPL"]);
     expect(enriched.AAPL).toBeDefined();
-    expect(enriched.AAPL?.sector).toBeUndefined();
-    expect(enriched.AAPL?.analystRating).toBe("Error: Config Required");
+    expect(enriched.AAPL?.sector).toBe("Technology");
+    expect(enriched.AAPL?.analystRating).toBe("Buy");
   });
 
   it("fetches and scores company news from Finnhub when key is configured", async () => {
     process.env.FINNHUB_API_KEY = "finnhub-key";
+    delete process.env.FMP_API_KEY;
     const { getEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
@@ -135,16 +138,18 @@ describe("Finnhub News Enrichment", () => {
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      return new Response("not found", { status: 404 });
+      // Other Finnhub endpoints return empty but valid responses.
+      return new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } });
     });
 
     const provider = getEnrichmentProvider();
     expect(provider.configured).toBe(true);
-    expect(provider.name).toBe("finnhub");
+    // With Finnhub key the cascade is finnhub+mock-enrichment.
+    expect(provider.name).toContain("finnhub");
 
     const result = await provider.enrich(["AAPL"]);
     expect(result.AAPL).toBeDefined();
-    expect(result.AAPL.sentiment).toBeGreaterThan(50); // Surges, outperforms, wins -> positive
+    expect(result.AAPL.sentiment).toBeGreaterThan(50); // surges, outperforms, wins → positive
     expect(result.AAPL.headlines).toHaveLength(2);
     expect(result.AAPL.headlines?.[0]).toContain("AAPL surges");
   });

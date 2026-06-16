@@ -62,10 +62,14 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     let topCandidates: MarketQuote[] = ranked.slice(0, quoteLimit);
 
     // Enrich the top set with news sentiment + fundamentals, then re-score & re-sort.
+    // The provider is always at minimum the mock tier, so enrichment always runs.
+    // Real API tiers (Finnhub, FMP) are added when their keys are configured.
     const provider = getEnrichmentProvider();
-    if (!provider.configured) {
-      warnings.push("News/fundamentals disabled (set FINNHUB_API_KEY to enable sentiment and P/E).");
-    } else if (topCandidates.length > 0) {
+    const hasRealProvider = process.env.FINNHUB_API_KEY || process.env.FMP_API_KEY;
+    if (!hasRealProvider) {
+      warnings.push("Using mock enrichment data. Set FINNHUB_API_KEY or FMP_API_KEY for real sentiment and P/E.");
+    }
+    if (topCandidates.length > 0) {
       try {
         const enrichment = await provider.enrich(topCandidates.map((quote) => quote.symbol));
         topCandidates = topCandidates

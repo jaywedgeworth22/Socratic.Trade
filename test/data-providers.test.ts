@@ -1,31 +1,48 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getEnrichmentProvider, noopProvider, scoreHeadlines } from "../src/lib/data-providers";
+import { getEnrichmentProvider, mockEnrichmentProvider, noopProvider, scoreHeadlines } from "../src/lib/data-providers";
 
 describe("market enrichment provider", () => {
-  const originalKey = process.env.FMP_API_KEY;
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalFmpKey = process.env.FMP_API_KEY;
 
   beforeEach(() => {
+    delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
   });
 
   afterEach(() => {
-    if (originalKey) process.env.FMP_API_KEY = originalKey;
+    if (originalFinnhubKey) process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    else delete process.env.FINNHUB_API_KEY;
+    if (originalFmpKey) process.env.FMP_API_KEY = originalFmpKey;
     else delete process.env.FMP_API_KEY;
   });
 
-  it("falls back to a fallback-enricher provider when no API key is configured", async () => {
+  it("uses mock enrichment provider when no API key is configured", async () => {
     const provider = getEnrichmentProvider();
-    expect(provider.configured).toBe(false);
-    expect(provider.name).toBe("fallback-enricher");
+    // Mock tier is always configured so columns are never empty.
+    expect(provider.configured).toBe(true);
+    expect(provider.name).toBe("mock-enrichment");
     const enriched = await provider.enrich(["AAPL"]);
     expect(enriched.AAPL).toBeDefined();
-    expect(enriched.AAPL?.sector).toBeUndefined();
-    expect(enriched.AAPL?.analystRating).toBe("Error: Config Required");
+    expect(enriched.AAPL?.sector).toBe("Technology");
+    expect(enriched.AAPL?.analystRating).toBe("Buy");
+    expect(enriched.AAPL?.peRatio).toBeGreaterThan(0);
   });
 
-  it("noopProvider never throws and returns no enrichment", async () => {
-    expect(noopProvider.configured).toBe(false);
-    expect(await noopProvider.enrich(["AAPL"])).toEqual({});
+  it("mock provider returns fallback data for unknown tickers", async () => {
+    const enriched = await mockEnrichmentProvider.enrich(["XYZUNK"]);
+    expect(enriched.XYZUNK).toBeDefined();
+    expect(enriched.XYZUNK?.sector).toBeTruthy();
+    expect(enriched.XYZUNK?.peRatio).toBeGreaterThan(0);
+    expect(enriched.XYZUNK?.analystRating).toBeTruthy();
+  });
+
+  it("noopProvider alias points to the mock provider", async () => {
+    // noopProvider is now an alias for mockEnrichmentProvider.
+    expect(noopProvider).toBe(mockEnrichmentProvider);
+    expect(noopProvider.configured).toBe(true);
+    const result = await noopProvider.enrich(["AAPL"]);
+    expect(result.AAPL?.sector).toBe("Technology");
   });
 });
 
