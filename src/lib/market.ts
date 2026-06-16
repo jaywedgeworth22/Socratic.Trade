@@ -87,6 +87,12 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
               volume: extra.volume && extra.volume > 0 ? extra.volume : quote.volume,
               dividendYield: extra.dividendYield ?? quote.dividendYield,
               eps: extra.eps ?? quote.eps,
+              pbRatio: extra.pbRatio ?? quote.pbRatio,
+              shortPercentOfFloat: extra.shortPercentOfFloat ?? quote.shortPercentOfFloat,
+              beta: extra.beta ?? quote.beta,
+              fiftyTwoWeekHigh: extra.fiftyTwoWeekHigh ?? quote.fiftyTwoWeekHigh,
+              fiftyTwoWeekLow: extra.fiftyTwoWeekLow ?? quote.fiftyTwoWeekLow,
+              insiderSentiment: extra.insiderSentiment ?? quote.insiderSentiment,
               sources: mergeSources(quote, extra)
             };
             const factorBreakdown = scoreFactors(enriched, weights);
@@ -359,6 +365,12 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         analystBySource: quote.analystBySource,
         dividendYield: quote.dividendYield,
         eps: quote.eps,
+        pbRatio: quote.pbRatio,
+        shortPercentOfFloat: quote.shortPercentOfFloat,
+        beta: quote.beta,
+        fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh,
+        fiftyTwoWeekLow: quote.fiftyTwoWeekLow,
+        insiderSentiment: quote.insiderSentiment,
         sources: quote.sources
       }
     ])

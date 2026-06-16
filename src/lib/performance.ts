@@ -73,8 +73,9 @@ export function recordFillFromProposal(input: {
   const quantity =
     quantityInput ?? (price > 0 && notional > 0 ? notional / price : 0);
   const finalNotional =
-    input.proposal.dollarAmount ??
-    (quantityInput && price > 0 ? quantityInput * price : notional > 0 ? notional : quantity * price);
+    quantity > 0 && price > 0
+      ? quantity * price
+      : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
   return insertFillEvent({
     proposalId: input.proposalId,
@@ -142,11 +143,12 @@ export function getPaperPortfolioProjection(input: {
     const symbol = normalizeSymbol(fill.symbol);
     const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
     if (fill.side === "buy") {
+      const fillCost = fill.quantity * fill.price;
       const currentCost = current.averageCost * current.quantity;
       const nextQuantity = current.quantity + fill.quantity;
-      const nextAverageCost = nextQuantity > 0 ? (currentCost + fill.notional) / nextQuantity : fill.price;
+      const nextAverageCost = nextQuantity > 0 ? (currentCost + fillCost) / nextQuantity : fill.price;
       positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
-      cash -= fill.notional;
+      cash -= fillCost;
     } else {
       const soldQuantity = Math.min(current.quantity, fill.quantity);
       const nextQuantity = Math.max(0, current.quantity - soldQuantity);

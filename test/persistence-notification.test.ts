@@ -111,7 +111,7 @@ describe("persistence and notifications", () => {
     const { sendNotification } = await import("../src/lib/notifications");
     const event = await sendNotification({ type: "fill", title: "Fill", payload: { id: "1" } }, { policy: DEFAULT_POLICY });
     expect(event.status).toBe("skipped");
-    expect(event.error).toContain("Webhook URL");
+    expect(event.error).toContain("Notifications Webhook");
   });
 
   it("records successful webhook delivery when configured", async () => {

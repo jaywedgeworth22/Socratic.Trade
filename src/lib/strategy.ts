@@ -20,6 +20,8 @@ import { sendNotification } from "./notifications";
 import { getPaperPortfolioProjection, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
+import { generateReflectionSummary } from "./post-mortem";
+import { getSetting } from "./db";
 import type { EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 export interface StrategyResult {
@@ -98,7 +100,11 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
         const proposalId = crypto.randomUUID();
         insertProposal({ id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         await sendNotification(
-          { type: "block", title: `${normalizedProposal.symbol} blocked`, payload: { runId, proposalId, decision } },
+          {
+            type: "block",
+            title: `${normalizedProposal.side === "buy" ? "Buy" : "Sell"} ${normalizedProposal.symbol} blocked`,
+            payload: { runId, proposalId, decision, proposal: normalizedProposal }
+          },
           { policy }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
@@ -121,7 +127,11 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
         const proposalId = crypto.randomUUID();
         insertProposal({ id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         await sendNotification(
-          { type: "block", title: `${normalizedProposal.symbol} blocked`, payload: { runId, proposalId, decision, review } },
+          {
+            type: "block",
+            title: `${normalizedProposal.side === "buy" ? "Buy" : "Sell"} ${normalizedProposal.symbol} blocked`,
+            payload: { runId, proposalId, decision, review, proposal: normalizedProposal }
+          },
           { policy }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
@@ -153,7 +163,11 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
           status: "filled"
         });
         await sendNotification(
-          { type: "fill", title: `${normalizedProposal.symbol} Paper fill`, payload: { runId, proposalId, fill } },
+          {
+            type: "fill",
+            title: `${normalizedProposal.symbol} ${normalizedProposal.side === "buy" ? "Paper Buy" : "Paper Sell"}`,
+            payload: { runId, proposalId, fill }
+          },
           { policy }
         );
         results.push({ proposal: normalizedProposal, status: "paper", reasons: [] });
@@ -223,6 +237,10 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       });
     }
     result = { runId, status: "completed", summary, proposals: results, marketScan };
+    
+    // Phase 7: Async trigger post-mortem reflection
+    generateReflectionSummary(policy.accountNumber).catch((e) => console.error("Post-mortem error:", e));
+    
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     finishStrategyRun(runId, "failed", summary);
@@ -280,8 +298,15 @@ export async function executeProposal(proposalId: string): Promise<{
   if (!tradability[proposal.symbol]?.tradable) {
     const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
     updateProposalStatus(proposalId, "blocked");
-    audit("proposal_approved", { proposalId, result: "blocked", reason });
-    await sendNotification({ type: "block", title: `${proposal.symbol} approval blocked`, payload: { proposalId, reason } }, { policy });
+    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason });
+    await sendNotification(
+      {
+        type: "block",
+        title: `${proposal.side === "buy" ? "Buy" : "Sell"} ${proposal.symbol} blocked`,
+        payload: { proposalId, reason, proposal }
+      },
+      { policy }
+    );
     return { status: "blocked", reasons: [reason] };
   }
 
@@ -299,8 +324,22 @@ export async function executeProposal(proposalId: string): Promise<{
 
   if (!decision.approved) {
     updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional);
-    audit("proposal_approved", { proposalId, result: "blocked", reasons: decision.reasons });
-    await sendNotification({ type: "block", title: `${proposal.symbol} approval blocked`, payload: { proposalId, decision, review } }, { policy });
+    audit("proposal_approved", {
+      proposalId,
+      symbol: proposal.symbol,
+      side: proposal.side,
+      action: "approval",
+      result: "blocked",
+      reasons: decision.reasons
+    });
+    await sendNotification(
+      {
+        type: "block",
+        title: `${proposal.side === "buy" ? "Buy" : "Sell"} ${proposal.symbol} blocked`,
+        payload: { proposalId, decision, review, proposal }
+      },
+      { policy }
+    );
     return { status: "blocked", reasons: decision.reasons };
   }
 
@@ -328,8 +367,15 @@ export async function executeProposal(proposalId: string): Promise<{
       portfolio: paperProjection.portfolio,
       positions: paperProjection.positions
     });
-    audit("proposal_approved", { proposalId, result: "paper" });
-    await sendNotification({ type: "fill", title: `${proposal.symbol} Paper approval fill`, payload: { proposalId, fill } }, { policy });
+    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" });
+    await sendNotification(
+      {
+        type: "fill",
+        title: `${proposal.symbol} ${proposal.side === "buy" ? "Paper Buy" : "Paper Sell"}`,
+        payload: { proposalId, fill }
+      },
+      { policy }
+    );
     return { status: "paper" };
   }
 
@@ -347,14 +393,34 @@ export async function executeProposal(proposalId: string): Promise<{
     marketScan: approvalScan,
     status: execution.state === "filled" ? "filled" : "pending_reconciliation"
   });
-  audit("proposal_approved", { proposalId, result: "placed", orderId: execution.orderId });
-  await sendNotification({ type: "fill", title: `${proposal.symbol} approval order ${execution.state}`, payload: { proposalId, fill } }, { policy });
+  audit("proposal_approved", {
+    proposalId,
+    symbol: proposal.symbol,
+    side: proposal.side,
+    action: "approval",
+    result: "placed",
+    orderId: execution.orderId
+  });
+  await sendNotification(
+    {
+      type: "fill",
+      title: `${proposal.side === "buy" ? "Buy" : "Sell"} ${proposal.symbol} ${execution.state}`,
+      payload: { proposalId, fill }
+    },
+    { policy }
+  );
   return { status: "placed", orderId: execution.orderId };
 }
 
 export function rejectProposal(proposalId: string): void {
+  const proposal = getProposal(proposalId);
   updateProposalStatus(proposalId, "rejected");
-  audit("proposal_rejected", { proposalId });
+  audit("proposal_rejected", {
+    proposalId,
+    symbol: proposal?.proposal.symbol,
+    side: proposal?.proposal.side,
+    action: "rejection"
+  });
 }
 
 async function proposeTrades(input: {
@@ -401,11 +467,15 @@ async function proposeTrades(input: {
         )
       : undefined;
 
+  const reflection = getSetting("reflection_summary", "");
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
     "",
     "Investment Strategy:",
     input.prompt,
+    "",
+    "Historical Reflection & Lessons Learned:",
+    reflection || "No historical reflection available yet.",
     "",
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
@@ -461,7 +531,7 @@ async function proposeTrades(input: {
           ],
           properties: {
             symbol: { type: "string" },
-            side: { enum: ["buy", "sell"] },
+            side: { enum: ["buy", "sell", "short", "cover"] },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
@@ -528,7 +598,126 @@ async function proposeTrades(input: {
   if (!text) {
     throw new Error("Empty response returned from LLM API.");
   }
-  return sanitizeProposals(JSON.parse(text).proposals ?? [], maxProposals);
+  
+  const bullProposals = sanitizeProposals(JSON.parse(text).proposals ?? [], maxProposals);
+  if (bullProposals.length === 0) return [];
+
+  // Phase 7: Bear Agent (Red Team) Critique
+  const bearSystemPrompt = [
+    "You are the Bear Agent (Red Team Risk Manager) for an autonomous trading system.",
+    "Your objective is to CRITIQUE the following proposed trades generated by the Bull Agent.",
+    "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
+    "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
+    "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
+    "If you approve a trade, you MUST add a concise 'tradeThesisTag' (e.g., 'GLP1-trend', 'Value-Reversion', 'Momentum-Breakout') and 'entryMarketRegime' (e.g., 'High-Inflation-Bear', 'Tech-Bull') to track the learning loop.",
+    "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
+    "If none survive, return an empty array."
+  ].join("\\n");
+
+  const bearSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["proposals"],
+    properties: {
+      proposals: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "symbol",
+            "side",
+            "type",
+            "quantity",
+            "dollarAmount",
+            "limitPrice",
+            "stopPrice",
+            "timeInForce",
+            "marketHours",
+            "rationale",
+            "tradeThesisTag",
+            "entryMarketRegime"
+          ],
+          properties: {
+            symbol: { type: "string" },
+            side: { enum: ["buy", "sell", "short", "cover"] },
+            type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
+            quantity: { type: ["number", "null"] },
+            dollarAmount: { type: ["number", "null"] },
+            limitPrice: { type: ["number", "null"] },
+            stopPrice: { type: ["number", "null"] },
+            timeInForce: { enum: ["gfd", "gtc"] },
+            marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
+            rationale: { type: "string" },
+            tradeThesisTag: { type: "string" },
+            entryMarketRegime: { type: "string" }
+          }
+        }
+      }
+    }
+  };
+
+  const bearUserContent = {
+    ...userContent,
+    bullAgentProposals: bullProposals
+  };
+
+  const bearBody = isChatCompletions
+    ? {
+        model,
+        messages: [
+          { role: "system", content: bearSystemPrompt },
+          { role: "user", content: JSON.stringify(bearUserContent) }
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "bear_proposals",
+            strict: true,
+            schema: bearSchema
+          }
+        }
+      }
+    : {
+        model,
+        input: [
+          { role: "system", content: bearSystemPrompt },
+          { role: "user", content: JSON.stringify(bearUserContent) }
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "bear_proposals",
+            schema: bearSchema
+          }
+        }
+      };
+
+  const bearResponse = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify(bearBody)
+  });
+
+  if (!bearResponse.ok) {
+    console.warn("Bear Agent API failed, falling back to Bull proposals");
+    return bullProposals;
+  }
+  
+  const bearPayload = await bearResponse.json();
+  const bearText = bearPayload.choices?.[0]?.message?.content ??
+                   bearPayload.output_text ??
+                   bearPayload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
+
+  if (!bearText) {
+    return bullProposals;
+  }
+
+  const parsedBear = JSON.parse(bearText).proposals ?? [];
+  return sanitizeProposals(parsedBear, maxProposals);
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
@@ -610,7 +799,9 @@ function fallbackProposal(input: {
       timeInForce: "gfd",
       marketHours: "regular_hours",
       rationale:
-        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple mock rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation."
+        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple mock rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
+      tradeThesisTag: "Development Fallback",
+      entryMarketRegime: "Mock Regime"
     }
   ];
 }
@@ -627,7 +818,9 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
       limitPrice: proposal.limitPrice ?? undefined,
       stopPrice: proposal.stopPrice ?? undefined,
       timeInForce: proposal.timeInForce ?? "gfd",
-      marketHours: proposal.marketHours ?? "regular_hours"
+      marketHours: proposal.marketHours ?? "regular_hours",
+      tradeThesisTag: proposal.tradeThesisTag ?? undefined,
+      entryMarketRegime: proposal.entryMarketRegime ?? undefined
     }));
 }
 
@@ -711,7 +904,6 @@ export function generateProactiveRiskProposals(
       } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
         reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
-
       if (reason) {
         proactiveProposals.push({
           symbol: normalizeSymbol(pos.symbol),
@@ -720,7 +912,9 @@ export function generateProactiveRiskProposals(
           quantity: pos.quantity,
           timeInForce: "gfd",
           marketHours: "regular_hours",
-          rationale: reason
+          rationale: reason,
+          tradeThesisTag: "Risk Management Exit",
+          entryMarketRegime: "Active Risk Check"
         });
       }
     }

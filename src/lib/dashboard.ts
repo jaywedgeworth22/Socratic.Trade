@@ -2,14 +2,18 @@ import {
   dailyExecutionStats,
   getActiveStrategyProfile,
   getPolicy,
+  getProposal,
   getStrategyPrompt,
   latestAuditByKind,
   listAudit,
   listNotificationEvents,
   listPendingProposals,
   listStrategyProfiles,
-  listStrategyRuns
+  listStrategyRuns,
+  listFillEvents
 } from "./db";
+import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
+import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { getPaperPortfolioProjection, getPerformanceSummary } from "./performance";
@@ -63,6 +67,36 @@ export async function getDashboardSnapshot() {
   const profiles = listStrategyProfiles();
   const activeProfile = getActiveStrategyProfile();
   const notifications = listNotificationEvents(50);
+  const latestStrategyRun = latestAuditByKind("strategy_run")?.payload as StrategyDecisionLike | undefined;
+  const audit = listAudit(100);
+  const symbolMetaBySymbol = buildSymbolMetaBySymbol({
+    positions: displayPositions,
+    livePositions: positions,
+    paperPositions: paperProjection?.positions,
+    orders,
+    pendingProposals,
+    latestStrategyRun
+  });
+  const auditFeed = buildAuditFeed({
+    audit,
+    symbolMetaBySymbol,
+    getProposalById: (proposalId) => {
+      const proposal = getProposal(proposalId);
+      return proposal ? { proposal: proposal.proposal } : undefined;
+    }
+  });
+
+  const unifiedFeed = buildUnifiedFeed({
+    audit,
+    notifications,
+    fills: accountNumber ? listFillEvents(accountNumber) : [],
+    orders,
+    symbolMetaBySymbol,
+    getProposalById: (proposalId) => {
+      const proposal = getProposal(proposalId);
+      return proposal ? { proposal: proposal.proposal } : undefined;
+    }
+  });
 
   return {
     policy,
@@ -70,13 +104,16 @@ export async function getDashboardSnapshot() {
     accounts,
     portfolio: displayPortfolio,
     positions: displayPositions,
+    symbolMetaBySymbol,
     livePortfolio: portfolio,
     livePositions: positions,
     paperPortfolio: paperProjection?.portfolio,
     paperPositions: paperProjection?.positions,
     orders,
-    audit: listAudit(100),
-    latestStrategyRun: latestAuditByKind("strategy_run")?.payload,
+    audit,
+    auditFeed,
+    unifiedFeed,
+    latestStrategyRun,
     dailyStats,
     strategyRuns: listStrategyRuns(15),
     pendingProposals,

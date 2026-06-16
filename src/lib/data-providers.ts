@@ -32,6 +32,12 @@ export interface SymbolEnrichment {
   dividendYield?: number; // annual dividend yield %
   eps?: number;           // earnings per share (TTM)
   companyName?: string;
+  pbRatio?: number;
+  shortPercentOfFloat?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  insiderSentiment?: number;
   // Which provider supplied each scalar field (filled by the cascade).
   sources?: Partial<Record<EnrichmentSourcedField, string>>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
@@ -47,7 +53,13 @@ export type EnrichmentSourcedField =
   | "volume"
   | "dividendYield"
   | "eps"
-  | "companyName";
+  | "companyName"
+  | "pbRatio"
+  | "shortPercentOfFloat"
+  | "beta"
+  | "fiftyTwoWeekHigh"
+  | "fiftyTwoWeekLow"
+  | "insiderSentiment";
 
 export interface MarketEnrichmentProvider {
   name: string;
@@ -256,6 +268,12 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("dividendYield", name, r.dividendYield);
         takeScalar("eps", name, r.eps);
         takeScalar("companyName", name, r.companyName);
+        takeScalar("pbRatio", name, r.pbRatio);
+        takeScalar("shortPercentOfFloat", name, r.shortPercentOfFloat);
+        takeScalar("beta", name, r.beta);
+        takeScalar("fiftyTwoWeekHigh", name, r.fiftyTwoWeekHigh);
+        takeScalar("fiftyTwoWeekLow", name, r.fiftyTwoWeekLow);
+        takeScalar("insiderSentiment", name, r.insiderSentiment);
         if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
         // Collect every provider's analyst read.
         if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
@@ -288,7 +306,13 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   volume: true,
   dividendYield: true,
   eps: true,
-  companyName: true
+  companyName: true,
+  pbRatio: true,
+  shortPercentOfFloat: true,
+  beta: true,
+  fiftyTwoWeekHigh: true,
+  fiftyTwoWeekLow: true,
+  insiderSentiment: true
 };
 
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
@@ -388,11 +412,21 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
       const rawEps = (ks.trailingEps as { raw?: number })?.raw;
       const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
+      const rawPb = (ks.priceToBook as { raw?: number })?.raw;
+      const rawShortFloat = (ks.shortPercentOfFloat as { raw?: number })?.raw;
+      const rawBeta = (ks.beta as { raw?: number })?.raw;
+      const raw52High = (sd.fiftyTwoWeekHigh as { raw?: number })?.raw;
+      const raw52Low = (sd.fiftyTwoWeekLow as { raw?: number })?.raw;
 
       const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
       // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
       const dividendYield = typeof rawDiv === "number" && rawDiv >= 0 ? Math.round(rawDiv * 10000) / 100 : undefined;
       const eps = typeof rawEps === "number" ? rawEps : undefined;
+      const pbRatio = typeof rawPb === "number" && rawPb > 0 ? rawPb : undefined;
+      const shortPercentOfFloat = typeof rawShortFloat === "number" && rawShortFloat >= 0 ? Math.round(rawShortFloat * 10000) / 100 : undefined;
+      const beta = typeof rawBeta === "number" ? rawBeta : undefined;
+      const fiftyTwoWeekHigh = typeof raw52High === "number" ? raw52High : undefined;
+      const fiftyTwoWeekLow = typeof raw52Low === "number" ? raw52Low : undefined;
       const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
       const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
 
@@ -411,6 +445,11 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         ...(eps !== undefined && { eps }),
         ...(sector !== undefined && { sector }),
         ...(industry !== undefined && { industry }),
+        ...(pbRatio !== undefined && { pbRatio }),
+        ...(shortPercentOfFloat !== undefined && { shortPercentOfFloat }),
+        ...(beta !== undefined && { beta }),
+        ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+        ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
         ...(analystBySource !== undefined && { analystBySource })
       };
     } finally {
@@ -450,12 +489,14 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
         chunk.map(async (symbol) => {
           try {
             // Run all Finnhub calls in parallel per symbol.
-            const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
+            const insiderFrom = new Date(now - 180 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // Last 6 months
+            const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw, insiderRaw] = await Promise.allSettled([
               this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
               this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
               this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`),
               this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
+              this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`),
+              this.getJson(`${this.base}/stock/insider-sentiment?symbol=${symbol}&from=${insiderFrom}&to=${toDate}&token=${this.apiKey}`)
             ]);
 
             // News → sentiment + headlines
@@ -519,6 +560,15 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               if (typeof avgVolM === "number" && avgVolM > 0) volumeFromMetric = Math.round(avgVolM * 1_000_000);
             }
 
+            let insiderSentiment: number | undefined;
+            if (insiderRaw.status === "fulfilled" && (insiderRaw.value as any)?.data) {
+              const dataArr = (insiderRaw.value as any).data as any[];
+              if (dataArr.length > 0) {
+                const avgMspr = dataArr.reduce((sum, d) => sum + num(d.mspr), 0) / dataArr.length;
+                insiderSentiment = Math.max(0, Math.min(100, Math.round(((avgMspr + 100) / 200) * 100)));
+              }
+            }
+
             // Prefer the current session volume; fall back to metric average when session volume is 0 (e.g. after hours).
             const resolvedVolume = (volume && volume > 0 ? volume : undefined) ?? volumeFromMetric;
             const data: SymbolEnrichment = {
@@ -531,7 +581,8 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               ...(companyName !== undefined && { companyName }),
               ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
               ...(dividendYield !== undefined && { dividendYield }),
-              ...(eps !== undefined && { eps })
+              ...(eps !== undefined && { eps }),
+              ...(insiderSentiment !== undefined && { insiderSentiment })
             };
 
             cache.set(`finnhub:${symbol}`, { expiresAt: now + ttlMs(), data });

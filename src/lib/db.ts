@@ -69,7 +69,9 @@ function migrate(database: Database.Database): void {
       review TEXT,
       ref_id TEXT,
       order_id TEXT,
-      status TEXT NOT NULL
+      status TEXT NOT NULL,
+      trade_thesis_tag TEXT,
+      entry_market_regime TEXT
     );
 
     CREATE TABLE IF NOT EXISTS strategy_profiles (
@@ -150,6 +152,11 @@ function migrate(database: Database.Database): void {
   // for share-qty market orders (which have no limitPrice to derive notional from).
   if (!columns.some((column) => column.name === "estimated_notional")) {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN estimated_notional REAL");
+  }
+  // Phase 7: persist thesis tags for learning loop
+  if (!columns.some((column) => column.name === "trade_thesis_tag")) {
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN trade_thesis_tag TEXT");
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN entry_market_regime TEXT");
   }
   // Rename: legacy "dry_run" proposal status is now "paper".
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
@@ -507,6 +514,8 @@ export function getProposal(id: string):
       review?: ReviewedOrder;
       estimatedNotional?: number;
       status: string;
+      tradeThesisTag?: string;
+      entryMarketRegime?: string;
     }
   | undefined {
   type RawRow = {
@@ -519,9 +528,11 @@ export function getProposal(id: string):
     review: string | null;
     estimated_notional: number | null;
     status: string;
+    trade_thesis_tag: string | null;
+    entry_market_regime: string | null;
   };
   const row = getDb()
-    .prepare("SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status FROM trade_proposals WHERE id = ?")
+    .prepare("SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, trade_thesis_tag, entry_market_regime FROM trade_proposals WHERE id = ?")
     .get(id) as RawRow | undefined;
   if (!row) return undefined;
   return {
@@ -533,7 +544,9 @@ export function getProposal(id: string):
     decision: JSON.parse(row.decision) as PolicyDecision,
     review: row.review ? (JSON.parse(row.review) as ReviewedOrder) : undefined,
     estimatedNotional: row.estimated_notional ?? undefined,
-    status: row.status
+    status: row.status,
+    tradeThesisTag: row.trade_thesis_tag ?? undefined,
+    entryMarketRegime: row.entry_market_regime ?? undefined
   };
 }
 
@@ -556,10 +569,12 @@ export function insertProposal(input: {
   refId?: string;
   orderId?: string;
   status: string;
+  tradeThesisTag?: string;
+  entryMarketRegime?: string;
 }): void {
   getDb()
     .prepare(
-      "INSERT INTO trade_proposals (id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO trade_proposals (id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       input.id,
@@ -572,7 +587,9 @@ export function insertProposal(input: {
       input.estimatedNotional ?? null,
       input.refId ?? null,
       input.orderId ?? null,
-      input.status
+      input.status,
+      input.tradeThesisTag ?? null,
+      input.entryMarketRegime ?? null
     );
 }
 

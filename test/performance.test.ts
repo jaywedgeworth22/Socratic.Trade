@@ -52,6 +52,23 @@ describe("calculatePnl", () => {
     expect(projection.positions).toHaveLength(0);
   });
 
+  it("uses share-weighted average cost for fractional Paper buys", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    insertFillEvent(fill({ id: "pb2", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: "PAPER2", symbol: "PLTR" }));
+    insertFillEvent(fill({ id: "pb3", side: "buy", quantity: 0.5, price: 200, notional: 100, accountNumber: "PAPER2", symbol: "PLTR" }));
+
+    const projection = getPaperPortfolioProjection({
+      accountNumber: "PAPER2",
+      startingCash: 1000,
+      currentPrices: { PLTR: 220 }
+    });
+
+    const pltr = projection.positions.find((position) => position.symbol === "PLTR");
+    expect(pltr?.quantity).toBeCloseTo(1.5);
+    expect(pltr?.averageCost).toBeCloseTo(133.3333333, 5);
+    expect(projection.portfolio.cash).toBeCloseTo(800);
+  });
+
   it("turns approved dollar Paper orders into quantity fills when a market quote is present", () => {
     const fill = recordFillFromProposal({
       accountNumber: "APPROVAL1",
@@ -63,7 +80,9 @@ describe("calculatePnl", () => {
         dollarAmount: 10,
         timeInForce: "gfd",
         marketHours: "regular_hours",
-        rationale: "test"
+        rationale: "test",
+        tradeThesisTag: "test",
+        entryMarketRegime: "test"
       },
       review: { estimatedNotional: 10, alerts: [], raw: {} },
       marketScan: marketScanWithQuote("MSFT", 420),

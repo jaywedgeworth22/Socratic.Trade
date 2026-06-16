@@ -1,4 +1,4 @@
-export type OrderSide = "buy" | "sell";
+export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
@@ -114,6 +114,8 @@ export interface TradeProposal {
   timeInForce: TimeInForce;
   marketHours: MarketHours;
   rationale: string;
+  tradeThesisTag: string;
+  entryMarketRegime: string;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -159,6 +161,12 @@ export interface MarketQuote {
   analystBySource?: Record<string, AnalystRatingDetail>;
   dividendYield?: number;
   eps?: number;
+  pbRatio?: number;
+  shortPercentOfFloat?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  insiderSentiment?: number;
   sources?: EnrichmentSources;
 }
 
@@ -199,6 +207,12 @@ export interface MarketQuoteSummary {
   analystBySource?: Record<string, AnalystRatingDetail>;
   dividendYield?: number;
   eps?: number;
+  pbRatio?: number;
+  shortPercentOfFloat?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  insiderSentiment?: number;
   sources?: EnrichmentSources;
 }
 

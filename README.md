@@ -61,12 +61,15 @@ MARKET_SCAN_LIMIT=30
 MARKET_SCAN_CACHE_TTL_MS=300000
 
 # Optional: fundamentals + analyst enrichment (Finnhub).
-# Provides P/E, EPS, dividend yield, analyst ratings, and news sentiment per symbol.
-# Without a key the scan falls back to neutral defaults and built-in mock metrics
-# for well-known tickers (AAPL, MSFT, NVDA, etc.) so Paper runs still show real-looking data.
+# Provides P/E, EPS, dividend yield, analyst ratings, sector/industry, and news
+# sentiment per symbol. Yahoo Finance (no key required) is always the final
+# enrichment tier, so every scanned symbol has real data even with no keys set.
+# The scan's `source` field lists every provider that actually supplied data for
+# that run (e.g. "nasdaq-delayed-screener+finnhub+yahoo-finance+robinhood-quotes");
+# each table cell's tooltip names the single provider that value came from.
 FINNHUB_API_KEY=...
 
-# Optional: Financial Modeling Prep (legacy FMP fallback; Finnhub is preferred).
+# Optional: Financial Modeling Prep (adds P/E + analyst consensus; Finnhub preferred).
 FMP_API_KEY=...
 FMP_MAX_SYMBOLS=15               # cap enriched candidates per scan (free-tier quota friendly)
 NEWS_CACHE_TTL_MS=21600000       # enrichment cache TTL (default 6h)
@@ -125,4 +128,11 @@ local SQLite settings table.
 npm test
 ```
 
-60 tests across 9 suites (vitest). Run after `npm install`.
+76 tests across 10 suites (vitest). Run after `npm install`.
+
+## Design Docs
+
+See `docs/` for phase-by-phase design notes, including `docs/phase-7-strategy.md`
+(in-progress: trade-thesis tagging, post-mortem reflection loop, short-selling
+support — see that doc's own risk-guardrail section before enabling `short`/`cover`
+proposals in Live mode).

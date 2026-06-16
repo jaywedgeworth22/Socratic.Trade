@@ -2,6 +2,7 @@
 
 import { CheckCircle, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { formatNotificationDisplay, formatShareQuantity } from "@/lib/dashboard-ui";
 import type {
   EquityCurvePoint,
   EquityPosition,
@@ -10,14 +11,15 @@ import type {
   Portfolio,
   ScoringWeights
 } from "@/lib/types";
+import type { SymbolMeta } from "@/lib/dashboard-feed";
 
 export const ALLOC_COLORS = ["#245a9d", "#116b4b", "#7c5cbf", "#c27a1e", "#1e7ec2", "#8a5c3e", "#5c8a3e", "#9d4524"];
 
-export function Metric({ label, value }: { label: string; value: string }) {
+export function Metric({ label, value, wrapValue, title }: { label: string; value: string; wrapValue?: boolean; title?: string }) {
   return (
-    <div className="metric">
+    <div className={`metric${wrapValue ? " metric-wrap-value" : ""}`}>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong title={title ?? value}>{value}</strong>
     </div>
   );
 }
@@ -97,25 +99,24 @@ export function PerformancePanel({ performance, mode }: { performance?: Performa
   const unrealizedPnl = mode === "paper" ? performance?.paperUnrealizedPnl ?? 0 : performance?.liveUnrealizedPnl ?? 0;
   const winRate = mode === "paper" ? performance?.paperWinRate ?? 0 : performance?.liveWinRate ?? 0;
   const averageReturn = mode === "paper" ? performance?.paperAverageReturnPct ?? 0 : performance?.liveAverageReturnPct ?? 0;
-  const label = mode === "paper" ? "Paper" : "Live";
   const last = lastPoint(curve);
   return (
     <section className="panel">
       <div className="panel-head">
-        <h2>{label} Performance</h2>
+        <h2>Performance</h2>
       </div>
       {!performance || curve.length === 0 ? (
         <p className="subtle">
           {mode === "paper"
-            ? "No Paper performance history yet. Paper trades will update this pretend portfolio immediately."
+            ? "No performance history yet. Trades will update this pretend portfolio immediately."
             : "No Live performance history yet. Live orders and broker snapshots will appear here."}
         </p>
       ) : (
         <div className="performance-grid">
           <div className="chart-card wide">
             <div className="chart-head">
-              <strong>Equity Curve</strong>
-              <span>{label} {money(last?.equity)}</span>
+              <strong>Equity Curve{mode === "paper" ? " (Paper Mode)" : ""}</strong>
+              <span>{mode === "paper" ? "Paper" : "Live"} {money(last?.equity)}</span>
             </div>
             <LineChart series={[curve]} />
           </div>
@@ -129,7 +130,7 @@ export function PerformancePanel({ performance, mode }: { performance?: Performa
   );
 }
 
-export function AllocationDonut({ positions, portfolio }: { positions: EquityPosition[]; portfolio?: Portfolio }) {
+export function AllocationDonut({ positions, portfolio, mode }: { positions: EquityPosition[]; portfolio?: Portfolio; mode: "paper" | "live" }) {
   const total = portfolio?.totalMarketValue ?? 0;
   if (total <= 0) return <p className="subtle">No allocation data yet.</p>;
   const equityValue = positions.reduce((sum, position) => sum + position.marketValue, 0);
@@ -158,26 +159,39 @@ export function AllocationDonut({ positions, portfolio }: { positions: EquityPos
   );
 }
 
-export function NotificationPanel({ notifications, configured }: { notifications: NotificationEvent[]; configured: boolean }) {
+export function NotificationPanel({
+  notifications,
+  configured,
+  symbolMetaBySymbol,
+  mode
+}: {
+  notifications: NotificationEvent[];
+  configured: boolean;
+  symbolMetaBySymbol: Record<string, SymbolMeta>;
+  mode: "paper" | "live";
+}) {
   return (
     <section className="panel">
       <div className="panel-head">
-        <h2>Notifications</h2>
+        <h2>Notifications{mode === "paper" ? " (Paper Mode)" : ""}</h2>
         <span className={`status-badge ${configured ? "status-completed" : "status-running"}`}>
-          {configured ? "webhook on" : "audit only"}
+          {configured ? "webhook on" : "webhook off"}
         </span>
       </div>
       {notifications.length === 0 ? (
         <p className="subtle">No notification attempts recorded.</p>
       ) : (
         <div className="notification-list">
-          {notifications.slice(0, 8).map((event) => (
-            <div key={event.id} className="notification-row">
-              {event.status === "sent" ? <CheckCircle size={15} /> : event.status === "failed" ? <XCircle size={15} /> : <span className="dot-muted" />}
-              <strong>{event.title}</strong>
-              <span>{event.status}{event.error ? ` · ${event.error}` : ""}</span>
-            </div>
-          ))}
+          {notifications.slice(0, 12).map((event) => {
+            const item = formatNotificationDisplay(event, symbolMetaBySymbol);
+            return (
+              <div key={event.id} className="audit-row">
+                <span className="audit-time">{item.timestamp}</span>
+                {renderNotificationTitle(item.title, item.companyName)}
+                <span>{item.detail}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
@@ -257,6 +271,20 @@ function DonutChart({ segments }: { segments: Array<{ label: string; pct: number
   );
 }
 
+function renderNotificationTitle(title: string, hoverTitle?: string) {
+  const match = title.match(/^(Paper )?(buy|sell|bought|sold|buy:|sell:)\b(.*)$/i);
+  if (!match) return <strong title={hoverTitle}>{title}</strong>;
+  const [, paperPrefix = "", action, rest] = match;
+  const actionClass = /sell|sold/i.test(action) ? "text-red" : "text-green";
+  return (
+    <strong title={hoverTitle}>
+      {paperPrefix}
+      <strong className={actionClass}>{action.toUpperCase()}</strong>
+      {rest}
+    </strong>
+  );
+}
+
 function lastPoint(points?: EquityCurvePoint[]) {
   return points && points.length > 0 ? points[points.length - 1] : undefined;
 }
@@ -290,6 +318,7 @@ export function compactNum(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
   return String(value);
 }
+
 
 export function compactMoney(value: number): string {
   if (value >= 1_000_000_000_000) return `$${(value / 1_000_000_000_000).toFixed(1)}T`;
