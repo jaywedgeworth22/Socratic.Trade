@@ -11,10 +11,11 @@ filling the missing pieces.
 |---|-------|------|--------|
 | 1 | Autonomy loop | `docs/phase-1-autonomy-loop.md` | Mostly implemented; hardening/tests remain |
 | 2 | Correctness fixes | `docs/phase-2-correctness.md` | Partially implemented; sector attribution incomplete |
-| 3 | Performance tracking | `docs/phase-3-performance.md` | Not complete |
-| 4 | Market data and scoring | `docs/phase-4-market-data-scoring.md` | Multi-factor scoring + TTL cache live; news sentiment + P/E via `FMP_API_KEY` (`src/lib/data-providers.ts`), neutral fallback without a key |
-| 5 | Frontend refactor and charts | `docs/phase-5-dashboard-refactor.md` | Not complete |
-| 6 | Customization and notifications | `docs/phase-6-customization-risk-notifications.md` | Not complete |
+| 3 | Performance tracking | `docs/phase-3-performance.md` | Partially implemented; paper portfolio projection and short/cover P&L branches exist, persistence/attribution hardening remains |
+| 4 | Market data and scoring | `docs/phase-4-market-data-scoring.md` | Multi-factor scoring + TTL cache live; Finnhub/FMP/Alpha Vantage/Yahoo enrichment and VIX macro context are wired |
+| 5 | Frontend refactor and charts | `docs/phase-5-dashboard-refactor.md` | Partially implemented; dashboard charts, market-scan columns, activity feed, and kill-switch confirmation are live |
+| 6 | Customization and notifications | `docs/phase-6-customization-risk-notifications.md` | Partially implemented; profiles, risk controls, and webhook settings exist; notification polish remains |
+| 7 | AI strategy learning loop | `docs/phase-7-strategy.md` | In progress; trade-thesis metadata, red-team debate hook, and learning-loop scaffolding exist |
 
 ## Build Order
 
@@ -24,6 +25,7 @@ filling the missing pieces.
 4. Phase 4 data/scoring: provider abstraction, quote enrichment, TTL cache, factor scores.
 5. Phase 5 dashboard: typed components, charts, visible loading/error states, better allowlist UX.
 6. Phase 6 customization: profiles, deterministic risk rules, webhook notifications.
+7. Phase 7 strategy loop: persist learning metrics, harden red-team debate fallback, and keep short/cover disabled for Live until broker/accounting behavior is proven.
 
 ## Acceptance Checks
 

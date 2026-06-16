@@ -13,28 +13,32 @@ steps materially change.
   contains the per-phase design details.
 - Latest completed design area in docs: `docs/phase-7-strategy.md` adds the AI
   strategy architecture, learning loop, and intended short-selling guardrails.
+- Cloud branch: `codex/upload-current-state` is pushed to `origin`.
+- Draft PR: https://github.com/jaywedgeworth22/robinhood-agentic-trading/pull/2
 
 ## Active Focus
 
-- Primary near-term work appears to be market data and strategy plumbing based
-  on the latest commits:
-  - `5bbe7bd` Update Phase 7 strategy with new data source integrations
-  - `37feb31` Close short/cover order-side risk gap and add API keys scaffolding
-  - `218b4ab` Merge Phase 7 work (trade-thesis tracking, post-mortem reflection,
-    fundamentals fields, dashboard refactor) into main
+- Current publish branch packages the latest dashboard, market-data, strategy,
+  short/cover, and handoff-doc work for review.
+- Near-term engineering focus should be hardening Phase 7 before Live use:
+  broker support confirmation, persistence/accounting checks, and better tests
+  around short/cover and red-team debate behavior.
 
 ## Known Risks
 
 - The worktree may be dirty. Check `git status` before assuming a clean base.
-- `short` / `cover` support exists at the type/schema level, but any change in
-  risk, PnL, or accounting logic should still be checked carefully against the
-  guardrail notes in `AGENTS.md` and `docs/phase-7-strategy.md`.
+- `short` / `cover` support is partly implemented in policy and paper P&L, but
+  Live use still needs broker-surface confirmation and persistence/accounting
+  review, especially daily-notional tracking in `src/lib/db.ts`.
 - `npx tsc --noEmit` can fail when `.next/types/**/*.ts` entries referenced by
   `tsconfig.json` are missing or stale. A fresh `npm run build` regenerates
   them.
 - `npx tsc --noEmit` may report a pre-existing `mockFetcher` type mismatch in
   `test/alternative-data.test.ts` unless that file has been addressed directly.
 - `npm run build` regenerates `.next/`; restart any running dev server after it.
+- If the browser shows plain unstyled HTML, verify
+  `/_next/static/css/app/layout.css` is returning `200`; if it returns `404`,
+  restart the dev server on `127.0.0.1:3000`.
 
 ## Read This First
 

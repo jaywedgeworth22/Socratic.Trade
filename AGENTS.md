@@ -80,16 +80,11 @@ that file directly.
   production code. Grep `side: "buy"` or `side: "sell"` in `test/*.ts` to find
   construction sites if you change this type again.
 - **`OrderSide`** (`src/lib/types.ts`) is `"buy" | "sell" | "short" | "cover"`.
-  ⚠️ As of this writing, `short`/`cover` are accepted by the LLM's proposal
-  schema (`src/lib/strategy.ts`) but **not yet handled** by the risk/PnL layer:
-  `src/lib/policy.ts` (`evaluateTradeProposal`, notional/exposure checks),
-  `src/lib/performance.ts` (`calculatePnl` FIFO lot accounting), and
-  `src/lib/db.ts` (`isBuy` daily-notional tracking) all still branch only on
-  `=== "buy"` / `=== "sell"`. If you touch any of these files, check whether
-  `short`/`cover` need a branch too — don't assume the binary check is
-  exhaustive just because it was written before this type changed. See
-  `docs/phase-7-strategy.md` section C for the intended guardrails (hard
-  stop-loss, stricter notional cap) — none of that is implemented yet.
+  `src/lib/policy.ts` and `src/lib/performance.ts` now include short/cover
+  branches, but this is still high-risk code. If you touch risk, P&L, order
+  accounting, or persistence, verify all four sides explicitly. In particular,
+  check `src/lib/db.ts` daily-notional tracking before assuming short/cover are
+  fully production-ready.
 - **Per-field enrichment sourcing** (`src/lib/data-providers.ts`): when adding
   a new enriched field (e.g. another fundamentals metric), wire it through all
   of: the `SymbolEnrichment` interface, `EnrichmentSourcedField` union, the
