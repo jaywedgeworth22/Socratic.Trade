@@ -61,6 +61,40 @@ When `OPENAI_API_KEY` is configured, the route asks the model for a strict JSON
 strategy tuning proposal. Without the key, it returns a transparent local-rules
 proposal so the UI path remains testable.
 
+## Alerts and Toasts
+
+Transient errors and command results are shown as a **toast stack anchored to
+the bottom-right** (`.toast-stack` / `.toast`), not as a fixed-offset banner.
+This was previously a `position: fixed; top: 202px` layer whose hardcoded offset
+did not match the real command-bar height and floated over content; bottom-right
+anchoring is stable regardless of how the header grid wraps or the body `zoom`.
+Result/success toasts auto-dismiss after a few seconds; error toasts persist
+until dismissed. Each toast carries an icon and an accessible dismiss button.
+
+## Accessibility
+
+- All dialogs render through a single reusable `Modal` component. It provides
+  `role="dialog"`, `aria-modal`, an `aria-label` from the title, focus-on-open
+  with focus restoration on close, body scroll-lock, Escape-to-close (a
+  document-level listener, so it works even if focus leaves the dialog), and
+  backdrop-click-to-close. Size variants are `default`, `narrow` (confirmations),
+  and `wide` (Strategy Studio).
+- Tab groups use `role="tablist"`/`role="tab"` with `aria-selected`, roving
+  `tabIndex`, and Left/Right arrow-key navigation.
+- Icon-only buttons carry `aria-label`s; the command-bar layout dropdown exposes
+  `aria-haspopup`/`aria-expanded` and closes on Escape.
+- A global `:focus-visible` outline makes keyboard focus visible, and
+  activity-feed detail rows expand on focus rather than hover-only.
+
+## Styling Conventions
+
+Cockpit panels are styled with CSS classes in `app/styles.css`, not inline
+styles. The Activity Feed (group rows, status pills, tags, expanded timeline),
+the market-scan column-settings popover, the filter bar, and the layout menu all
+use dedicated classes. Status colors reuse a shared class family
+(`.activity-status.is-*`) rather than re-deriving rgba values inline, so theming
+stays in one place.
+
 ## Display Semantics
 
 - Sentiment values are displayed as explicit chips: `Positive`, `Neutral`, or

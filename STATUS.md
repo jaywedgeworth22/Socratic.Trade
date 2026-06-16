@@ -20,6 +20,12 @@ steps materially change.
 
 - Current publish branch packages the latest dashboard, cockpit UI,
   market-data, strategy, short/cover, and handoff-doc work for review.
+- 2026-06-16: completed a cockpit-UI optimization pass (presentation-only) —
+  fixed the floating-alert positioning bug (now a bottom-right toast stack),
+  added modal/tab accessibility (Escape, focus management, scroll-lock, ARIA),
+  extracted ~400 lines of inline styles into CSS classes, and removed dead
+  TS/CSS. Verified with `tsc` + `npm test` (80) + `npm run build`. See
+  `docs/rollouts/2026-06-16-ui-optimization-pass.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

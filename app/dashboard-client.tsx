@@ -1,13 +1,13 @@
 "use client";
 
-import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, X, XCircle, Zap, Settings, LayoutDashboard } from "lucide-react";
+import { AlertTriangle, CheckCircle, Info, Pause, Play, RefreshCw, RotateCcw, Shield, X, XCircle, Zap, Settings, LayoutDashboard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
-import { cellTitle, companyTitle, enrichPositionsForDisplay, formatShareQuantity, quoteTitle, ratingTitle, scanQuoteAsOf, sentimentTitle } from "@/lib/dashboard-ui";
+import { cellTitle, companyTitle, enrichPositionsForDisplay, formatShareQuantity, quoteTitle, ratingTitle, sentimentTitle } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
 import { SP500_SYMBOLS } from "@/lib/sp500";
-import type { EquityPosition, FillEvent, MarketQuote, NotificationSettings, StrategyTuningProposal, TradingPolicy, TradeProposal } from "@/lib/types";
+import type { EquityPosition, MarketQuote, NotificationSettings, StrategyTuningProposal, TradingPolicy, TradeProposal } from "@/lib/types";
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
 import {
   AllocationDonut,
@@ -65,8 +65,15 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         setLayoutMenuOpen(false);
       }
     }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setLayoutMenuOpen(false);
+    }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, []);
 
   useEffect(() => {
@@ -79,6 +86,13 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     }, 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-dismiss transient success/result toasts; errors stay until dismissed.
+  useEffect(() => {
+    if (!result) return;
+    const timer = setTimeout(() => setResult(""), 6000);
+    return () => clearTimeout(timer);
+  }, [result]);
 
   async function load(options: { quiet?: boolean } = {}) {
     if (!options.quiet) setBusy(true);
@@ -289,34 +303,35 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           <StatusTile label="Allowed" value={policy.universe === "sp500" ? "S&P 500" : `${allowedCount}`} />
         </div>
         <div className="command-actions">
-          <div ref={layoutMenuRef} style={{ position: "relative" }}>
-            <button className="ghost sm" onClick={() => setLayoutMenuOpen(!layoutMenuOpen)}>
+          <div ref={layoutMenuRef} className="layout-menu">
+            <button
+              className="ghost sm"
+              aria-haspopup="true"
+              aria-expanded={layoutMenuOpen}
+              onClick={() => setLayoutMenuOpen(!layoutMenuOpen)}
+            >
               <LayoutDashboard size={14} />
               Layout
             </button>
             {layoutMenuOpen && (
-              <div style={{ position: "absolute", top: "100%", right: 0, marginTop: "8px", background: "white", border: "1px solid var(--line)", borderRadius: "8px", padding: "8px", zIndex: 100, minWidth: "180px", boxShadow: "var(--shadow)", display: "grid", gap: "8px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showLeftRail ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
-                  <input type="checkbox" checked={showLeftRail} onChange={(e) => setShowLeftRail(e.target.checked)} />
-                  Left Rail
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showCenterWorkspace ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
-                  <input type="checkbox" checked={showCenterWorkspace} onChange={(e) => setShowCenterWorkspace(e.target.checked)} />
-                  Center Workspace
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showRightInspector ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
-                  <input type="checkbox" checked={showRightInspector} onChange={(e) => setShowRightInspector(e.target.checked)} />
-                  Right Inspector
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px", margin: 0, cursor: "pointer", color: showBottomDrawer ? "var(--text)" : "var(--muted)", fontWeight: "normal" }}>
-                  <input type="checkbox" checked={showBottomDrawer} onChange={(e) => setShowBottomDrawer(e.target.checked)} />
-                  Bottom Drawer
-                </label>
+              <div className="layout-menu-panel" role="group" aria-label="Visible panels">
+                <span className="layout-menu-title">Visible panels</span>
+                {([
+                  ["Left Rail", showLeftRail, setShowLeftRail],
+                  ["Center Workspace", showCenterWorkspace, setShowCenterWorkspace],
+                  ["Right Inspector", showRightInspector, setShowRightInspector],
+                  ["Bottom Drawer", showBottomDrawer, setShowBottomDrawer]
+                ] as const).map(([label, checked, setter]) => (
+                  <label key={label} className={`layout-menu-item${checked ? "" : " is-off"}`}>
+                    <input type="checkbox" checked={checked} onChange={(event) => setter(event.target.checked)} />
+                    {label}
+                  </label>
+                ))}
               </div>
             )}
           </div>
           <button className="ghost sm" onClick={() => load()} disabled={busy}>
-            <RefreshCw size={14} />
+            <RefreshCw size={14} className={busy ? "spin" : ""} />
             Refresh
           </button>
           <button className="ghost sm" onClick={() => setShowStrategyStudio(true)}>
@@ -334,16 +349,26 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         </div>
       </header>
 
-      {(error || result) && (
-        <section className="cockpit-alerts">
-          {error && (
-            <p className="warning">
-              <AlertTriangle size={16} /> {error}
-            </p>
-          )}
-          {result && <p className="result">{result}</p>}
-        </section>
-      )}
+      <div className="toast-stack" role="status" aria-live="polite">
+        {error && (
+          <div className="toast toast-error">
+            <AlertTriangle size={16} className="toast-icon" />
+            <span className="toast-msg">{error}</span>
+            <button className="toast-close" onClick={() => setError("")} aria-label="Dismiss error">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {result && (
+          <div className="toast toast-info">
+            <Info size={16} className="toast-icon" />
+            <span className="toast-msg">{result}</span>
+            <button className="toast-close" onClick={() => setResult("")} aria-label="Dismiss message">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+      </div>
 
       {(showLeftRail || showCenterWorkspace || showRightInspector || showBottomDrawer) && (
         <PanelGroup orientation="vertical">
@@ -522,86 +547,67 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       )}
 
       {showNotionalSettings && (
-        <div className="alert-modal-overlay">
-          <div className="alert-modal">
-            <div className="alert-modal-header">
-              <h3>Edit Daily Limits</h3>
-              <button className="close-btn" onClick={() => setShowNotionalSettings(false)}>×</button>
-            </div>
-            <div className="alert-modal-body modal-form">
-              <RangeNumberField label="Max Daily Notional" value={tempMaxDailyNotional} min={10} max={10000} step={10} onCommit={setTempMaxDailyNotional} />
-              <RangeNumberField label="Max Daily Orders" value={tempMaxDailyOrders} min={1} max={100} step={1} onCommit={setTempMaxDailyOrders} />
-            </div>
-            <div className="alert-modal-actions">
-              <button onClick={() => { void updatePolicy({ maxDailyNotional: tempMaxDailyNotional, maxDailyOrders: tempMaxDailyOrders }); setShowNotionalSettings(false); }}>Save</button>
+        <Modal
+          title="Edit Daily Limits"
+          onClose={() => setShowNotionalSettings(false)}
+          footer={
+            <>
               <button className="ghost" onClick={() => setShowNotionalSettings(false)}>Cancel</button>
-            </div>
+              <button onClick={() => { void updatePolicy({ maxDailyNotional: tempMaxDailyNotional, maxDailyOrders: tempMaxDailyOrders }); setShowNotionalSettings(false); }}>Save</button>
+            </>
+          }
+        >
+          <div className="modal-form">
+            <RangeNumberField label="Max Daily Notional" value={tempMaxDailyNotional} min={10} max={10000} step={10} onCommit={setTempMaxDailyNotional} />
+            <RangeNumberField label="Max Daily Orders" value={tempMaxDailyOrders} min={1} max={100} step={1} onCommit={setTempMaxDailyOrders} />
           </div>
-        </div>
+        </Modal>
       )}
 
       {showStrategyStudio && (
-        <div className="alert-modal-overlay">
-          <div className="strategy-modal">
-            <div className="alert-modal-header">
-              <h3>Strategy Studio</h3>
-              <button className="close-btn" onClick={() => setShowStrategyStudio(false)}>×</button>
-            </div>
-            <div className="strategy-modal-body">
-              <StrategyStudioPanel
-                snapshot={snapshot}
-                policy={policy}
-                strategyTuning={strategyTuning}
-                tuningBusy={tuningBusy}
-                tuningError={tuningError}
-                editStrategyPrompt={editStrategyPrompt}
-                resetStrategyPrompt={() => {
-                  setSnapshot((current) => ({ ...current, strategyPrompt: DEFAULT_STRATEGY_PROMPT }));
-                  void saveStrategyPrompt(DEFAULT_STRATEGY_PROMPT);
-                }}
-                requestStrategyTuning={requestStrategyTuning}
-                applyStrategyTuning={applyStrategyTuning}
-                updatePolicy={updatePolicy}
-              />
-            </div>
-          </div>
-        </div>
+        <Modal title="Strategy Studio" size="wide" onClose={() => setShowStrategyStudio(false)}>
+          <StrategyStudioPanel
+            snapshot={snapshot}
+            policy={policy}
+            strategyTuning={strategyTuning}
+            tuningBusy={tuningBusy}
+            tuningError={tuningError}
+            editStrategyPrompt={editStrategyPrompt}
+            resetStrategyPrompt={() => {
+              setSnapshot((current) => ({ ...current, strategyPrompt: DEFAULT_STRATEGY_PROMPT }));
+              void saveStrategyPrompt(DEFAULT_STRATEGY_PROMPT);
+            }}
+            requestStrategyTuning={requestStrategyTuning}
+            applyStrategyTuning={applyStrategyTuning}
+            updatePolicy={updatePolicy}
+          />
+        </Modal>
       )}
 
       {alertMessage && (
-        <div className="alert-modal-overlay">
-          <div className="alert-modal">
-            <div className={`alert-modal-header ${alertMessage.type}`}>
-              <h3>{alertMessage.title}</h3>
-              <button className="close-btn" onClick={() => setAlertMessage(null)}>×</button>
-            </div>
-            <div className="alert-modal-body">
-              {alertMessage.body.split("\n").map((line, idx) => (
-                <p key={idx}>{line}</p>
-              ))}
-            </div>
-            <div className="alert-modal-actions">
-              <button onClick={() => setAlertMessage(null)}>Dismiss</button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          title={alertMessage.title}
+          tone={alertMessage.type}
+          onClose={() => setAlertMessage(null)}
+          footer={<button onClick={() => setAlertMessage(null)}>Dismiss</button>}
+        >
+          {alertMessage.body.split("\n").map((line, idx) => (
+            <p key={idx}>{line}</p>
+          ))}
+        </Modal>
       )}
 
       {showKillSwitchConfirm && (
-        <div className="alert-modal-overlay">
-          <div className="alert-modal" style={{ maxWidth: "420px" }}>
-            <div className={`alert-modal-header ${policy.killSwitch ? "success" : "warning"}`}>
-              <h3>{policy.killSwitch ? "Deactivate Kill Switch?" : "Activate Kill Switch?"}</h3>
-              <button className="close-btn" onClick={() => setShowKillSwitchConfirm(false)}>×</button>
-            </div>
-            <div className="alert-modal-body" style={{ textAlign: "left" }}>
-              <p style={{ marginBottom: "12px", color: "var(--text)" }}>
-                {policy.killSwitch
-                  ? "Are you sure you want to deactivate the Kill Switch? This will resume automated trading operations."
-                  : "Are you sure you want to activate the Kill Switch? This will immediately pause all automated trading runs and block any new order proposals."}
-              </p>
-            </div>
-            <div className="alert-modal-actions">
+        <Modal
+          title={policy.killSwitch ? "Deactivate Kill Switch?" : "Activate Kill Switch?"}
+          tone={policy.killSwitch ? "success" : "warning"}
+          size="narrow"
+          onClose={() => setShowKillSwitchConfirm(false)}
+          footer={
+            <>
+              <button className="ghost" onClick={() => setShowKillSwitchConfirm(false)}>
+                Cancel
+              </button>
               <button
                 className={policy.killSwitch ? "approve" : "danger"}
                 onClick={async () => {
@@ -611,14 +617,111 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               >
                 Confirm
               </button>
-              <button className="ghost" onClick={() => setShowKillSwitchConfirm(false)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p>
+            {policy.killSwitch
+              ? "Are you sure you want to deactivate the Kill Switch? This will resume automated trading operations."
+              : "Are you sure you want to activate the Kill Switch? This will immediately pause all automated trading runs and block any new order proposals."}
+          </p>
+        </Modal>
       )}
     </main>
+  );
+}
+
+type ModalTone = "default" | "error" | "warning" | "success";
+
+function Modal({
+  title,
+  onClose,
+  tone = "default",
+  size = "default",
+  children,
+  footer
+}: {
+  title: string;
+  onClose: () => void;
+  tone?: ModalTone;
+  size?: "default" | "wide" | "narrow";
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const { overflow } = document.body.style;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.focus();
+    return () => {
+      document.body.style.overflow = overflow;
+      previouslyFocused?.focus?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      // Trap focus within the dialog so Tab/Shift+Tab cannot reach background elements.
+      const focusables = dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusables.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey) {
+        if (active === first || active === dialog || !dialog.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !dialog.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="alert-modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        className={`alert-modal modal-${size}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+      >
+        <div className={`alert-modal-header ${tone === "default" ? "" : tone}`}>
+          <h3>{title}</h3>
+          <button className="close-btn" onClick={onClose} aria-label="Close dialog">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="alert-modal-body">{children}</div>
+        {footer && <div className="alert-modal-actions">{footer}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -650,13 +753,32 @@ function TabBar<T extends string>({
   active: T;
   onSelect: (id: T) => void;
 }) {
+  function onKeyDown(event: React.KeyboardEvent, index: number) {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(index + delta + tabs.length) % tabs.length];
+    onSelect(next.id);
+  }
+
   return (
-    <div className="tab-bar">
-      {tabs.map((tab) => (
-        <button key={tab.id} className={active === tab.id ? "tab-active" : ""} onClick={() => onSelect(tab.id)}>
-          {tab.label}
-        </button>
-      ))}
+    <div className="tab-bar" role="tablist">
+      {tabs.map((tab, index) => {
+        const selected = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            className={selected ? "tab-active" : ""}
+            onClick={() => onSelect(tab.id)}
+            onKeyDown={(event) => onKeyDown(event, index)}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1189,64 +1311,34 @@ function LatestDecision({
           {decision.marketScan ? (
             <div>
               <div className="scan-summary">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", flexWrap: "wrap", gap: "8px" }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                <div className="scan-summary-head">
+                  <div className="scan-summary-meta">
                     <strong>Market Scan</strong>
-                    <span style={{ fontSize: "11px" }}>
+                    <span className="scan-summary-source">
                       utilized information on {decision.marketScan.scannedSymbols} symbols sourced at {new Date(decision.marketScan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} from: {formatSources(decision.marketScan.source)}
                       {decision.marketScan.cached ? " · cached" : ""}
                     </span>
                   </div>
-                  <button 
+                  <button
+                    className="icon-button"
                     onClick={() => setShowColumnSettings(!showColumnSettings)}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      padding: "4px",
-                      minHeight: "auto",
-                      color: "var(--muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center"
-                    }}
-                    title="Configure Columns"
+                    aria-expanded={showColumnSettings}
+                    aria-label="Configure columns"
+                    title="Configure columns"
                   >
                     <Settings size={16} />
                   </button>
                 </div>
                 {showColumnSettings && (
-                  <div style={{
-                    borderTop: "1px solid var(--line)",
-                    paddingTop: "12px",
-                    marginTop: "4px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "8px"
-                  }}>
-                    <div style={{ fontSize: "12px", fontWeight: "600" }}>Market Scan Columns:</div>
-                    <div style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
-                      gap: "8px"
-                    }}>
+                  <div className="column-settings">
+                    <div className="field-label">Market scan columns</div>
+                    <div className="column-settings-grid">
                       {columnsList.map(col => (
-                        <label 
-                          key={col.id} 
-                          style={{ 
-                            display: "flex", 
-                            alignItems: "center", 
-                            gap: "6px", 
-                            cursor: "pointer",
-                            fontSize: "11px",
-                            userSelect: "none"
-                          }}
-                        >
-                          <input 
-                            type="checkbox" 
-                            checked={visibleColumns[col.id] || false} 
+                        <label key={col.id} className="column-toggle">
+                          <input
+                            type="checkbox"
+                            checked={visibleColumns[col.id] || false}
                             onChange={() => toggleColumn(col.id)}
-                            style={{ cursor: "pointer" }}
                           />
                           {col.label}
                         </label>
@@ -1606,38 +1698,38 @@ function UnifiedActivityFeedPanel({
 
   return (
     <section className="panel unified-activity-panel">
-      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+      <div className="panel-head">
         <div>
           <h2>Activity Feed</h2>
-          <p className="subtle" style={{ margin: 0, fontSize: '12px' }}>Consolidated trading log, audit events, and notifications</p>
+          <p className="subtle-text">Consolidated trading log, audit events, and notifications</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="panel-head-actions">
           <span className={`status-badge ${configured ? "status-completed" : "status-running"}`}>
-            {configured ? "Notifications Webhook Configured" : "Notifications Webhook Not Configured"}
+            {configured ? "Webhook configured" : "Webhook not configured"}
           </span>
-          <button className="icon-button" onClick={() => setShowSettings(true)} aria-label="Webhook Settings" style={{background:"none", border:"none", cursor:"pointer", color:"var(--text)", padding:"4px", display:"flex", alignItems:"center"}}>
+          <button className="icon-button" onClick={() => setShowSettings(true)} aria-label="Webhook settings">
             <Settings size={16} />
           </button>
         </div>
       </div>
 
       {showSettings && (
-        <div className="alert-modal-overlay">
-          <div className="alert-modal" style={{ maxWidth: '500px' }}>
-            <div className="alert-modal-header">
-              <h3>Webhook Settings</h3>
-              <button className="close-btn" onClick={() => setShowSettings(false)}>×</button>
-            </div>
-            <div className="alert-modal-body" style={{ textAlign: 'left' }}>
-              <label>
-                Notifications Webhook
-                <input
-                  value={policy.notificationSettings.webhookUrl ?? ""}
-                  onChange={(event) => patchSettings({ webhookUrl: event.target.value })}
-                  placeholder="https://..."
-                  style={{ width: '100%', marginBottom: '16px' }}
-                />
-              </label>
+        <Modal
+          title="Webhook Settings"
+          onClose={() => setShowSettings(false)}
+          footer={<button onClick={() => setShowSettings(false)}>Done</button>}
+        >
+          <div className="modal-form">
+            <label>
+              Notifications Webhook
+              <input
+                value={policy.notificationSettings.webhookUrl ?? ""}
+                onChange={(event) => patchSettings({ webhookUrl: event.target.value })}
+                placeholder="https://..."
+              />
+            </label>
+            <div>
+              <span className="field-label">Send notifications for</span>
               <div className="event-toggle-grid">
                 {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => (
                   <label key={eventType} className="inline-check">
@@ -1656,246 +1748,119 @@ function UnifiedActivityFeedPanel({
                 ))}
               </div>
             </div>
-            <div className="alert-modal-actions">
-              <button onClick={() => setShowSettings(false)}>Done</button>
-            </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      <div className="filter-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '12px 0', borderBottom: '1px solid var(--line)', alignItems: 'center' }}>
-        <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--muted)', display: 'flex', alignItems: 'center', marginRight: '4px' }}>Mode:</span>
-        {(["all", "live", "paper"] as const).map(mode => {
-          const active = modeFilter === mode;
-          return (
-            <button
-              key={mode}
-              onClick={() => setModeFilter(mode)}
-              style={{
-                background: active ? 'var(--text)' : 'transparent',
-                color: active ? 'white' : 'var(--text)',
-                border: '1px solid var(--line)',
-                borderRadius: '8px',
-                padding: '4px 10px',
-                fontSize: '12px',
-                cursor: 'pointer',
-                minHeight: '26px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                textTransform: 'capitalize',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              {mode}
-            </button>
-          );
-        })}
+      <div className="filter-bar">
+        <span className="filter-label">Mode</span>
+        {(["all", "live", "paper"] as const).map(mode => (
+          <button
+            key={mode}
+            className={`filter-chip${modeFilter === mode ? " is-active" : ""}`}
+            aria-pressed={modeFilter === mode}
+            onClick={() => setModeFilter(mode)}
+          >
+            {mode}
+          </button>
+        ))}
 
-        <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--muted)', display: 'flex', alignItems: 'center', marginLeft: '12px', marginRight: '4px' }}>Filter:</span>
-        {allTags.map(tag => {
-          const active = selectedTags.includes(tag);
-          return (
-            <button
-              key={tag}
-              onClick={() => toggleTag(tag)}
-              className="tag-pill"
-              style={{
-                background: active ? 'var(--text)' : 'transparent',
-                color: active ? 'var(--bg, #fff)' : 'var(--muted)',
-                border: active ? '1px solid var(--text)' : '1px solid var(--line)',
-                borderRadius: '16px',
-                padding: '4px 10px',
-                fontSize: '12px',
-                cursor: 'pointer',
-                minHeight: '26px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                textTransform: 'capitalize',
-                transition: 'all 0.15s ease',
-                fontWeight: active ? '600' : '400',
-                opacity: active ? 1 : 0.7
-              }}
-            >
-              {tag}
-            </button>
-          );
-        })}
+        <span className="filter-label filter-label-divider">Filter</span>
+        {allTags.map(tag => (
+          <button
+            key={tag}
+            className={`filter-chip filter-chip-pill${selectedTags.includes(tag) ? " is-active" : ""}`}
+            aria-pressed={selectedTags.includes(tag)}
+            onClick={() => toggleTag(tag)}
+          >
+            {tag}
+          </button>
+        ))}
         {(selectedTags.length > 0 || modeFilter !== "all") && (
           <button
+            className="filter-reset"
             onClick={() => {
               setSelectedTags([]);
               setModeFilter("all");
             }}
-            style={{
-              background: 'transparent',
-              color: 'var(--red)',
-              border: 'none',
-              fontSize: '12px',
-              cursor: 'pointer',
-              minHeight: '26px',
-              padding: '0 4px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              fontWeight: 'bold'
-            }}
           >
-            Reset Filters
+            Reset filters
           </button>
         )}
       </div>
 
       {filteredItems.length === 0 ? (
-        <p className="subtle" style={{ padding: '24px 0', textAlign: 'center' }}>No activities match the selected filters.</p>
+        <p className="subtle empty-feed">No activities match the selected filters.</p>
       ) : (
-        <div className="audit" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+        <div className="activity-list">
           {filteredItems.slice(0, 50).map(group => {
             const isExpanded = !!expandedIds[group.id];
             const hasSubEvents = group.events && group.events.length > 1;
-
-            let borderStyle = '3px solid var(--line)';
-            if (group.tags.includes('policy change')) {
-              borderStyle = '3px solid var(--blue)';
-            } else if (group.status === 'filled') {
-              borderStyle = '3px solid var(--green)';
-            } else if (group.status === 'blocked' || group.status === 'rejected') {
-              borderStyle = '3px solid var(--red)';
-            } else if (group.status === 'pending_approval' || group.status === 'pending') {
-              borderStyle = '3px solid #f0a000';
-            }
+            const accent = group.tags.includes('policy change')
+              ? 'blue'
+              : group.status === 'filled'
+                ? 'green'
+                : group.status === 'blocked' || group.status === 'rejected'
+                  ? 'red'
+                  : group.status === 'pending_approval' || group.status === 'pending'
+                    ? 'amber'
+                    : 'neutral';
 
             return (
-              <div
-                key={group.id}
-                className="activity-group-row"
-                style={{
-                  borderLeft: borderStyle,
-                  paddingLeft: '12px',
-                  marginBottom: '8px',
-                  background: 'rgba(0,0,0,0.01)',
-                  borderRadius: '0 8px 8px 0',
-                  borderBottom: '1px solid var(--line)'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', alignItems: 'start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                      <span className="audit-time" style={{ color: 'var(--muted)', fontSize: '11px' }}>
-                        {new Date(group.updatedAt).toLocaleString()}
-                      </span>
-                      {group.companyName && (
-                        <span style={{ fontSize: '11px', color: 'var(--muted)' }}>({group.companyName})</span>
-                      )}
+              <div key={group.id} className={`activity-group accent-${accent}`}>
+                <div className="activity-group-main">
+                  <div className="activity-group-body">
+                    <div className="activity-meta">
+                      <span className="audit-time">{new Date(group.updatedAt).toLocaleString()}</span>
+                      {group.companyName && <span className="activity-company">({group.companyName})</span>}
                     </div>
-                    
-                    <div style={{ margin: '4px 0' }}>
-                      {renderActionTitle(group.title)}
-                    </div>
-                    
-                    <div className="activity-detail" title={group.detail} style={{ fontSize: '13px', color: 'var(--text)' }}>
+                    <div className="activity-title">{renderActionTitle(group.title)}</div>
+                    <div className="activity-detail" tabIndex={0} title={group.detail}>
                       {group.detail}
                     </div>
-
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                    <div className="activity-tags">
                       {group.tags.map(t => (
-                        <span
-                          key={t}
-                          style={{
-                            fontSize: '10px',
-                            background: '#e8ece9',
-                            color: 'var(--muted)',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            textTransform: 'uppercase',
-                            fontWeight: 'bold'
-                          }}
-                        >
-                          {t}
-                        </span>
+                        <span key={t} className="activity-tag">{t}</span>
                       ))}
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'end', gap: '8px', marginLeft: '12px' }}>
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        fontWeight: 'bold',
-                        padding: '3px 8px',
-                        borderRadius: '12px',
-                        textTransform: 'uppercase',
-                        background:
-                          group.status === 'filled' ? 'rgba(17,107,75,0.1)' :
-                          group.status === 'blocked' || group.status === 'rejected' ? 'rgba(179,38,30,0.1)' :
-                          group.status === 'approved' ? 'rgba(17,107,75,0.05)' :
-                          group.status === 'pending_approval' ? 'rgba(240,160,0,0.1)' :
-                          'rgba(0,0,0,0.05)',
-                        color:
-                          group.status === 'filled' ? 'var(--green)' :
-                          group.status === 'blocked' || group.status === 'rejected' ? 'var(--red)' :
-                          group.status === 'approved' ? 'var(--green)' :
-                          group.status === 'pending_approval' ? '#c08000' :
-                          'var(--text)'
-                      }}
-                    >
+                  <div className="activity-group-aside">
+                    <span className={`activity-status is-${activityStatusClass(group.status)}`}>
                       {group.status.replace(/_/g, ' ')}
                     </span>
-
                     {hasSubEvents && (
                       <button
+                        className="ghost sm activity-toggle"
                         onClick={() => toggleExpand(group.id)}
-                        className="ghost sm"
-                        style={{ padding: '2px 8px', fontSize: '11px', minHeight: '24px' }}
+                        aria-expanded={isExpanded}
                       >
-                        {isExpanded ? "Hide Details" : `Show Details (${group.events.length})`}
+                        {isExpanded ? "Hide details" : `Show details (${group.events.length})`}
                       </button>
                     )}
                   </div>
                 </div>
 
                 {isExpanded && hasSubEvents && (
-                  <div
-                    className="timeline-sub-events"
-                    style={{
-                      borderTop: '1px dashed var(--line)',
-                      margin: '6px 0 10px 0',
-                      paddingTop: '8px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px'
-                    }}
-                  >
+                  <div className="timeline-sub-events">
                     {group.events.map(ev => {
-                      let typeColor = 'var(--muted)';
-                      if (ev.type === 'fill') typeColor = 'var(--green)';
-                      if (ev.type === 'notification' && ev.status === 'failed') typeColor = 'var(--red)';
-
+                      const evType = ev.type === 'fill'
+                        ? 'green'
+                        : ev.type === 'notification' && ev.status === 'failed'
+                          ? 'red'
+                          : 'neutral';
                       return (
-                        <div
-                          key={ev.id}
-                          style={{
-                            display: 'flex',
-                            gap: '12px',
-                            fontSize: '12px',
-                            lineHeight: '1.4',
-                            padding: '4px 0'
-                          }}
-                        >
-                          <div style={{ color: 'var(--muted)', width: '130px', flexShrink: 0 }}>
+                        <div key={ev.id} className="timeline-event">
+                          <div className="timeline-event-time">
                             {new Date(ev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                           </div>
-                          
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: '500' }}>
-                              {renderActionTitle(ev.title)}
-                            </div>
-                            <div className="activity-detail" title={ev.detail} style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                          <div className="timeline-event-body">
+                            <div className="timeline-event-title">{renderActionTitle(ev.title)}</div>
+                            <div className="activity-detail timeline-event-detail" tabIndex={0} title={ev.detail}>
                               {ev.detail}
                             </div>
                           </div>
-
-                          <div style={{ flexShrink: 0, textTransform: 'capitalize', fontSize: '11px', color: typeColor, fontWeight: 'bold' }}>
-                            {ev.type}
-                          </div>
+                          <div className={`timeline-event-type type-${evType}`}>{ev.type}</div>
                         </div>
                       );
                     })}
@@ -1908,6 +1873,14 @@ function UnifiedActivityFeedPanel({
       )}
     </section>
   );
+}
+
+function activityStatusClass(status: string): string {
+  if (status === "filled") return "filled";
+  if (status === "blocked" || status === "rejected") return "blocked";
+  if (status === "approved") return "approved";
+  if (status === "pending_approval" || status === "pending") return "pending";
+  return "neutral";
 }
 
 function positionHeader(
@@ -1980,11 +1953,6 @@ function displayStatus(status: string): string {
   return status.toUpperCase();
 }
 
-function nextRunLabel(policy: TradingPolicy, nextRunAt?: string | null): string {
-  if (!policy.enabled || policy.killSwitch) return "-";
-  return nextRunAt ? new Date(nextRunAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "awaiting tick";
-}
-
 function formatSectorCaps(caps: Record<string, number>): string {
   return Object.entries(caps).map(([sector, cap]) => `${sector}:${cap}`).join(", ");
 }
@@ -2038,27 +2006,6 @@ function sentimentLabel(value: number) {
   const tone = value >= 60 ? "positive" : value <= 40 ? "negative" : "neutral";
   const label = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
   return <span className={`sentiment-chip sentiment-${tone}`}>{label} {value}</span>;
-}
-
-function TradeRow({
-  fill,
-  symbolMetaBySymbol
-}: {
-  fill: FillEvent;
-  symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
-}) {
-  return (
-    <div className="audit-row">
-      <span className="audit-time">{new Date(fill.filledAt).toLocaleString()}</span>
-      <strong title={companyTitle(fill.symbol, symbolMetaBySymbol)}>
-        {fill.source === "paper" ? "Paper " : ""}
-        <span className={fill.side === "buy" ? "text-green" : "text-red"}>{fill.side === "buy" ? "BUY" : "SELL"}</span> {fill.symbol}
-      </strong>
-      <span>
-        {formatShareQuantity(fill.quantity, fill.symbol)} shares @ {money(fill.price)} · {fill.status}
-      </span>
-    </div>
-  );
 }
 
 function renderActionTitle(title: string, hoverTitle?: string) {

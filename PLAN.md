@@ -16,7 +16,7 @@ filling the missing pieces.
 | 5 | Frontend refactor and charts | `docs/phase-5-dashboard-refactor.md` | Partially implemented; dashboard charts, market-scan columns, activity feed, and kill-switch confirmation are live |
 | 6 | Customization and notifications | `docs/phase-6-customization-risk-notifications.md` | Partially implemented; profiles, risk controls, and webhook settings exist; notification polish remains |
 | 7 | AI strategy learning loop | `docs/phase-7-strategy.md` | In progress; trade-thesis metadata, red-team debate hook, and learning-loop scaffolding exist |
-| 8 | Cockpit UI and Strategy Studio | `docs/phase-8-cockpit-ui.md` | Initial cockpit shell, tabs, Strategy Studio modal/tab, and strategy tuning proposal API are live |
+| 8 | Cockpit UI and Strategy Studio | `docs/phase-8-cockpit-ui.md` | Cockpit shell, tabs, Strategy Studio modal/tab, and strategy tuning proposal API are live; UI hardened 2026-06-16 (toast-stack alerts, modal/tab accessibility, inline-style→CSS-class refactor); strategy-tuning tests still pending |
 
 ## Build Order
 

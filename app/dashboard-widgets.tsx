@@ -2,7 +2,7 @@
 
 import { CheckCircle, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { formatNotificationDisplay, formatShareQuantity } from "@/lib/dashboard-ui";
+import { formatNotificationDisplay } from "@/lib/dashboard-ui";
 import type {
   EquityCurvePoint,
   EquityPosition,
@@ -15,9 +15,9 @@ import type { SymbolMeta } from "@/lib/dashboard-feed";
 
 export const ALLOC_COLORS = ["#245a9d", "#116b4b", "#7c5cbf", "#c27a1e", "#1e7ec2", "#8a5c3e", "#5c8a3e", "#9d4524"];
 
-export function Metric({ label, value, wrapValue, title }: { label: string; value: string; wrapValue?: boolean; title?: string }) {
+export function Metric({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className={`metric${wrapValue ? " metric-wrap-value" : ""}`}>
+    <div className="metric">
       <span>{label}</span>
       <strong title={title ?? value}>{value}</strong>
     </div>
