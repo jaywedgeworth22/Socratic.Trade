@@ -19,20 +19,19 @@ export function formatQuantity(value: number | undefined | null, symbol?: string
   const abs = Math.abs(value);
   if (abs === 0) return "0";
 
-  const isExtra = symbol ? ["NVDA", "INTC", "QCOM"].includes(symbol.trim().toUpperCase()) : false;
-
-  if (abs >= 10000) {
-    return value.toFixed(isExtra ? 1 : 0);
-  } else if (abs >= 1000) {
-    return value.toFixed(isExtra ? 2 : 1);
-  } else if (abs >= 10) {
-    return value.toFixed(isExtra ? 3 : 2);
-  } else {
-    const prec = value.toPrecision(isExtra ? 4 : 3);
-    if (prec.includes("e")) {
-      return Number(prec).toString();
-    }
-    return prec;
+  if (abs >= 1000) {
+    return Math.round(value).toString();
   }
+
+  // Under 1000 shares: 3 significant figures
+  // Using Number(...) removes trailing zeros like "10.0" -> "10"
+  let str = Number(value.toPrecision(3)).toString();
+  
+  // For extremely small numbers that use e-notation
+  if (str.includes("e")) {
+    str = Number(value.toPrecision(3)).toLocaleString("en-US", { maximumFractionDigits: 10, useGrouping: false });
+  }
+  
+  return str;
 }
 

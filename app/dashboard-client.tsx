@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, XCircle, Zap, Settings } from "lucide-react";
+import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, X, XCircle, Zap, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { cellTitle, companyTitle, enrichPositionsForDisplay, formatShareQuantity, quoteTitle, ratingTitle, scanQuoteAsOf, sentimentTitle } from "@/lib/dashboard-ui";
@@ -37,6 +37,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [showNotionalSettings, setShowNotionalSettings] = useState(false);
   const [tempMaxDailyNotional, setTempMaxDailyNotional] = useState(initialSnapshot.policy.maxDailyNotional);
   const [tempMaxDailyOrders, setTempMaxDailyOrders] = useState(initialSnapshot.policy.maxDailyOrders);
+  const [showKillSwitchConfirm, setShowKillSwitchConfirm] = useState(false);
 
   useEffect(() => {
     setSectorCapsDraft(formatSectorCaps(snapshot.policy.sectorCaps));
@@ -215,8 +216,8 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           <h1>Robinhood Agentic Dashboard</h1>
         </div>
         <div style={{display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px"}}>
-          <button className={`btn-primary ${policy.killSwitch ? "btn-danger" : ""}`} onClick={() => updatePolicy({ killSwitch: !policy.killSwitch })}>
-            <Pause size={18} />
+          <button className={policy.killSwitch ? "danger" : ""} onClick={() => setShowKillSwitchConfirm(true)}>
+            {policy.killSwitch ? <Play size={20} /> : <X size={20} />}
             Kill Switch
           </button>
         </div>
@@ -229,7 +230,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         <div className="daily-metrics panel" style={{display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: "12px", gridColumn: "span 4"}}>
           <Metric label="Daily Orders" value={`${dailyStats.orderCount} / ${policy.maxDailyOrders}`} />
           <Metric label="Daily $" value={`${Math.round(dailyStats.notional / policy.maxDailyNotional * 100)}%`} title={`${money(dailyStats.notional)} out of ${money(policy.maxDailyNotional).replace(/\.00$/, '')}`} />
-          <button className="icon-button" onClick={() => setShowNotionalSettings(true)} aria-label="Edit Notional Settings" style={{background:"none", border:"none", cursor:"pointer"}}>
+          <button className="icon-button" onClick={() => setShowNotionalSettings(true)} aria-label="Edit Notional Settings" style={{background:"none", border:"none", cursor:"pointer", color:"var(--text)", padding:"4px", display:"flex", alignItems:"center"}}>
             <Settings size={16} />
           </button>
         </div>
@@ -365,7 +366,6 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           activateProfile={activateProfile}
           createProfile={createProfile}
         />
-        <NotificationSettingsPanel policy={policy} updatePolicy={updatePolicy} />
       </section>
 
       <section className="panel">
@@ -404,7 +404,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       </section>
 
       <LatestDecision decision={snapshot.latestStrategyRun} symbolMetaBySymbol={symbolMetaBySymbol} />
-      <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
+      {snapshot.policy.strategyAuthority === "propose" && (
+        <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
+      )}
 
       <section className="columns">
         <PositionsTable positions={snapshot.positions} portfolio={snapshot.portfolio} symbolMetaBySymbol={symbolMetaBySymbol} />
@@ -412,6 +414,8 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           unifiedFeed={snapshot.unifiedFeed}
           configured={snapshot.notificationStatus.configured}
           symbolMetaBySymbol={symbolMetaBySymbol}
+          policy={snapshot.policy}
+          updatePolicy={updatePolicy}
         />
       </section>
 
@@ -431,6 +435,38 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             </div>
             <div className="alert-modal-actions">
               <button onClick={() => setAlertMessage(null)}>Dismiss</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showKillSwitchConfirm && (
+        <div className="alert-modal-overlay">
+          <div className="alert-modal" style={{ maxWidth: "420px" }}>
+            <div className={`alert-modal-header ${policy.killSwitch ? "success" : "warning"}`}>
+              <h3>{policy.killSwitch ? "Deactivate Kill Switch?" : "Activate Kill Switch?"}</h3>
+              <button className="close-btn" onClick={() => setShowKillSwitchConfirm(false)}>×</button>
+            </div>
+            <div className="alert-modal-body" style={{ textAlign: "left" }}>
+              <p style={{ marginBottom: "12px", color: "var(--text)" }}>
+                {policy.killSwitch
+                  ? "Are you sure you want to deactivate the Kill Switch? This will resume automated trading operations."
+                  : "Are you sure you want to activate the Kill Switch? This will immediately pause all automated trading runs and block any new order proposals."}
+              </p>
+            </div>
+            <div className="alert-modal-actions">
+              <button
+                className={policy.killSwitch ? "approve" : "danger"}
+                onClick={async () => {
+                  await updatePolicy({ killSwitch: !policy.killSwitch });
+                  setShowKillSwitchConfirm(false);
+                }}
+              >
+                Confirm
+              </button>
+              <button className="ghost" onClick={() => setShowKillSwitchConfirm(false)}>
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -461,9 +497,7 @@ function RiskPanel({
       </div>
       <div className="risk-inputs">
         <NumberField label="Max order ($)" value={policy.maxOrderNotional} onCommit={(value) => updatePolicy({ maxOrderNotional: value })} />
-        <NumberField label="Max daily ($)" value={policy.maxDailyNotional} onCommit={(value) => updatePolicy({ maxDailyNotional: value })} />
         <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(value) => updatePolicy({ maxSymbolExposurePct: value })} />
-        <NumberField label="Max orders/day" value={policy.maxDailyOrders} onCommit={(value) => updatePolicy({ maxDailyOrders: value })} />
       </div>
       <div className="risk-inputs">
         <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(value) => updatePolicy({ maxProposalsPerRun: value })} />
@@ -538,44 +572,6 @@ function ProfilePanel({
   );
 }
 
-function NotificationSettingsPanel({ policy, updatePolicy }: { policy: TradingPolicy; updatePolicy: (patch: PolicyPatch) => void }) {
-  function patchSettings(patch: Partial<NotificationSettings>) {
-    updatePolicy({ notificationSettings: { ...policy.notificationSettings, ...patch } });
-  }
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>Webhook Settings</h2>
-      </div>
-      <label>
-        Notifications Webhook
-        <input
-          value={policy.notificationSettings.webhookUrl ?? ""}
-          onChange={(event) => patchSettings({ webhookUrl: event.target.value })}
-          placeholder="https://..."
-        />
-      </label>
-      <div className="event-toggle-grid">
-        {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => (
-          <label key={eventType} className="inline-check">
-            <input
-              type="checkbox"
-              checked={policy.notificationSettings.enabledEvents.includes(eventType)}
-              onChange={(event) => {
-                const enabledEvents = event.target.checked
-                  ? Array.from(new Set([...policy.notificationSettings.enabledEvents, eventType]))
-                  : policy.notificationSettings.enabledEvents.filter((item) => item !== eventType);
-                patchSettings({ enabledEvents });
-              }}
-            />
-            {eventType.replace("_", " ")}
-          </label>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function LatestDecision({
   decision,
   symbolMetaBySymbol
@@ -583,6 +579,45 @@ function LatestDecision({
   decision?: DashboardSnapshot["latestStrategyRun"];
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
 }) {
+  const [showColumnSettings, setShowColumnSettings] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
+    symbol: true,
+    price: true,
+    bid: false,
+    ask: false,
+    intradayChangePct: true,
+    volume: true,
+    marketCap: true,
+    peRatio: true,
+    dividendYield: true,
+    eps: true,
+    sentiment: true,
+    analystScore: true,
+    sector: true,
+    score: true
+  });
+
+  const columnsList = [
+    { id: "symbol", label: "Symbol" },
+    { id: "price", label: "Price" },
+    { id: "bid", label: "Bid" },
+    { id: "ask", label: "Ask" },
+    { id: "intradayChangePct", label: "Change" },
+    { id: "volume", label: "VOL" },
+    { id: "marketCap", label: "Mkt Cap" },
+    { id: "peRatio", label: "P/E" },
+    { id: "dividendYield", label: "Div Yield" },
+    { id: "eps", label: "EPS" },
+    { id: "sentiment", label: "Sentiment" },
+    { id: "analystScore", label: "Rating" },
+    { id: "sector", label: "Sector" },
+    { id: "score", label: "Score" }
+  ];
+
+  const toggleColumn = (colId: string) => {
+    setVisibleColumns(prev => ({ ...prev, [colId]: !prev[colId] }));
+  };
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -596,16 +631,73 @@ function LatestDecision({
           {decision.marketScan ? (
             <div>
               <div className="scan-summary">
-                <div>
-                  <strong>Market Scan</strong>
-                  <span>
-                    {decision.marketScan.returnedQuotes} / {decision.marketScan.scannedSymbols} symbols from {decision.marketScan.source}
-                    {decision.marketScan.cached ? " · cached" : ""}
-                  </span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", flexWrap: "wrap", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                    <strong>Market Scan</strong>
+                    <span style={{ fontSize: "11px" }}>
+                      utilized information on {decision.marketScan.scannedSymbols} symbols sourced at {new Date(decision.marketScan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} from: {formatSources(decision.marketScan.source)}
+                      {decision.marketScan.cached ? " · cached" : ""}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setShowColumnSettings(!showColumnSettings)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: "4px",
+                      minHeight: "auto",
+                      color: "var(--muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}
+                    title="Configure Columns"
+                  >
+                    <Settings size={16} />
+                  </button>
                 </div>
-                {scanQuoteAsOf(decision.marketScan.topCandidates) ? <span>{scanQuoteAsOf(decision.marketScan.topCandidates)}</span> : null}
+                {showColumnSettings && (
+                  <div style={{
+                    borderTop: "1px solid var(--line)",
+                    paddingTop: "12px",
+                    marginTop: "4px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px"
+                  }}>
+                    <div style={{ fontSize: "12px", fontWeight: "600" }}>Market Scan Columns:</div>
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                      gap: "8px"
+                    }}>
+                      {columnsList.map(col => (
+                        <label 
+                          key={col.id} 
+                          style={{ 
+                            display: "flex", 
+                            alignItems: "center", 
+                            gap: "6px", 
+                            cursor: "pointer",
+                            fontSize: "11px",
+                            userSelect: "none"
+                          }}
+                        >
+                          <input 
+                            type="checkbox" 
+                            checked={visibleColumns[col.id] || false} 
+                            onChange={() => toggleColumn(col.id)}
+                            style={{ cursor: "pointer" }}
+                          />
+                          {col.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              <ScanTable candidates={decision.marketScan.topCandidates} />
+              <ScanTable candidates={decision.marketScan.topCandidates} visibleColumns={visibleColumns} />
             </div>
           ) : null}
           {decision.proposals.map((item, index) => (
@@ -725,11 +817,33 @@ function PositionsTable({
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
 }) {
   const [sort, setSort] = useState<{ col: keyof EnrichedPosition; dir: SortDir }>({ col: "marketValue", dir: "desc" });
+  const [widths, setWidths] = useState<Record<string, number>>({});
   const total = portfolio?.totalMarketValue ?? 0;
   const enriched = enrichPositionsForDisplay(positions, total);
   const sorted = [...enriched].sort((left, right) => compare(left[sort.col], right[sort.col], sort.dir));
+
+  const startResize = (col: string) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = e.currentTarget.parentElement?.getBoundingClientRect().width || 100;
+
+    const doDrag = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(40, startWidth + (moveEvent.clientX - startX));
+      setWidths((prev) => ({ ...prev, [col]: newWidth }));
+    };
+
+    const stopDrag = () => {
+      document.removeEventListener("mousemove", doDrag);
+      document.removeEventListener("mouseup", stopDrag);
+    };
+
+    document.addEventListener("mousemove", doDrag);
+    document.addEventListener("mouseup", stopDrag);
+  };
+
   return (
-    <section className="panel">
+    <section className="panel portfolio-table">
       <div className="panel-head">
         <h2>Positions</h2>
       </div>
@@ -739,13 +853,13 @@ function PositionsTable({
         <table>
           <thead>
             <tr>
-              {positionHeader("Symbol", "symbol", sort, setSort)}
-              {positionHeader("Qty", "quantity", sort, setSort)}
-              {positionHeader("Cost Basis", "costBasis", sort, setSort)}
-              {positionHeader("Mkt Value", "marketValue", sort, setSort)}
-              {positionHeader("P&L", "pnl", sort, setSort)}
-              {positionHeader("Return", "returnPct", sort, setSort)}
-              {positionHeader("Alloc", "allocPct", sort, setSort)}
+              {positionHeader("Symbol", "symbol", sort, setSort, widths.symbol, startResize("symbol"))}
+              {positionHeader("Qty", "quantity", sort, setSort, widths.quantity, startResize("quantity"))}
+              {positionHeader("Cost Basis", "costBasis", sort, setSort, widths.costBasis, startResize("costBasis"))}
+              {positionHeader("Mkt Value", "marketValue", sort, setSort, widths.marketValue, startResize("marketValue"))}
+              {positionHeader("P&L", "pnl", sort, setSort, widths.pnl, startResize("pnl"))}
+              {positionHeader("Return", "returnPct", sort, setSort, widths.returnPct, startResize("returnPct"))}
+              {positionHeader("Alloc", "allocPct", sort, setSort, widths.allocPct, startResize("allocPct"))}
             </tr>
           </thead>
           <tbody>
@@ -771,29 +885,72 @@ function PositionsTable({
   );
 }
 
-function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
+function ScanTable({ 
+  candidates,
+  visibleColumns = {
+    symbol: true,
+    price: true,
+    bid: false,
+    ask: false,
+    intradayChangePct: true,
+    volume: true,
+    marketCap: true,
+    peRatio: true,
+    dividendYield: true,
+    eps: true,
+    sentiment: true,
+    analystScore: true,
+    sector: true,
+    score: true
+  }
+}: { 
+  candidates: MarketQuote[];
+  visibleColumns?: Record<string, boolean>;
+}) {
   const [sort, setSort] = useState<{ col: keyof MarketQuote; dir: SortDir }>({ col: "score", dir: "desc" });
+  const [widths, setWidths] = useState<Record<string, number>>({});
   if (candidates.length === 0) return <p className="subtle">No scan candidates returned.</p>;
   const sorted = [...candidates].sort((left, right) => compare(left[sort.col], right[sort.col], sort.dir));
+
+  const startResize = (col: string) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = e.currentTarget.parentElement?.getBoundingClientRect().width || 100;
+
+    const doDrag = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(40, startWidth + (moveEvent.clientX - startX));
+      setWidths((prev) => ({ ...prev, [col]: newWidth }));
+    };
+
+    const stopDrag = () => {
+      document.removeEventListener("mousemove", doDrag);
+      document.removeEventListener("mouseup", stopDrag);
+    };
+
+    document.addEventListener("mousemove", doDrag);
+    document.addEventListener("mouseup", stopDrag);
+  };
+
   return (
     <div className="scan-candidates">
       <table>
         <thead>
           <tr>
-            {marketHeader("Symbol", "symbol", sort, setSort, "Sourced from Nasdaq Stock Screener API")}
-            {marketHeader("Price", "price", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes. Hover cells for quote time.")}
-            {marketHeader("Bid", "bid", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes. Hover cells for quote time.")}
-            {marketHeader("Ask", "ask", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes. Hover cells for quote time.")}
-            {marketHeader("Change", "intradayChangePct", sort, setSort, "Sourced from Nasdaq Stock Screener (intraday delay)")}
-            {marketHeader("Volume", "volume", sort, setSort, "Sourced from Nasdaq, Finnhub, or Yahoo Finance")}
-            {marketHeader("Mkt Cap", "marketCap", sort, setSort, "Market capitalization from Nasdaq Screener")}
-            {marketHeader("P/E", "peRatio", sort, setSort, "Price-to-earnings ratio from Finnhub, FMP, or Yahoo Finance")}
-            {marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % from Finnhub or Yahoo Finance")}
-            {marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) from Finnhub or Yahoo Finance")}
-            {marketHeader("Sentiment", "sentiment", sort, setSort, "Locally computed 0–100 score from recent Finnhub headlines using keyword-based sentiment scoring")}
-            {marketHeader("Rating", "analystScore", sort, setSort, "Blended analyst consensus (0–100) across Finnhub, FMP, and Yahoo Finance")}
-            {marketHeader("Sector", "sector", sort, setSort, "Sourced from Nasdaq Screener, Finnhub, or Yahoo Finance profile")}
-            {marketHeader("Score", "score", sort, setSort, "Calculated dynamically based on active scoring weights")}
+            {visibleColumns.symbol && marketHeader("Symbol", "symbol", sort, setSort, "Ticker symbol sourced from Nasdaq Stock Screener API", widths.symbol, startResize("symbol"))}
+            {visibleColumns.price && marketHeader("Price", "price", sort, setSort, "Current price sourced from Robinhood or Yahoo Finance quotes", widths.price, startResize("price"))}
+            {visibleColumns.bid && marketHeader("Bid", "bid", sort, setSort, "Bid price sourced from Robinhood or Yahoo Finance quotes", widths.bid, startResize("bid"))}
+            {visibleColumns.ask && marketHeader("Ask", "ask", sort, setSort, "Ask price sourced from Robinhood or Yahoo Finance quotes", widths.ask, startResize("ask"))}
+            {visibleColumns.intradayChangePct && marketHeader("Change", "intradayChangePct", sort, setSort, "Intraday price change % sourced from Nasdaq Stock Screener", widths.intradayChangePct, startResize("intradayChangePct"))}
+            {visibleColumns.volume && marketHeader("VOL", "volume", sort, setSort, "Volume sourced from Nasdaq, Finnhub, or Yahoo Finance", widths.volume, startResize("volume"))}
+            {visibleColumns.marketCap && marketHeader("Mkt Cap", "marketCap", sort, setSort, "Market capitalization sourced from Nasdaq Stock Screener", widths.marketCap, startResize("marketCap"))}
+            {visibleColumns.peRatio && marketHeader("P/E", "peRatio", sort, setSort, "Price-to-earnings ratio sourced from Finnhub, FMP, or Yahoo Finance", widths.peRatio, startResize("peRatio"))}
+            {visibleColumns.dividendYield && marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % sourced from Finnhub or Yahoo Finance", widths.dividendYield, startResize("dividendYield"))}
+            {visibleColumns.eps && marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) sourced from Finnhub or Yahoo Finance", widths.eps, startResize("eps"))}
+            {visibleColumns.sentiment && marketHeader("Sentiment", "sentiment", sort, setSort, "News sentiment score sourced from Finnhub news headlines", widths.sentiment, startResize("sentiment"))}
+            {visibleColumns.analystScore && marketHeader("Rating", "analystScore", sort, setSort, "Blended analyst rating consensus sourced from Finnhub, FMP, or Yahoo Finance", widths.analystScore, startResize("analystScore"))}
+            {visibleColumns.sector && marketHeader("Sector", "sector", sort, setSort, "Stock sector sourced from Nasdaq, Finnhub, or Yahoo Finance profile", widths.sector, startResize("sector"))}
+            {visibleColumns.score && marketHeader("Score", "score", sort, setSort, "Scoring rank calculated dynamically based on active policy weights", widths.score, startResize("score"))}
           </tr>
         </thead>
         <tbody>
@@ -807,20 +964,20 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
                 : "-";
             return (
               <tr key={candidate.symbol}>
-                <td title={candidate.companyName}><strong>{candidate.symbol}</strong></td>
-                <td title={quoteTitle("Quote", candidate)}>{money(candidate.price)}</td>
-                <td title={quoteTitle("Bid quote", candidate)}>{candidate.bid ? money(candidate.bid) : "-"}</td>
-                <td title={quoteTitle("Ask quote", candidate)}>{candidate.ask ? money(candidate.ask) : "-"}</td>
-                <td title="Intraday price change (Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
-                <td title={cellTitle("Daily trading volume", src.volume ?? candidate.provider)}>{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
-                <td title="Market capitalization (Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
-                <td title={cellTitle(peText === "n/a" ? "Price-to-Earnings: negative earnings, no meaningful ratio" : "Price-to-Earnings Ratio", src.peRatio)}>{peText}</td>
-                <td title={cellTitle("Annual Dividend Yield %", src.dividendYield)}>{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
-                <td title={cellTitle("Earnings Per Share (TTM)", src.eps)}>{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
-                <td title={sentimentTitle(candidate)}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
-                <td title={ratingTitle(candidate)}>{candidate.analystRating ? `${candidate.analystRating} ${candidate.analystScore ?? ""}`.trim() : "-"}</td>
-                <td title={cellTitle("Stock Sector", src.sector)}>{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
-                <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>
+                {visibleColumns.symbol && <td title={candidate.companyName}><strong>{candidate.symbol}</strong></td>}
+                {visibleColumns.price && <td title={quoteTitle("Quote", candidate)}>{money(candidate.price)}</td>}
+                {visibleColumns.bid && <td title={quoteTitle("Bid quote", candidate)}>{candidate.bid ? money(candidate.bid) : "-"}</td>}
+                {visibleColumns.ask && <td title={quoteTitle("Ask quote", candidate)}>{candidate.ask ? money(candidate.ask) : "-"}</td>}
+                {visibleColumns.intradayChangePct && <td title="Intraday price change (Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>}
+                {visibleColumns.volume && <td title={cellTitle("Daily trading volume", src.volume ?? candidate.provider)}>{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>}
+                {visibleColumns.marketCap && <td title="Market capitalization (Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>}
+                {visibleColumns.peRatio && <td title={cellTitle(peText === "n/a" ? "Price-to-Earnings: negative earnings, no meaningful ratio" : "Price-to-Earnings Ratio", src.peRatio)}>{peText}</td>}
+                {visibleColumns.dividendYield && <td title={cellTitle("Annual Dividend Yield %", src.dividendYield)}>{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>}
+                {visibleColumns.eps && <td title={cellTitle("Earnings Per Share (TTM)", src.eps)}>{typeof candidate.eps === "number" ? (candidate.eps >= 0 ? `$${candidate.eps.toFixed(2)}` : `($${Math.abs(candidate.eps).toFixed(2)})`) : "-"}</td>}
+                {visibleColumns.sentiment && <td title={sentimentTitle(candidate)}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>}
+                {visibleColumns.analystScore && <td title={ratingTitle(candidate)}>{candidate.analystRating ? `${candidate.analystScore ?? ""} ${candidate.analystRating}`.trim() : "-"}</td>}
+                {visibleColumns.sector && <td title={cellTitle("Stock Sector", src.sector)}>{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>}
+                {visibleColumns.score && <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>}
               </tr>
             );
           })}
@@ -833,21 +990,32 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
 function UnifiedActivityFeedPanel({
   unifiedFeed,
   configured,
-  symbolMetaBySymbol
+  symbolMetaBySymbol,
+  policy,
+  updatePolicy
 }: {
   unifiedFeed: UnifiedActivityGroup[];
   configured: boolean;
   symbolMetaBySymbol: Record<string, DashboardSnapshot["symbolMetaBySymbol"][string]>;
+  policy: TradingPolicy;
+  updatePolicy: (patch: PolicyPatch) => void;
 }) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [modeFilter, setModeFilter] = useState<"all" | "live" | "paper">("all");
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [showSettings, setShowSettings] = useState(false);
+
+  function patchSettings(patch: Partial<NotificationSettings>) {
+    updatePolicy({ notificationSettings: { ...policy.notificationSettings, ...patch } });
+  }
+
 
   const allTags = [
     "policy change",
     "trade",
     "buy",
     "sell",
+    "post mortem",
     "notification sent",
     "notification failed",
     "notification disabled"
@@ -865,32 +1033,14 @@ function UnifiedActivityFeedPanel({
 
   const filteredItems = unifiedFeed.filter(item => {
     // 1. Live vs Paper filter
-    const isItemPaper = item.title.startsWith("Paper ") || item.events.some(ev => ev.title.startsWith("Paper "));
+    const isItemPaper = item.tags.includes("paper");
     if (modeFilter === "paper" && !isItemPaper) return false;
     if (modeFilter === "live" && isItemPaper) return false;
 
-    // 2. Category-Based Multi-Tag filtering
+    // 2. Tag filtering — show items that have ANY of the selected tags (OR logic)
     if (selectedTags.length > 0) {
-      // Side Category
-      const activeSideTags = selectedTags.filter(t => ["buy", "sell"].includes(t));
-      if (activeSideTags.length > 0) {
-        const hasMatch = item.tags.some(t => activeSideTags.includes(t));
-        if (!hasMatch) return false;
-      }
-
-      // Type Category
-      const activeTypeTags = selectedTags.filter(t => ["trade", "policy change"].includes(t));
-      if (activeTypeTags.length > 0) {
-        const hasMatch = item.tags.some(t => activeTypeTags.includes(t));
-        if (!hasMatch) return false;
-      }
-
-      // Notification Category
-      const activeNotifTags = selectedTags.filter(t => ["notification sent", "notification failed", "notification disabled"].includes(t));
-      if (activeNotifTags.length > 0) {
-        const hasMatch = item.tags.some(t => activeNotifTags.includes(t));
-        if (!hasMatch) return false;
-      }
+      const hasAnySelectedTag = item.tags.some(t => selectedTags.includes(t));
+      if (!hasAnySelectedTag) return false;
     }
 
     return true;
@@ -903,10 +1053,57 @@ function UnifiedActivityFeedPanel({
           <h2>Activity Feed</h2>
           <p className="subtle" style={{ margin: 0, fontSize: '12px' }}>Consolidated trading log, audit events, and notifications</p>
         </div>
-        <span className={`status-badge ${configured ? "status-completed" : "status-running"}`}>
-          {configured ? "Notifications Webhook Configured" : "Notifications Webhook Not Configured"}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span className={`status-badge ${configured ? "status-completed" : "status-running"}`}>
+            {configured ? "Notifications Webhook Configured" : "Notifications Webhook Not Configured"}
+          </span>
+          <button className="icon-button" onClick={() => setShowSettings(true)} aria-label="Webhook Settings" style={{background:"none", border:"none", cursor:"pointer", color:"var(--text)", padding:"4px", display:"flex", alignItems:"center"}}>
+            <Settings size={16} />
+          </button>
+        </div>
       </div>
+
+      {showSettings && (
+        <div className="alert-modal-overlay">
+          <div className="alert-modal" style={{ maxWidth: '500px' }}>
+            <div className="alert-modal-header">
+              <h3>Webhook Settings</h3>
+              <button className="close-btn" onClick={() => setShowSettings(false)}>×</button>
+            </div>
+            <div className="alert-modal-body" style={{ textAlign: 'left' }}>
+              <label>
+                Notifications Webhook
+                <input
+                  value={policy.notificationSettings.webhookUrl ?? ""}
+                  onChange={(event) => patchSettings({ webhookUrl: event.target.value })}
+                  placeholder="https://..."
+                  style={{ width: '100%', marginBottom: '16px' }}
+                />
+              </label>
+              <div className="event-toggle-grid">
+                {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => (
+                  <label key={eventType} className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={policy.notificationSettings.enabledEvents.includes(eventType)}
+                      onChange={(event) => {
+                        const enabledEvents = event.target.checked
+                          ? Array.from(new Set([...policy.notificationSettings.enabledEvents, eventType]))
+                          : policy.notificationSettings.enabledEvents.filter((item) => item !== eventType);
+                        patchSettings({ enabledEvents });
+                      }}
+                    />
+                    {eventType.replace("_", " ")}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="alert-modal-actions">
+              <button onClick={() => setShowSettings(false)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="filter-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '12px 0', borderBottom: '1px solid var(--line)', alignItems: 'center' }}>
         <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--muted)', display: 'flex', alignItems: 'center', marginRight: '4px' }}>Mode:</span>
@@ -946,8 +1143,8 @@ function UnifiedActivityFeedPanel({
               className="tag-pill"
               style={{
                 background: active ? 'var(--text)' : 'transparent',
-                color: active ? 'white' : 'var(--text)',
-                border: '1px solid var(--line)',
+                color: active ? 'var(--bg, #fff)' : 'var(--muted)',
+                border: active ? '1px solid var(--text)' : '1px solid var(--line)',
                 borderRadius: '16px',
                 padding: '4px 10px',
                 fontSize: '12px',
@@ -956,7 +1153,9 @@ function UnifiedActivityFeedPanel({
                 display: 'inline-flex',
                 alignItems: 'center',
                 textTransform: 'capitalize',
-                transition: 'all 0.15s ease'
+                transition: 'all 0.15s ease',
+                fontWeight: active ? '600' : '400',
+                opacity: active ? 1 : 0.7
               }}
             >
               {tag}
@@ -1034,7 +1233,7 @@ function UnifiedActivityFeedPanel({
                       {renderActionTitle(group.title)}
                     </div>
                     
-                    <div style={{ fontSize: '13px', color: 'var(--text)' }}>
+                    <div className="activity-detail" title={group.detail} style={{ fontSize: '13px', color: 'var(--text)' }}>
                       {group.detail}
                     </div>
 
@@ -1131,7 +1330,7 @@ function UnifiedActivityFeedPanel({
                             <div style={{ fontWeight: '500' }}>
                               {renderActionTitle(ev.title)}
                             </div>
-                            <div style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                            <div className="activity-detail" title={ev.detail} style={{ color: 'var(--muted)', fontSize: '11px' }}>
                               {ev.detail}
                             </div>
                           </div>
@@ -1157,9 +1356,11 @@ function positionHeader(
   label: string,
   col: keyof EnrichedPosition,
   sort: { col: keyof EnrichedPosition; dir: SortDir },
-  setSort: (sort: { col: keyof EnrichedPosition; dir: SortDir }) => void
+  setSort: (sort: { col: keyof EnrichedPosition; dir: SortDir }) => void,
+  width?: number,
+  onResizeStart?: (e: React.MouseEvent) => void
 ) {
-  return sortableHeader(label, col, sort, setSort);
+  return sortableHeader(label, col, sort, setSort, undefined, width, onResizeStart);
 }
 
 function marketHeader(
@@ -1167,9 +1368,11 @@ function marketHeader(
   col: keyof MarketQuote,
   sort: { col: keyof MarketQuote; dir: SortDir },
   setSort: (sort: { col: keyof MarketQuote; dir: SortDir }) => void,
-  title?: string
+  title?: string,
+  width?: number,
+  onResizeStart?: (e: React.MouseEvent) => void
 ) {
-  return sortableHeader(label, col, sort, setSort, title);
+  return sortableHeader(label, col, sort, setSort, title, width, onResizeStart);
 }
 
 function sortableHeader<T extends string>(
@@ -1177,7 +1380,9 @@ function sortableHeader<T extends string>(
   col: T,
   sort: { col: T; dir: SortDir },
   setSort: (sort: { col: T; dir: SortDir }) => void,
-  title?: string
+  title?: string,
+  width?: number,
+  onResizeStart?: (e: React.MouseEvent) => void
 ) {
   const active = sort.col === col;
   return (
@@ -1186,8 +1391,16 @@ function sortableHeader<T extends string>(
       className="sortable-th"
       onClick={() => setSort({ col, dir: active && sort.dir === "desc" ? "asc" : "desc" })}
       title={title}
+      style={width ? { width: `${width}px` } : undefined}
     >
-      {label}{active ? (sort.dir === "asc" ? " ▲" : " ▼") : " ⇅"}
+      {label} <span className="sort-arrow">{active ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+      {onResizeStart && (
+        <div
+          className="resize-handle"
+          onMouseDown={onResizeStart}
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
     </th>
   );
 }
@@ -1239,6 +1452,28 @@ function factorTitle(candidate: MarketQuote): string {
     .filter(([key]) => key !== "weightedTotal")
     .map(([key, value]) => `${key}: ${Number(value).toFixed(1)}`);
   return entries.join(" | ");
+}
+
+function formatSources(sourceString: string): string {
+  if (!sourceString) return "";
+  const parts = sourceString.split("+");
+  const mapped = parts.map(part => {
+    switch (part.trim().toLowerCase()) {
+      case "nasdaq-delayed-screener":
+        return "NASDAQ Delayed Screener";
+      case "finnhub":
+        return "Finnhub";
+      case "yahoo-finance":
+        return "Yahoo Finance";
+      case "fmp":
+        return "FMP";
+      case "alpha-vantage":
+        return "Alpha Vantage";
+      default:
+        return part.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+  });
+  return mapped.join(", ");
 }
 
 function sentimentLabel(value: number): string {

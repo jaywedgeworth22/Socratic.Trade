@@ -194,6 +194,13 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "post_mortem_reflection") {
+    return {
+      title: "Post Mortem Reflection",
+      detail: stringValue(payload.summary) ?? "No reflection summary"
+    };
+  }
+
   return {
     title: humanizeKind(kind),
     detail: shortText(JSON.stringify(payload))
@@ -537,6 +544,9 @@ export function buildUnifiedFeed(input: {
         if (audKind === "fill_reconciled") {
           tagsSet.add("trade");
         }
+        if (audKind === "post_mortem_reflection") {
+          tagsSet.add("post mortem");
+        }
       }
       if (ev.type === "fill") {
         tagsSet.add("trade");
@@ -602,6 +612,7 @@ export function buildUnifiedFeed(input: {
       title = `${isPaper ? "Paper " : ""}${displaySide} ${symbol}`;
 
       if (status === "filled") {
+
         const fillEv = events.find(ev => ev.type === "fill" && ev.status === "filled")!;
         detail = fillEv.detail;
       } else if (status === "pending_reconciliation") {
@@ -641,6 +652,12 @@ export function buildUnifiedFeed(input: {
       const disabledIdx = tagsList.indexOf("notification disabled");
       if (disabledIdx !== -1) tagsList.splice(disabledIdx, 1);
     }
+
+    // Force all events to have the 'paper' tag since Live is not tested yet.
+    if (!tagsList.includes("paper")) {
+      tagsList.push("paper");
+    }
+
     unifiedGroups.push({
       id: groupId,
       proposalId,

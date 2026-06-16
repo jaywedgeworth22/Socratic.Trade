@@ -142,32 +142,32 @@ export function getPaperPortfolioProjection(input: {
     if (fill.quantity <= 0 || fill.price <= 0) continue;
     const symbol = normalizeSymbol(fill.symbol);
     const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
-    if (fill.side === "buy") {
-      // SHORT_SELLING TODO: "cover" also opens a lot (buying back to close a short).
-      // When enabled, treat cover like buy for FIFO lot creation.
-      // A "short" fill should open a *short lot* (negative position) — consider
-      // a separate short-lots map or a signed-quantity approach.
+    if (fill.side === "buy" || fill.side === "short") {
+      const isShort = fill.side === "short";
+      const quantityChange = isShort ? -fill.quantity : fill.quantity;
       const fillCost = fill.quantity * fill.price;
-      const currentCost = current.averageCost * current.quantity;
-      const nextQuantity = current.quantity + fill.quantity;
-      const nextAverageCost = nextQuantity > 0 ? (currentCost + fillCost) / nextQuantity : fill.price;
+      const currentCost = current.averageCost * Math.abs(current.quantity);
+      const nextQuantity = current.quantity + quantityChange;
+      const nextAbsQuantity = Math.abs(nextQuantity);
+      
+      const nextAverageCost = nextAbsQuantity > 0 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
       positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
-      cash -= fillCost;
+      cash += isShort ? fillCost : -fillCost;
     } else {
-      // Currently handles "sell". SHORT_SELLING TODO: "short" opens a new
-      // short position (not a close of a long). When enabled, route "short"
-      // fills to a short-lot map instead of matching against long lots.
-      const soldQuantity = Math.min(current.quantity, fill.quantity);
-      const nextQuantity = Math.max(0, current.quantity - soldQuantity);
-      if (nextQuantity <= 0.000001) positions.delete(symbol);
+      const isCover = fill.side === "cover";
+      const matchedQuantity = Math.min(Math.abs(current.quantity), fill.quantity);
+      const quantityChange = isCover ? matchedQuantity : -matchedQuantity;
+      const nextQuantity = current.quantity + quantityChange;
+      
+      if (Math.abs(nextQuantity) <= 0.000001) positions.delete(symbol);
       else positions.set(symbol, { ...current, quantity: nextQuantity });
-      cash += soldQuantity * fill.price;
+      cash += isCover ? -matchedQuantity * fill.price : matchedQuantity * fill.price;
     }
   }
 
   // Mark open positions to live prices (fall back to average cost when a price is missing).
   const projectedPositions = Array.from(positions.values())
-    .filter((position) => position.quantity > 0.000001)
+    .filter((position) => Math.abs(position.quantity) > 0.000001)
     .map((position) => {
       const mark = prices[normalizeSymbol(position.symbol)] ?? position.averageCost;
       return { ...position, marketValue: position.quantity * mark };
@@ -189,7 +189,7 @@ export function getPaperPortfolioProjection(input: {
 }
 
 export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, number> = {}): PnlResult {
-  const lots = new Map<string, Array<{ quantity: number; price: number; runId?: string }>>();
+  const lots = new Map<string, Array<{ quantity: number; price: number; runId?: string; side: "long" | "short" }>>();
   const closedLots: ClosedLot[] = [];
   const attribution = new Map<string, RunAttribution>();
   let realized = 0;
@@ -198,23 +198,25 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     const symbol = normalizeSymbol(fill.symbol);
     if (!lots.has(symbol)) lots.set(symbol, []);
 
-    if (fill.side === "buy") {
-      // SHORT_SELLING TODO: "cover" also adds quantity (buying back a short).
-      // When enabled, close the short position and realize P&L.
-      lots.get(symbol)!.push({ quantity: fill.quantity, price: fill.price, runId: fill.runId });
+    if (fill.side === "buy" || fill.side === "short") {
+      lots.get(symbol)!.push({ quantity: fill.quantity, price: fill.price, runId: fill.runId, side: fill.side === "buy" ? "long" : "short" });
       addAttribution(attribution, fill, 0);
       continue;
     }
 
-    // Currently handles "sell". SHORT_SELLING TODO: A "short" fill should
-    // open a short lot (short sell proceeds = fill.price × fill.quantity).
-    // P&L on a short is realized when covering: (shortPrice - coverPrice) × qty.
     let remaining = fill.quantity;
     while (remaining > 0 && lots.get(symbol)!.length > 0) {
       const lot = lots.get(symbol)![0];
       const matched = Math.min(remaining, lot.quantity);
-      const pnl = matched * (fill.price - lot.price);
-      const returnPct = lot.price > 0 ? ((fill.price - lot.price) / lot.price) * 100 : 0;
+      let pnl = 0;
+      let returnPct = 0;
+      if (fill.side === "sell" && lot.side === "long") {
+        pnl = matched * (fill.price - lot.price);
+        returnPct = lot.price > 0 ? ((fill.price - lot.price) / lot.price) * 100 : 0;
+      } else if (fill.side === "cover" && lot.side === "short") {
+        pnl = matched * (lot.price - fill.price);
+        returnPct = lot.price > 0 ? ((lot.price - fill.price) / lot.price) * 100 : 0;
+      }
       realized += pnl;
       closedLots.push({ pnl, returnPct });
       addAttribution(attribution, fill, pnl);
@@ -228,7 +230,13 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
   for (const [symbol, symbolLots] of lots) {
     const current = currentPrices[symbol];
     if (!current) continue;
-    for (const lot of symbolLots) unrealized += lot.quantity * (current - lot.price);
+    for (const lot of symbolLots) {
+      if (lot.side === "long") {
+        unrealized += lot.quantity * (current - lot.price);
+      } else {
+        unrealized += lot.quantity * (lot.price - current);
+      }
+    }
   }
 
   return {

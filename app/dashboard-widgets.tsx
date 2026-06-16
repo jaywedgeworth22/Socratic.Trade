@@ -299,17 +299,21 @@ function labelize(value: string): string {
 
 export function money(value?: number) {
   if (typeof value !== "number") return "$0.00";
+  if (value < 0) {
+    const formattedAbs = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(value));
+    return `(${formattedAbs})`;
+  }
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
 export function signedMoney(value?: number) {
-  const amount = money(value ?? 0);
-  return (value ?? 0) >= 0 ? `+${amount}` : amount;
+  if (value === undefined) return "$0.00";
+  return value >= 0 ? `+${money(value)}` : money(value);
 }
 
 export function formatPct(value?: number) {
   if (typeof value !== "number") return "0.00%";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  return value >= 0 ? `+${value.toFixed(2)}%` : `(${Math.abs(value).toFixed(2)}%)`;
 }
 
 export function compactNum(value: number): string {
@@ -321,6 +325,9 @@ export function compactNum(value: number): string {
 
 
 export function compactMoney(value: number): string {
+  if (value < 0) {
+    return `(${compactMoney(Math.abs(value))})`;
+  }
   if (value >= 1_000_000_000_000) return `$${(value / 1_000_000_000_000).toFixed(1)}T`;
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;

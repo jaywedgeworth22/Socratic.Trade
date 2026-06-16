@@ -130,13 +130,14 @@ export interface TradeProposal {
   rationale: string;
   tradeThesisTag: string;
   entryMarketRegime: string;
+  confidenceScore?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName",
+    "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades",
     string
   >
 >;
@@ -181,6 +182,10 @@ export interface MarketQuote {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   insiderSentiment?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+  senateTrades?: number; // Net aggregate value or count
   sources?: EnrichmentSources;
 }
 
@@ -227,6 +232,10 @@ export interface MarketQuoteSummary {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   insiderSentiment?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+  senateTrades?: number;
   sources?: EnrichmentSources;
 }
 
@@ -289,6 +298,32 @@ export interface PendingProposal {
   proposal: TradeProposal;
   decision: PolicyDecision;
   review?: ReviewedOrder;
+}
+
+export interface StrategyOutcome {
+  proposalId?: string;
+  runId?: string;
+  accountNumber: string;
+  source: "paper" | "live";
+  symbol: string;
+  side: "buy" | "sell" | "short" | "cover";
+  rationale: string;
+  entryPrice?: number;
+  entryAt?: string;
+  exitPrice?: number;
+  exitAt?: string;
+  currentPrice?: number;
+  realizedPnl?: number;
+  unrealizedPnl?: number;
+  returnPct?: number;
+  holdingDays?: number;
+  sector?: string;
+  tradeThesisTag?: string; // e.g., Mean Reversion, Breakout, Value
+  riskExit?: "stop_loss" | "take_profit" | "trailing_stop";
+  entryMarketRegime?: any; // Snapshot of SPY, QQQ, VIX at entry
+  exitMarketRegime?: any; // Snapshot of SPY, QQQ, VIX at exit
+  mae?: number; // Maximum Adverse Excursion during holding
+  mfe?: number; // Maximum Favorable Excursion during holding
 }
 
 export interface StrategyProfile {

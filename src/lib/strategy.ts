@@ -22,6 +22,7 @@ import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
 import { generateReflectionSummary } from "./post-mortem";
 import { getSetting } from "./db";
+import { debateProposal } from "./red-team";
 import type { EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 export interface StrategyResult {
@@ -76,19 +77,38 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
 
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
 
+    const llmProposals = await proposeTrades({
+      policyAllowlist: allowedSymbols,
+      prompt: getStrategyPrompt(),
+      policy,
+      portfolio: workingPortfolio,
+      positions: workingPositions,
+      recentOrders: orders.slice(0, 20),
+      marketScan,
+      dailyNotionalUsed: daily.notional,
+      dailyOrderCount: daily.orderCount
+    });
+
+    const debatedProposals: TradeProposal[] = [];
+    for (const proposal of llmProposals) {
+      if ((proposal.confidenceScore ?? 0) >= 80) { // High conviction threshold
+        const isBullish = proposal.side === "buy" || proposal.side === "cover";
+        const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
+        const redTeamResult = await debateProposal(proposal, quote, isBullish);
+        if (redTeamResult.rejected) {
+          console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
+          // Skip this proposal completely, as the Red Team found a critical flaw
+          continue;
+        } else {
+          proposal.rationale += `\n\nRed Team Debate Survived: ${redTeamResult.reason}`;
+        }
+      }
+      debatedProposals.push(proposal);
+    }
+
     const proposals = [
       ...proactiveProposals,
-      ...(await proposeTrades({
-        policyAllowlist: allowedSymbols,
-        prompt: getStrategyPrompt(),
-        policy,
-        portfolio: workingPortfolio,
-        positions: workingPositions,
-        recentOrders: orders.slice(0, 20),
-        marketScan,
-        dailyNotionalUsed: daily.notional,
-        dailyOrderCount: daily.orderCount
-      }))
+      ...debatedProposals
     ];
 
     const results: StrategyResult["proposals"] = [];
@@ -527,7 +547,10 @@ async function proposeTrades(input: {
             "stopPrice",
             "timeInForce",
             "marketHours",
-            "rationale"
+            "rationale",
+            "tradeThesisTag",
+            "entryMarketRegime",
+            "confidenceScore"
           ],
           properties: {
             symbol: { type: "string" },
@@ -541,7 +564,10 @@ async function proposeTrades(input: {
             stopPrice: { type: ["number", "null"] },
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
-            rationale: { type: "string" }
+            rationale: { type: "string" },
+            tradeThesisTag: { type: "string" },
+            entryMarketRegime: { type: "string" },
+            confidenceScore: { type: "number", description: "Conviction score from 1 to 100" }
           }
         }
       }

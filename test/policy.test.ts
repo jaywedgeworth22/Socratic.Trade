@@ -66,7 +66,7 @@ describe("evaluateTradeProposal", () => {
   it("blocks orders over max notional", () => {
     const decision = evaluateTradeProposal({ ...proposal, dollarAmount: 1200 }, context(1200));
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("exceeds the maximum cumulative daily order limit");
+    expect(decision.reasons.join(" ")).toContain("exceeds the maximum order limit");
   });
 
   it("blocks daily notional overflow", () => {
@@ -103,11 +103,11 @@ describe("evaluateTradeProposal", () => {
   });
 
   it("blocks adding to positions past stop-loss or take-profit rules", () => {
-    const stopLoss = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, {
+    const stopLoss = evaluateTradeProposal({ ...proposal, symbol: "AAPL", limitPrice: 150 }, {
       ...context(),
       positions: [{ symbol: "AAPL", quantity: 5, averageCost: 250, marketValue: 1000, sector: "Technology" }]
     });
-    const takeProfit = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, {
+    const takeProfit = evaluateTradeProposal({ ...proposal, symbol: "AAPL", limitPrice: 150 }, {
       ...context(),
       positions: [{ symbol: "AAPL", quantity: 5, averageCost: 100, marketValue: 1500, sector: "Technology" }]
     });

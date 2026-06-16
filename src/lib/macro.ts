@@ -6,6 +6,7 @@ export interface MacroData {
   m2MoneySupply: string;
   housingStarts: string;
   consumerSentiment: string;
+  vix: string;
   asOf: string;
 }
 
@@ -17,6 +18,7 @@ const DEFAULT_MACRO: MacroData = {
   m2MoneySupply: "20.8T",
   housingStarts: "1.3M",
   consumerSentiment: "75.0",
+  vix: "15.00",
   asOf: new Date().toISOString().split("T")[0]
 };
 
@@ -39,14 +41,15 @@ export async function fetchMacroData(): Promise<MacroData> {
   }
 
   try {
-    const [fedFunds, dgs10, cpi, unemployment, m2, houst, umcsent] = await Promise.all([
+    const [fedFunds, dgs10, cpi, unemployment, m2, houst, umcsent, vix] = await Promise.all([
       fetchFredSeries("FEDFUNDS", apiKey),
       fetchFredSeries("DGS10", apiKey),
       fetchFredSeries("CPIAUCSL", apiKey),
       fetchFredSeries("UNRATE", apiKey),
       fetchFredSeries("M2SL", apiKey),
       fetchFredSeries("HOUST", apiKey),
-      fetchFredSeries("UMCSENT", apiKey)
+      fetchFredSeries("UMCSENT", apiKey),
+      fetchFredSeries("VIXCLS", apiKey)
     ]);
 
     const data: MacroData = {
@@ -57,6 +60,7 @@ export async function fetchMacroData(): Promise<MacroData> {
       m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : DEFAULT_MACRO.m2MoneySupply,
       housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : DEFAULT_MACRO.housingStarts,
       consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : DEFAULT_MACRO.consumerSentiment,
+      vix: vix ? `${Number(vix).toFixed(2)}` : DEFAULT_MACRO.vix,
       asOf: new Date().toISOString().split("T")[0]
     };
 

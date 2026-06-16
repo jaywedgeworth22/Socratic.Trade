@@ -15,6 +15,38 @@ the hard way.
   commit message — don't silently delete+replace without a paper trail (this
   has happened: `docs/phase-7-strategy-learning-loop.md` was fully replaced by
   `docs/phase-7-strategy.md` with a different design, no commit explained it).
+- Read `STATUS.md` for the current repo snapshot, then skim the most relevant
+  `docs/*.md` and the latest matching note under `docs/rollouts/` before making
+  a non-trivial change.
+
+## Documentation workflow
+
+- `AGENTS.md` is for durable repo rules and cross-file traps only. Do not put
+  turn-specific status or a running changelog here.
+- `STATUS.md` is the current snapshot. Update it when the project's active
+  focus, risks, verification state, or next steps materially change.
+- `docs/*.md` are design docs. Use them for architecture, invariants, tradeoffs,
+  and implementation sequencing for a feature area or phase.
+- `docs/rollouts/YYYY-MM-DD-short-slug.md` are chronological handoff notes.
+  Add or update one when a non-trivial change lands, a design direction shifts,
+  or important verification/blockers need to be preserved for the next tool.
+- `PLAN.md` remains the high-level roadmap. Do not use it as a substitute for
+  rollout notes or current status.
+- If you replace an existing design doc, call that out explicitly in both the
+  commit message and the relevant rollout note.
+- Prefer short factual notes with exact file paths, exact commands, and explicit
+  follow-ups over long narrative summaries.
+- Separate pre-existing failures from failures introduced by your change.
+
+## Rollout note minimums
+
+- Summary: what changed.
+- Why: why it changed or what decision was made.
+- Files: exact touched paths.
+- Verification: exact commands actually run, plus notable failures if any.
+- Follow-ups: remaining work, risks, or deferred items.
+- If no code changed but an important decision or blocker was discovered, write
+  the note anyway and say that explicitly.
 
 ## Verify before claiming done
 
@@ -29,6 +61,11 @@ npm run build      # full Next.js build; also re-checks types
 `npm run build` deletes and regenerates `.next/`. If a dev server is running
 (via Claude Code's preview tool or otherwise), it will start erroring with
 `ENOENT .next/server/...` afterward — restart it.
+
+Because `tsconfig.json` includes `.next/types/**/*.ts`, `npx tsc --noEmit` can
+also fail when those generated files are missing or stale. If that happens,
+capture the exact missing-path error in your rollout note and treat a fresh
+`npm run build` as the authoritative regeneration step before re-checking.
 
 If `npx tsc --noEmit` reports errors in `test/alternative-data.test.ts` around
 a `mockFetcher`/`URL | RequestInfo` type mismatch — that's pre-existing and
