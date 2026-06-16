@@ -337,6 +337,39 @@ export interface StrategyProfile {
   updatedAt: string;
 }
 
+export interface StrategyTuningPatch {
+  prompt?: string;
+  scoringWeights?: Partial<ScoringWeights>;
+  policy?: Partial<
+    Pick<
+      TradingPolicy,
+      | "maxOrderNotional"
+      | "maxDailyNotional"
+      | "maxSymbolExposurePct"
+      | "maxDailyOrders"
+      | "maxProposalsPerRun"
+      | "runCadenceMinutes"
+      | "universe"
+      | "strategyAuthority"
+      | "runDuringExtendedHours"
+    >
+  > & {
+    riskRules?: Partial<RiskRules>;
+    sectorCaps?: Record<string, number>;
+  };
+}
+
+export interface StrategyTuningProposal {
+  summary: string;
+  rationale: string;
+  marketContext: string;
+  performanceReadout: string;
+  proposedPatch: StrategyTuningPatch;
+  cautions: string[];
+  confidenceScore: number;
+  generatedBy: "llm" | "local_rules";
+}
+
 export interface PortfolioSnapshot {
   id: string;
   runId?: string;
