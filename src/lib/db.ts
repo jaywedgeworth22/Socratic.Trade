@@ -127,6 +127,19 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_account ON portfolio_snapshots (account_number, created_at);
     CREATE INDEX IF NOT EXISTS idx_fill_events_account ON fill_events (account_number, filled_at);
     CREATE INDEX IF NOT EXISTS idx_notification_events_created ON notification_events (created_at);
+
+    -- Multi-user API key storage (scaffolding for future multi-user support)
+    CREATE TABLE IF NOT EXISTS user_api_keys (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      service TEXT NOT NULL,
+      api_key TEXT NOT NULL,
+      label TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, service)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys (user_id);
   `);
 
   const columns = database.prepare("PRAGMA table_info(trade_proposals)").all() as Array<{ name: string }>;
@@ -354,12 +367,14 @@ export function dailyExecutionStats(accountNumber: string, now = new Date()): { 
 
   return rows.reduce(
     (acc, row) => {
-      const proposal = JSON.parse(row.proposal) as { dollarAmount?: number; quantity?: number; limitPrice?: number };
+      const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
+      const isBuy = proposal.side === "buy";
       // Prefer the persisted estimated_notional; fall back to proposal fields for old rows.
-      const notional =
-        row.estimated_notional != null
-          ? row.estimated_notional
-          : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0));
+      const notional = isBuy
+        ? (row.estimated_notional != null
+            ? row.estimated_notional
+            : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
+        : 0;
       return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
     },
     { orderCount: 0, notional: 0 }
@@ -655,6 +670,42 @@ export function listFillEvents(accountNumber: string, source?: FillSource, limit
   return rows.map(toFillEvent);
 }
 
+export function updateFillEvent(id: string, patch: Partial<FillEvent>): void {
+  const database = getDb();
+  const sets: string[] = [];
+  const args: unknown[] = [];
+
+  if (patch.status !== undefined) {
+    sets.push("status = ?");
+    args.push(patch.status);
+  }
+  if (patch.price !== undefined) {
+    sets.push("price = ?");
+    args.push(patch.price);
+  }
+  if (patch.quantity !== undefined) {
+    sets.push("quantity = ?");
+    args.push(patch.quantity);
+  }
+  if (patch.notional !== undefined) {
+    sets.push("notional = ?");
+    args.push(patch.notional);
+  }
+  if (patch.raw !== undefined) {
+    sets.push("raw = ?");
+    args.push(patch.raw === null ? null : JSON.stringify(patch.raw));
+  }
+  if (patch.filledAt !== undefined) {
+    sets.push("filled_at = ?");
+    args.push(patch.filledAt);
+  }
+
+  if (sets.length === 0) return;
+
+  args.push(id);
+  database.prepare(`UPDATE fill_events SET ${sets.join(", ")} WHERE id = ?`).run(...args);
+}
+
 export function insertNotificationEvent(input: {
   type: NotificationEventType;
   title: string;
@@ -849,4 +900,86 @@ function setSettingDirect(key: string, value: unknown, updatedAt: string): void 
       "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
     )
     .run(key, JSON.stringify(value), updatedAt);
+}
+
+// ── Multi-User API Key Storage ──────────────────────────────────────────────
+
+export interface UserApiKey {
+  id: string;
+  userId: string;
+  service: string;
+  apiKey: string;
+  label?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getUserApiKey(userId: string, service: string): UserApiKey | undefined {
+  const row = getDb()
+    .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? AND service = ?")
+    .get(userId, service) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined;
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    service: row.service,
+    apiKey: row.api_key,
+    label: row.label ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function listUserApiKeys(userId: string): UserApiKey[] {
+  const rows = getDb()
+    .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY service")
+    .all(userId) as Array<{ id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string }>;
+  return rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    service: row.service,
+    apiKey: row.api_key,
+    label: row.label ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }));
+}
+
+export function upsertUserApiKey(userId: string, service: string, apiKey: string, label?: string): UserApiKey {
+  const now = new Date().toISOString();
+  const id = `${userId}_${service}`;
+  getDb()
+    .prepare(
+      `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
+    )
+    .run(id, userId, service, apiKey, label ?? null, now, now);
+  return { id, userId, service, apiKey, label, createdAt: now, updatedAt: now };
+}
+
+export function deleteUserApiKey(userId: string, service: string): boolean {
+  const result = getDb()
+    .prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?")
+    .run(userId, service);
+  return result.changes > 0;
+}
+
+/**
+ * Resolves the API key for a given service, checking per-user storage first,
+ * then falling back to the environment variable.
+ */
+export function resolveApiKey(service: string, userId?: string): string | undefined {
+  if (userId) {
+    const userKey = getUserApiKey(userId, service);
+    if (userKey?.apiKey) return userKey.apiKey;
+  }
+  // Fall back to environment variable
+  const envMap: Record<string, string> = {
+    finnhub: "FINNHUB_API_KEY",
+    fmp: "FMP_API_KEY",
+    openai: "OPENAI_API_KEY"
+  };
+  const envVar = envMap[service.toLowerCase()];
+  return envVar ? process.env[envVar] : undefined;
 }

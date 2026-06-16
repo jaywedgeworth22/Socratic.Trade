@@ -21,6 +21,9 @@ export function getSchedulerState(): { lastRunAt: string | null; nextRunAt: stri
 export function startScheduler(): void {
   if (timer) return; // guard against double-start
 
+  // Run a tick immediately on start to schedule Next Run right away
+  void tick();
+
   timer = setInterval(tick, TICK_MS);
   timer.unref(); // don't hold the process open in dev
   console.log("[scheduler] started (tick every 60s)");

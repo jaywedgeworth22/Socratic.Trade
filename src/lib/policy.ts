@@ -31,10 +31,10 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
-  if (estimatedNotional > context.policy.maxOrderNotional) {
+  if (proposal.side === "buy" && estimatedNotional > context.policy.maxOrderNotional) {
     reasons.push(`Order notional ${estimatedNotional.toFixed(2)} exceeds max order notional ${context.policy.maxOrderNotional.toFixed(2)}.`);
   }
-  if (context.dailyNotionalUsed + estimatedNotional > context.policy.maxDailyNotional) {
+  if (proposal.side === "buy" && context.dailyNotionalUsed + estimatedNotional > context.policy.maxDailyNotional) {
     reasons.push("Daily notional limit would be exceeded.");
   }
   if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {

@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { calculatePnl, getPaperPortfolioProjection } from "../src/lib/performance";
-import type { FillEvent } from "../src/lib/types";
+import { mergeQuoteData } from "../src/lib/market";
+import { calculatePnl, getPaperPortfolioProjection, recordFillFromProposal } from "../src/lib/performance";
+import type { FillEvent, MarketScan } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-performance-${randomUUID()}.db`)}`;
@@ -50,6 +51,41 @@ describe("calculatePnl", () => {
     expect(projection.portfolio.totalMarketValue).toBeCloseTo(5000);
     expect(projection.positions).toHaveLength(0);
   });
+
+  it("turns approved dollar Paper orders into quantity fills when a market quote is present", () => {
+    const fill = recordFillFromProposal({
+      accountNumber: "APPROVAL1",
+      source: "paper",
+      proposal: {
+        symbol: "MSFT",
+        side: "buy",
+        type: "market",
+        dollarAmount: 10,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "test"
+      },
+      review: { estimatedNotional: 10, alerts: [], raw: {} },
+      marketScan: marketScanWithQuote("MSFT", 420),
+      status: "filled"
+    });
+
+    expect(fill.price).toBeCloseTo(420);
+    expect(fill.quantity).toBeCloseTo(10 / 420);
+
+    const projection = getPaperPortfolioProjection({ accountNumber: "APPROVAL1", startingCash: 100, currentPrices: { MSFT: 420 } });
+    expect(projection.portfolio.cash).toBeCloseTo(90);
+    expect(projection.positions.find((position) => position.symbol === "MSFT")?.quantity).toBeCloseTo(10 / 420);
+  });
+
+  it("keeps broker-only approval quotes in the market scan price map", () => {
+    const scan = mergeQuoteData(emptyScan(), {
+      MSFT: { price: 420, bid: 419.5, ask: 420.5, provider: "mock-robinhood", asOf: "2026-06-15T00:00:00.000Z" }
+    });
+
+    expect(scan.quotesBySymbol.MSFT?.price).toBeCloseTo(420);
+    expect(scan.quotesBySymbol.MSFT?.ask).toBeCloseTo(420.5);
+  });
 });
 
 function fill(input: Partial<FillEvent> & { id: string; side: "buy" | "sell"; quantity: number; price: number; notional: number }): FillEvent {
@@ -64,5 +100,33 @@ function fill(input: Partial<FillEvent> & { id: string; side: "buy" | "sell"; qu
     raw: undefined,
     filledAt: `2026-06-15T00:00:0${input.id === "s1" ? 3 : input.id === "b2" ? 2 : 1}.000Z`,
     ...input
+  };
+}
+
+function emptyScan(): MarketScan {
+  return {
+    source: "test",
+    generatedAt: "2026-06-15T00:00:00.000Z",
+    scannedSymbols: 0,
+    returnedQuotes: 0,
+    topCandidates: [],
+    sectorBySymbol: {},
+    quotesBySymbol: {},
+    warnings: []
+  };
+}
+
+function marketScanWithQuote(symbol: string, price: number): MarketScan {
+  return {
+    ...emptyScan(),
+    scannedSymbols: 1,
+    returnedQuotes: 1,
+    quotesBySymbol: {
+      [symbol]: {
+        symbol,
+        price,
+        score: 0
+      }
+    }
   };
 }

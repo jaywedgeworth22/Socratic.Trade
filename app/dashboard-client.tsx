@@ -29,6 +29,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
+  const [alertMessage, setAlertMessage] = useState<{ title: string; body: string; type: "error" | "warning" | "success" } | null>(null);
   const [newProfileName, setNewProfileName] = useState("");
   const [sectorCapsDraft, setSectorCapsDraft] = useState(formatSectorCaps(initialSnapshot.policy.sectorCaps));
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,16 +102,36 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       const response = await fetch(`/api/proposals/${proposalId}/approve`, { method: "POST" });
       if (!response.ok) throw new Error(await response.text());
       const body = (await response.json()) as { status: string; orderId?: string; reasons?: string[] };
-      setResult(
-        body.status === "placed"
-          ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
-          : body.status === "paper"
-            ? "Proposal executed in Paper mode."
-            : `Result: ${body.status}${body.reasons ? ` - ${body.reasons.join(", ")}` : ""}`
-      );
-      await load({ quiet: true });
+      if (body.status === "blocked") {
+        const reasonsMsg = body.reasons?.map(r => `• ${r}`).join("\n") ?? "No reasons provided.";
+        setAlertMessage({
+          title: "Proposal Blocked by Policy Check",
+          body: `The following rules blocked this order:\n\n${reasonsMsg}`,
+          type: "warning"
+        });
+        setResult(`Result: blocked - ${body.reasons?.join(", ") ?? ""}`);
+      } else {
+        setResult(
+          body.status === "placed"
+            ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
+            : body.status === "paper"
+              ? "Proposal executed in Paper mode."
+              : `Result: ${body.status}${body.reasons ? ` - ${body.reasons.join(", ")}` : ""}`
+        );
+      }
+      // Only refresh dashboard if the proposal succeeded (placed or paper); otherwise keep it in the list for editing
+      if (body.status === "placed" || body.status === "paper") {
+        await load({ quiet: true });
+      }
+      setError("");
     } catch (approvalError) {
-      setError(approvalError instanceof Error ? approvalError.message : "Proposal approval failed.");
+      const errMsg = approvalError instanceof Error ? approvalError.message : "Proposal approval failed.";
+      setError(errMsg);
+      setAlertMessage({
+        title: "Execution Error",
+        body: `Failed to approve proposal:\n${errMsg}`,
+        type: "error"
+      });
     } finally {
       setBusy(false);
     }
@@ -124,7 +145,13 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       setResult("Proposal rejected.");
       await load({ quiet: true });
     } catch (rejectError) {
-      setError(rejectError instanceof Error ? rejectError.message : "Proposal rejection failed.");
+      const errMsg = rejectError instanceof Error ? rejectError.message : "Proposal rejection failed.";
+      setError(errMsg);
+      setAlertMessage({
+        title: "Rejection Error",
+        body: `Failed to reject proposal:\n${errMsg}`,
+        type: "error"
+      });
     } finally {
       setBusy(false);
     }
@@ -360,6 +387,25 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         <NotificationPanel notifications={snapshot.notifications} configured={snapshot.notificationStatus.configured} />
         <AuditPanel audit={snapshot.audit} />
       </section>
+
+      {alertMessage && (
+        <div className="alert-modal-overlay">
+          <div className="alert-modal">
+            <div className={`alert-modal-header ${alertMessage.type}`}>
+              <h3>{alertMessage.title}</h3>
+              <button className="close-btn" onClick={() => setAlertMessage(null)}>×</button>
+            </div>
+            <div className="alert-modal-body">
+              {alertMessage.body.split("\n").map((line, idx) => (
+                <p key={idx}>{line}</p>
+              ))}
+            </div>
+            <div className="alert-modal-actions">
+              <button onClick={() => setAlertMessage(null)}>Dismiss</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -671,8 +717,8 @@ function PositionsTable({ positions, portfolio }: { positions: EquityPosition[];
               return (
                 <tr key={position.symbol}>
                   <td><strong>{position.symbol}</strong></td>
-                  <td>{position.quantity}</td>
-                  <td>{money(position.averageCost)}</td>
+                  <td>{compactNum(position.quantity)}</td>
+                  <td>{money(position.marketValue / position.quantity)}</td>
                   <td>{money(position.marketValue)}</td>
                   <td className={cls}>{signedMoney(position.pnl)}</td>
                   <td className={cls}>{formatPct(position.returnPct)}</td>
@@ -738,33 +784,48 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
       <table>
         <thead>
           <tr>
-            {marketHeader("Symbol", "symbol", sort, setSort)}
-            {marketHeader("Price", "price", sort, setSort)}
-            {marketHeader("Bid", "bid", sort, setSort)}
-            {marketHeader("Ask", "ask", sort, setSort)}
-            {marketHeader("Change", "intradayChangePct", sort, setSort)}
-            {marketHeader("Volume", "volume", sort, setSort)}
-            {marketHeader("P/E", "peRatio", sort, setSort)}
-            {marketHeader("News", "sentiment", sort, setSort)}
-            {marketHeader("Sector", "sector", sort, setSort)}
-            {marketHeader("Score", "score", sort, setSort)}
+            {marketHeader("Symbol", "symbol", sort, setSort, "Sourced from Nasdaq Stock Screener API")}
+            {marketHeader("Price", "price", sort, setSort, "Sourced from Robinhood/Mock quotes or Yahoo Finance fallback")}
+            {marketHeader("Bid", "bid", sort, setSort, "Sourced from Robinhood/Mock quotes or Yahoo Finance fallback")}
+            {marketHeader("Ask", "ask", sort, setSort, "Sourced from Robinhood/Mock quotes or Yahoo Finance fallback")}
+            {marketHeader("Change", "intradayChangePct", sort, setSort, "Sourced from Nasdaq Stock Screener (intraday delay)")}
+            {marketHeader("Volume", "volume", sort, setSort, "Sourced from Nasdaq, Finnhub, or Yahoo Finance")}
+            {marketHeader("Mkt Cap", "marketCap", sort, setSort, "Market capitalization from Nasdaq Screener")}
+            {marketHeader("P/E", "peRatio", sort, setSort, "Sourced from Finnhub API or Fallback Company Fundamentals")}
+            {marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % from Finnhub basic financials")}
+            {marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) from Finnhub basic financials")}
+            {marketHeader("Sentiment", "sentiment", sort, setSort, "Calculated from recent company headlines / news tone analysis")}
+            {marketHeader("Rating", "analystRating", sort, setSort, "Sourced from Finnhub analyst recommendation consensus or mock metrics")}
+            {marketHeader("Sector", "sector", sort, setSort, "Sourced from Nasdaq Screener or company profile metadata")}
+            {marketHeader("Score", "score", sort, setSort, "Calculated dynamically based on active scoring weights")}
           </tr>
         </thead>
         <tbody>
-          {sorted.slice(0, 15).map((candidate) => (
-            <tr key={candidate.symbol}>
-              <td title={candidate.headlines?.[0]}><strong>{candidate.symbol}</strong></td>
-              <td>{money(candidate.price)}</td>
-              <td>{candidate.bid ? money(candidate.bid) : "-"}</td>
-              <td>{candidate.ask ? money(candidate.ask) : "-"}</td>
-              <td className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
-              <td>{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
-              <td>{candidate.peRatio ? candidate.peRatio.toFixed(1) : "-"}</td>
-              <td title={candidate.headlines?.join(" · ")}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
-              <td>{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
-              <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>
-            </tr>
-          ))}
+          {sorted.slice(0, 15).map((candidate) => {
+            const sourceName = candidate.provider === "yahoo-finance" ? "Yahoo Finance" : candidate.provider ?? "unknown";
+            const quoteSource = `Source: ${sourceName}`;
+            const sentimentTitle = typeof candidate.sentiment === "number"
+              ? `Sentiment Score: ${candidate.sentiment}/100 (from Finnhub News or Fallback)\n\nRecent Headlines:\n${candidate.headlines?.map(h => `• ${h}`).join("\n") ?? "None"}`
+              : "No sentiment data";
+            return (
+              <tr key={candidate.symbol}>
+                <td title="Stock Symbol (from Nasdaq Screener)"><strong>{candidate.symbol}</strong></td>
+                <td title={quoteSource}>{money(candidate.price)}</td>
+                <td title={quoteSource}>{candidate.bid ? money(candidate.bid) : "-"}</td>
+                <td title={quoteSource}>{candidate.ask ? money(candidate.ask) : "-"}</td>
+                <td title="Intraday price change (from Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
+                <td title="Daily trading volume (from Nasdaq, Finnhub, or Yahoo Finance)">{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
+                <td title="Market capitalization (from Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
+                <td title="Price-to-Earnings Ratio (from Finnhub or Fallback)">{candidate.peRatio ? candidate.peRatio.toFixed(1) : "-"}</td>
+                <td title="Annual Dividend Yield % (from Finnhub basic financials)">{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
+                <td title="Earnings Per Share TTM (from Finnhub basic financials)">{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
+                <td title={sentimentTitle}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
+                <td title="Analyst consensus rating (from Finnhub or Fallback)">{candidate.analystRating ?? "-"}</td>
+                <td title="Stock Sector (from Nasdaq Screener or profile metadata)">{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
+                <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -830,16 +891,18 @@ function marketHeader(
   label: string,
   col: keyof MarketQuote,
   sort: { col: keyof MarketQuote; dir: SortDir },
-  setSort: (sort: { col: keyof MarketQuote; dir: SortDir }) => void
+  setSort: (sort: { col: keyof MarketQuote; dir: SortDir }) => void,
+  title?: string
 ) {
-  return sortableHeader(label, col, sort, setSort);
+  return sortableHeader(label, col, sort, setSort, title);
 }
 
 function sortableHeader<T extends string>(
   label: string,
   col: T,
   sort: { col: T; dir: SortDir },
-  setSort: (sort: { col: T; dir: SortDir }) => void
+  setSort: (sort: { col: T; dir: SortDir }) => void,
+  title?: string
 ) {
   const active = sort.col === col;
   return (
@@ -847,6 +910,7 @@ function sortableHeader<T extends string>(
       key={col}
       className="sortable-th"
       onClick={() => setSort({ col, dir: active && sort.dir === "desc" ? "asc" : "desc" })}
+      title={title}
     >
       {label}{active ? (sort.dir === "asc" ? " ▲" : " ▼") : " ⇅"}
     </th>

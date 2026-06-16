@@ -62,6 +62,18 @@ describe("currentMarketSession", () => {
     const d = etDate("2026-06-14", 10, 0);
     expect(currentMarketSession(d)).toBe("closed");
   });
+
+  it("Thanksgiving 2026 (Thursday) → closed", () => {
+    // Nov is EST (UTC-5): 10:00 ET = 15:00 UTC
+    const d = new Date("2026-11-26T15:00:00Z");
+    expect(currentMarketSession(d)).toBe("closed");
+  });
+
+  it("Christmas 2026 (Friday) → closed", () => {
+    // Dec is EST (UTC-5): 10:00 ET = 15:00 UTC
+    const d = new Date("2026-12-25T15:00:00Z");
+    expect(currentMarketSession(d)).toBe("closed");
+  });
 });
 
 describe("isRunAllowedNow", () => {

@@ -37,7 +37,10 @@ export async function scanMarket(
 export const nasdaqDelayedProvider: MarketDataProvider = {
   name: "nasdaq-delayed-screener",
   async scan(symbols, positions, options) {
-    const allowed = new Set(symbols.map(normalizeSymbol));
+    const allowed = new Set([
+      ...symbols.map(normalizeSymbol),
+      ...positions.map((p) => normalizeSymbol(p.symbol))
+    ]);
     const weights = options?.scoringWeights ?? DEFAULT_SCORING_WEIGHTS;
     const warnings: string[] = [];
     let quotes: MarketQuote[] = [];
@@ -61,7 +64,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     // Enrich the top set with news sentiment + fundamentals, then re-score & re-sort.
     const provider = getEnrichmentProvider();
     if (!provider.configured) {
-      warnings.push("News/fundamentals disabled (set FMP_API_KEY to enable sentiment and P/E).");
+      warnings.push("News/fundamentals disabled (set FINNHUB_API_KEY to enable sentiment and P/E).");
     } else if (topCandidates.length > 0) {
       try {
         const enrichment = await provider.enrich(topCandidates.map((quote) => quote.symbol));
@@ -73,7 +76,13 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
               ...quote,
               sentiment: extra.sentiment ?? quote.sentiment,
               peRatio: extra.peRatio ?? quote.peRatio,
-              headlines: extra.headlines ?? quote.headlines
+              headlines: extra.headlines ?? quote.headlines,
+              analystRating: extra.analystRating ?? quote.analystRating,
+              sector: extra.sector ?? quote.sector,
+              industry: extra.industry ?? quote.industry,
+              volume: extra.volume && extra.volume > 0 ? extra.volume : quote.volume,
+              dividendYield: extra.dividendYield ?? quote.dividendYield,
+              eps: extra.eps ?? quote.eps
             };
             const factorBreakdown = scoreFactors(enriched, weights);
             return { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal };
@@ -161,6 +170,21 @@ export function mergeQuoteData(
       return [quote.symbol, merged] as const;
     })
   );
+  for (const [rawSymbol, quote] of Object.entries(quoteData)) {
+    const symbol = normalizeSymbol(rawSymbol);
+    if (!symbol || quoteMap[symbol]) continue;
+    const price = positiveNumber(quote.price);
+    if (!price) continue;
+    quoteMap[symbol] = {
+      symbol,
+      price,
+      bid: positiveNumber(quote.bid),
+      ask: positiveNumber(quote.ask),
+      score: 0,
+      provider: quote.provider,
+      asOf: quote.asOf
+    };
+  }
   return {
     ...scan,
     source: Object.keys(quoteData).length > 0 ? `${scan.source}+robinhood-quotes` : scan.source,
@@ -300,7 +324,10 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         provider: quote.provider,
         asOf: quote.asOf,
         sentiment: quote.sentiment,
-        peRatio: quote.peRatio
+        peRatio: quote.peRatio,
+        analystRating: quote.analystRating,
+        dividendYield: quote.dividendYield,
+        eps: quote.eps
       }
     ])
   );

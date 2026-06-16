@@ -8,15 +8,18 @@ import {
   getStrategyPrompt,
   insertProposal,
   insertStrategyRun,
+  listFillEvents,
   releaseStrategyLock,
-  updateProposalStatus
+  updateProposalStatus,
+  updateFillEvent
 } from "./db";
 import { mergeQuoteData, scanMarket } from "./market";
+import { fetchMacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { getPaperPortfolioProjection, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
-import { getRobinhoodGateway } from "./robinhood";
+import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
 import type { EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 export interface StrategyResult {
@@ -43,6 +46,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
     if (policy.killSwitch) throw new Error("Kill switch is active.");
 
     const gateway = getRobinhoodGateway();
+    await reconcilePendingFills(gateway, policy.accountNumber);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
@@ -55,7 +59,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
 
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights);
-    const quoteSymbols = baseMarketScan.topCandidates.map((quote) => quote.symbol);
+    const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber);
 
@@ -68,17 +72,22 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
 
-    const proposals = await proposeTrades({
-      policyAllowlist: allowedSymbols,
-      prompt: getStrategyPrompt(),
-      policy,
-      portfolio: workingPortfolio,
-      positions: workingPositions,
-      recentOrders: orders.slice(0, 20),
-      marketScan,
-      dailyNotionalUsed: daily.notional,
-      dailyOrderCount: daily.orderCount
-    });
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
+
+    const proposals = [
+      ...proactiveProposals,
+      ...(await proposeTrades({
+        policyAllowlist: allowedSymbols,
+        prompt: getStrategyPrompt(),
+        policy,
+        portfolio: workingPortfolio,
+        positions: workingPositions,
+        recentOrders: orders.slice(0, 20),
+        marketScan,
+        dailyNotionalUsed: daily.notional,
+        dailyOrderCount: daily.orderCount
+      }))
+    ];
 
     const results: StrategyResult["proposals"] = [];
     for (const proposal of proposals) {
@@ -255,9 +264,10 @@ export async function executeProposal(proposalId: string): Promise<{
   ]);
   const allowedSymbols = allowedSymbolsForPolicy(policy);
   const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights);
+  const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
   const approvalScan = mergeQuoteData(
     approvalScanBase,
-    await gateway.getEquityQuotes(policy.accountNumber, approvalScanBase.topCandidates.map((quote) => quote.symbol))
+    await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
   );
 
   // In Paper mode, evaluate the approval against the standalone paper account.
@@ -306,6 +316,18 @@ export async function executeProposal(proposalId: string): Promise<{
       marketScan: approvalScan,
       status: "filled"
     });
+    const paperProjection = getPaperPortfolioProjection({
+      accountNumber: row.accountNumber,
+      startingCash: policy.paperStartingCash,
+      currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) }
+    });
+    recordPortfolioSnapshot({
+      runId: row.runId,
+      accountNumber: row.accountNumber,
+      source: "paper",
+      portfolio: paperProjection.portfolio,
+      positions: paperProjection.positions
+    });
     audit("proposal_approved", { proposalId, result: "paper" });
     await sendNotification({ type: "fill", title: `${proposal.symbol} Paper approval fill`, payload: { proposalId, fill } }, { policy });
     return { status: "paper" };
@@ -322,6 +344,7 @@ export async function executeProposal(proposalId: string): Promise<{
     proposal,
     review,
     execution,
+    marketScan: approvalScan,
     status: execution.state === "filled" ? "filled" : "pending_reconciliation"
   });
   audit("proposal_approved", { proposalId, result: "placed", orderId: execution.orderId });
@@ -391,6 +414,8 @@ async function proposeTrades(input: {
     "Return strict JSON only. No markdown. No text outside the JSON object."
   ].join("\n");
 
+  const macro = await fetchMacroData();
+
   const userContent = {
     currentDate: new Date().toISOString(),
     portfolio: input.portfolio,
@@ -403,67 +428,92 @@ async function proposeTrades(input: {
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
+    macroeconomicData: macro,
     ...(sectorComposition ? { sectorComposition } : {})
   };
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
+  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const isChatCompletions = url.includes("/chat/completions");
+
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["proposals"],
+    properties: {
+      proposals: {
+        type: "array",
+        maxItems: maxProposals,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "symbol",
+            "side",
+            "type",
+            "quantity",
+            "dollarAmount",
+            "limitPrice",
+            "stopPrice",
+            "timeInForce",
+            "marketHours",
+            "rationale"
+          ],
+          properties: {
+            symbol: { type: "string" },
+            side: { enum: ["buy", "sell"] },
+            type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
+            quantity: { type: ["number", "null"] },
+            dollarAmount: { type: ["number", "null"] },
+            limitPrice: { type: ["number", "null"] },
+            stopPrice: { type: ["number", "null"] },
+            timeInForce: { enum: ["gfd", "gtc"] },
+            marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
+            rationale: { type: "string" }
+          }
+        }
+      }
+    }
+  };
+
+  const body = isChatCompletions
+    ? {
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: JSON.stringify(userContent) }
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "trade_proposals",
+            strict: true,
+            schema
+          }
+        }
+      }
+    : {
+        model,
+        input: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: JSON.stringify(userContent) }
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "trade_proposals",
+            schema
+          }
+        }
+      };
+
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${process.env.OPENAI_API_KEY}`
     },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      input: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: JSON.stringify(userContent) }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "trade_proposals",
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["proposals"],
-            properties: {
-              proposals: {
-                type: "array",
-                maxItems: maxProposals,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: [
-                    "symbol",
-                    "side",
-                    "type",
-                    "quantity",
-                    "dollarAmount",
-                    "limitPrice",
-                    "stopPrice",
-                    "timeInForce",
-                    "marketHours",
-                    "rationale"
-                  ],
-                  properties: {
-                    symbol: { type: "string" },
-                    side: { enum: ["buy", "sell"] },
-                    type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
-                    quantity: { type: ["number", "null"] },
-                    dollarAmount: { type: ["number", "null"] },
-                    limitPrice: { type: ["number", "null"] },
-                    stopPrice: { type: ["number", "null"] },
-                    timeInForce: { enum: ["gfd", "gtc"] },
-                    marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
-                    rationale: { type: "string" }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -471,7 +521,13 @@ async function proposeTrades(input: {
     throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
   }
   const payload = await response.json();
-  const text = payload.output_text ?? payload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
+  const text = payload.choices?.[0]?.message?.content ??
+               payload.output_text ??
+               payload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
+
+  if (!text) {
+    throw new Error("Empty response returned from LLM API.");
+  }
   return sanitizeProposals(JSON.parse(text).proposals ?? [], maxProposals);
 }
 
@@ -482,6 +538,10 @@ function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
       .filter((quote) => quote.price > 0)
       .map((quote) => [quote.symbol, quote.price] as const)
   );
+}
+
+function uniqueSymbols(symbols: string[]): string[] {
+  return Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
 }
 
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
@@ -565,4 +625,101 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
       timeInForce: proposal.timeInForce ?? "gfd",
       marketHours: proposal.marketHours ?? "regular_hours"
     }));
+}
+
+export async function reconcilePendingFills(gateway: RobinhoodGateway, accountNumber: string): Promise<void> {
+  const pending = listFillEvents(accountNumber, "live").filter(
+    (fill) => fill.status === "pending_reconciliation" && fill.brokerOrderId
+  );
+  if (pending.length === 0) return;
+
+  try {
+    const brokerOrders = await gateway.getEquityOrders(accountNumber);
+    for (const fill of pending) {
+      const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
+      if (!matched) continue;
+
+      if (matched.state === "filled") {
+        const price = matched.averagePrice ?? fill.price;
+        const qty = matched.filledQuantity ?? fill.quantity;
+        const notional = price * qty;
+        
+        updateFillEvent(fill.id, {
+          status: "filled",
+          price,
+          quantity: qty,
+          notional,
+          filledAt: matched.updatedAt ?? new Date().toISOString(),
+          raw: {
+            ...((fill.raw as Record<string, unknown>) ?? {}),
+            reconciliation: matched
+          }
+        });
+        
+        audit("fill_reconciled", {
+          fillId: fill.id,
+          symbol: fill.symbol,
+          status: "filled",
+          price,
+          quantity: qty
+        });
+      } else if (["cancelled", "rejected", "failed"].includes(matched.state)) {
+        updateFillEvent(fill.id, {
+          status: matched.state,
+          raw: {
+            ...((fill.raw as Record<string, unknown>) ?? {}),
+            reconciliation: matched
+          }
+        });
+        
+        audit("fill_reconciled", {
+          fillId: fill.id,
+          symbol: fill.symbol,
+          status: matched.state
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[reconciliation] failed to reconcile pending fills:", error);
+  }
+}
+
+export function generateProactiveRiskProposals(
+  positions: EquityPosition[],
+  currentPrices: Record<string, number>,
+  policy: TradingPolicy
+): TradeProposal[] {
+  const proactiveProposals: TradeProposal[] = [];
+  const stopLossPct = policy.riskRules.stopLossPct ?? 0;
+  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
+
+  if (stopLossPct > 0 || takeProfitPct > 0) {
+    for (const pos of positions) {
+      if (pos.quantity <= 0.000001 || pos.averageCost <= 0) continue;
+      const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
+      if (!currentPrice || currentPrice <= 0) continue;
+
+      const returnPct = ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
+
+      let reason = "";
+      if (stopLossPct > 0 && returnPct <= -stopLossPct) {
+        reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${stopLossPct}% limit.`;
+      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
+        reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
+      }
+
+      if (reason) {
+        proactiveProposals.push({
+          symbol: normalizeSymbol(pos.symbol),
+          side: "sell",
+          type: "market",
+          quantity: pos.quantity,
+          timeInForce: "gfd",
+          marketHours: "regular_hours",
+          rationale: reason
+        });
+      }
+    }
+  }
+  return proactiveProposals;
 }

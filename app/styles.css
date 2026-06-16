@@ -192,6 +192,7 @@ h2 {
   gap: 16px;
   overflow-x: auto;
   padding: 18px;
+  align-content: start;
 }
 
 .panel-head {
@@ -690,4 +691,108 @@ th.sortable-th:hover {
   .notification-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Alert Modal Overlay ───────────────────────── */
+.alert-modal-overlay {
+  align-items: center;
+  backdrop-filter: blur(5px);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  height: 100vh;
+  justify-content: center;
+  left: 0;
+  position: fixed;
+  top: 0;
+  width: 100vw;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.alert-modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  max-width: 500px;
+  width: 90%;
+  animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.alert-modal-header {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  border-top-left-radius: 11px;
+  border-top-right-radius: 11px;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 18px;
+}
+
+.alert-modal-header.error {
+  background: #fdecea;
+  color: var(--red);
+}
+
+.alert-modal-header.warning {
+  background: #fff6e7;
+  color: #c27a1e;
+}
+
+.alert-modal-header.success {
+  background: #eafaf2;
+  color: var(--green);
+}
+
+.alert-modal-header h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.alert-modal-header .close-btn {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  min-height: auto;
+  padding: 0;
+}
+
+.alert-modal-body {
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 20px 18px;
+}
+
+.alert-modal-body p {
+  margin: 0 0 10px;
+}
+.alert-modal-body p:last-child {
+  margin: 0;
+}
+
+.alert-modal-actions {
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px;
+}
+
+.alert-modal-actions button {
+  min-height: 36px;
+  padding: 0 16px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(12px) scale(0.98); }
+  to { transform: translateY(0) scale(1); }
 }

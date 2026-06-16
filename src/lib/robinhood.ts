@@ -249,6 +249,20 @@ class HttpMcpRobinhoodGateway implements RobinhoodGateway {
   }
 }
 
+const MOCK_PRICES: Record<string, number> = {
+  AAPL: 200,
+  VOO: 500,
+  MSFT: 420,
+  NVDA: 125,
+  AMZN: 180,
+  JPM: 175,
+  AMD: 165,
+  TSLA: 180,
+  META: 480,
+  NFLX: 600,
+  GOOG: 170
+};
+
 class MockRobinhoodGateway implements RobinhoodGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
     return [{ accountNumber: "RH-MOCK-AGENT", label: "Mock agentic account", agenticAllowed: true }];
@@ -270,24 +284,63 @@ class MockRobinhoodGateway implements RobinhoodGateway {
   }
 
   async getEquityQuotes(_accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
-    const mockPrices: Record<string, number> = { AAPL: 200, VOO: 500, MSFT: 420, NVDA: 125, AMZN: 180 };
-    return Object.fromEntries(
-      symbols.map((symbol) => {
+    const quotes = await Promise.all(
+      symbols.map(async (symbol) => {
         const normalized = normalizeSymbol(symbol);
-        const price = mockPrices[normalized] ?? 100;
-        return [
-          normalized,
-          {
-            symbol: normalized,
-            price,
-            bid: price * 0.999,
-            ask: price * 1.001,
-            asOf: new Date().toISOString(),
-            provider: "mock-robinhood"
+
+        // Fetch live quotes from Yahoo Finance first in non-test environments
+        if (process.env.NODE_ENV !== "test") {
+          const yf = await fetchYahooFinanceQuote(normalized);
+          if (yf) {
+            return [
+              normalized,
+              {
+                symbol: normalized,
+                price: yf.price,
+                bid: yf.bid,
+                ask: yf.ask,
+                asOf: new Date().toISOString(),
+                provider: "yahoo-finance"
+              }
+            ] as const;
           }
-        ];
+        }
+
+        if (MOCK_PRICES[normalized]) {
+          const price = MOCK_PRICES[normalized];
+          return [
+            normalized,
+            {
+              symbol: normalized,
+              price,
+              bid: price * 0.999,
+              ask: price * 1.001,
+              asOf: new Date().toISOString(),
+              provider: "mock-robinhood"
+            }
+          ] as const;
+        }
+
+        // Fallback for non-mock symbols in test mode (so tests never make network calls or fail)
+        if (process.env.NODE_ENV === "test") {
+          return [
+            normalized,
+            {
+              symbol: normalized,
+              price: 100,
+              bid: 99.9,
+              ask: 100.1,
+              asOf: new Date().toISOString(),
+              provider: "mock-robinhood"
+            }
+          ] as const;
+        }
+
+        // In normal development/production mode, if we can't find the Yahoo Finance quote and it's not a mock symbol, throw an error!
+        throw new Error(`Real-time quote for symbol ${normalized} is unavailable.`);
       })
     );
+    return Object.fromEntries(quotes);
   }
 
   async getEquityTradability(_accountNumber: string, symbols: string[]) {
@@ -295,18 +348,23 @@ class MockRobinhoodGateway implements RobinhoodGateway {
   }
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
-    return { estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * (input.limitPrice ?? 100), alerts: [], raw: { mock: true } };
+    const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
+    const price = quotes[normalizeSymbol(input.symbol)]?.price ?? 100;
+    const estPrice = input.limitPrice ?? input.stopPrice ?? price;
+    return { estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * estPrice, alerts: [], raw: { mock: true } };
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
-    const price = input.limitPrice ?? input.stopPrice ?? 100;
-    const quantity = input.quantity ?? (input.dollarAmount ? input.dollarAmount / price : undefined);
+    const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
+    const price = quotes[normalizeSymbol(input.symbol)]?.price ?? 100;
+    const estPrice = input.limitPrice ?? input.stopPrice ?? price;
+    const quantity = input.quantity ?? (input.dollarAmount ? input.dollarAmount / estPrice : undefined);
     return {
       orderId: `mock-${input.refId}`,
       refId: input.refId,
       state: "filled",
       filledQuantity: quantity,
-      averagePrice: price,
+      averagePrice: estPrice,
       raw: { mock: true }
     };
   }
@@ -345,4 +403,34 @@ function number(value: unknown): number {
 function optionalNumber(value: unknown): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   return number(value);
+}
+
+export async function fetchYahooFinanceQuote(symbol: string): Promise<{ price: number; bid: number; ask: number; prevClose: number; volume: number } | undefined> {
+  const clean = encodeURIComponent(symbol.toUpperCase());
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${clean}?interval=1d&range=1d`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) return undefined;
+    const payload = await response.json() as any;
+    const meta = payload?.chart?.result?.[0]?.meta;
+    if (!meta) return undefined;
+    const price = meta.regularMarketPrice;
+    if (typeof price !== "number" || price <= 0) return undefined;
+    const prevClose = meta.chartPreviousClose ?? price;
+    const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
+    const volume = Number(quote?.volume?.[0] ?? 0);
+    return {
+      price,
+      bid: price * 0.999,
+      ask: price * 1.001,
+      prevClose,
+      volume
+    };
+  } catch {
+    clearTimeout(timeout);
+    return undefined;
+  }
 }

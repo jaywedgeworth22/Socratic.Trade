@@ -13,10 +13,14 @@ describe("market enrichment provider", () => {
     else delete process.env.FMP_API_KEY;
   });
 
-  it("falls back to a no-op provider when no API key is configured", async () => {
+  it("falls back to a fallback-enricher provider when no API key is configured", async () => {
     const provider = getEnrichmentProvider();
     expect(provider.configured).toBe(false);
-    expect(await provider.enrich(["AAPL", "MSFT"])).toEqual({});
+    expect(provider.name).toBe("fallback-enricher");
+    const enriched = await provider.enrich(["AAPL"]);
+    expect(enriched.AAPL).toBeDefined();
+    expect(enriched.AAPL?.sector).toBeUndefined();
+    expect(enriched.AAPL?.analystRating).toBe("Error: Config Required");
   });
 
   it("noopProvider never throws and returns no enrichment", async () => {

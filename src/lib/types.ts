@@ -136,6 +136,9 @@ export interface MarketQuote {
   sentiment?: number;
   peRatio?: number;
   headlines?: string[];
+  analystRating?: string;
+  dividendYield?: number;
+  eps?: number;
 }
 
 export interface MarketScan {
@@ -169,6 +172,9 @@ export interface MarketQuoteSummary {
   asOf?: string;
   sentiment?: number;
   peRatio?: number;
+  analystRating?: string;
+  dividendYield?: number;
+  eps?: number;
 }
 
 export interface MarketDataProviderOptions {

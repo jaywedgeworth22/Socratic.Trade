@@ -130,6 +130,17 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain("exceeds current AAPL holdings");
   });
 
+  it("allows sell orders to bypass max order notional and daily notional limits", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, limitPrice: 2000 },
+      {
+        ...context(2000),
+        dailyNotionalUsed: 2000
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
+
   it("blocks when kill switch is active", () => {
     const decision = evaluateTradeProposal(proposal, {
       ...context(),

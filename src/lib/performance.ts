@@ -60,12 +60,21 @@ export function recordFillFromProposal(input: {
   const executionPrice = input.execution?.averagePrice;
   const proposedPrice = input.proposal.limitPrice ?? input.proposal.stopPrice;
   const notional = input.review?.estimatedNotional ?? input.proposal.dollarAmount ?? 0;
-  const price = positiveNumber(executionPrice) ?? positiveNumber(proposedPrice) ?? positiveNumber(marketPrice) ?? 0;
+  const quantityInput = positiveNumber(input.execution?.filledQuantity) ?? positiveNumber(input.proposal.quantity);
+  const impliedPrice = quantityInput && notional > 0 ? notional / quantityInput : undefined;
+  const reviewPrice = priceFromReview(input.review?.raw);
+  const price =
+    positiveNumber(executionPrice) ??
+    positiveNumber(proposedPrice) ??
+    positiveNumber(marketPrice) ??
+    positiveNumber(reviewPrice) ??
+    positiveNumber(impliedPrice) ??
+    0;
   const quantity =
-    positiveNumber(input.execution?.filledQuantity) ??
-    positiveNumber(input.proposal.quantity) ??
-    (price > 0 && notional > 0 ? notional / price : 0);
-  const finalNotional = notional > 0 ? notional : quantity * price;
+    quantityInput ?? (price > 0 && notional > 0 ? notional / price : 0);
+  const finalNotional =
+    input.proposal.dollarAmount ??
+    (quantityInput && price > 0 ? quantityInput * price : notional > 0 ? notional : quantity * price);
 
   return insertFillEvent({
     proposalId: input.proposalId,
@@ -266,4 +275,19 @@ function averageReturn(lots: ClosedLot[]): number {
 function positiveNumber(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function priceFromReview(raw: unknown): number | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  return (
+    positiveNumber(row.estimatedPrice) ??
+    positiveNumber(row.estimated_price) ??
+    positiveNumber(row.averagePrice) ??
+    positiveNumber(row.average_price) ??
+    positiveNumber(row.lastPrice) ??
+    positiveNumber(row.last_price) ??
+    positiveNumber(row.last_trade_price) ??
+    positiveNumber(row.price)
+  );
 }

@@ -53,18 +53,32 @@ Open `http://localhost:3000`.
 
 ```bash
 OPENAI_API_KEY=...
-OPENAI_MODEL=...
-ROBINHOOD_ADAPTER=mock
+OPENAI_MODEL=gpt-4.1-mini        # or gpt-4o for deeper reasoning
+OPENAI_API_URL=...               # optional: override to use an OpenAI-compatible endpoint
+ROBINHOOD_ADAPTER=mock           # "mock" (default) or "mcp" for real Robinhood MCP
 DATABASE_URL=file:./data/app.db
 MARKET_SCAN_LIMIT=30
 MARKET_SCAN_CACHE_TTL_MS=300000
 
-# Optional: fundamentals + analyst-sentiment enrichment (Financial Modeling Prep, stable API).
-# P/E from ratios-ttm; sentiment from analyst grades-consensus (general news needs a paid
-# FMP plan, so it is not used). Without a key the scan still works (neutral sentiment, no P/E).
+# Optional: fundamentals + analyst enrichment (Finnhub).
+# Provides P/E, EPS, dividend yield, analyst ratings, and news sentiment per symbol.
+# Without a key the scan falls back to neutral defaults and built-in mock metrics
+# for well-known tickers (AAPL, MSFT, NVDA, etc.) so Paper runs still show real-looking data.
+FINNHUB_API_KEY=...
+
+# Optional: Financial Modeling Prep (legacy FMP fallback; Finnhub is preferred).
 FMP_API_KEY=...
-FMP_MAX_SYMBOLS=15        # cap enriched candidates per scan (free-tier quota friendly)
-NEWS_CACHE_TTL_MS=21600000  # enrichment cache TTL (default 6h)
+FMP_MAX_SYMBOLS=15               # cap enriched candidates per scan (free-tier quota friendly)
+NEWS_CACHE_TTL_MS=21600000       # enrichment cache TTL (default 6h)
+
+# Optional: macroeconomic context injected into LLM prompt (Federal Reserve FRED API).
+# Adds fed funds rate, 10-yr treasury yield, CPI, and unemployment rate to strategy context.
+# Without a key the prompt uses hardcoded recent defaults (updated periodically in macro.ts).
+FRED_API_KEY=...
+
+# Optional: webhook for trade notifications.
+# Discord webhook URLs receive rich embeds; any other URL receives generic JSON.
+WEBHOOK_URL=...
 ```
 
 ## Paper vs Live
@@ -74,8 +88,8 @@ NEWS_CACHE_TTL_MS=21600000  # enrichment cache TTL (default 6h)
   fills, and marks open positions to the same live prices Live uses. Paper trades feed
   back into later decisions, so the simulated account evolves the way a live one would.
 - **Live mode** places real orders through the broker adapter.
-- Both modes use the identical market-data path (NASDAQ screener + broker quotes +, when
-  `FMP_API_KEY` is set, news sentiment and P/E).
+- Both modes use the identical market-data path (NASDAQ screener + broker quotes +
+  Finnhub enrichment when `FINNHUB_API_KEY` is set).
 
 To use a real MCP transport, set:
 
@@ -111,4 +125,4 @@ local SQLite settings table.
 npm test
 ```
 
-This environment did not have Node/npm installed, so dependency installation and test execution were not run here.
+60 tests across 9 suites (vitest). Run after `npm install`.
