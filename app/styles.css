@@ -217,9 +217,19 @@ h2 {
 }
 
 .metric strong {
-  font-size: 24px;
-  line-height: 1.1;
+  font-size: clamp(18px, 1.7vw, 24px);
+  line-height: 1.05;
   overflow-wrap: anywhere;
+}
+
+.status-grid-8 .metric strong {
+  font-size: clamp(13px, 1.1vw, 17px);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.status-grid-8 .metric.metric-wrap-value strong {
+  white-space: normal;
 }
 
 .warning,
@@ -401,20 +411,44 @@ th.sortable-th:hover {
 .notification-list {
   display: grid;
   gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .notification-row {
-  align-items: center;
+  align-items: start;
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 8px;
-  grid-template-columns: 18px minmax(100px, 0.6fr) minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   padding: 8px 0;
 }
 
 .notification-row span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.notification-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.notification-copy strong {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.notification-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-time {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .dot-muted {
@@ -570,6 +604,9 @@ th.sortable-th:hover {
 .audit {
   display: grid;
   gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .decision-list {
@@ -628,18 +665,28 @@ th.sortable-th:hover {
 }
 
 .audit-row {
-  align-items: center;
+  align-items: start;
   border-bottom: 1px solid var(--line);
   display: grid;
-  gap: 10px;
-  grid-template-columns: 180px 160px minmax(0, 1fr);
-  padding: 9px 0;
+  gap: 4px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 8px 0;
+}
+
+.audit-row strong {
+  font-size: 13px;
+  line-height: 1.3;
 }
 
 .audit-row span,
 .audit-row code {
   color: var(--muted);
   font-size: 12px;
+}
+
+.audit-time {
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .audit-row code {
@@ -680,10 +727,6 @@ th.sortable-th:hover {
   .performance-grid,
   .event-toggle-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .audit-row {
-    grid-template-columns: 1fr;
   }
 
   .allocation-chart,

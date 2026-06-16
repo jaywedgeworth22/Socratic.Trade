@@ -134,7 +134,13 @@ describe("Finnhub News Enrichment", () => {
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      // Other Finnhub endpoints return empty but valid responses.
+      if (url.includes("stock/recommendation")) {
+        return new Response(
+          JSON.stringify([{ strongBuy: 20, buy: 10, hold: 2, sell: 0, strongSell: 0 }]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      // Other endpoints return empty but valid responses.
       return new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } });
     });
 
@@ -145,9 +151,16 @@ describe("Finnhub News Enrichment", () => {
 
     const result = await provider.enrich(["AAPL"]);
     expect(result.AAPL).toBeDefined();
+    // Sentiment is news-tone (not pegged at 100) and stamped with its single source.
     expect(result.AAPL.sentiment).toBeGreaterThan(50); // surges, outperforms, wins → positive
+    expect(result.AAPL.sentiment).toBeLessThan(100);
+    expect(result.AAPL.sources?.sentiment).toBe("finnhub");
     expect(result.AAPL.headlines).toHaveLength(2);
     expect(result.AAPL.headlines?.[0]).toContain("AAPL surges");
+    // Analyst recommendation → blended 0–100 score + per-source breakdown.
+    expect(result.AAPL.analystBySource?.finnhub?.score).toBeGreaterThan(80); // mostly strong buy/buy
+    expect(typeof result.AAPL.analystScore).toBe("number");
+    expect(result.AAPL.analystRating).toBeTruthy();
   });
 });
 

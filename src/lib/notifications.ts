@@ -20,7 +20,7 @@ export async function sendNotification(
   }
 
   if (!webhookUrl) {
-    return record(input, "skipped", undefined, "Webhook URL is not configured.");
+    return record(input, "skipped", undefined, "Notifications Webhook Not Configured");
   }
 
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");

@@ -30,7 +30,9 @@ const proposal: TradeProposal = {
   dollarAmount: 10,
   timeInForce: "gfd",
   marketHours: "regular_hours",
-  rationale: "test"
+  rationale: "test",
+  tradeThesisTag: "test",
+  entryMarketRegime: "test"
 };
 
 describe("evaluateTradeProposal", () => {
@@ -64,7 +66,7 @@ describe("evaluateTradeProposal", () => {
   it("blocks orders over max notional", () => {
     const decision = evaluateTradeProposal({ ...proposal, dollarAmount: 1200 }, context(1200));
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("exceeds max order notional");
+    expect(decision.reasons.join(" ")).toContain("exceeds the maximum cumulative daily order limit");
   });
 
   it("blocks daily notional overflow", () => {

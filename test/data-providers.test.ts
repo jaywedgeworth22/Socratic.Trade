@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getEnrichmentProvider, mockEnrichmentProvider, noopProvider, scoreHeadlines } from "../src/lib/data-providers";
+import {
+  analystScoreFromCounts,
+  analystScoreFromMean,
+  getEnrichmentProvider,
+  labelFromAnalystScore,
+  mockEnrichmentProvider,
+  noopProvider,
+  scoreHeadlines
+} from "../src/lib/data-providers";
 
 describe("market enrichment provider", () => {
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
@@ -50,5 +58,36 @@ describe("scoreHeadlines", () => {
   it("scores positive headlines above 50 and negative below 50", () => {
     expect(scoreHeadlines(["Stock surges as company beats earnings and raises guidance"])).toBeGreaterThan(50);
     expect(scoreHeadlines(["Shares plunge on downgrade and profit warning"])).toBeLessThan(50);
+  });
+
+  it("does not saturate at 100 even with many positive words", () => {
+    const score = scoreHeadlines([
+      "surge surge surge beats beats record growth gains rally jumps outperform"
+    ]);
+    expect(score).toBeGreaterThan(50);
+    expect(score).toBeLessThanOrEqual(95); // damped + clamped, never a hard 100
+  });
+});
+
+describe("analyst scoring helpers", () => {
+  it("maps rating distributions to a 0–100 score", () => {
+    expect(analystScoreFromCounts({ strongBuy: 10, buy: 0, hold: 0, sell: 0, strongSell: 0 })).toBe(100);
+    expect(analystScoreFromCounts({ strongBuy: 0, buy: 0, hold: 10, sell: 0, strongSell: 0 })).toBe(50);
+    expect(analystScoreFromCounts({ strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 10 })).toBe(0);
+    expect(analystScoreFromCounts({ strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 })).toBeUndefined();
+  });
+
+  it("maps a 1–5 analyst mean to a 0–100 score", () => {
+    expect(analystScoreFromMean(1)).toBe(100); // strong buy
+    expect(analystScoreFromMean(3)).toBe(50); // hold
+    expect(analystScoreFromMean(5)).toBe(0); // strong sell
+  });
+
+  it("labels scores on the Strong Buy … Strong Sell scale", () => {
+    expect(labelFromAnalystScore(95)).toBe("Strong Buy");
+    expect(labelFromAnalystScore(70)).toBe("Buy");
+    expect(labelFromAnalystScore(50)).toBe("Hold");
+    expect(labelFromAnalystScore(30)).toBe("Sell");
+    expect(labelFromAnalystScore(10)).toBe("Strong Sell");
   });
 });

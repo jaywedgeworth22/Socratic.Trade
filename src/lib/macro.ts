@@ -3,6 +3,9 @@ export interface MacroData {
   dgs10Treasury: string;
   cpiInflation: string;
   unemploymentRate: string;
+  m2MoneySupply: string;
+  housingStarts: string;
+  consumerSentiment: string;
   asOf: string;
 }
 
@@ -11,7 +14,10 @@ const DEFAULT_MACRO: MacroData = {
   dgs10Treasury: "4.20%",
   cpiInflation: "3.10%",
   unemploymentRate: "3.90%",
-  asOf: "2026-06-15"
+  m2MoneySupply: "20.8T",
+  housingStarts: "1.3M",
+  consumerSentiment: "75.0",
+  asOf: new Date().toISOString().split("T")[0]
 };
 
 const cache: { expiresAt: number; data: MacroData | null } = {
@@ -33,11 +39,14 @@ export async function fetchMacroData(): Promise<MacroData> {
   }
 
   try {
-    const [fedFunds, dgs10, cpi, unemployment] = await Promise.all([
+    const [fedFunds, dgs10, cpi, unemployment, m2, houst, umcsent] = await Promise.all([
       fetchFredSeries("FEDFUNDS", apiKey),
       fetchFredSeries("DGS10", apiKey),
       fetchFredSeries("CPIAUCSL", apiKey),
-      fetchFredSeries("UNRATE", apiKey)
+      fetchFredSeries("UNRATE", apiKey),
+      fetchFredSeries("M2SL", apiKey),
+      fetchFredSeries("HOUST", apiKey),
+      fetchFredSeries("UMCSENT", apiKey)
     ]);
 
     const data: MacroData = {
@@ -45,6 +54,9 @@ export async function fetchMacroData(): Promise<MacroData> {
       dgs10Treasury: dgs10 ? `${Number(dgs10).toFixed(2)}%` : DEFAULT_MACRO.dgs10Treasury,
       cpiInflation: cpi ? `${Number(cpi).toFixed(2)}%` : DEFAULT_MACRO.cpiInflation,
       unemploymentRate: unemployment ? `${Number(unemployment).toFixed(2)}%` : DEFAULT_MACRO.unemploymentRate,
+      m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : DEFAULT_MACRO.m2MoneySupply,
+      housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : DEFAULT_MACRO.housingStarts,
+      consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : DEFAULT_MACRO.consumerSentiment,
       asOf: new Date().toISOString().split("T")[0]
     };
 

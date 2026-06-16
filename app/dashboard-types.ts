@@ -12,6 +12,8 @@ import type {
   TradingPolicy,
   TradeProposal
 } from "@/lib/types";
+import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
+export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
 export interface AuditEvent {
   id: string;
@@ -34,12 +36,15 @@ export interface DashboardSnapshot {
   accounts: BrokerageAccount[];
   portfolio?: Portfolio;
   positions: EquityPosition[];
+  symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
   livePortfolio?: Portfolio;
   livePositions?: EquityPosition[];
   paperPortfolio?: Portfolio;
   paperPositions?: EquityPosition[];
   orders: EquityOrder[];
   audit: AuditEvent[];
+  auditFeed: DashboardAuditFeedItem[];
+  unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
   dailyStats: { orderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];

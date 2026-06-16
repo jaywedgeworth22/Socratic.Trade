@@ -1,4 +1,4 @@
-export type OrderSide = "buy" | "sell";
+export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
@@ -114,10 +114,29 @@ export interface TradeProposal {
   timeInForce: TimeInForce;
   marketHours: MarketHours;
   rationale: string;
+  tradeThesisTag: string;
+  entryMarketRegime: string;
+}
+
+// Per-field provenance: which provider supplied each enriched value. Used for the
+// single-source tooltips in the market scan table.
+export type EnrichmentSources = Partial<
+  Record<
+    "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName",
+    string
+  >
+>;
+
+export interface AnalystRatingDetail {
+  score: number;
+  label: string;
+  counts?: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number };
+  mean?: number;
 }
 
 export interface MarketQuote {
   symbol: string;
+  companyName?: string;
   price: number;
   bid?: number;
   ask?: number;
@@ -138,8 +157,17 @@ export interface MarketQuote {
   peRatio?: number;
   headlines?: string[];
   analystRating?: string;
+  analystScore?: number;
+  analystBySource?: Record<string, AnalystRatingDetail>;
   dividendYield?: number;
   eps?: number;
+  pbRatio?: number;
+  shortPercentOfFloat?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  insiderSentiment?: number;
+  sources?: EnrichmentSources;
 }
 
 export interface MarketScan {
@@ -163,6 +191,7 @@ export type MarketFactorBreakdown = Record<MarketFactor, number> & {
 
 export interface MarketQuoteSummary {
   symbol: string;
+  companyName?: string;
   price: number;
   bid?: number;
   ask?: number;
@@ -174,8 +203,17 @@ export interface MarketQuoteSummary {
   sentiment?: number;
   peRatio?: number;
   analystRating?: string;
+  analystScore?: number;
+  analystBySource?: Record<string, AnalystRatingDetail>;
   dividendYield?: number;
   eps?: number;
+  pbRatio?: number;
+  shortPercentOfFloat?: number;
+  beta?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  insiderSentiment?: number;
+  sources?: EnrichmentSources;
 }
 
 export interface MarketDataProviderOptions {

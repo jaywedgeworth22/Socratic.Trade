@@ -1,15 +1,16 @@
 "use client";
 
-import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, XCircle, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle, Pause, Play, RefreshCw, RotateCcw, Shield, XCircle, Zap, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
+import { cellTitle, companyTitle, enrichPositionsForDisplay, formatShareQuantity, quoteTitle, ratingTitle, scanQuoteAsOf, sentimentTitle } from "@/lib/dashboard-ui";
+import type { EnrichedPosition } from "@/lib/dashboard-ui";
 import { SP500_SYMBOLS } from "@/lib/sp500";
-import type { EquityOrder, EquityPosition, MarketQuote, NotificationSettings, ScoringWeights, TradingPolicy, TradeProposal } from "@/lib/types";
-import type { AuditEvent, DashboardSnapshot } from "./dashboard-types";
+import type { EquityOrder, EquityPosition, FillEvent, MarketQuote, NotificationSettings, ScoringWeights, TradingPolicy, TradeProposal } from "@/lib/types";
+import type { AuditFeedItem, DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
 import {
   AllocationDonut,
   Metric,
-  NotificationPanel,
   NumberField,
   PerformancePanel,
   ScoringWeightsEditor,
@@ -33,6 +34,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [newProfileName, setNewProfileName] = useState("");
   const [sectorCapsDraft, setSectorCapsDraft] = useState(formatSectorCaps(initialSnapshot.policy.sectorCaps));
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showNotionalSettings, setShowNotionalSettings] = useState(false);
+  const [tempMaxDailyNotional, setTempMaxDailyNotional] = useState(initialSnapshot.policy.maxDailyNotional);
+  const [tempMaxDailyOrders, setTempMaxDailyOrders] = useState(initialSnapshot.policy.maxDailyOrders);
 
   useEffect(() => {
     setSectorCapsDraft(formatSectorCaps(snapshot.policy.sectorCaps));
@@ -201,6 +205,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       : undefined;
   const allowedCount = policy.universe === "sp500" ? SP500_SYMBOLS.length : policy.allowlist.length;
   const mode = policy.paperMode ? "paper" : "live";
+  const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
 
   return (
     <main className="shell">
@@ -209,12 +214,8 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           <p className="eyebrow">Local-only trading control</p>
           <h1>Robinhood Agentic Dashboard</h1>
         </div>
-        <div className="actions">
-          <button aria-label="Refresh dashboard" onClick={() => load()} disabled={busy}>
-            <RefreshCw size={18} />
-            Refresh
-          </button>
-          <button className="danger" onClick={() => updatePolicy({ killSwitch: true, enabled: false })}>
+        <div style={{display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px"}}>
+          <button className={`btn-primary ${policy.killSwitch ? "btn-danger" : ""}`} onClick={() => updatePolicy({ killSwitch: !policy.killSwitch })}>
             <Pause size={18} />
             Kill Switch
           </button>
@@ -222,14 +223,42 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       </header>
 
       <section className="status-grid-8">
-        <Metric label={`${policy.paperMode ? "Paper" : "Live"} Portfolio`} value={money(snapshot.portfolio?.totalMarketValue)} />
+        <Metric label="Portfolio" value={money(snapshot.portfolio?.totalMarketValue)} />
         <Metric label="Buying Power" value={money(snapshot.portfolio?.buyingPower)} />
         <Metric label="Autonomy" value={policy.enabled ? "Enabled" : "Paused"} />
-        <Metric label="Mode" value={policy.paperMode ? "Paper" : "Live"} />
-        <Metric label="Orders Today" value={`${dailyStats.orderCount} / ${policy.maxDailyOrders}`} />
-        <Metric label="Daily Notional" value={`${money(dailyStats.notional)} used`} />
-        <Metric label="Market" value={snapshot.marketSession ?? "-"} />
-        <Metric label="Next Run" value={nextRunLabel(policy, snapshot.scheduler?.nextRunAt)} />
+        <div className="daily-metrics panel" style={{display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: "12px", gridColumn: "span 4"}}>
+          <Metric label="Daily Orders" value={`${dailyStats.orderCount} / ${policy.maxDailyOrders}`} />
+          <Metric label="Daily $" value={`${Math.round(dailyStats.notional / policy.maxDailyNotional * 100)}%`} title={`${money(dailyStats.notional)} out of ${money(policy.maxDailyNotional).replace(/\.00$/, '')}`} />
+          <button className="icon-button" onClick={() => setShowNotionalSettings(true)} aria-label="Edit Notional Settings" style={{background:"none", border:"none", cursor:"pointer"}}>
+            <Settings size={16} />
+          </button>
+        </div>
+        {showNotionalSettings && (
+          <div className="alert-modal-overlay">
+            <div className="alert-modal">
+              <div className="alert-modal-header">
+                <h3>Edit Notional Limits</h3>
+                <button className="close-btn" onClick={() => setShowNotionalSettings(false)}>×</button>
+              </div>
+              <div className="alert-modal-body">
+                <label>
+                  Max Daily Notional
+                  <input type="number" value={tempMaxDailyNotional} onChange={e => setTempMaxDailyNotional(Number(e.target.value))} />
+                </label>
+                <label>
+                  Max Daily Orders
+                  <input type="number" value={tempMaxDailyOrders} onChange={e => setTempMaxDailyOrders(Number(e.target.value))} />
+                </label>
+              </div>
+              <div className="alert-modal-actions">
+                <button onClick={() => { updatePolicy({ maxDailyNotional: tempMaxDailyNotional, maxDailyOrders: tempMaxDailyOrders }); setShowNotionalSettings(false); }}>Save</button>
+                <button onClick={() => setShowNotionalSettings(false)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        
       </section>
 
       {error && (
@@ -243,9 +272,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         <PerformancePanel performance={snapshot.performance} mode={mode} />
         <section className="panel">
           <div className="panel-head">
-            <h2>Allocation</h2>
+            <h2>Allocation{mode === "paper" ? " (Paper Mode)" : ""}</h2>
           </div>
-          <AllocationDonut positions={snapshot.positions} portfolio={snapshot.portfolio} />
+          <AllocationDonut positions={snapshot.positions} portfolio={snapshot.portfolio} mode={mode} />
         </section>
       </section>
 
@@ -374,19 +403,19 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         />
       </section>
 
-      <LatestDecision decision={snapshot.latestStrategyRun} />
-      <PendingProposals proposals={snapshot.pendingProposals} busy={busy} approve={approveProposal} reject={rejectProposal} />
+      <LatestDecision decision={snapshot.latestStrategyRun} symbolMetaBySymbol={symbolMetaBySymbol} />
+      <PendingProposals proposals={snapshot.pendingProposals} symbolMetaBySymbol={symbolMetaBySymbol} busy={busy} approve={approveProposal} reject={rejectProposal} />
+
+      <section className="columns">
+        <PositionsTable positions={snapshot.positions} portfolio={snapshot.portfolio} symbolMetaBySymbol={symbolMetaBySymbol} />
+        <UnifiedActivityFeedPanel
+          unifiedFeed={snapshot.unifiedFeed}
+          configured={snapshot.notificationStatus.configured}
+          symbolMetaBySymbol={symbolMetaBySymbol}
+        />
+      </section>
+
       <RunHistory runs={snapshot.strategyRuns} />
-
-      <section className="columns">
-        <PositionsTable positions={snapshot.positions} portfolio={snapshot.portfolio} />
-        <OrdersTable orders={snapshot.orders} />
-      </section>
-
-      <section className="columns">
-        <NotificationPanel notifications={snapshot.notifications} configured={snapshot.notificationStatus.configured} />
-        <AuditPanel audit={snapshot.audit} />
-      </section>
 
       {alertMessage && (
         <div className="alert-modal-overlay">
@@ -519,7 +548,7 @@ function NotificationSettingsPanel({ policy, updatePolicy }: { policy: TradingPo
         <h2>Webhook Settings</h2>
       </div>
       <label>
-        Webhook URL
+        Notifications Webhook
         <input
           value={policy.notificationSettings.webhookUrl ?? ""}
           onChange={(event) => patchSettings({ webhookUrl: event.target.value })}
@@ -547,7 +576,13 @@ function NotificationSettingsPanel({ policy, updatePolicy }: { policy: TradingPo
   );
 }
 
-function LatestDecision({ decision }: { decision?: DashboardSnapshot["latestStrategyRun"] }) {
+function LatestDecision({
+  decision,
+  symbolMetaBySymbol
+}: {
+  decision?: DashboardSnapshot["latestStrategyRun"];
+  symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
+}) {
   return (
     <section className="panel">
       <div className="panel-head">
@@ -568,14 +603,15 @@ function LatestDecision({ decision }: { decision?: DashboardSnapshot["latestStra
                     {decision.marketScan.cached ? " · cached" : ""}
                   </span>
                 </div>
+                {scanQuoteAsOf(decision.marketScan.topCandidates) ? <span>{scanQuoteAsOf(decision.marketScan.topCandidates)}</span> : null}
               </div>
               <ScanTable candidates={decision.marketScan.topCandidates} />
             </div>
           ) : null}
           {decision.proposals.map((item, index) => (
             <div className="decision" key={`${item.proposal.symbol}-${index}`}>
-              <strong>
-                {displayStatus(item.status)} {item.proposal.side.toUpperCase()} {item.proposal.symbol}
+              <strong title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)}>
+                {displayStatus(item.status)} <strong className={item.proposal.side === "buy" ? "text-green" : "text-red"}>{item.proposal.side.toUpperCase()}</strong> {item.proposal.symbol}
               </strong>
               <span>
                 {proposalSize(item.proposal)} | {item.proposal.type}
@@ -592,11 +628,13 @@ function LatestDecision({ decision }: { decision?: DashboardSnapshot["latestStra
 
 function PendingProposals({
   proposals,
+  symbolMetaBySymbol,
   busy,
   approve,
   reject
 }: {
   proposals: DashboardSnapshot["pendingProposals"];
+  symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   busy: boolean;
   approve: (proposalId: string) => void;
   reject: (proposalId: string) => void;
@@ -611,8 +649,8 @@ function PendingProposals({
         {proposals.map((pending) => (
           <div key={pending.id} className="proposal-card">
             <div className="proposal-header">
-              <strong className={pending.proposal.side === "buy" ? "text-green" : "text-red"}>
-                {pending.proposal.side.toUpperCase()} {pending.proposal.symbol}
+              <strong title={companyTitle(pending.proposal.symbol, symbolMetaBySymbol)}>
+                <strong className={pending.proposal.side === "buy" ? "text-green" : "text-red"}>{pending.proposal.side.toUpperCase()}</strong> {pending.proposal.symbol}
               </strong>
               <span className="proposal-meta">{proposalSize(pending.proposal)} · {pending.proposal.type}</span>
               <span className="proposal-meta">{new Date(pending.createdAt).toLocaleString()}</span>
@@ -677,19 +715,18 @@ function RunHistory({ runs }: { runs: DashboardSnapshot["strategyRuns"] }) {
   );
 }
 
-function PositionsTable({ positions, portfolio }: { positions: EquityPosition[]; portfolio?: DashboardSnapshot["portfolio"] }) {
+function PositionsTable({
+  positions,
+  portfolio,
+  symbolMetaBySymbol
+}: {
+  positions: EquityPosition[];
+  portfolio?: DashboardSnapshot["portfolio"];
+  symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
+}) {
   const [sort, setSort] = useState<{ col: keyof EnrichedPosition; dir: SortDir }>({ col: "marketValue", dir: "desc" });
   const total = portfolio?.totalMarketValue ?? 0;
-  const enriched: EnrichedPosition[] = positions.map((position) => {
-    const costBasis = position.averageCost * position.quantity;
-    const pnl = position.marketValue - costBasis;
-    return {
-      ...position,
-      pnl,
-      returnPct: costBasis > 0 ? (pnl / costBasis) * 100 : 0,
-      allocPct: total > 0 ? (position.marketValue / total) * 100 : 0
-    };
-  });
+  const enriched = enrichPositionsForDisplay(positions, total);
   const sorted = [...enriched].sort((left, right) => compare(left[sort.col], right[sort.col], sort.dir));
   return (
     <section className="panel">
@@ -704,7 +741,7 @@ function PositionsTable({ positions, portfolio }: { positions: EquityPosition[];
             <tr>
               {positionHeader("Symbol", "symbol", sort, setSort)}
               {positionHeader("Qty", "quantity", sort, setSort)}
-              {positionHeader("Avg Cost", "averageCost", sort, setSort)}
+              {positionHeader("Cost Basis", "costBasis", sort, setSort)}
               {positionHeader("Mkt Value", "marketValue", sort, setSort)}
               {positionHeader("P&L", "pnl", sort, setSort)}
               {positionHeader("Return", "returnPct", sort, setSort)}
@@ -716,9 +753,10 @@ function PositionsTable({ positions, portfolio }: { positions: EquityPosition[];
               const cls = position.pnl >= 0 ? "pnl-pos" : "pnl-neg";
               return (
                 <tr key={position.symbol}>
-                  <td><strong>{position.symbol}</strong></td>
-                  <td>{compactNum(position.quantity)}</td>
-                  <td>{money(position.marketValue / position.quantity)}</td>
+                  <td><strong title={companyTitle(position.symbol, symbolMetaBySymbol)}>{position.symbol}</strong></td>
+                  <td>{formatShareQuantity(position.quantity, position.symbol)}</td>
+    
+                  <td>{money(position.costBasis)}</td>
                   <td>{money(position.marketValue)}</td>
                   <td className={cls}>{signedMoney(position.pnl)}</td>
                   <td className={cls}>{formatPct(position.returnPct)}</td>
@@ -726,48 +764,6 @@ function PositionsTable({ positions, portfolio }: { positions: EquityPosition[];
                 </tr>
               );
             })}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
-}
-
-interface EnrichedPosition extends EquityPosition {
-  pnl: number;
-  returnPct: number;
-  allocPct: number;
-}
-
-function OrdersTable({ orders }: { orders: EquityOrder[] }) {
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>Recent Orders</h2>
-      </div>
-      {orders.length === 0 ? (
-        <p className="subtle">No recent orders.</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Side</th>
-              <th>Type</th>
-              <th>State</th>
-              <th>Filled</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map((order) => (
-              <tr key={order.id}>
-                <td><strong>{order.symbol}</strong></td>
-                <td>{order.side}</td>
-                <td>{order.type}</td>
-                <td>{order.state}</td>
-                <td>{order.filledQuantity ?? "-"}</td>
-              </tr>
-            ))}
           </tbody>
         </table>
       )}
@@ -785,43 +781,45 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
         <thead>
           <tr>
             {marketHeader("Symbol", "symbol", sort, setSort, "Sourced from Nasdaq Stock Screener API")}
-            {marketHeader("Price", "price", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes")}
-            {marketHeader("Bid", "bid", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes")}
-            {marketHeader("Ask", "ask", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes")}
+            {marketHeader("Price", "price", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes. Hover cells for quote time.")}
+            {marketHeader("Bid", "bid", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes. Hover cells for quote time.")}
+            {marketHeader("Ask", "ask", sort, setSort, "Sourced from Robinhood or Yahoo Finance quotes. Hover cells for quote time.")}
             {marketHeader("Change", "intradayChangePct", sort, setSort, "Sourced from Nasdaq Stock Screener (intraday delay)")}
             {marketHeader("Volume", "volume", sort, setSort, "Sourced from Nasdaq, Finnhub, or Yahoo Finance")}
             {marketHeader("Mkt Cap", "marketCap", sort, setSort, "Market capitalization from Nasdaq Screener")}
             {marketHeader("P/E", "peRatio", sort, setSort, "Price-to-earnings ratio from Finnhub, FMP, or Yahoo Finance")}
             {marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % from Finnhub or Yahoo Finance")}
             {marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) from Finnhub or Yahoo Finance")}
-            {marketHeader("Sentiment", "sentiment", sort, setSort, "Derived from analyst consensus or news headline sentiment scoring")}
-            {marketHeader("Rating", "analystRating", sort, setSort, "Analyst consensus from Finnhub, FMP, or Yahoo Finance")}
+            {marketHeader("Sentiment", "sentiment", sort, setSort, "Locally computed 0–100 score from recent Finnhub headlines using keyword-based sentiment scoring")}
+            {marketHeader("Rating", "analystScore", sort, setSort, "Blended analyst consensus (0–100) across Finnhub, FMP, and Yahoo Finance")}
             {marketHeader("Sector", "sector", sort, setSort, "Sourced from Nasdaq Screener, Finnhub, or Yahoo Finance profile")}
             {marketHeader("Score", "score", sort, setSort, "Calculated dynamically based on active scoring weights")}
           </tr>
         </thead>
         <tbody>
           {sorted.slice(0, 15).map((candidate) => {
-            const sourceName = candidate.provider === "yahoo-finance" ? "Yahoo Finance" : candidate.provider ?? "unknown";
-            const quoteSource = `Source: ${sourceName}`;
-            const sentimentTitle = typeof candidate.sentiment === "number"
-              ? `Sentiment Score: ${candidate.sentiment}/100 (from analyst consensus or news scoring)\n\nRecent Headlines:\n${candidate.headlines?.map(h => `• ${h}`).join("\n") ?? "None"}`
-              : "No sentiment data";
+            const src = candidate.sources ?? {};
+            // P/E: real value, "n/a" for negative earnings (no meaningful ratio), "-" if unknown.
+            const peText = candidate.peRatio && candidate.peRatio > 0
+              ? candidate.peRatio.toFixed(1)
+              : typeof candidate.eps === "number" && candidate.eps <= 0
+                ? "n/a"
+                : "-";
             return (
               <tr key={candidate.symbol}>
-                <td title="Stock Symbol (from Nasdaq Screener)"><strong>{candidate.symbol}</strong></td>
-                <td title={quoteSource}>{money(candidate.price)}</td>
-                <td title={quoteSource}>{candidate.bid ? money(candidate.bid) : "-"}</td>
-                <td title={quoteSource}>{candidate.ask ? money(candidate.ask) : "-"}</td>
-                <td title="Intraday price change (from Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
-                <td title="Daily trading volume (from Nasdaq, Finnhub, or Yahoo Finance)">{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
-                <td title="Market capitalization (from Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
-                <td title="Price-to-Earnings Ratio (Finnhub / FMP / Yahoo Finance)">{candidate.peRatio ? candidate.peRatio.toFixed(1) : "-"}</td>
-                <td title="Annual Dividend Yield % (from Finnhub basic financials)">{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
-                <td title="Earnings Per Share TTM (from Finnhub basic financials)">{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
-                <td title={sentimentTitle}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
-                <td title="Analyst consensus rating (Finnhub / FMP / Yahoo Finance)">{candidate.analystRating ?? "-"}</td>
-                <td title="Stock Sector (from Nasdaq Screener or profile metadata)">{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
+                <td title={candidate.companyName}><strong>{candidate.symbol}</strong></td>
+                <td title={quoteTitle("Quote", candidate)}>{money(candidate.price)}</td>
+                <td title={quoteTitle("Bid quote", candidate)}>{candidate.bid ? money(candidate.bid) : "-"}</td>
+                <td title={quoteTitle("Ask quote", candidate)}>{candidate.ask ? money(candidate.ask) : "-"}</td>
+                <td title="Intraday price change (Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
+                <td title={cellTitle("Daily trading volume", src.volume ?? candidate.provider)}>{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
+                <td title="Market capitalization (Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
+                <td title={cellTitle(peText === "n/a" ? "Price-to-Earnings: negative earnings, no meaningful ratio" : "Price-to-Earnings Ratio", src.peRatio)}>{peText}</td>
+                <td title={cellTitle("Annual Dividend Yield %", src.dividendYield)}>{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
+                <td title={cellTitle("Earnings Per Share (TTM)", src.eps)}>{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
+                <td title={sentimentTitle(candidate)}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
+                <td title={ratingTitle(candidate)}>{candidate.analystRating ? `${candidate.analystRating} ${candidate.analystScore ?? ""}`.trim() : "-"}</td>
+                <td title={cellTitle("Stock Sector", src.sector)}>{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
                 <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>
               </tr>
             );
@@ -832,49 +830,326 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
   );
 }
 
-function AuditPanel({ audit }: { audit: AuditEvent[] }) {
+function UnifiedActivityFeedPanel({
+  unifiedFeed,
+  configured,
+  symbolMetaBySymbol
+}: {
+  unifiedFeed: UnifiedActivityGroup[];
+  configured: boolean;
+  symbolMetaBySymbol: Record<string, DashboardSnapshot["symbolMetaBySymbol"][string]>;
+}) {
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [modeFilter, setModeFilter] = useState<"all" | "live" | "paper">("all");
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+
+  const allTags = [
+    "policy change",
+    "trade",
+    "buy",
+    "sell",
+    "notification sent",
+    "notification failed",
+    "notification disabled"
+  ];
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags(current =>
+      current.includes(tag) ? current.filter(t => t !== tag) : [...current, tag]
+    );
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(current => ({ ...current, [id]: !current[id] }));
+  };
+
+  const filteredItems = unifiedFeed.filter(item => {
+    // 1. Live vs Paper filter
+    const isItemPaper = item.title.startsWith("Paper ") || item.events.some(ev => ev.title.startsWith("Paper "));
+    if (modeFilter === "paper" && !isItemPaper) return false;
+    if (modeFilter === "live" && isItemPaper) return false;
+
+    // 2. Category-Based Multi-Tag filtering
+    if (selectedTags.length > 0) {
+      // Side Category
+      const activeSideTags = selectedTags.filter(t => ["buy", "sell"].includes(t));
+      if (activeSideTags.length > 0) {
+        const hasMatch = item.tags.some(t => activeSideTags.includes(t));
+        if (!hasMatch) return false;
+      }
+
+      // Type Category
+      const activeTypeTags = selectedTags.filter(t => ["trade", "policy change"].includes(t));
+      if (activeTypeTags.length > 0) {
+        const hasMatch = item.tags.some(t => activeTypeTags.includes(t));
+        if (!hasMatch) return false;
+      }
+
+      // Notification Category
+      const activeNotifTags = selectedTags.filter(t => ["notification sent", "notification failed", "notification disabled"].includes(t));
+      if (activeNotifTags.length > 0) {
+        const hasMatch = item.tags.some(t => activeNotifTags.includes(t));
+        if (!hasMatch) return false;
+      }
+    }
+
+    return true;
+  });
+
   return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>Audit Feed</h2>
+    <section className="panel unified-activity-panel">
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h2>Activity Feed</h2>
+          <p className="subtle" style={{ margin: 0, fontSize: '12px' }}>Consolidated trading log, audit events, and notifications</p>
+        </div>
+        <span className={`status-badge ${configured ? "status-completed" : "status-running"}`}>
+          {configured ? "Notifications Webhook Configured" : "Notifications Webhook Not Configured"}
+        </span>
       </div>
-      {audit.length === 0 ? (
-        <p className="subtle">No audit events yet.</p>
+
+      <div className="filter-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '12px 0', borderBottom: '1px solid var(--line)', alignItems: 'center' }}>
+        <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--muted)', display: 'flex', alignItems: 'center', marginRight: '4px' }}>Mode:</span>
+        {(["all", "live", "paper"] as const).map(mode => {
+          const active = modeFilter === mode;
+          return (
+            <button
+              key={mode}
+              onClick={() => setModeFilter(mode)}
+              style={{
+                background: active ? 'var(--text)' : 'transparent',
+                color: active ? 'white' : 'var(--text)',
+                border: '1px solid var(--line)',
+                borderRadius: '8px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                minHeight: '26px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                textTransform: 'capitalize',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              {mode}
+            </button>
+          );
+        })}
+
+        <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--muted)', display: 'flex', alignItems: 'center', marginLeft: '12px', marginRight: '4px' }}>Filter:</span>
+        {allTags.map(tag => {
+          const active = selectedTags.includes(tag);
+          return (
+            <button
+              key={tag}
+              onClick={() => toggleTag(tag)}
+              className="tag-pill"
+              style={{
+                background: active ? 'var(--text)' : 'transparent',
+                color: active ? 'white' : 'var(--text)',
+                border: '1px solid var(--line)',
+                borderRadius: '16px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                minHeight: '26px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                textTransform: 'capitalize',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              {tag}
+            </button>
+          );
+        })}
+        {(selectedTags.length > 0 || modeFilter !== "all") && (
+          <button
+            onClick={() => {
+              setSelectedTags([]);
+              setModeFilter("all");
+            }}
+            style={{
+              background: 'transparent',
+              color: 'var(--red)',
+              border: 'none',
+              fontSize: '12px',
+              cursor: 'pointer',
+              minHeight: '26px',
+              padding: '0 4px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              fontWeight: 'bold'
+            }}
+          >
+            Reset Filters
+          </button>
+        )}
+      </div>
+
+      {filteredItems.length === 0 ? (
+        <p className="subtle" style={{ padding: '24px 0', textAlign: 'center' }}>No activities match the selected filters.</p>
       ) : (
-        <div className="audit">
-          {audit.slice(0, 20).map((event) => (
-            <AuditRow key={event.id} event={event} />
-          ))}
+        <div className="audit" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+          {filteredItems.slice(0, 50).map(group => {
+            const isExpanded = !!expandedIds[group.id];
+            const hasSubEvents = group.events && group.events.length > 1;
+
+            let borderStyle = '3px solid var(--line)';
+            if (group.tags.includes('policy change')) {
+              borderStyle = '3px solid var(--blue)';
+            } else if (group.status === 'filled') {
+              borderStyle = '3px solid var(--green)';
+            } else if (group.status === 'blocked' || group.status === 'rejected') {
+              borderStyle = '3px solid var(--red)';
+            } else if (group.status === 'pending_approval' || group.status === 'pending') {
+              borderStyle = '3px solid #f0a000';
+            }
+
+            return (
+              <div
+                key={group.id}
+                className="activity-group-row"
+                style={{
+                  borderLeft: borderStyle,
+                  paddingLeft: '12px',
+                  marginBottom: '8px',
+                  background: 'rgba(0,0,0,0.01)',
+                  borderRadius: '0 8px 8px 0',
+                  borderBottom: '1px solid var(--line)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', alignItems: 'start' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <span className="audit-time" style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                        {new Date(group.updatedAt).toLocaleString()}
+                      </span>
+                      {group.companyName && (
+                        <span style={{ fontSize: '11px', color: 'var(--muted)' }}>({group.companyName})</span>
+                      )}
+                    </div>
+                    
+                    <div style={{ margin: '4px 0' }}>
+                      {renderActionTitle(group.title)}
+                    </div>
+                    
+                    <div style={{ fontSize: '13px', color: 'var(--text)' }}>
+                      {group.detail}
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                      {group.tags.map(t => (
+                        <span
+                          key={t}
+                          style={{
+                            fontSize: '10px',
+                            background: '#e8ece9',
+                            color: 'var(--muted)',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            textTransform: 'uppercase',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'end', gap: '8px', marginLeft: '12px' }}>
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: 'bold',
+                        padding: '3px 8px',
+                        borderRadius: '12px',
+                        textTransform: 'uppercase',
+                        background:
+                          group.status === 'filled' ? 'rgba(17,107,75,0.1)' :
+                          group.status === 'blocked' || group.status === 'rejected' ? 'rgba(179,38,30,0.1)' :
+                          group.status === 'approved' ? 'rgba(17,107,75,0.05)' :
+                          group.status === 'pending_approval' ? 'rgba(240,160,0,0.1)' :
+                          'rgba(0,0,0,0.05)',
+                        color:
+                          group.status === 'filled' ? 'var(--green)' :
+                          group.status === 'blocked' || group.status === 'rejected' ? 'var(--red)' :
+                          group.status === 'approved' ? 'var(--green)' :
+                          group.status === 'pending_approval' ? '#c08000' :
+                          'var(--text)'
+                      }}
+                    >
+                      {group.status.replace(/_/g, ' ')}
+                    </span>
+
+                    {hasSubEvents && (
+                      <button
+                        onClick={() => toggleExpand(group.id)}
+                        className="ghost sm"
+                        style={{ padding: '2px 8px', fontSize: '11px', minHeight: '24px' }}
+                      >
+                        {isExpanded ? "Hide Details" : `Show Details (${group.events.length})`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isExpanded && hasSubEvents && (
+                  <div
+                    className="timeline-sub-events"
+                    style={{
+                      borderTop: '1px dashed var(--line)',
+                      margin: '6px 0 10px 0',
+                      paddingTop: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}
+                  >
+                    {group.events.map(ev => {
+                      let typeColor = 'var(--muted)';
+                      if (ev.type === 'fill') typeColor = 'var(--green)';
+                      if (ev.type === 'notification' && ev.status === 'failed') typeColor = 'var(--red)';
+
+                      return (
+                        <div
+                          key={ev.id}
+                          style={{
+                            display: 'flex',
+                            gap: '12px',
+                            fontSize: '12px',
+                            lineHeight: '1.4',
+                            padding: '4px 0'
+                          }}
+                        >
+                          <div style={{ color: 'var(--muted)', width: '130px', flexShrink: 0 }}>
+                            {new Date(ev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </div>
+                          
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '500' }}>
+                              {renderActionTitle(ev.title)}
+                            </div>
+                            <div style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                              {ev.detail}
+                            </div>
+                          </div>
+
+                          <div style={{ flexShrink: 0, textTransform: 'capitalize', fontSize: '11px', color: typeColor, fontWeight: 'bold' }}>
+                            {ev.type}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
-  );
-}
-
-function AuditRow({ event }: { event: AuditEvent }) {
-  const payload = asRecord(event.payload);
-  const label =
-    event.kind === "strategy_run"
-      ? payload.status === "failed" ? "Strategy Failed" : "Strategy Run"
-      : event.kind === "policy_change"
-        ? "Policy Updated"
-        : event.kind === "notification"
-          ? "Notification"
-          : event.kind;
-  const detail =
-    event.kind === "strategy_run"
-      ? String(payload.summary ?? "")
-      : event.kind === "policy_change"
-        ? `Changed: ${String(payload.key ?? "settings")}`
-        : event.kind === "notification"
-          ? `${String(payload.type ?? "")} ${String(payload.status ?? "")}`
-          : JSON.stringify(event.payload).slice(0, 120);
-  return (
-    <div className="audit-row">
-      <span>{new Date(event.createdAt).toLocaleString()}</span>
-      <strong>{label}</strong>
-      <span>{detail}</span>
-    </div>
   );
 }
 
@@ -925,7 +1200,7 @@ function compare(left: unknown, right: unknown, dir: SortDir): number {
 
 function proposalSize(proposal: TradeProposal): string {
   if (proposal.dollarAmount) return money(proposal.dollarAmount);
-  if (proposal.quantity) return `${proposal.quantity} shares`;
+  if (proposal.quantity) return `${formatShareQuantity(proposal.quantity, proposal.symbol)} shares`;
   return "No size";
 }
 
@@ -972,6 +1247,37 @@ function sentimentLabel(value: number): string {
   return `– ${value}`;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+function TradeRow({
+  fill,
+  symbolMetaBySymbol
+}: {
+  fill: FillEvent;
+  symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
+}) {
+  return (
+    <div className="audit-row">
+      <span className="audit-time">{new Date(fill.filledAt).toLocaleString()}</span>
+      <strong title={companyTitle(fill.symbol, symbolMetaBySymbol)}>
+        {fill.source === "paper" ? "Paper " : ""}
+        <span className={fill.side === "buy" ? "text-green" : "text-red"}>{fill.side === "buy" ? "BUY" : "SELL"}</span> {fill.symbol}
+      </strong>
+      <span>
+        {formatShareQuantity(fill.quantity, fill.symbol)} shares @ {money(fill.price)} · {fill.status}
+      </span>
+    </div>
+  );
+}
+
+function renderActionTitle(title: string, hoverTitle?: string) {
+  const match = title.match(/^(Paper\s+)?(buy|sell|bought|sold|buy:|sell:)\b(.*)$/i);
+  if (!match) return <strong title={hoverTitle}>{title}</strong>;
+  const [, paperPrefix = "", action, rest] = match;
+  const actionClass = /sell|sold/i.test(action) ? "text-red" : "text-green";
+  return (
+    <strong title={hoverTitle}>
+      {paperPrefix}
+      <span className={actionClass}>{action.toUpperCase()}</span>
+      {rest}
+    </strong>
+  );
 }
