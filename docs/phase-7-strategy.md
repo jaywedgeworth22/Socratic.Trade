@@ -9,12 +9,14 @@ To ensure balanced and resilient trade proposals, the LLM evaluates candidates a
 ### A. Macro, Thematic, & Market Context
 *Don't fight the Fed, and don't fight the broader trend.*
 - **Core Macro Indicators:** SPY/QQQ daily trends, `^VIX` (Volatility Index), Fed Funds Rate trajectory, CPI/Inflation trends, Unemployment data, and broad market breadth (advancers vs. decliners).
+  - *Implementation Target:* Integrate `VIXCLS` via the FRED API (already available in `macro.ts`) to immediately unlock "de-risk in high-vol regimes" logic.
 - **Thematic & Structural Shifts:** Tracking long-term disruptive trends that create secular tailwinds or headwinds across entire sectors (e.g., GLP-1 weight loss drug adoption impacting not just food/healthcare, but downstream retail, clothing, and cosmetics sectors; AI infrastructure spending; housing/cost of living trends; and shifting consumer habits).
 - **Goal:** Establish the risk regime. In a high-VIX or downtrending market, the strategy should naturally demand higher conviction for long positions, pivot to defensive sectors, or seek opportunistic **short** setups.
 
 ### B. Fundamental Factors
 *Ensure underlying business health and value.*
 - **Indicators:** Forward P/E Ratio vs. Sector Average, EPS Growth (QoQ/YoY), Free Cash Flow yield, Debt-to-Equity ratio, and forward guidance sentiment.
+  - *Implementation Target:* Leverage SEC EDGAR (free, authoritative) for XBRL financials and 8-K filings, and explore Twelve Data or Tiingo for enhanced fundamental indicators.
 - **Goal:** Identify structurally sound companies that are mispriced relative to their earnings potential for long positions, or conversely, identify fundamentally deteriorating companies (e.g., shrinking margins, high debt) as prime **short** candidates.
 
 ### C. Technical Factors
@@ -25,11 +27,13 @@ To ensure balanced and resilient trade proposals, the LLM evaluates candidates a
 ### D. Sentiment & News Catalysts
 *Identify short-term directional fuel.*
 - **Indicators:** Real-time company-specific headlines, earnings call sentiment (derived from NLP), sector-level news, and macro shock events.
+  - *Implementation Target:* Upgrade the current keyword-heuristic sentiment scorer to a real ML model. Prioritize **Alpha Vantage NEWS_SENTIMENT** (drop-in API, utilizing our existing key) or score existing Finnhub headlines via a local **FinBERT** model. Use zero-key RSS feeds (Yahoo Finance, Google News) for broad catalyst capture.
 - **Goal:** Anticipate sudden price re-ratings driven by external events that technicals and fundamentals have not yet priced in.
 
 ### E. Alternative Data & Alpha
 *Gain an informational edge over retail consensus.*
 - **Indicators:** Insider trading ratios (Form 4), Congressional trading activity, Unusual Options Activity (UOA) / Dark Pool prints, and NLP summarization of raw SEC EDGAR filings (8-K Material Events, 10-Q Risk Factors).
+  - *Implementation Target:* Prioritize **FMP's senate and insider endpoints** (since the FMP key is already integrated) as the most cost-effective path to smart-money signals. Add SEC EDGAR RSS for authoritative Form 4 insider trades.
   - *(Note: We will integrate the Quiver Quantitative API in the short-term future to specifically source high-quality Congressional trading and lobbying data).*
 - **Legislative & Litigation Risk:** Actively monitoring for pending lawsuits, anti-trust actions, or major legislative changes (e.g., subsidies, new tariffs, regulatory approvals) that could drastically re-rate a company's valuation overnight.
 - **Token Efficiency Mechanism:** Raw filings and options chains are *never* fed directly to the active prompt. An asynchronous background task digests these alternative data streams and produces 1-sentence bulletins (e.g., *"Insider buying detected at 52-week lows; 8-K shows new DoD contract"*).
