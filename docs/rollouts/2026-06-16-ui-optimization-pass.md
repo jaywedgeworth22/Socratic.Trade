@@ -108,6 +108,20 @@ nit. All three were fixed in this pass:
    `.status-grid-8` system. The prop was never passed `true` anywhere, so it was
    removed entirely from the component.
 
+### Strategy Studio textarea height (pre-existing bug, fixed)
+
+Spotted during manual review: in Strategy Studio the prompt `<textarea>`
+collapsed to ~59px (its 2-row intrinsic height) while its panel was ~600px tall,
+so only ~2 lines of the 2,400-char prompt were visible. Root cause is
+pre-existing, not from this pass: `.strategy-editor` is a `.panel`, and `.panel`
+uses `align-content: start`, which packs grid rows at the top instead of
+stretching them — so the textarea's `height: 100%` resolved against a
+content-sized row. Fixed by giving `.strategy-editor` an explicit
+`grid-template-rows: auto minmax(0, 1fr)` so the textarea row fills the panel,
+plus a `min-height: 220px` floor on the textarea as a safety net. Applies to
+both the Strategy Studio modal and the center-workspace Strategy tab (same
+component). Verified live: textarea now renders ~520px and shows the full prompt.
+
 ## Follow-ups
 
 - The body still uses `zoom: 0.9` for density. It is load-bearing for the dense

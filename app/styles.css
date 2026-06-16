@@ -422,10 +422,13 @@ label {
 
 .strategy-editor {
   min-height: 420px;
+  /* Override .panel's align-content:start so the textarea row fills the panel
+     instead of collapsing to content height. */
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .strategy-editor textarea {
-  min-height: 0;
+  min-height: 220px;
   height: 100%;
   resize: none;
 }
