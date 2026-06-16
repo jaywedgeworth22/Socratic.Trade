@@ -775,6 +775,42 @@ function OrdersTable({ orders }: { orders: EquityOrder[] }) {
   );
 }
 
+// Friendly names for the per-cell "Source: X" tooltips.
+const SOURCE_LABELS: Record<string, string> = {
+  finnhub: "Finnhub",
+  fmp: "FMP",
+  "yahoo-finance": "Yahoo Finance",
+  "nasdaq-delayed-screener": "Nasdaq",
+  robinhood: "Robinhood",
+  "robinhood-quotes": "Robinhood",
+  blended: "blended (multiple sources)"
+};
+
+function friendlySource(name?: string): string {
+  if (!name) return "unknown";
+  return SOURCE_LABELS[name] ?? name;
+}
+
+// "<label>\nSource: <provider>" — the single source the displayed value came from.
+function cellTitle(label: string, source?: string): string {
+  return source ? `${label}\nSource: ${friendlySource(source)}` : label;
+}
+
+// Rating tooltip: blended header + each source's individual read.
+function ratingTitle(candidate: MarketQuote): string {
+  if (typeof candidate.analystScore !== "number") return "No analyst rating data";
+  const header = `Blended ${candidate.analystScore}/100 (${candidate.analystRating ?? "n/a"})`;
+  const lines = Object.entries(candidate.analystBySource ?? {}).map(([src, d]) => {
+    const detail = d.counts
+      ? ` (SB${d.counts.strongBuy}/B${d.counts.buy}/H${d.counts.hold}/S${d.counts.sell}/SS${d.counts.strongSell})`
+      : typeof d.mean === "number"
+        ? ` (mean ${d.mean})`
+        : "";
+    return `${friendlySource(src)}: ${d.label} ${d.score}${detail}`;
+  });
+  return [header, ...lines].join("\n");
+}
+
 function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
   const [sort, setSort] = useState<{ col: keyof MarketQuote; dir: SortDir }>({ col: "score", dir: "desc" });
   if (candidates.length === 0) return <p className="subtle">No scan candidates returned.</p>;
@@ -794,34 +830,44 @@ function ScanTable({ candidates }: { candidates: MarketQuote[] }) {
             {marketHeader("P/E", "peRatio", sort, setSort, "Price-to-earnings ratio from Finnhub, FMP, or Yahoo Finance")}
             {marketHeader("Div Yield", "dividendYield", sort, setSort, "Annual dividend yield % from Finnhub or Yahoo Finance")}
             {marketHeader("EPS", "eps", sort, setSort, "Earnings per share (TTM) from Finnhub or Yahoo Finance")}
-            {marketHeader("Sentiment", "sentiment", sort, setSort, "Derived from analyst consensus or news headline sentiment scoring")}
-            {marketHeader("Rating", "analystRating", sort, setSort, "Analyst consensus from Finnhub, FMP, or Yahoo Finance")}
+            {marketHeader("Sentiment", "sentiment", sort, setSort, "News-tone score (0–100) from recent headline analysis (Finnhub)")}
+            {marketHeader("Rating", "analystScore", sort, setSort, "Blended analyst consensus (0–100) across Finnhub, FMP, and Yahoo Finance")}
             {marketHeader("Sector", "sector", sort, setSort, "Sourced from Nasdaq Screener, Finnhub, or Yahoo Finance profile")}
             {marketHeader("Score", "score", sort, setSort, "Calculated dynamically based on active scoring weights")}
           </tr>
         </thead>
         <tbody>
           {sorted.slice(0, 15).map((candidate) => {
-            const sourceName = candidate.provider === "yahoo-finance" ? "Yahoo Finance" : candidate.provider ?? "unknown";
-            const quoteSource = `Source: ${sourceName}`;
+            const quoteSource = `Source: ${friendlySource(candidate.provider)}`;
+            const src = candidate.sources ?? {};
+            // P/E: real value, "n/a" for negative earnings (no meaningful ratio), "-" if unknown.
+            const peText = candidate.peRatio && candidate.peRatio > 0
+              ? candidate.peRatio.toFixed(1)
+              : typeof candidate.eps === "number" && candidate.eps <= 0
+                ? "n/a"
+                : "-";
             const sentimentTitle = typeof candidate.sentiment === "number"
-              ? `Sentiment Score: ${candidate.sentiment}/100 (from analyst consensus or news scoring)\n\nRecent Headlines:\n${candidate.headlines?.map(h => `• ${h}`).join("\n") ?? "None"}`
-              : "No sentiment data";
+              ? cellTitle(
+                  `News-tone ${candidate.sentiment}/100 (headline analysis)` +
+                    `\n\nRecent Headlines:\n${candidate.headlines?.map((h) => `• ${h}`).join("\n") ?? "None"}`,
+                  src.sentiment
+                )
+              : "No recent news";
             return (
               <tr key={candidate.symbol}>
-                <td title="Stock Symbol (from Nasdaq Screener)"><strong>{candidate.symbol}</strong></td>
+                <td title={candidate.companyName ?? candidate.symbol}><strong>{candidate.symbol}</strong></td>
                 <td title={quoteSource}>{money(candidate.price)}</td>
                 <td title={quoteSource}>{candidate.bid ? money(candidate.bid) : "-"}</td>
                 <td title={quoteSource}>{candidate.ask ? money(candidate.ask) : "-"}</td>
-                <td title="Intraday price change (from Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
-                <td title="Daily trading volume (from Nasdaq, Finnhub, or Yahoo Finance)">{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
-                <td title="Market capitalization (from Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
-                <td title="Price-to-Earnings Ratio (Finnhub / FMP / Yahoo Finance)">{candidate.peRatio ? candidate.peRatio.toFixed(1) : "-"}</td>
-                <td title="Annual Dividend Yield % (from Finnhub basic financials)">{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
-                <td title="Earnings Per Share TTM (from Finnhub basic financials)">{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
+                <td title="Intraday price change (Nasdaq Screener)" className={candidate.intradayChangePct >= 0 ? "pnl-pos" : "pnl-neg"}>{formatPct(candidate.intradayChangePct)}</td>
+                <td title={cellTitle("Daily trading volume", src.volume ?? candidate.provider)}>{candidate.volume > 0 ? compactNum(candidate.volume) : "-"}</td>
+                <td title="Market capitalization (Nasdaq Screener)">{candidate.marketCap && candidate.marketCap > 0 ? compactMoney(candidate.marketCap) : "-"}</td>
+                <td title={cellTitle(peText === "n/a" ? "Price-to-Earnings: negative earnings, no meaningful ratio" : "Price-to-Earnings Ratio", src.peRatio)}>{peText}</td>
+                <td title={cellTitle("Annual Dividend Yield %", src.dividendYield)}>{typeof candidate.dividendYield === "number" ? `${candidate.dividendYield.toFixed(2)}%` : "-"}</td>
+                <td title={cellTitle("Earnings Per Share (TTM)", src.eps)}>{typeof candidate.eps === "number" ? `$${candidate.eps.toFixed(2)}` : "-"}</td>
                 <td title={sentimentTitle}>{typeof candidate.sentiment === "number" ? sentimentLabel(candidate.sentiment) : "-"}</td>
-                <td title="Analyst consensus rating (Finnhub / FMP / Yahoo Finance)">{candidate.analystRating ?? "-"}</td>
-                <td title="Stock Sector (from Nasdaq Screener or profile metadata)">{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
+                <td title={ratingTitle(candidate)}>{candidate.analystRating ? `${candidate.analystRating} ${candidate.analystScore ?? ""}`.trim() : "-"}</td>
+                <td title={cellTitle("Stock Sector", src.sector)}>{candidate.sector ? <span className="sector-tag">{candidate.sector}</span> : "-"}</td>
                 <td title={factorTitle(candidate)}>{candidate.score.toFixed(1)}</td>
               </tr>
             );

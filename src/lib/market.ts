@@ -1,7 +1,8 @@
-import { getEnrichmentProvider } from "./data-providers";
+import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { normalizeSymbol } from "./money";
 import type {
+  EnrichmentSources,
   EquityPosition,
   MarketDataProvider,
   MarketFactor,
@@ -62,8 +63,8 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     let topCandidates: MarketQuote[] = ranked.slice(0, quoteLimit);
 
     // Enrich the top set with news sentiment + fundamentals, then re-score & re-sort.
-    // The provider is always at minimum the mock tier, so enrichment always runs.
-    // Real API tiers (Finnhub, FMP) are added when their keys are configured.
+    // Enrichment covers the whole candidate slice (see maxSymbols), so every symbol that
+    // can climb into the displayed set after re-sorting already has data.
     const provider = getEnrichmentProvider();
     if (topCandidates.length > 0) {
       try {
@@ -74,15 +75,19 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
             if (!extra) return quote;
             const enriched: MarketQuote = {
               ...quote,
+              companyName: extra.companyName ?? quote.companyName,
               sentiment: extra.sentiment ?? quote.sentiment,
               peRatio: extra.peRatio ?? quote.peRatio,
               headlines: extra.headlines ?? quote.headlines,
               analystRating: extra.analystRating ?? quote.analystRating,
+              analystScore: extra.analystScore ?? quote.analystScore,
+              analystBySource: extra.analystBySource ?? quote.analystBySource,
               sector: extra.sector ?? quote.sector,
               industry: extra.industry ?? quote.industry,
               volume: extra.volume && extra.volume > 0 ? extra.volume : quote.volume,
               dividendYield: extra.dividendYield ?? quote.dividendYield,
-              eps: extra.eps ?? quote.eps
+              eps: extra.eps ?? quote.eps,
+              sources: mergeSources(quote, extra)
             };
             const factorBreakdown = scoreFactors(enriched, weights);
             return { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal };
@@ -146,15 +151,21 @@ export function mergeQuoteData(
   const normalize = (quote: MarketQuote): MarketQuote => {
     const extra = quoteData[quote.symbol];
     if (!extra) return quote;
+    // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
+    const usedExtraVolume = !!(extra.volume && extra.volume > 0);
+    const sources: EnrichmentSources | undefined =
+      usedExtraVolume && extra.provider
+        ? { ...(quote.sources ?? {}), volume: extra.provider }
+        : quote.sources;
     return {
       ...quote,
       bid: positiveNumber(extra.bid) ?? quote.bid,
       ask: positiveNumber(extra.ask) ?? quote.ask,
       price: positiveNumber(extra.price) ?? quote.price,
-      // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
-      volume: (extra.volume && extra.volume > 0 ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
+      volume: (usedExtraVolume ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
       asOf: extra.asOf ?? quote.asOf,
-      provider: extra.provider ?? quote.provider
+      provider: extra.provider ?? quote.provider,
+      sources
     };
   };
   const topCandidates = scan.topCandidates.map(normalize);
@@ -232,11 +243,13 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
   const netChange = number(row.netchange);
   const sector = text(row.sector);
   const industry = text(row.industry);
+  const companyName = text(row.name);
   const position = positions.find((p) => normalizeSymbol(p.symbol) === symbol);
 
   return [
     {
       symbol,
+      companyName,
       price,
       volume,
       marketCap,
@@ -251,6 +264,19 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
       asOf
     }
   ];
+}
+
+// Combine enrichment-supplied field sources with screener-supplied ones so each
+// displayed cell can name the single provider its value came from.
+function mergeSources(quote: MarketQuote, extra: SymbolEnrichment): EnrichmentSources {
+  const sources: EnrichmentSources = { ...(extra.sources ?? {}) };
+  // Fields the screener supplies when enrichment didn't override them.
+  if (!sources.companyName && extra.companyName === undefined && quote.companyName) {
+    sources.companyName = nasdaqDelayedProvider.name;
+  }
+  if (!sources.sector && extra.sector === undefined && quote.sector) sources.sector = nasdaqDelayedProvider.name;
+  if (!sources.industry && extra.industry === undefined && quote.industry) sources.industry = nasdaqDelayedProvider.name;
+  return sources;
 }
 
 function normalizeWeights(weights: ScoringWeights): ScoringWeights {
@@ -317,6 +343,7 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
       quote.symbol,
       {
         symbol: quote.symbol,
+        companyName: quote.companyName,
         price: quote.price,
         bid: quote.bid,
         ask: quote.ask,
@@ -328,8 +355,11 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         sentiment: quote.sentiment,
         peRatio: quote.peRatio,
         analystRating: quote.analystRating,
+        analystScore: quote.analystScore,
+        analystBySource: quote.analystBySource,
         dividendYield: quote.dividendYield,
-        eps: quote.eps
+        eps: quote.eps,
+        sources: quote.sources
       }
     ])
   );

@@ -11,17 +11,43 @@
 
 import { normalizeSymbol } from "./money";
 
+// Per-source analyst breakdown so the Rating column can blend across providers and
+// the tooltip can show each provider's individual read.
+export interface AnalystRatingDetail {
+  score: number;   // 0–100 (Strong Buy = 100 … Strong Sell = 0)
+  label: string;   // Strong Buy / Buy / Hold / Sell / Strong Sell
+  counts?: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number };
+  mean?: number;   // analyst mean (1–5) when the source reports one instead of counts
+}
+
 export interface SymbolEnrichment {
-  sentiment?: number;    // 0–100 (50 = neutral)
+  sentiment?: number;    // 0–100 news tone (50 = neutral). News-derived only.
   peRatio?: number;
   headlines?: string[];
-  analystRating?: string;
+  analystRating?: string;  // blended consensus label
+  analystScore?: number;   // blended 0–100 analyst score
   sector?: string;
   industry?: string;
   volume?: number;
   dividendYield?: number; // annual dividend yield %
   eps?: number;           // earnings per share (TTM)
+  companyName?: string;
+  // Which provider supplied each scalar field (filled by the cascade).
+  sources?: Partial<Record<EnrichmentSourcedField, string>>;
+  // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
+  analystBySource?: Record<string, AnalystRatingDetail>;
 }
+
+export type EnrichmentSourcedField =
+  | "sentiment"
+  | "peRatio"
+  | "analystRating"
+  | "sector"
+  | "industry"
+  | "volume"
+  | "dividendYield"
+  | "eps"
+  | "companyName";
 
 export interface MarketEnrichmentProvider {
   name: string;
@@ -29,8 +55,40 @@ export interface MarketEnrichmentProvider {
   enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
 }
 
+// ── Analyst scoring helpers ───────────────────────────────────────────────────
+// Map ratings onto a 0–100 scale so multiple sources can be averaged.
+
+export function labelFromAnalystScore(score: number): string {
+  if (score >= 85) return "Strong Buy";
+  if (score >= 65) return "Buy";
+  if (score >= 45) return "Hold";
+  if (score >= 25) return "Sell";
+  return "Strong Sell";
+}
+
+export function analystScoreFromCounts(c: {
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+}): number | undefined {
+  const total = c.strongBuy + c.buy + c.hold + c.sell + c.strongSell;
+  if (total <= 0) return undefined;
+  return (c.strongBuy * 100 + c.buy * 75 + c.hold * 50 + c.sell * 25 + c.strongSell * 0) / total;
+}
+
+// Analyst mean: 1 = Strong Buy … 5 = Strong Sell.
+export function analystScoreFromMean(mean: number): number {
+  return Math.max(0, Math.min(100, ((5 - mean) / 4) * 100));
+}
+
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-const DEFAULT_MAX_SYMBOLS = 15;
+// Cover the full scan candidate set (MARKET_SCAN_LIMIT, default 30) so every row the
+// dashboard displays is enriched — otherwise symbols that climb in rank after enrichment
+// would render blank. The 6h cache means only the first run is heavy.
+const DEFAULT_MAX_SYMBOLS = 30;
+const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
 
@@ -60,7 +118,7 @@ const MOCK_METRICS: Record<string, Omit<SymbolEnrichment, "volume"> & Required<P
   UNH:  { sector: "Healthcare", industry: "Healthcare Plans", peRatio: 22.1, analystRating: "Buy", sentiment: 60, dividendYield: 1.65, eps: 26.13, headlines: ["UnitedHealth Group raises annual EPS guidance.", "UNH Optum segment delivers strong growth in care services."] },
 };
 
-function getFallbackMetrics(symbol: string): Required<Omit<SymbolEnrichment, "volume">> {
+function getFallbackMetrics(symbol: string): SymbolEnrichment {
   // Deterministic hash-based pseudo-data for unknown symbols.
   const hash = symbol.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
   const sectors = ["Technology", "Financial Services", "Consumer Cyclical", "Healthcare", "Industrials", "Consumer Defensive", "Communication Services"];
@@ -87,8 +145,27 @@ function ttlMs(): number {
 }
 
 function maxSymbols(): number {
-  const value = Number(process.env.FMP_MAX_SYMBOLS ?? DEFAULT_MAX_SYMBOLS);
-  return Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_SYMBOLS;
+  const value = Number(process.env.FMP_MAX_SYMBOLS ?? process.env.MARKET_SCAN_LIMIT ?? DEFAULT_MAX_SYMBOLS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_MAX_SYMBOLS;
+  return Math.min(value, MAX_SYMBOLS_CAP);
+}
+
+// One retry on HTTP 429 (rate limit) with a short backoff before giving up.
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  options: { retries?: number; backoffMs?: number } = {}
+): Promise<Response> {
+  const retries = options.retries ?? 1;
+  const backoffMs = options.backoffMs ?? 600;
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, init);
+    if (response.status === 429 && attempt < retries) {
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+      continue;
+    }
+    return response;
+  }
 }
 
 // ── Provider factory ────────────────────────────────────────────────────────
@@ -100,7 +177,9 @@ export function getEnrichmentProvider(): MarketEnrichmentProvider {
   if (process.env.FINNHUB_API_KEY) providers.push(new FinnhubEnrichmentProvider(process.env.FINNHUB_API_KEY));
   if (process.env.FMP_API_KEY) providers.push(new FmpEnrichmentProvider(process.env.FMP_API_KEY));
   providers.push(new YahooFinanceEnrichmentProvider());
-  return providers.length === 1 ? providers[0] : new CascadingEnrichmentProvider(providers);
+  // Always wrap in the cascade — even for a single provider — so per-field source
+  // stamping and analyst blending happen uniformly.
+  return new CascadingEnrichmentProvider(providers);
 }
 
 // ── Mock / fallback provider (always configured) ────────────────────────────
@@ -124,9 +203,10 @@ export const noopProvider = mockEnrichmentProvider;
 export const fallbackProvider = mockEnrichmentProvider;
 
 // ── Cascading provider ──────────────────────────────────────────────────────
-// Runs all child providers in order; for each symbol/field takes the first
-// non-undefined value. This means Finnhub fills what it can, FMP fills gaps,
-// and mock fills anything still missing.
+// Runs all child providers in parallel. For each scalar field it takes the first
+// non-undefined value (Finnhub fills what it can, FMP fills gaps, Yahoo fills the
+// rest) and records which provider supplied it. Analyst ratings are NOT first-wins:
+// every provider's read is collected and blended into one 0–100 score + label.
 
 class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name: string;
@@ -137,34 +217,83 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    // Run all providers in parallel.
-    const results = await Promise.all(this.providers.map((p) => p.enrich(symbols).catch(() => ({} as Record<string, SymbolEnrichment>))));
+    // Run all providers in parallel; pair each result set with its provider name.
+    const results = await Promise.all(
+      this.providers.map((p) =>
+        p
+          .enrich(symbols)
+          .then((data) => ({ name: p.name, data }))
+          .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }))
+      )
+    );
     const merged: Record<string, SymbolEnrichment> = {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
+
     for (const symbol of normalized) {
       const base: SymbolEnrichment = {};
-      for (const result of results) {
-        const r = result[symbol];
+      const sources: Partial<Record<EnrichmentSourcedField, string>> = {};
+      const analystBySource: Record<string, AnalystRatingDetail> = {};
+
+      const takeScalar = <K extends keyof SymbolEnrichment>(
+        field: K,
+        sourceName: string,
+        value: SymbolEnrichment[K] | undefined
+      ) => {
+        if (base[field] === undefined && value !== undefined) {
+          base[field] = value;
+          if (field in EMPTY_SOURCED) sources[field as EnrichmentSourcedField] = sourceName;
+        }
+      };
+
+      for (const { name, data } of results) {
+        const r = data[symbol];
         if (!r) continue;
-        if (base.sentiment === undefined && r.sentiment !== undefined) base.sentiment = r.sentiment;
-        if (base.peRatio === undefined && r.peRatio !== undefined) base.peRatio = r.peRatio;
+        takeScalar("sentiment", name, r.sentiment);
+        takeScalar("peRatio", name, r.peRatio);
+        takeScalar("sector", name, r.sector);
+        takeScalar("industry", name, r.industry);
+        takeScalar("volume", name, r.volume);
+        takeScalar("dividendYield", name, r.dividendYield);
+        takeScalar("eps", name, r.eps);
+        takeScalar("companyName", name, r.companyName);
         if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
-        if (base.analystRating === undefined && r.analystRating !== undefined) base.analystRating = r.analystRating;
-        if (base.sector === undefined && r.sector !== undefined) base.sector = r.sector;
-        if (base.industry === undefined && r.industry !== undefined) base.industry = r.industry;
-        if (base.volume === undefined && r.volume !== undefined) base.volume = r.volume;
-        if (base.dividendYield === undefined && r.dividendYield !== undefined) base.dividendYield = r.dividendYield;
-        if (base.eps === undefined && r.eps !== undefined) base.eps = r.eps;
+        // Collect every provider's analyst read.
+        if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
       }
+
+      // Blend analyst scores across all sources that reported one.
+      const detail = Object.values(analystBySource);
+      if (detail.length > 0) {
+        const blended = detail.reduce((sum, d) => sum + d.score, 0) / detail.length;
+        base.analystScore = Math.round(blended);
+        base.analystRating = labelFromAnalystScore(blended);
+        base.analystBySource = analystBySource;
+        sources.analystRating = Object.keys(analystBySource).length > 1 ? "blended" : Object.keys(analystBySource)[0];
+      }
+
+      base.sources = sources;
       merged[symbol] = base;
     }
     return merged;
   }
 }
 
+// Marker set so takeScalar only stamps fields that are actually sourced (not headlines/analyst).
+const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
+  sentiment: true,
+  peRatio: true,
+  analystRating: true,
+  sector: true,
+  industry: true,
+  volume: true,
+  dividendYield: true,
+  eps: true,
+  companyName: true
+};
+
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
 // Uses Yahoo Finance session-crumb auth to call v10/finance/quoteSummary.
-// Provides: sector, industry, P/E, EPS, dividend yield, analyst rating, sentiment.
+// Provides: sector, industry, P/E, EPS, dividend yield, and analyst rating.
 
 interface YfCreds { cookie: string; crumb: string; expiresAt: number; }
 let yfCreds: YfCreds | null = null;
@@ -240,7 +369,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
         cache: "no-store",
         signal: controller.signal
@@ -259,7 +388,6 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
       const rawEps = (ks.trailingEps as { raw?: number })?.raw;
       const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
-      const recKey = fd.recommendationKey as string | undefined;
 
       const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
       // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
@@ -268,17 +396,13 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
       const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
 
-      let analystRating: string | undefined;
-      let sentiment: number | undefined;
-      if (typeof rawRecMean === "number") {
-        // recommendationMean: 1=Strong Buy, 5=Strong Sell → map to 0–100.
-        sentiment = Math.max(0, Math.min(100, Math.round((5 - rawRecMean) / 4 * 100)));
-      }
-      if (recKey) {
-        const keyMap: Record<string, string> = {
-          strongbuy: "Strong Buy", buy: "Buy", hold: "Hold", sell: "Sell", strongsell: "Strong Sell"
+      // Analyst rating comes from the 1–5 recommendation mean → blended by the cascade.
+      let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+      if (typeof rawRecMean === "number" && rawRecMean > 0) {
+        const score = analystScoreFromMean(rawRecMean);
+        analystBySource = {
+          [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), mean: Math.round(rawRecMean * 100) / 100 }
         };
-        analystRating = keyMap[recKey.toLowerCase().replace(/[-_\s]/g, "")] ?? capitalise(recKey);
       }
 
       return {
@@ -287,8 +411,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         ...(eps !== undefined && { eps }),
         ...(sector !== undefined && { sector }),
         ...(industry !== undefined && { industry }),
-        ...(analystRating !== undefined && { analystRating }),
-        ...(sentiment !== undefined && { sentiment })
+        ...(analystBySource !== undefined && { analystBySource })
       };
     } finally {
       clearTimeout(timeout);
@@ -350,26 +473,32 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               if (typeof q?.v === "number" && q.v > 0) volume = q.v;
             }
 
-            // Analyst recommendations
-            let analystRating: string | undefined;
+            // Analyst recommendations → 0–100 score + label + counts (blended by the cascade)
+            let analystBySource: Record<string, AnalystRatingDetail> | undefined;
             if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as any[]).length > 0) {
               const latest = (recRaw.value as any[])[0];
-              const sb = num(latest.strongBuy), b = num(latest.buy), h = num(latest.hold), s = num(latest.sell), ss = num(latest.strongSell);
-              const total = sb + b + h + s + ss;
-              if (total > 0) {
-                if (sb + b > total * 0.6) analystRating = sb > b ? "Strong Buy" : "Buy";
-                else if (ss + s > total * 0.4) analystRating = ss > s ? "Strong Sell" : "Sell";
-                else analystRating = "Hold";
+              const counts = {
+                strongBuy: num(latest.strongBuy),
+                buy: num(latest.buy),
+                hold: num(latest.hold),
+                sell: num(latest.sell),
+                strongSell: num(latest.strongSell)
+              };
+              const score = analystScoreFromCounts(counts);
+              if (score !== undefined) {
+                analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
               }
             }
 
-            // Company profile → sector + industry
+            // Company profile → sector + industry + company name
             let sector: string | undefined;
             let industry: string | undefined;
+            let companyName: string | undefined;
             if (profileRaw.status === "fulfilled") {
               const profile = profileRaw.value as any;
               if (profile?.finnhubIndustry) { sector = profile.finnhubIndustry; industry = profile.finnhubIndustry; }
               if (profile?.sector) sector = profile.sector;
+              if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
             }
 
             // Basic financials → P/E, dividend yield, EPS, average volume
@@ -396,9 +525,10 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               ...(sentiment !== undefined && { sentiment }),
               ...(headlines.length > 0 && { headlines }),
               ...(peRatio !== undefined && { peRatio }),
-              ...(analystRating !== undefined && { analystRating }),
+              ...(analystBySource !== undefined && { analystBySource }),
               ...(sector !== undefined && { sector }),
               ...(industry !== undefined && { industry }),
+              ...(companyName !== undefined && { companyName }),
               ...(resolvedVolume !== undefined && { volume: resolvedVolume }),
               ...(dividendYield !== undefined && { dividendYield }),
               ...(eps !== undefined && { eps })
@@ -407,7 +537,7 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
             cache.set(`finnhub:${symbol}`, { expiresAt: now + ttlMs(), data });
             result[symbol] = data;
           } catch {
-            result[symbol] = {}; // empty — cascade will fill from FMP/mock
+            result[symbol] = {}; // empty; later cascade tiers can still fill gaps.
           }
         })
       );
@@ -419,7 +549,7 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -467,28 +597,29 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             if (Number.isFinite(pe) && pe > 0) peRatio = pe;
           }
 
-          let sentiment: number | undefined;
-          let analystRating: string | undefined;
-          let headlines: string[] | undefined;
+          // Analyst grades-consensus → 0–100 score + label + counts (blended by the cascade).
+          // FMP does not provide news, so it contributes no sentiment.
+          let analystBySource: Record<string, AnalystRatingDetail> | undefined;
           if (consensusRaw.status === "fulfilled" && Array.isArray(consensusRaw.value)) {
             const row = (consensusRaw.value as any[])[0];
             if (row) {
-              const sb = num(row.strongBuy), b = num(row.buy), h = num(row.hold), s = num(row.sell), ss = num(row.strongSell);
-              const total = sb + b + h + s + ss;
-              if (total > 0) {
-                sentiment = Math.round((sb * 100 + b * 75 + h * 50 + s * 25 + ss * 0) / total);
-                const consensus = row.consensus as string | undefined;
-                analystRating = consensus ? capitalise(consensus) : undefined;
-                headlines = [`Analyst consensus: ${consensus ?? "n/a"} (${sb + b} buy / ${h} hold / ${s + ss} sell)`];
+              const counts = {
+                strongBuy: num(row.strongBuy),
+                buy: num(row.buy),
+                hold: num(row.hold),
+                sell: num(row.sell),
+                strongSell: num(row.strongSell)
+              };
+              const score = analystScoreFromCounts(counts);
+              if (score !== undefined) {
+                analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
               }
             }
           }
 
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
-            ...(sentiment !== undefined && { sentiment }),
-            ...(analystRating !== undefined && { analystRating }),
-            ...(headlines !== undefined && { headlines })
+            ...(analystBySource !== undefined && { analystBySource })
           };
 
           cache.set(`fmp:${symbol}`, { expiresAt: now + ttlMs(), data });
@@ -503,7 +634,7 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -519,10 +650,6 @@ function num(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function capitalise(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-}
-
 // Lightweight headline sentiment proxy: counts positive vs negative finance keywords.
 const POSITIVE_WORDS = ["beat", "beats", "surge", "surges", "soar", "soars", "rally", "rallies", "upgrade", "upgraded", "record", "growth", "gains", "jumps", "outperform", "buy", "bullish", "strong", "raises", "profit", "wins"];
 const NEGATIVE_WORDS = ["miss", "misses", "plunge", "plunges", "drop", "drops", "fall", "falls", "downgrade", "downgraded", "cut", "cuts", "loss", "losses", "warning", "warns", "lawsuit", "probe", "bearish", "weak", "slump", "decline", "fraud", "recall"];
@@ -536,9 +663,12 @@ export function scoreHeadlines(headlines: string[]): number {
       if (NEGATIVE_WORDS.includes(word)) negative += 1;
     }
   }
-  const total = positive + negative;
-  if (total === 0) return 50;
-  return Math.max(0, Math.min(100, Math.round(50 + ((positive - negative) / total) * 50)));
+  if (positive + negative === 0) return 50;
+  // Damped tanh on the NET signal so a few positive words no longer peg the score at 100.
+  // net 1→66, 2→74, 3→81, 5→91 … and it never reaches a hard 0/100 (clamped to 5–95).
+  const net = positive - negative;
+  const raw = 50 + 50 * Math.tanh(net / 3.5);
+  return Math.max(5, Math.min(95, Math.round(raw)));
 }
 
 export function clearEnrichmentCache(): void {
