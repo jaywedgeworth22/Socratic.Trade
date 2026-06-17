@@ -29,15 +29,13 @@ the discovery half of P2 are all **done**. What remains of P2 is the *ranking* h
 Closes Codex P2's remaining half ("recompute score/factorBreakdown after overlay,
 add smart-money/catalyst sub-scores instead of leaving the LLM to infer from prose").
 
-- **A1 `[todo]` Positioning sub-score (new `ScoringWeights` factor).** Add a
-  `positioning` factor scored from congress net + insider sentiment + short pressure
-  (and later 8-K/options). Recompute `factorBreakdown`/`score` AFTER the web overlay
-  so these names rank up deterministically, not just in the prompt.
-  - Touches: `ScoringWeights`, `normalizeWeights`, `DEFAULT_SCORING_WEIGHTS`,
-    `scoreFactors`, the UI scoring-weight editor, and the `MarketFactor` map.
-  - Risk: M (cross-file cascade; update `test/market.test.ts` weight literals).
-  - Accept: a strong-congress-buy name's `positioning` sub-score is high and its
-    composite score reflects it; weights remain normalized; tests green.
+- **A1 `[done]` Positioning sub-score (new `ScoringWeights` factor).** Added a
+  `positioning` factor (`positioningScore`) scored from congress net + insider
+  sentiment + squeeze-level short interest; `scanMarket` now recomputes
+  `factorBreakdown`/`score` AFTER the web overlay and re-sorts, so freshly-disclosed
+  smart-money names rank up deterministically (not just in the prompt). Wired through
+  `ScoringWeights`, `DEFAULT_SCORING_WEIGHTS` (0.8), `normalizeWeights`, the tuning
+  LLM schema, and the UI weight editor (auto). `tsc` + 130 tests + build green.
 - **A2 `[partial]` Expand the event union as new signal sources land.** The union
   already pulls congress/insider/FINRA-short names; extend `hasNotableWebSignal` to
   8-K / earnings / options / analyst-revision signals as Phase C delivers them.

@@ -287,7 +287,7 @@ function tuningSchema() {
       scoringWeights: {
         type: "object",
         additionalProperties: false,
-        required: ["liquidity", "momentum", "value", "quality", "volatility", "sentiment", "diversification"],
+        required: ["liquidity", "momentum", "value", "quality", "volatility", "sentiment", "positioning", "diversification"],
         properties: {
           liquidity: nullableNumber,
           momentum: nullableNumber,
@@ -295,6 +295,7 @@ function tuningSchema() {
           quality: nullableNumber,
           volatility: nullableNumber,
           sentiment: nullableNumber,
+          positioning: nullableNumber,
           diversification: nullableNumber
         }
       },

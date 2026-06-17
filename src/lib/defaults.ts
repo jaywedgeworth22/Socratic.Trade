@@ -13,6 +13,7 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   quality: 0.8,
   volatility: 0.8,
   sentiment: 0.6,
+  positioning: 0.8,
   diversification: 1
 };
 

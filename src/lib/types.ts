@@ -17,6 +17,8 @@ export interface ScoringWeights {
   quality: number;
   volatility: number;
   sentiment: number;
+  /** Smart-money positioning: congressional net buying, insider buying, short-squeeze potential. */
+  positioning: number;
   diversification: number;
 }
 

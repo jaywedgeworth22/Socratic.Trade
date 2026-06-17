@@ -17,7 +17,7 @@ describe("rankMarketQuotes", () => {
   it("normalizes scoring weights into a transparent factor total", () => {
     const scored = scoreFactors(
       quote({ symbol: "MSFT", volume: 20_000_000, intradayChangePct: 2, positionMarketValue: 0 }),
-      { liquidity: 1, momentum: 1, value: 0, quality: 0, volatility: 0, sentiment: 0, diversification: 0 }
+      { liquidity: 1, momentum: 1, value: 0, quality: 0, volatility: 0, sentiment: 0, positioning: 0, diversification: 0 }
     );
 
     expect(scored.liquidity).toBeGreaterThan(0);
@@ -42,6 +42,17 @@ describe("rankMarketQuotes", () => {
     const highBeta = scoreFactors(quote({ symbol: "HB", intradayChangePct: 0, beta: 1.8 }));
     const lowBeta = scoreFactors(quote({ symbol: "LB", intradayChangePct: 0, beta: 0.6 }));
     expect(lowBeta.volatility).toBeGreaterThan(highBeta.volatility); // high beta scores as riskier (lower stability)
+  });
+});
+
+describe("positioning sub-score", () => {
+  it("lifts net congressional + insider buying and dings net selling", () => {
+    const neutral = scoreFactors(quote({ symbol: "N" }));
+    const buy = scoreFactors(quote({ symbol: "B", senateTrades: 3, insiderSentiment: 80 }));
+    const sell = scoreFactors(quote({ symbol: "S", senateTrades: -2, insiderSentiment: 20 }));
+    expect(buy.positioning).toBeGreaterThan(neutral.positioning);
+    expect(sell.positioning).toBeLessThan(neutral.positioning);
+    expect(neutral.positioning).toBe(50); // no signal => neutral
   });
 });
 

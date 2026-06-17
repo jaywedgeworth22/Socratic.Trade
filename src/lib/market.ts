@@ -134,14 +134,20 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         overlaySources.add("sec-edgar");
       }
       if (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) overlaySources.add("finra");
-      return {
+      const overlaid: MarketQuote = {
         ...quote,
         senateTrades,
         insiderSentiment,
         evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins,
         sources
       };
+      // Recompute the score: the positioning factor depends on senateTrades/insiderSentiment
+      // the overlay just filled, so a freshly-disclosed smart-money name now ranks up.
+      const factorBreakdown = scoreFactors(overlaid, weights);
+      return { ...overlaid, factorBreakdown, score: factorBreakdown.weightedTotal };
     });
+    // Re-sort so the positioning lift actually reorders the displayed candidates.
+    topCandidates = topCandidates.sort((a, b) => b.score - a.score);
 
     // Fold enriched candidates back into the full set so quotesBySymbol carries sentiment/PE.
     const enrichedBySymbol = new Map(topCandidates.map((quote) => [quote.symbol, quote]));
@@ -182,6 +188,7 @@ export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAU
     quality: qualityScore(quote),
     volatility: volatilityScore(quote),
     sentiment: clamp(quote.sentiment ?? 50),
+    positioning: positioningScore(quote),
     diversification: quote.positionMarketValue > 0 ? 45 : 80
   };
   const normalized = normalizeWeights(weights);
@@ -369,6 +376,7 @@ function normalizeWeights(weights: ScoringWeights): ScoringWeights {
     quality: safeWeight(weights.quality),
     volatility: safeWeight(weights.volatility),
     sentiment: safeWeight(weights.sentiment),
+    positioning: safeWeight(weights.positioning),
     diversification: safeWeight(weights.diversification)
   };
   const total = Object.values(sanitized).reduce((sum, value) => sum + value, 0);
@@ -380,6 +388,7 @@ function normalizeWeights(weights: ScoringWeights): ScoringWeights {
     quality: sanitized.quality / total,
     volatility: sanitized.volatility / total,
     sentiment: sanitized.sentiment / total,
+    positioning: sanitized.positioning / total,
     diversification: sanitized.diversification / total
   };
 }
@@ -413,6 +422,34 @@ function volatilityScore(quote: MarketQuote): number {
     if (quote.beta > 1.5) base -= 15;
     else if (quote.beta > 1.1) base -= 6;
     else if (quote.beta < 0.8) base += 6;
+  }
+  return clamp(base);
+}
+
+/**
+ * Smart-money positioning sub-score (50 = neutral when no signal). Lifts names with
+ * net congressional buying / insider open-market buying / squeeze-level short interest,
+ * and dings net selling — so the scraped signals influence the deterministic ranking,
+ * not just the LLM prompt. Populated from the web-source overlay (see scanMarket), so
+ * the score is recomputed AFTER the overlay there.
+ */
+function positioningScore(quote: MarketQuote): number {
+  let base = 50;
+  if (typeof quote.senateTrades === "number" && quote.senateTrades !== 0) {
+    // Net distinct congressional buy members minus sell members.
+    base += quote.senateTrades > 0
+      ? Math.min(18, 8 + (quote.senateTrades - 1) * 5)
+      : -Math.min(18, 8 + (-quote.senateTrades - 1) * 5);
+  }
+  if (typeof quote.insiderSentiment === "number") {
+    // 0–100 open-market Form 4 buy share (50 = balanced).
+    if (quote.insiderSentiment >= 70) base += 12;
+    else if (quote.insiderSentiment >= 60) base += 6;
+    else if (quote.insiderSentiment <= 30) base -= 12;
+    else if (quote.insiderSentiment <= 40) base -= 6;
+  }
+  if (typeof quote.shortPercentOfFloat === "number" && quote.shortPercentOfFloat >= 20) {
+    base += 5; // squeeze potential (two-sided, so a small contribution only)
   }
   return clamp(base);
 }
