@@ -10,6 +10,8 @@ export interface PolicyContext {
   dailyOrderCount: number;
   estimatedNotional?: number;
   marketScan?: MarketScan;
+  /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
+  washSaleLockedSymbols?: Set<string>;
   now?: Date;
 }
 
@@ -65,6 +67,16 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
   if (proposal.side === "sell" && sellQuantityExceedsHoldings(proposal, context.positions)) {
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
+  }
+
+  // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
+  // the last 30 days, which would disallow the loss. Configurable via taxSettings.
+  if (
+    proposal.side === "buy" &&
+    (context.policy.taxSettings?.washSaleGuard ?? true) &&
+    context.washSaleLockedSymbols?.has(symbol)
+  ) {
+    reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
   }
 
   if (isOpening && proposal.side === "short" && context.policy.maxShortExposurePct) {

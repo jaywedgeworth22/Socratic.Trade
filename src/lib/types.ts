@@ -18,6 +18,16 @@ export interface ScoringWeights {
   diversification: number;
 }
 
+/** US tax-mitigation settings (estimates only — not tax advice). */
+export interface TaxSettings {
+  /** Block the agent from rebuying a symbol it closed at a loss within 30 days (IRC §1091). */
+  washSaleGuard: boolean;
+  /** Marginal rate applied to short-term realized gains (ordinary income), e.g. 24. */
+  shortTermRatePct: number;
+  /** Marginal rate applied to long-term realized gains, e.g. 15. */
+  longTermRatePct: number;
+}
+
 export interface RiskRules {
   stopLossPct?: number;
   takeProfitPct?: number;
@@ -103,6 +113,7 @@ export interface TradingPolicy {
   sectorCaps: Record<string, number>;
   riskRules: RiskRules;
   notificationSettings: NotificationSettings;
+  taxSettings?: TaxSettings;
   activeProfileId?: string;
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter

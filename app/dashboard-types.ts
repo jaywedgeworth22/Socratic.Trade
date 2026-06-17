@@ -13,6 +13,7 @@ import type {
   TradeProposal
 } from "@/lib/types";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { TaxSummary } from "@/lib/tax";
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
@@ -55,6 +56,7 @@ export interface DashboardSnapshot {
   performance?: PerformanceSummary;
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];
+  tax?: TaxSummary;
   profiles: StrategyProfile[];
   activeProfile?: StrategyProfile;
   notifications: NotificationEvent[];

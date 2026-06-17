@@ -49,6 +49,12 @@ steps materially change.
   tests + build pass. See `docs/rollouts/2026-06-16-ui-redesign-tailwind.md`.
   Analyzed `RobinAgent-MCP`: a thin AI-Studio mockup — borrowed UI polish only;
   our agent engine is far ahead.
+- 2026-06-16 (branch `ui-redesign`): US tax-mitigation features — wash-sale
+  lockout guardrail (policy blocks rebuying a symbol sold at a loss within 30
+  days), a Tax tab (ST/LT realized, estimated liability, wash-sale flags,
+  tax-loss-harvest candidates, days-to-long-term), after-tax agent context, and
+  Tax settings. New `src/lib/tax.ts`. `tsc` + 92 tests + build pass. See
+  `docs/rollouts/2026-06-16-tax-mitigation.md`. Estimates only — not tax advice.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

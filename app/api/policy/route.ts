@@ -1,4 +1,4 @@
-import { DEFAULT_POLICY } from "@/lib/defaults";
+import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
 import { normalizeSymbol } from "@/lib/money";
 import { getRobinhoodGateway } from "@/lib/robinhood";
@@ -41,6 +41,11 @@ export async function PUT(request: Request) {
         Array.isArray(body.notificationSettings.enabledEvents)
           ? body.notificationSettings.enabledEvents.filter(isNotificationEvent)
           : current.notificationSettings.enabledEvents
+    },
+    taxSettings: {
+      ...DEFAULT_TAX_SETTINGS,
+      ...current.taxSettings,
+      ...(typeof body.taxSettings === "object" && body.taxSettings ? body.taxSettings : {})
     }
   };
   const validationError = await validatePolicy(policy);
@@ -60,6 +65,11 @@ async function validatePolicy(policy: TradingPolicy): Promise<string | undefined
   if (Object.values(policy.scoringWeights).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0)) return "scoring weights must be non-negative numbers.";
   if (Object.values(policy.sectorCaps).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "sector caps must be between 0 and 100.";
   if (Object.values(policy.riskRules).some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
+  if (policy.taxSettings) {
+    const { shortTermRatePct, longTermRatePct } = policy.taxSettings;
+    if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";
+    if (!Number.isFinite(longTermRatePct) || longTermRatePct < 0 || longTermRatePct > 100) return "longTermRatePct must be between 0 and 100.";
+  }
   if (policy.notificationSettings.webhookUrl?.trim()) {
     try {
       new URL(policy.notificationSettings.webhookUrl);

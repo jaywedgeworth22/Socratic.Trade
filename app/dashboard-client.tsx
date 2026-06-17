@@ -9,10 +9,13 @@ import {
   ChevronRight,
   Command as CommandIcon,
   Gauge,
+  Hourglass,
   Info,
+  Landmark,
   LayoutDashboard,
   LineChart as LineChartIcon,
   Pause,
+  Percent,
   Play,
   RefreshCw,
   RotateCcw,
@@ -73,7 +76,7 @@ import { ThemeToggle } from "./ui/theme";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "market" | "performance" | "strategy";
+type WorkspaceTab = "decision" | "market" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications";
 
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
@@ -302,6 +305,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     { id: "decision", label: "Go to Decision", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
     { id: "market", label: "Go to Market Scan", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
     { id: "perf", label: "Go to Performance", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
+    { id: "tax", label: "Go to Tax", icon: <Landmark size={15} />, run: () => setWorkspaceTab("tax") },
     { id: "strategy", label: "Go to Strategy", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("strategy") },
     { id: "studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
     { id: "activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
@@ -401,6 +405,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
                 { id: "decision", label: "Decision" },
                 { id: "market", label: "Market Scan" },
                 { id: "performance", label: "Performance" },
+                { id: "tax", label: "Tax" },
                 { id: "strategy", label: "Strategy" }
               ]}
             />
@@ -423,6 +428,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             )}
             {workspaceTab === "market" && <MarketScanView snapshot={snapshot} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} />}
+            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "strategy" && (
               <StrategyView
                 snapshot={snapshot}
@@ -865,6 +871,132 @@ function PerformanceView({
   );
 }
 
+/* ───────────────────────── Tax view (tab) ───────────────────────── */
+
+function TaxView({
+  snapshot,
+  symbolMetaBySymbol
+}: {
+  snapshot: DashboardSnapshot;
+  symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
+}) {
+  const tax = snapshot.tax;
+  if (!tax) {
+    return (
+      <Card>
+        <PanelHeader title="Tax" icon={<Landmark size={16} />} />
+        <EmptyState icon={<Landmark size={20} />} title="No tax data yet" hint="Select an account and run the strategy; realized gains and lots appear here." />
+      </Card>
+    );
+  }
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <Card className="lg:col-span-2">
+        <PanelHeader
+          title={`Tax overview · ${tax.taxYear}`}
+          subtitle="Rough estimates only — not tax advice. Consult a CPA."
+          icon={<Landmark size={16} />}
+          actions={<Chip tone={tax.settings.washSaleGuard ? "up" : "warn"}>Wash-sale guard {tax.settings.washSaleGuard ? "on" : "off"}</Chip>}
+        />
+        <div className="grid grid-cols-2 gap-2 p-4 pt-3 sm:grid-cols-4">
+          <StatTile label="Short-term realized" value={signedMoney(tax.shortTermRealized)} tone={tax.shortTermRealized >= 0 ? "up" : "down"} sub={`taxed ~${tax.settings.shortTermRatePct}% (ordinary)`} />
+          <StatTile label="Long-term realized" value={signedMoney(tax.longTermRealized)} tone={tax.longTermRealized >= 0 ? "up" : "down"} sub={`taxed ~${tax.settings.longTermRatePct}%`} />
+          <StatTile label="Est. tax liability" value={money(tax.estimatedTaxLiability)} tone="down" sub="this year, on realized gains" />
+          <StatTile label="Disallowed (wash sale)" value={money(tax.disallowedWashSaleLoss)} tone={tax.disallowedWashSaleLoss > 0 ? "warn" : "neutral"} sub="losses you can't deduct" />
+        </div>
+      </Card>
+
+      <Card>
+        <PanelHeader title="Wash-sale lockout" subtitle="Rebuying these is blocked 30 days after a loss sale" icon={<Shield size={16} />} />
+        <div className="space-y-3 p-4 pt-3">
+          {tax.lockedSymbols.length === 0 ? (
+            <p className="text-[13px] text-faint">No symbols are currently locked out.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {tax.lockedSymbols.map((s) => (
+                <Chip key={s} tone="down">{s}</Chip>
+              ))}
+            </div>
+          )}
+          {tax.washSales.length > 0 && (
+            <div className="space-y-1.5 border-t border-line pt-3">
+              <span className="text-xs font-medium text-muted">Wash sales detected this year</span>
+              {tax.washSales.slice(0, 6).map((w, i) => (
+                <div key={`${w.symbol}-${i}`} className="flex items-center justify-between text-[13px]">
+                  <span className="font-semibold text-fg">{w.symbol}</span>
+                  <span className="tnum text-faint">{new Date(w.soldAt).toLocaleDateString()} · {money(w.disallowedLoss)} disallowed</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <PanelHeader title="Tax-loss harvest candidates" subtitle="Unrealized losers that could offset realized gains" icon={<Percent size={16} />} />
+        <div className="p-4 pt-3">
+          {tax.harvestCandidates.length === 0 ? (
+            <p className="text-[13px] text-faint">No harvestable losses right now.</p>
+          ) : (
+            <table className="w-full text-[13px]">
+              <tbody>
+                {tax.harvestCandidates.map((h) => (
+                  <tr key={h.symbol} className="border-b border-line/50">
+                    <td className="py-1.5 font-semibold text-fg" title={companyTitle(h.symbol, symbolMetaBySymbol)}>{h.symbol}</td>
+                    <td className="py-1.5 text-right tnum text-muted">{formatShareQuantity(h.quantity, h.symbol)} sh</td>
+                    <td className="py-1.5 text-right tnum text-down">{signedMoney(h.unrealizedLoss)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Card>
+
+      <Card className="lg:col-span-2">
+        <PanelHeader title="Holding period — days to long-term" subtitle="Crossing 1 year flips gains from ordinary to long-term rates" icon={<Hourglass size={16} />} />
+        <div className="min-h-0 overflow-auto p-2">
+          {tax.openLots.length === 0 ? (
+            <EmptyState icon={<Hourglass size={18} />} title="No open lots" />
+          ) : (
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="border-b border-line text-[11px] uppercase text-faint">
+                  <th className="px-2 py-1.5 text-left font-semibold">Symbol</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Qty</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Days held</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Progress to long-term</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tax.openLots.map((lot, i) => (
+                  <tr key={`${lot.symbol}-${i}`} className="border-b border-line/50">
+                    <td className="px-2 py-1.5 font-semibold text-fg" title={companyTitle(lot.symbol, symbolMetaBySymbol)}>{lot.symbol}</td>
+                    <td className="px-2 py-1.5 text-right tnum text-muted">{formatShareQuantity(lot.quantity, lot.symbol)}</td>
+                    <td className="px-2 py-1.5 text-right tnum text-muted">{lot.daysHeld}</td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="h-1.5 w-32 overflow-hidden rounded-full bg-surface-3">
+                          <span className={cn("block h-full rounded-full", lot.isLongTerm ? "bg-up" : "bg-info")} style={{ width: `${Math.min(100, (lot.daysHeld / 365) * 100)}%` }} />
+                        </span>
+                        <span className="tnum text-[11px] text-faint">{lot.isLongTerm ? "—" : `${lot.daysToLongTerm}d left`}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <Chip tone={lot.isLongTerm ? "up" : "warn"}>{lot.isLongTerm ? "Long-term" : "Short-term"}</Chip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 /* ───────────────────────── Strategy view (tab) ───────────────────────── */
 
 function StrategyView({
@@ -1230,10 +1362,11 @@ function SettingsContent({
   remainingOrders: number;
   updatePolicy: (patch: PolicyPatch) => void;
 }) {
-  type Section = "operate" | "risk" | "notifications";
+  type Section = "operate" | "risk" | "tax" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [sectorCaps, setSectorCaps] = useState(formatSectorCaps(policy.sectorCaps));
   const [draft, setDraft] = useState("");
+  const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
 
   function addAllowlist() {
     const next = normalizeSymbols([...policy.allowlist, ...draft.split(/[,\s]+/)]);
@@ -1249,6 +1382,7 @@ function SettingsContent({
         tabs={[
           { id: "operate", label: "Operate" },
           { id: "risk", label: "Risk & limits" },
+          { id: "tax", label: "Tax" },
           { id: "notifications", label: "Notifications" }
         ]}
       />
@@ -1340,6 +1474,26 @@ function SettingsContent({
           <p className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13px] text-muted sm:col-span-2">
             Remaining today: <span className="tnum text-fg">{money(remainingNotional)}</span> notional and <span className="tnum text-fg">{remainingOrders}</span> orders.
           </p>
+        </div>
+      )}
+
+      {section === "tax" && (
+        <div className="space-y-3">
+          <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[13px] text-muted">
+            Estimates only — not tax advice. These settings tune the after-tax signals the agent sees and the wash-sale guardrail.
+          </p>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Wash-sale guard</span>
+              <span className="block text-xs text-faint">Block rebuying a symbol sold at a loss within 30 days (IRC §1091).</span>
+            </span>
+            <Switch checked={taxSettings.washSaleGuard} onChange={(v) => updatePolicy({ taxSettings: { ...taxSettings, washSaleGuard: v } })} />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField label="Short-term rate (%)" value={taxSettings.shortTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, shortTermRatePct: v } })} />
+            <NumberField label="Long-term rate (%)" value={taxSettings.longTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, longTermRatePct: v } })} />
+          </div>
+          <p className="text-xs text-faint">Rates are used only for the rough liability estimate on the Tax tab. Defaults: 24% short-term (ordinary), 15% long-term.</p>
         </div>
       )}
 

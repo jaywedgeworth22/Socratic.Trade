@@ -43,10 +43,20 @@ export interface RegimeStat {
   totalPnl: number;
 }
 
+/** An open (unclosed) tax lot with its entry date, for holding-period / tax analysis. */
+export interface OpenLot {
+  symbol: string;
+  quantity: number;
+  entryPrice: number;
+  side: "long" | "short";
+  entryAt?: string;
+}
+
 interface PnlResult {
   realized: number;
   unrealized: number;
   closedLots: ClosedLot[];
+  openLots: OpenLot[];
   attribution: RunAttribution[];
 }
 
@@ -284,10 +294,14 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
   }
 
   let unrealized = 0;
+  const openLots: OpenLot[] = [];
   for (const [symbol, symbolLots] of lots) {
     const current = currentPrices[symbol];
-    if (!current) continue;
     for (const lot of symbolLots) {
+      if (Math.abs(lot.quantity) > 0.000001) {
+        openLots.push({ symbol, quantity: lot.quantity, entryPrice: lot.price, side: lot.side, entryAt: lot.entryAt });
+      }
+      if (!current) continue;
       if (lot.side === "long") {
         unrealized += lot.quantity * (current - lot.price);
       } else {
@@ -300,6 +314,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     realized,
     unrealized,
     closedLots,
+    openLots,
     attribution: Array.from(attribution.values()).sort((a, b) => a.runId.localeCompare(b.runId))
   };
 }
@@ -335,6 +350,11 @@ export function getRegimeScorecard(
 /** Closed lots with entry/exit context, oldest-first, for excursion (MAE/MFE) analysis. */
 export function getClosedLotsDetailed(accountNumber: string, source?: FillSource): ClosedLot[] {
   return calculatePnl(listFillEvents(accountNumber, source)).closedLots;
+}
+
+/** Open (unclosed) lots with entry dates, for holding-period and tax analysis. */
+export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot[] {
+  return calculatePnl(listFillEvents(accountNumber, source)).openLots;
 }
 
 function aggregateClosedLots(

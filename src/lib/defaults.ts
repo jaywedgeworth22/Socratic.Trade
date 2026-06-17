@@ -1,4 +1,10 @@
-import type { NotificationSettings, RiskRules, ScoringWeights, TradingPolicy } from "./types";
+import type { NotificationSettings, RiskRules, ScoringWeights, TaxSettings, TradingPolicy } from "./types";
+
+export const DEFAULT_TAX_SETTINGS: TaxSettings = {
+  washSaleGuard: true,
+  shortTermRatePct: 24,
+  longTermRatePct: 15
+};
 
 export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   liquidity: 1.4,
@@ -41,7 +47,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   scoringWeights: DEFAULT_SCORING_WEIGHTS,
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
-  notificationSettings: DEFAULT_NOTIFICATION_SETTINGS
+  notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
+  taxSettings: DEFAULT_TAX_SETTINGS
 };
 
 export const DEFAULT_STRATEGY_PROMPT = `OBJECTIVE

@@ -19,6 +19,7 @@ import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { getPaperPortfolioProjection, getRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
+import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
 import { generateReflectionSummary } from "./post-mortem";
 import { getSetting, getInternalSetting, setInternalSetting } from "./db";
@@ -65,6 +66,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber);
+    const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live");
 
     // In Paper mode, decisions run against the standalone paper account (starting cash +
     // prior paper fills, marked to live prices) so the simulation evolves like Live.
@@ -140,7 +142,8 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
         dailyNotionalUsed: dailyNow.notional,
         dailyOrderCount: dailyNow.orderCount,
         estimatedNotional: review.estimatedNotional,
-        marketScan
+        marketScan,
+        washSaleLockedSymbols
       });
 
       if (!decision.approved) {
@@ -339,7 +342,8 @@ export async function executeProposal(proposalId: string): Promise<{
     dailyNotionalUsed: daily.notional,
     dailyOrderCount: daily.orderCount,
     estimatedNotional: review.estimatedNotional,
-    marketScan: approvalScan
+    marketScan: approvalScan,
+    washSaleLockedSymbols: getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live")
   });
 
   if (!decision.approved) {
@@ -491,6 +495,22 @@ async function proposeTrades(input: {
   const source = input.policy.paperMode ? "paper" : "live";
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source) : [];
   const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source) : [];
+  const taxSummary = input.policy.accountNumber
+    ? getTaxSummary(input.policy.accountNumber, source, currentPricesFromScan(input.marketScan), input.policy.taxSettings)
+    : null;
+  const taxContext = taxSummary
+    ? {
+        taxYear: taxSummary.taxYear,
+        shortTermRealizedYTD: taxSummary.shortTermRealized,
+        longTermRealizedYTD: taxSummary.longTermRealized,
+        estimatedTaxLiability: taxSummary.estimatedTaxLiability,
+        washSaleLockedSymbols: taxSummary.lockedSymbols,
+        positionsNearLongTerm: taxSummary.openLots
+          .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
+          .map((lot) => ({ symbol: lot.symbol, daysToLongTerm: lot.daysToLongTerm })),
+        harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
+      }
+    : null;
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
     "",
@@ -503,6 +523,15 @@ async function proposeTrades(input: {
     "Your realized track record (in the user message):",
     "- `tradeOutcomesByThesis`: win rate, average return, and total P&L grouped by the `tradeThesisTag` you previously assigned. Lean into thesis types with a positive track record and a healthy win rate; be skeptical of, downsize, or avoid thesis types that have repeatedly lost money. Reuse a proven `tradeThesisTag` when the current setup matches it.",
     "- `tradeOutcomesByRegime`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
+    ...(taxContext
+      ? [
+          "",
+          "Tax efficiency (US, in the user message as `taxContext`): you trade in a taxable account, so factor the after-tax cost of churn.",
+          "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).",
+          "- For winners in `positionsNearLongTerm`, prefer holding past the 1-year mark (long-term rate is much lower than the short-term ordinary rate) unless the thesis has clearly broken.",
+          "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
+        ]
+      : []),
     "",
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
@@ -549,7 +578,8 @@ async function proposeTrades(input: {
     macroeconomicData,
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
-    ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {})
+    ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {}),
+    ...(taxContext ? { taxContext } : {})
   };
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";

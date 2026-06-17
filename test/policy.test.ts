@@ -48,6 +48,33 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
+  it("blocks a buy of a wash-sale-locked symbol when the guard is on", () => {
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10,
+      washSaleLockedSymbols: new Set(["VOO"])
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
+  });
+
+  it("allows a locked-symbol buy when the wash-sale guard is disabled", () => {
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: false, shortTermRatePct: 24, longTermRatePct: 15 } },
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10,
+      washSaleLockedSymbols: new Set(["VOO"])
+    });
+    expect(decision.approved).toBe(true);
+  });
+
   it("blocks symbols outside the allowlist", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "TSLA" }, context());
     expect(decision.approved).toBe(false);

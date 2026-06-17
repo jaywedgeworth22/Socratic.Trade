@@ -17,6 +17,7 @@ import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
+import { getTaxSummary } from "./tax";
 import { getRobinhoodGateway } from "./robinhood";
 import { getSchedulerState } from "./scheduler";
 
@@ -67,6 +68,7 @@ export async function getDashboardSnapshot() {
   const scorecardSource = policy.paperMode ? "paper" : "live";
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices) : [];
+  const tax = accountNumber ? getTaxSummary(accountNumber, scorecardSource, currentPrices, policy.taxSettings) : undefined;
   const profiles = listStrategyProfiles();
   const activeProfile = getActiveStrategyProfile();
   const notifications = listNotificationEvents(50);
@@ -123,6 +125,7 @@ export async function getDashboardSnapshot() {
     performance,
     thesisScorecard,
     regimeScorecard,
+    tax,
     profiles,
     activeProfile,
     notifications,
