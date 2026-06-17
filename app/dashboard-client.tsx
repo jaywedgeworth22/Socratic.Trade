@@ -689,7 +689,7 @@ function DecisionView({
                 <div className="flex items-center gap-2">
                   <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
                   <span className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}>{p.proposal.symbol}</span>
-                  <span className="ml-auto tnum text-xs text-muted" title="Estimated total trade value. '(est)' means it's derived from the current price — the actual fill price may differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional)}</span>
+                  <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
                 <div className="mt-3 flex gap-2">
@@ -725,7 +725,7 @@ function DecisionView({
                   <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
                   <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
                   <span className="font-semibold text-fg">{item.proposal.symbol}</span>
-                  <span className="tnum text-xs text-muted" title="Estimated total trade value. '(est)' means it's derived from the current price — the actual fill price may differ slightly.">{proposalSize(item.proposal)} · {item.proposal.type}</span>
+                  <span className="tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
                   {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
                 </div>
                 <p className="mt-2 text-[13px] leading-snug text-muted">{item.proposal.rationale}</p>
@@ -1917,16 +1917,26 @@ function displayStatus(status: string): string {
   return status.toUpperCase();
 }
 
-function proposalSize(proposal: TradeProposal, estimatedNotional?: number): string {
-  // Always present a total dollar figure. A dollar order spends an exact amount; a
-  // share/quantity order's total depends on the fill price, so it's marked "(est)".
-  if (proposal.dollarAmount) return money(proposal.dollarAmount);
-  if (typeof estimatedNotional === "number" && estimatedNotional > 0) return `${money(estimatedNotional)} (est)`;
-  if (proposal.quantity) {
-    const est = proposal.limitPrice && proposal.limitPrice > 0 ? proposal.quantity * proposal.limitPrice : undefined;
-    if (est && est > 0) return `${money(est)} (est)`;
-    return `${formatShareQuantity(proposal.quantity, proposal.symbol)} sh (est)`;
+/** Format to N significant figures; whole numbers stay whole (e.g. 0.412, 12.3, 5). */
+function toSigFigs(n: number, figs = 3): string {
+  if (!Number.isFinite(n)) return "—";
+  if (Number.isInteger(n)) return String(n);
+  if (n === 0) return "0";
+  const digits = Math.max(0, figs - Math.floor(Math.log10(Math.abs(n))) - 1);
+  return n.toFixed(digits);
+}
+
+function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price?: number): string {
+  // Show the estimated total cost AND the share count (3 sig figs). All of it is an
+  // estimate (the "~"): the fill price can differ from the quote used here.
+  const px = price && price > 0 ? price : proposal.limitPrice && proposal.limitPrice > 0 ? proposal.limitPrice : undefined;
+  const cost = proposal.dollarAmount ?? estimatedNotional ?? (proposal.quantity && px ? proposal.quantity * px : undefined);
+  const shares = proposal.quantity ?? (cost && px ? cost / px : undefined);
+  if (typeof cost === "number" && cost > 0 && typeof shares === "number" && shares > 0) {
+    return `~ ${money(cost)} for ${toSigFigs(shares, 3)} shares`;
   }
+  if (typeof cost === "number" && cost > 0) return `~ ${money(cost)}`;
+  if (typeof shares === "number" && shares > 0) return `~ ${toSigFigs(shares, 3)} shares`;
   return "—";
 }
 
