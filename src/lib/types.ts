@@ -26,6 +26,16 @@ export interface TaxSettings {
   shortTermRatePct: number;
   /** Marginal rate applied to long-term realized gains, e.g. 15. */
   longTermRatePct: number;
+  /** When true, the Performance view shows realized P&L net of the estimated tax burden. */
+  subtractFromResults?: boolean;
+}
+
+/** Tunable constants that are otherwise arbitrary code-level defaults. */
+export interface TuningSettings {
+  /** Bayesian shrinkage pseudo-count for small-sample win/return toward a neutral prior. Default 5. */
+  shrinkPrior?: number;
+  /** Minimum closed lots before the auto-tuner may shift factor weights (phase-7 §3.E). Default 20. */
+  minClosedLotsForWeightShift?: number;
 }
 
 export interface RiskRules {
@@ -114,6 +124,7 @@ export interface TradingPolicy {
   riskRules: RiskRules;
   notificationSettings: NotificationSettings;
   taxSettings?: TaxSettings;
+  tuning?: TuningSettings;
   activeProfileId?: string;
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter

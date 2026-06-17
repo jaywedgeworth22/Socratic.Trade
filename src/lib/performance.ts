@@ -1,4 +1,4 @@
-import { insertFillEvent, insertPortfolioSnapshot, listFillEvents, listPortfolioSnapshots } from "./db";
+import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listFillEvents, listPortfolioSnapshots } from "./db";
 import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
@@ -417,6 +417,16 @@ export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot
  */
 const SHRINK_PRIOR = 5;
 
+/** Shrinkage prior, overridable via policy.tuning.shrinkPrior; falls back to the default. */
+function resolveShrinkPrior(): number {
+  try {
+    const v = getPolicy().tuning?.shrinkPrior;
+    return typeof v === "number" && v > 0 ? v : SHRINK_PRIOR;
+  } catch {
+    return SHRINK_PRIOR;
+  }
+}
+
 function aggregateClosedLots(
   closedLots: ClosedLot[],
   keyFn: (lot: ClosedLot) => string
@@ -429,6 +439,7 @@ function aggregateClosedLots(
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
 }> {
+  const prior = resolveShrinkPrior();
   const byKey = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
@@ -446,9 +457,9 @@ function aggregateClosedLots(
       winRate: Math.round((s.wins / s.trades) * 100),
       avgReturnPct: Number((s.returnSum / s.trades).toFixed(2)),
       totalPnl: Number(s.pnl.toFixed(2)),
-      // Shrink toward neutral (0.5 win, 0% return) with SHRINK_PRIOR pseudo-trades.
-      shrunkWinRate: Math.round(((s.wins + 0.5 * SHRINK_PRIOR) / (s.trades + SHRINK_PRIOR)) * 100),
-      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + SHRINK_PRIOR)).toFixed(2))
+      // Shrink toward neutral (0.5 win, 0% return) with `prior` pseudo-trades.
+      shrunkWinRate: Math.round(((s.wins + 0.5 * prior) / (s.trades + prior)) * 100),
+      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2))
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }

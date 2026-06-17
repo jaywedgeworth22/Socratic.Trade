@@ -46,6 +46,10 @@ export async function PUT(request: Request) {
       ...DEFAULT_TAX_SETTINGS,
       ...current.taxSettings,
       ...(typeof body.taxSettings === "object" && body.taxSettings ? body.taxSettings : {})
+    },
+    tuning: {
+      ...current.tuning,
+      ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
   const validationError = await validatePolicy(policy);
@@ -69,6 +73,11 @@ async function validatePolicy(policy: TradingPolicy): Promise<string | undefined
     const { shortTermRatePct, longTermRatePct } = policy.taxSettings;
     if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";
     if (!Number.isFinite(longTermRatePct) || longTermRatePct < 0 || longTermRatePct > 100) return "longTermRatePct must be between 0 and 100.";
+  }
+  if (policy.tuning) {
+    const { shrinkPrior, minClosedLotsForWeightShift } = policy.tuning;
+    if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
+    if (minClosedLotsForWeightShift !== undefined && (!Number.isFinite(minClosedLotsForWeightShift) || minClosedLotsForWeightShift < 1 || minClosedLotsForWeightShift > 1000)) return "tuning.minClosedLotsForWeightShift must be between 1 and 1000.";
   }
   if (policy.notificationSettings.webhookUrl?.trim()) {
     try {

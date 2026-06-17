@@ -11,7 +11,8 @@ import {
   ResponsiveContainer,
   Tooltip,
   XAxis,
-  YAxis
+  YAxis,
+  Brush
 } from "recharts";
 import type { EquityCurvePoint } from "@/lib/types";
 
@@ -64,6 +65,7 @@ export function EquityCurve({ data }: { data: EquityCurvePoint[] }) {
           formatter={(v) => [money(Number(v)), "Equity"]}
         />
         <Area type="monotone" dataKey="equity" stroke="var(--accent)" strokeWidth={2} fill="url(#eq)" />
+        <Brush dataKey="t" height={30} stroke="var(--muted)" fill="transparent" tickFormatter={() => ""} />
       </AreaChart>
     </ResponsiveContainer>
   );

@@ -14,7 +14,7 @@ import {
   updateFillEvent
 } from "./db";
 import { mergeQuoteData, scanMarket } from "./market";
-import { fetchMacroData, pruneMacro, type MacroData } from "./macro";
+import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { getPaperPortfolioProjection, getRegimeScorecard, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
@@ -91,8 +91,10 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       dailyOrderCount: daily.orderCount
     });
 
+    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy));
+
     const debatedProposals: TradeProposal[] = [];
-    for (const proposal of llmProposals) {
+    for (const proposal of sizedProposals) {
       if ((proposal.confidenceScore ?? 0) >= 80) { // High conviction threshold
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
@@ -278,8 +280,11 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
     const placed = results.filter((r) => r.status === "placed").length;
     const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
+    const tradeCount = placed + paperCount + proposed;
+    const tradeNoun = policy.paperMode ? "Paper Trade" : "Trade";
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
+      `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
       paperCount > 0 ? `Paper: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : ""
@@ -326,6 +331,37 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
   audit("strategy_run", result);
   return result;
+}
+
+function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy): TradeProposal {
+  if (proposal.side === "sell" || proposal.side === "cover") return proposal; // Preserve exits
+  
+  const source = policy.paperMode ? "paper" : "live";
+  const account = policy.accountNumber;
+  if (!account) return proposal;
+
+  const regimeScorecard = getThesisRegimeScorecard(account, source);
+  const thesisScorecard = getThesisScorecard(account, source);
+  
+  const comboStat = regimeScorecard.find(s => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
+  const thesisStat = thesisScorecard.find(s => s.thesisTag === proposal.tradeThesisTag);
+  
+  const winRate = comboStat && comboStat.trades >= 5 ? comboStat.shrunkWinRate : (thesisStat?.shrunkWinRate ?? 50);
+  const conviction = (proposal.confidenceScore ?? 50) / 100;
+  
+  // Deterministic sizing: scale max Order Notional by Conviction and Historical Win Rate
+  const multiplier = (winRate / 100) * conviction;
+  
+  // Bound between 10% and 100% of maxOrderNotional
+  const boundedMultiplier = Math.max(0.1, Math.min(1.0, multiplier));
+  const targetNotional = Math.floor(policy.maxOrderNotional * boundedMultiplier);
+  
+  return {
+    ...proposal,
+    dollarAmount: targetNotional,
+    quantity: undefined, // Override any LLM-guessed quantity to force notional routing
+    rationale: proposal.rationale + `\n\n[Sizing] Sized deterministically to $${targetNotional} (${Math.round(boundedMultiplier*100)}% of max) based on ${winRate}% historical win rate and ${Math.round(conviction*100)}% AI conviction.`
+  };
 }
 
 export async function executeProposal(proposalId: string): Promise<{
@@ -595,9 +631,9 @@ async function proposeTrades(input: {
     reflection || "No historical reflection available yet.",
     "",
     "Your realized track record (in the user message):",
-    "- `tradeOutcomesByThesis`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
-    "- `tradeOutcomesByRegime`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
-    "- `tradeOutcomesByThesisRegime`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
+    "- `thesisOutcomes`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
+    "- `regimeOutcomes`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
+    "- `comboOutcomes`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
     ...(taxContext
       ? [
           "",
@@ -612,8 +648,8 @@ async function proposeTrades(input: {
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
     "",
-    "Evidence per candidate (in marketScan.topCandidates): factorBreakdown sub-scores, fcfYieldPct, debtToEquity, epsGrowth, newsSentiment, insiderSentiment, senateTradesNet, smartMoneyEvidence, analyst rating, headlines. Justify each proposal from this structured evidence, not vibes.",
-    "smartMoneyEvidence holds freshly-disclosed congressional (and insider) trade bulletins; senateTradesNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
+    "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
+    "smartMoney holds freshly-disclosed congressional (and insider) trade bulletins; senateNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
     THESIS_PLAYBOOK_GUIDE,
     "",
     "Return strict JSON only. No markdown. No text outside the JSON object."
@@ -630,22 +666,26 @@ async function proposeTrades(input: {
       ? { ...macroForPrompt, unchangedSinceLastRun: macroOmitted }
       : macroForPrompt;
 
-  // For a large allowed universe (e.g. the full S&P 500) the explicit ticker list
-  // is mostly redundant with the scored marketScan candidates and costs hundreds of
-  // tokens, so send a compact note instead of every symbol.
-  const ALLOWLIST_INLINE_LIMIT = 60;
-  const allowedSymbolsForPrompt =
-    input.policyAllowlist.length > ALLOWLIST_INLINE_LIMIT
-      ? {
-          note: `Large allowed universe (${input.policyAllowlist.length} symbols). Only propose BUYs for symbols present in marketScan.topCandidates; you may SELL/TRIM any current position.`,
-          sample: input.policyAllowlist.slice(0, 20)
-        }
-      : input.policyAllowlist;
+  const currentMarketRegime = determineMarketRegime(macro);
+
+  // [PHASE 2 OPTIMIZATION] Total Allowlist Abstraction
+  // Instead of sending hundreds of allowed symbols to the LLM, we just tell it to only trade
+  // from the provided topCandidates (which the backend pre-filters). We enforce this at the gateway.
+  const allowedSymbolsForPrompt = {
+    note: "All proposals must strictly be selected from `marketScan.topCandidates`. Do not propose symbols outside this list. You may SELL/TRIM any current position."
+  };
+
+  const currentPortfolioStateStr = JSON.stringify({ portfolio: input.portfolio, positions: input.positions });
+  const previousPortfolioStateStr = getInternalSetting<string>("last_portfolio_state_str");
+  const portfolioUnchanged = currentPortfolioStateStr === previousPortfolioStateStr;
+  setInternalSetting("last_portfolio_state_str", currentPortfolioStateStr);
 
   const userContent = {
     currentDate: new Date().toISOString(),
-    portfolio: input.portfolio,
-    positions: input.positions,
+    currentMarketRegime,
+    ...(portfolioUnchanged 
+      ? { portfolioAndPositions: { unchangedSinceLastRun: true } }
+      : { portfolio: input.portfolio, positions: input.positions }),
     recentOrders: input.recentOrders,
     allowedSymbols: allowedSymbolsForPrompt,
     marketScan: compactMarketScanForPrompt(input.marketScan),
@@ -656,9 +696,9 @@ async function proposeTrades(input: {
     },
     macroeconomicData,
     ...(sectorComposition ? { sectorComposition } : {}),
-    ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
-    ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {}),
-    ...(thesisRegimeScorecard.length > 0 ? { tradeOutcomesByThesisRegime: thesisRegimeScorecard } : {}),
+    ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
+    ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
+    ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
     ...(taxContext ? { taxContext } : {})
   };
 
@@ -689,7 +729,6 @@ async function proposeTrades(input: {
             "marketHours",
             "rationale",
             "tradeThesisTag",
-            "entryMarketRegime",
             "confidenceScore"
           ],
           properties: {
@@ -706,7 +745,6 @@ async function proposeTrades(input: {
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            entryMarketRegime: { type: "string" },
             confidenceScore: { type: "number", description: "Conviction score from 1 to 100" }
           }
         }
@@ -767,8 +805,10 @@ async function proposeTrades(input: {
     throw new Error("Empty response returned from LLM API.");
   }
   
-  const bullProposals = sanitizeProposals(JSON.parse(text).proposals ?? [], maxProposals);
-  if (bullProposals.length === 0) return [];
+  const bullProposals = sanitizeProposals(JSON.parse(text).proposals ?? [], maxProposals).map(p => ({
+    ...p,
+    entryMarketRegime: currentMarketRegime
+  }));
 
   // Phase 7: Bear Agent (Red Team) Critique
   const bearSystemPrompt = [
@@ -777,7 +817,7 @@ async function proposeTrades(input: {
     "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
-    `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}) and add a concise 'entryMarketRegime' (e.g., 'High-Inflation-Bear', 'Tech-Bull') to track the learning loop.`,
+    `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}).`,
     "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
     "If none survive, return an empty array."
   ].join("\\n");
@@ -803,8 +843,7 @@ async function proposeTrades(input: {
             "timeInForce",
             "marketHours",
             "rationale",
-            "tradeThesisTag",
-            "entryMarketRegime"
+            "tradeThesisTag"
           ],
           properties: {
             symbol: { type: "string" },
@@ -819,30 +858,30 @@ async function proposeTrades(input: {
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
-            tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            entryMarketRegime: { type: "string" }
+            tradeThesisTag: { enum: THESIS_PLAYBOOK }
           }
         }
       }
     }
   };
 
-  // The Bear only critiques the Bull's proposals, so it needs the candidates under
   // review plus risk context — not a second copy of the full market scan / allowlist.
   const proposedSymbols = new Set(bullProposals.map((proposal) => normalizeSymbol(proposal.symbol)));
   const candidatesUnderReview = userContent.marketScan?.topCandidates?.filter((candidate) =>
-    proposedSymbols.has(normalizeSymbol(candidate.symbol))
+    proposedSymbols.has(normalizeSymbol(candidate.sym))
   );
   const bearUserContent = {
     currentDate: userContent.currentDate,
+    currentMarketRegime: userContent.currentMarketRegime,
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
-    portfolio: userContent.portfolio,
-    positions: userContent.positions,
+    ...(portfolioUnchanged 
+      ? { portfolioAndPositions: { unchangedSinceLastRun: true } }
+      : { portfolio: input.portfolio, positions: input.positions }),
     ...(sectorComposition ? { sectorComposition } : {}),
-    ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
-    ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {}),
-    ...(thesisRegimeScorecard.length > 0 ? { tradeOutcomesByThesisRegime: thesisRegimeScorecard } : {}),
+    ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
+    ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
+    ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
     candidatesUnderReview,
     bullAgentProposals: bullProposals
   };
@@ -902,7 +941,10 @@ async function proposeTrades(input: {
   }
 
   const parsedBear = JSON.parse(bearText).proposals ?? [];
-  return sanitizeProposals(parsedBear, maxProposals);
+  return sanitizeProposals(parsedBear, maxProposals).map(p => ({
+    ...p,
+    entryMarketRegime: currentMarketRegime
+  }));
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
@@ -947,33 +989,35 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
     cacheTtlMs: marketScan.cacheTtlMs,
     cached: marketScan.cached,
     hasAskData,
-    topCandidates: marketScan.topCandidates.map((quote, index) => ({
+    topCandidates: marketScan.topCandidates
+      .filter(quote => quote.score >= 40) // [PHASE 2 OPTIMIZATION] Strict backend pre-filtering
+      .map((quote, index) => ({
       rank: index + 1,
-      symbol: quote.symbol,
-      price: quote.price,
+      sym: quote.symbol,
+      px: quote.price,
       bid: quote.bid,
       ask: quote.ask,
-      volume: quote.volume,
-      marketCap: quote.marketCap,
-      intradayChangePct: quote.intradayChangePct,
-      peRatio: quote.peRatio,
+      vol: quote.volume,
+      mktCap: quote.marketCap,
+      chgPct: quote.intradayChangePct,
+      pe: quote.peRatio,
       eps: quote.eps,
-      dividendYield: quote.dividendYield,
-      fcfYieldPct: quote.fcfYield,
-      debtToEquity: quote.debtToEquity,
-      epsGrowth: quote.epsGrowth,
-      newsSentiment: quote.sentiment,
-      insiderSentiment: quote.insiderSentiment,
-      senateTradesNet: quote.senateTrades,
-      smartMoneyEvidence: quote.evidenceBulletins?.slice(0, 3),
-      analystRating: quote.analystRating,
-      analystScore: quote.analystScore,
-      headlines: quote.headlines?.slice(0, 2),
-      sector: quote.sector,
-      industry: quote.industry,
-      positionMarketValue: quote.positionMarketValue,
+      div: quote.dividendYield,
+      fcf: quote.fcfYield,
+      de: quote.debtToEquity,
+      epsGr: quote.epsGrowth,
+      newsSent: quote.sentiment,
+      insiderSent: quote.insiderSentiment,
+      senateNet: quote.senateTrades,
+      smartMoney: quote.evidenceBulletins?.slice(0, 3),
+      rating: quote.analystRating,
+      ratingScore: quote.analystScore,
+      news: quote.headlines?.slice(0, 2),
+      sec: quote.sector,
+      ind: quote.industry,
+      posMV: quote.positionMarketValue,
       score: quote.score,
-      factorBreakdown: quote.factorBreakdown,
+      factors: quote.factorBreakdown,
       provider: quote.provider,
       asOf: quote.asOf
     })),

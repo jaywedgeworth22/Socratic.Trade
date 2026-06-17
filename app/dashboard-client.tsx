@@ -28,7 +28,9 @@ import {
   XCircle,
   Zap
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { TableVirtuoso } from "react-virtuoso";
+import { toast } from "sonner";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import {
   cellTitle,
@@ -45,6 +47,7 @@ import { SP500_SYMBOLS } from "@/lib/sp500";
 import type {
   EquityPosition,
   MarketQuote,
+  MarketScan,
   NotificationSettings,
   ScoringWeights,
   StrategyTuningProposal,
@@ -54,7 +57,10 @@ import type {
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
 import { compactMoney, compactNum, formatPct, money, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
-import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
+import dynamic from "next/dynamic";
+const AllocationDonut = dynamic(() => import("./ui/charts").then((m) => m.AllocationDonut), { ssr: false });
+const EquityCurve = dynamic(() => import("./ui/charts").then((m) => m.EquityCurve), { ssr: false });
+const ScorecardBars = dynamic(() => import("./ui/charts").then((m) => m.ScorecardBars), { ssr: false });
 import { CommandPalette, type Command } from "./ui/command-palette";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import {
@@ -82,10 +88,6 @@ type FeedTab = "activity" | "runs" | "notifications";
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState("");
-  const [error, setError] = useState("");
-  const [alertMessage, setAlertMessage] = useState<{ title: string; body: string; type: "error" | "warning" | "success" } | null>(null);
-
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("decision");
   const [feedTab, setFeedTab] = useState<FeedTab>("activity");
   const [feedOpen, setFeedOpen] = useState(false);
@@ -107,22 +109,26 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     return () => clearInterval(interval);
   }, []);
 
+  const [isMac, setIsMac] = useState(true);
   useEffect(() => {
-    if (!result) return;
-    const timer = setTimeout(() => setResult(""), 6000);
-    return () => clearTimeout(timer);
-  }, [result]);
+    // Platform-aware command shortcut: ⌘K on macOS, Ctrl+K elsewhere (Windows/Linux).
+    const platform = typeof navigator !== "undefined" ? navigator.platform || navigator.userAgent || "" : "";
+    setIsMac(/Mac|iPhone|iPad|iPod/i.test(platform));
+  }, []);
+  const shortcutLabel = isMac ? "⌘K" : "Ctrl+K";
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // Honor the platform's modifier: Cmd on macOS, Ctrl on Windows/Linux.
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((v) => !v);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [isMac]);
 
   async function load(options: { quiet?: boolean } = {}) {
     if (!options.quiet) setBusy(true);
@@ -130,9 +136,8 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       const response = await fetch("/api/dashboard", { cache: "no-store" });
       if (!response.ok) throw new Error(await response.text());
       setSnapshot((await response.json()) as DashboardSnapshot);
-      setError("");
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Dashboard refresh failed.");
+      toast.error(loadError instanceof Error ? loadError.message : "Dashboard refresh failed.");
     } finally {
       if (!options.quiet) setBusy(false);
     }
@@ -147,10 +152,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         body: JSON.stringify({ ...snapshot.policy, ...patch })
       });
       if (!response.ok) throw new Error(await response.text());
+      toast.success("Policy updated.");
       await load({ quiet: true });
-      setError("");
     } catch (policyError) {
-      setError(policyError instanceof Error ? policyError.message : "Policy update failed.");
+      toast.error(policyError instanceof Error ? policyError.message : "Policy update failed.");
     } finally {
       setBusy(false);
     }
@@ -172,10 +177,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       const response = await fetch("/api/strategy/run", { method: "POST" });
       if (!response.ok) throw new Error(await response.text());
       const body = (await response.json()) as { summary?: string };
-      setResult(body.summary ?? "Strategy run completed.");
+      toast.success(body.summary ?? "Strategy run completed.");
       await load({ quiet: true });
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : "Strategy run failed.");
+      toast.error(runError instanceof Error ? runError.message : "Strategy run failed.");
     } finally {
       setBusy(false);
     }
@@ -189,9 +194,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       const body = (await response.json()) as { status: string; orderId?: string; reasons?: string[] };
       if (body.status === "blocked") {
         const reasonsMsg = body.reasons?.map((r) => `• ${r}`).join("\n") ?? "No reasons provided.";
-        setAlertMessage({ title: "Proposal blocked by policy", body: `The following rules blocked this order:\n\n${reasonsMsg}`, type: "warning" });
+        toast.warning("Proposal blocked by policy", { description: reasonsMsg });
       } else {
-        setResult(
+        toast.success(
           body.status === "placed"
             ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
             : body.status === "paper"
@@ -200,11 +205,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         );
       }
       if (body.status === "placed" || body.status === "paper") await load({ quiet: true });
-      setError("");
     } catch (approvalError) {
       const errMsg = approvalError instanceof Error ? approvalError.message : "Proposal approval failed.";
-      setError(errMsg);
-      setAlertMessage({ title: "Execution error", body: `Failed to approve proposal:\n${errMsg}`, type: "error" });
+      toast.error("Execution error", { description: errMsg });
     } finally {
       setBusy(false);
     }
@@ -215,10 +218,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     try {
       const response = await fetch(`/api/proposals/${proposalId}/reject`, { method: "POST" });
       if (!response.ok) throw new Error(await response.text());
-      setResult("Proposal rejected.");
+      toast.info("Proposal rejected.");
       await load({ quiet: true });
     } catch (rejectError) {
-      setError(rejectError instanceof Error ? rejectError.message : "Proposal rejection failed.");
+      toast.error(rejectError instanceof Error ? rejectError.message : "Proposal rejection failed.");
     } finally {
       setBusy(false);
     }
@@ -229,9 +232,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     try {
       const response = await fetch(`/api/profiles/${profileId}/activate`, { method: "POST" });
       if (!response.ok) throw new Error(await response.text());
+      toast.success("Profile activated.");
       await load({ quiet: true });
     } catch (profileError) {
-      setError(profileError instanceof Error ? profileError.message : "Profile activation failed.");
+      toast.error(profileError instanceof Error ? profileError.message : "Profile activation failed.");
     } finally {
       setBusy(false);
     }
@@ -248,10 +252,11 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         body: JSON.stringify({ name, policy: snapshot.policy, prompt: snapshot.strategyPrompt, active: true })
       });
       if (!response.ok) throw new Error(await response.text());
+      toast.success("Profile created.");
       setNewProfileName("");
       await load({ quiet: true });
     } catch (profileError) {
-      setError(profileError instanceof Error ? profileError.message : "Profile creation failed.");
+      toast.error(profileError instanceof Error ? profileError.message : "Profile creation failed.");
     } finally {
       setBusy(false);
     }
@@ -281,7 +286,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       ...(patch.policy?.riskRules ? { riskRules: { ...policy.riskRules, ...patch.policy.riskRules } } : {}),
       ...(patch.prompt ? { strategyPrompt: patch.prompt } : {})
     });
-    setResult("Strategy tuning changes applied.");
+    toast.success("Strategy tuning changes applied.");
   }
 
   const policy = snapshot.policy;
@@ -298,6 +303,12 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   const dailyNotionalPct = policy.maxDailyNotional > 0 ? Math.round((dailyStats.notional / policy.maxDailyNotional) * 100) : 0;
   const pendingCount = snapshot.pendingProposals.length;
+  const autonomyStatus = policy.killSwitch
+    ? { tone: "down" as const, label: "Halted" }
+    : policy.enabled
+      ? { tone: "up" as const, label: "Autonomy On" }
+      : { tone: "neutral" as const, label: "Autonomy Off" };
+  const marketStatus = marketStatusFor(snapshot.marketSession);
 
   const commands: Command[] = [
     { id: "run", label: "Run strategy once", hint: "R", icon: <Zap size={15} />, run: () => void runStrategy() },
@@ -324,11 +335,16 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             <Zap size={17} className="fill-current" />
           </span>
           <div className="leading-tight">
-            <div className="text-sm font-semibold text-fg">Agentic Cockpit</div>
-            <div className="flex items-center gap-1.5 text-[11px] text-muted">
-              <Dot tone={policy.killSwitch ? "down" : policy.enabled ? "up" : "warn"} pulse={policy.enabled && !policy.killSwitch} />
-              {policy.killSwitch ? "Halted" : policy.enabled ? "Autonomy on" : "Paused"}
-              <span className="text-faint">· {snapshot.marketSession ?? "—"}</span>
+            <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
+            <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
+              <div className="flex items-center gap-1.5 whitespace-nowrap">
+                <Dot tone={autonomyStatus.tone} pulse={policy.enabled && !policy.killSwitch} />
+                {autonomyStatus.label}
+              </div>
+              <div className="flex items-center gap-1.5 whitespace-nowrap">
+                <Dot tone={marketStatus.tone} />
+                {marketStatus.label}
+              </div>
             </div>
           </div>
         </div>
@@ -341,6 +357,17 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <div
+            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 md:flex"
+            title={policy.killSwitch ? "Kill switch is active — deactivate it to enable autonomy" : "Turn autonomous trading on or off"}
+          >
+            <span className="text-xs font-medium text-muted">Autonomy</span>
+            <Switch
+              checked={policy.enabled && !policy.killSwitch}
+              onChange={(on) => updatePolicy({ enabled: on, ...(on ? { killSwitch: false } : {}) })}
+              label="Autonomy"
+            />
+          </div>
           <Segmented
             value={mode}
             onChange={(v) => updatePolicy({ paperMode: v === "paper" })}
@@ -351,9 +378,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           />
           <button
             onClick={() => setPaletteOpen(true)}
+            title="Open command palette"
             className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-fg md:flex"
           >
-            <CommandIcon size={13} /> K
+            {isMac ? <><CommandIcon size={13} /> K</> : <span className="font-medium">Ctrl K</span>}
           </button>
           <IconButton label="Refresh" onClick={() => load()} disabled={busy}>
             <RefreshCw size={15} className={cn(busy && "animate-spin")} />
@@ -433,6 +461,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               <StrategyView
                 snapshot={snapshot}
                 policy={policy}
+                updatePolicy={updatePolicy}
                 onEdit={() => setStudioOpen(true)}
                 activateProfile={activateProfile}
                 newProfileName={newProfileName}
@@ -447,12 +476,6 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             )}
           </div>
         </main>
-      </div>
-
-      {/* ── Toasts ──────────────────────────────────────────────── */}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[1200] grid w-[min(420px,calc(100vw-2rem))] gap-2">
-        {error && <Toast tone="error" message={error} onClose={() => setError("")} />}
-        {result && <Toast tone="info" message={result} onClose={() => setResult("")} />}
       </div>
 
       {/* ── Overlays ────────────────────────────────────────────── */}
@@ -529,14 +552,6 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         tone={policy.killSwitch ? "primary" : "danger"}
       />
 
-      <Modal open={!!alertMessage} onClose={() => setAlertMessage(null)} title={alertMessage?.title ?? ""} size="sm" footer={<Button onClick={() => setAlertMessage(null)}>Dismiss</Button>}>
-        {alertMessage?.body.split("\n").map((line, i) => (
-          <p key={i} className="text-sm leading-relaxed text-muted">
-            {line || " "}
-          </p>
-        ))}
-      </Modal>
-
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
     </div>
   );
@@ -569,22 +584,6 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
   );
 }
 
-function Toast({ tone, message, onClose }: { tone: "error" | "info"; message: string; onClose: () => void }) {
-  return (
-    <div
-      className={cn(
-        "pointer-events-auto flex items-start gap-2.5 rounded-xl border bg-surface p-3 shadow-[var(--shadow)]",
-        tone === "error" ? "border-l-4 border-l-down border-line" : "border-l-4 border-l-info border-line"
-      )}
-    >
-      {tone === "error" ? <AlertTriangle size={16} className="mt-0.5 text-down" /> : <Info size={16} className="mt-0.5 text-info" />}
-      <span className="flex-1 text-[13px] leading-snug text-fg">{message}</span>
-      <button onClick={onClose} aria-label="Dismiss" className="text-faint hover:text-fg">
-        <X size={14} />
-      </button>
-    </div>
-  );
-}
 
 /* ───────────────────────── Portfolio rail ───────────────────────── */
 
@@ -686,7 +685,7 @@ function DecisionView({
                   <span className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}>{p.proposal.symbol}</span>
                   <span className="ml-auto tnum text-xs text-muted">{proposalSize(p.proposal)}</span>
                 </div>
-                <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted">{p.proposal.rationale}</p>
+                <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
                 <div className="mt-3 flex gap-2">
                   <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
                     <Check size={14} /> Approve
@@ -703,12 +702,12 @@ function DecisionView({
 
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Latest decision"
+          title="Latest decisions"
           subtitle={decision?.marketScan ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}` : "Run the strategy to generate a decision"}
           icon={<Sparkles size={16} />}
         />
         {!decision ? (
-          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Hit Run (or ⌘K → Run strategy once) to generate the agent's first decision." />
+          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Hit Run (or open the command palette → Run strategy once) to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
             <div className={cn("rounded-xl border px-3 py-2 text-[13px]", decision.status === "failed" ? "border-down/30 bg-down/10 text-down" : "border-info/25 bg-info/10 text-fg")}>
@@ -736,91 +735,195 @@ function DecisionView({
 
 /* ───────────────────────── Market scan view ───────────────────────── */
 
-const SCAN_COLUMNS: Array<{ key: keyof MarketQuote; label: string; title: string; align?: "right" }> = [
-  { key: "symbol", label: "Symbol", title: "Ticker" },
-  { key: "price", label: "Price", title: "Last price", align: "right" },
-  { key: "intradayChangePct", label: "Chg", title: "Intraday change %", align: "right" },
-  { key: "volume", label: "Vol", title: "Volume", align: "right" },
-  { key: "marketCap", label: "Mkt Cap", title: "Market cap", align: "right" },
-  { key: "peRatio", label: "P/E", title: "Price/earnings", align: "right" },
-  { key: "fcfYield", label: "FCF%", title: "Free-cash-flow yield", align: "right" },
-  { key: "debtToEquity", label: "D/E", title: "Debt / equity", align: "right" },
-  { key: "epsGrowth", label: "EPS gr", title: "EPS growth (YoY)", align: "right" },
-  { key: "dividendYield", label: "Div", title: "Dividend yield", align: "right" },
-  { key: "sentiment", label: "Sentiment", title: "News sentiment" },
-  { key: "analystScore", label: "Rating", title: "Analyst consensus" },
-  { key: "senateTrades", label: "Congress", title: "Net congressional buys − sells (recent disclosures)", align: "right" },
-  { key: "sector", label: "Sector", title: "Sector" },
-  { key: "score", label: "Score", title: "Composite score", align: "right" }
+const DASH = <span className="text-faint">—</span>;
+
+type ScanColumn = {
+  id: string;
+  label: string;
+  title: string; // rich header tooltip: acronym expansion + methodology + source
+  align?: "right";
+  defaultHidden?: boolean;
+  sortKey: keyof MarketQuote;
+  render: (q: MarketQuote) => React.ReactNode;
+  cellClass?: (q: MarketQuote) => string;
+  cellTitle?: (q: MarketQuote) => string | undefined;
+};
+
+const SCAN_COLUMNS: ScanColumn[] = [
+  { id: "symbol", label: "Symbol", title: "Ticker symbol. Hover a row for the company name.", sortKey: "symbol",
+    render: (q) => <span className="font-semibold text-fg">{q.symbol}</span>, cellTitle: (q) => q.companyName },
+  { id: "price", label: "Price", title: "Last traded price (delayed). Source: NASDAQ delayed screener, refined by Yahoo / broker quotes when available.", align: "right", sortKey: "price",
+    render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
+  { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
+    render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down") },
+  { id: "volume", label: "Vol", title: "Shares traded today (falls back to the 10-day average when reported after hours). Source: screener / Finnhub.", align: "right", sortKey: "volume",
+    render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH) },
+  { id: "marketCap", label: "Mkt Cap", title: "Market capitalization = share price × shares outstanding.", align: "right", sortKey: "marketCap",
+    render: (q) => (q.marketCap && q.marketCap > 0 ? <span className="tnum text-muted">{compactMoney(q.marketCap)}</span> : DASH) },
+  { id: "peRatio", label: "P/E", title: "Price-to-Earnings ratio = price ÷ trailing-12-month earnings per share; lower is cheaper relative to earnings. 'n/a' = negative/zero earnings (no meaningful ratio); '—' = no data. Source: Yahoo / FMP / Finnhub.", align: "right", sortKey: "peRatio",
+    render: (q) => <span className="tnum text-muted">{q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—"}</span>, cellTitle: (q) => cellTitle("P/E ratio", q.sources?.peRatio) },
+  { id: "fcfYield", label: "FCF%", title: "Free-cash-flow yield = trailing free cash flow ÷ market cap; higher means more cash generated per dollar of value. Source: Yahoo Finance.", align: "right", sortKey: "fcfYield",
+    render: (q) => (typeof q.fcfYield === "number" ? <span className="tnum text-muted">{q.fcfYield.toFixed(1)}%</span> : DASH), cellTitle: (q) => cellTitle("Free-cash-flow yield", q.sources?.fcfYield) },
+  { id: "debtToEquity", label: "D/E", title: "Debt-to-Equity = total debt ÷ shareholder equity; lower means less leverage. Source: Yahoo Finance.", align: "right", sortKey: "debtToEquity",
+    render: (q) => (typeof q.debtToEquity === "number" ? <span className="tnum text-muted">{q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)}</span> : DASH), cellTitle: (q) => cellTitle("Debt / equity", q.sources?.debtToEquity) },
+  { id: "epsGrowth", label: "EPS gr", title: "Earnings-per-share growth, year over year (e.g. +15%). Source: Yahoo Finance.", align: "right", sortKey: "epsGrowth",
+    render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => cellTitle("EPS growth (YoY)", q.sources?.epsGrowth) },
+  { id: "dividendYield", label: "Div", title: "Annual dividend yield = trailing dividends per share ÷ price. Source: Yahoo / Finnhub.", align: "right", sortKey: "dividendYield",
+    render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH) },
+  { id: "bid", label: "Bid", title: "Best bid — the highest price a buyer is currently willing to pay. Shown when broker quotes are available.", align: "right", defaultHidden: true, sortKey: "bid",
+    render: (q) => (typeof q.bid === "number" ? <span className="tnum text-muted">{money(q.bid)}</span> : DASH) },
+  { id: "ask", label: "Ask", title: "Best ask — the lowest price a seller is currently willing to accept. Shown when broker quotes are available.", align: "right", defaultHidden: true, sortKey: "ask",
+    render: (q) => (typeof q.ask === "number" ? <span className="tnum text-muted">{money(q.ask)}</span> : DASH) },
+  { id: "sentiment", label: "Sentiment", title: "News sentiment 0–100 (50 = neutral), scored from recent headlines with keyword/NLP analysis. Source: Alpha Vantage / Finnhub.", sortKey: "sentiment",
+    render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : DASH), cellTitle: (q) => sentimentTitle(q) },
+  { id: "analystScore", label: "Rating", title: "Analyst consensus 0–100, blended across providers (Strong Buy = 100 … Strong Sell = 0). Source: Yahoo / FMP / Finnhub.", sortKey: "analystScore",
+    render: (q) => (q.analystRating ? <RatingChip score={q.analystScore} label={q.analystRating} /> : DASH), cellTitle: (q) => ratingTitle(q) },
+  { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
+    render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
+  { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", sortKey: "sector",
+    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) },
+  { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
+    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
 ];
 
+const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
+const SCAN_COLS_KEY = "scan-visible-cols";
+
 function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const scan = snapshot.latestStrategyRun?.marketScan;
   const [sort, setSort] = useState<{ col: keyof MarketQuote; dir: SortDir }>({ col: "score", dir: "desc" });
+  const [visible, setVisible] = useState<string[]>(DEFAULT_SCAN_COLS);
+  const [colsOpen, setColsOpen] = useState(false);
+  const [liveScan, setLiveScan] = useState<MarketScan | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SCAN_COLS_KEY);
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr) && arr.length > 0) setVisible(arr.filter((id) => SCAN_COLUMNS.some((c) => c.id === id)));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  function toggleCol(id: string) {
+    if (id === "symbol") return; // symbol is always shown
+    const next = visible.includes(id) ? visible.filter((c) => c !== id) : [...visible, id];
+    setVisible(next);
+    try {
+      localStorage.setItem(SCAN_COLS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const refreshScan = useCallback(async () => {
+    setScanLoading(true);
+    try {
+      const res = await fetch("/api/scan");
+      if (res.ok) {
+        const data = (await res.json()) as MarketScan;
+        if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
+      }
+    } catch {
+      /* keep the captured scan as fallback */
+    } finally {
+      setScanLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshScan();
+  }, [refreshScan]);
+
+  const scan = liveScan ?? snapshot.latestStrategyRun?.marketScan;
   if (!scan) {
     return (
       <Card>
-        <PanelHeader title="Market scan" icon={<LineChartIcon size={16} />} />
-        <EmptyState icon={<LineChartIcon size={20} />} title="No market scan captured yet" hint="Run the strategy once to populate the scored candidate set." />
+        <PanelHeader
+          title="Market scan"
+          icon={<LineChartIcon size={16} />}
+          actions={
+            <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
+              <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
+            </IconButton>
+          }
+        />
+        <EmptyState icon={<LineChartIcon size={20} />} title={scanLoading ? "Scanning the market…" : "No market scan yet"} hint="Refresh to scan the current market, or run the strategy to capture one." />
       </Card>
     );
   }
+  const cols = SCAN_COLUMNS.filter((c) => visible.includes(c.id));
   const sorted = [...scan.topCandidates].sort((a, b) => compare(a[sort.col], b[sort.col], sort.dir));
   return (
     <Card className="overflow-hidden">
       <PanelHeader
         title="Market scan"
-        subtitle={`${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${scan.cached ? " · cached" : ""}`}
+        subtitle={`${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`}
         icon={<LineChartIcon size={16} />}
-        actions={<Chip tone="neutral">{new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Chip>}
+        actions={
+          <div className="flex items-center gap-1.5">
+            <Chip tone="neutral">{new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Chip>
+            <IconButton label="Refresh scan" onClick={() => void refreshScan()} disabled={scanLoading}>
+              <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
+            </IconButton>
+            <div className="relative">
+              <IconButton label="Configure columns" onClick={() => setColsOpen((v) => !v)}>
+                <SettingsIcon size={14} />
+              </IconButton>
+              {colsOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setColsOpen(false)} />
+                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-48 overflow-auto rounded-lg border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
+                    <p className="px-2 py-1 text-[11px] font-semibold uppercase text-faint">Show columns</p>
+                    {SCAN_COLUMNS.map((c) => (
+                      <label key={c.id} className={cn("flex items-center gap-2 rounded px-2 py-1 text-[13px] text-muted", c.id === "symbol" ? "opacity-50" : "cursor-pointer hover:bg-surface-2")} title={c.title}>
+                        <input type="checkbox" checked={visible.includes(c.id)} onChange={() => toggleCol(c.id)} disabled={c.id === "symbol"} className="accent-[var(--accent)]" />
+                        {c.label}
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        }
       />
-      <div className="overflow-x-auto p-2">
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b border-line text-[11px] uppercase text-faint">
-              {SCAN_COLUMNS.map((c) => (
+      <div className="p-2 h-[600px]">
+        <TableVirtuoso
+          data={sorted}
+          components={{
+            Table: (props) => <table {...props} className="w-full text-[13px]" />,
+            TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface" />),
+            TableRow: (props) => <tr {...props} className="border-b border-line/50 hover:bg-surface-2" />,
+          }}
+          fixedHeaderContent={() => (
+            <tr className="border-b border-line text-[11px] uppercase text-faint bg-surface shadow-sm">
+              {cols.map((c) => (
                 <th
-                  key={c.key as string}
+                  key={c.id}
                   title={c.title}
-                  onClick={() => setSort((s) => ({ col: c.key, dir: s.col === c.key && s.dir === "desc" ? "asc" : "desc" }))}
+                  onClick={() => setSort((s) => ({ col: c.sortKey, dir: s.col === c.sortKey && s.dir === "desc" ? "asc" : "desc" }))}
                   className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
                 >
                   {c.label}
-                  <span className="ml-0.5 text-faint">{sort.col === c.key ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
+                  <span className="ml-0.5 text-faint">{sort.col === c.sortKey ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                 </th>
               ))}
             </tr>
-          </thead>
-          <tbody>
-            {sorted.slice(0, 20).map((q) => {
-              const peText = q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—";
-              return (
-                <tr key={q.symbol} className="border-b border-line/50 hover:bg-surface-2">
-                  <td className="px-2.5 py-1.5 font-semibold text-fg" title={q.companyName}>{q.symbol}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum" title={quoteTitle("Quote", q)}>{money(q.price)}</td>
-                  <td className={cn("px-2.5 py-1.5 text-right tnum", q.intradayChangePct >= 0 ? "text-up" : "text-down")}>{formatPct(q.intradayChangePct)}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum text-muted">{q.volume > 0 ? compactNum(q.volume) : "—"}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum text-muted">{q.marketCap && q.marketCap > 0 ? compactMoney(q.marketCap) : "—"}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum text-muted" title={cellTitle("P/E", q.sources?.peRatio)}>{peText}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum text-muted" title={cellTitle("Free-cash-flow yield", q.sources?.fcfYield)}>{typeof q.fcfYield === "number" ? `${q.fcfYield.toFixed(1)}%` : "—"}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum text-muted" title={cellTitle("Debt / equity", q.sources?.debtToEquity)}>{typeof q.debtToEquity === "number" ? (q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)) : "—"}</td>
-                  <td className={cn("px-2.5 py-1.5 text-right tnum", typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : "text-muted")} title={cellTitle("EPS growth (YoY)", q.sources?.epsGrowth)}>{typeof q.epsGrowth === "number" ? `${(q.epsGrowth * 100).toFixed(0)}%` : "—"}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum text-muted">{typeof q.dividendYield === "number" ? `${q.dividendYield.toFixed(2)}%` : "—"}</td>
-                  <td className="px-2.5 py-1.5" title={sentimentTitle(q)}>{typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : <span className="text-faint">—</span>}</td>
-                  <td className="px-2.5 py-1.5 text-muted" title={ratingTitle(q)}>{q.analystRating ? `${q.analystScore ?? ""} ${q.analystRating}`.trim() : "—"}</td>
-                  <td
-                    className={cn("px-2.5 py-1.5 text-right tnum", typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : "text-muted")}
-                    title={q.evidenceBulletins?.join("\n") || "Net congressional trades (recent disclosures)"}
-                  >
-                    {typeof q.senateTrades === "number" ? (q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades) : "—"}
-                  </td>
-                  <td className="px-2.5 py-1.5">{q.sector ? <Chip tone="info">{q.sector}</Chip> : <span className="text-faint">—</span>}</td>
-                  <td className="px-2.5 py-1.5 text-right tnum font-semibold text-fg">{q.score.toFixed(1)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+          )}
+          itemContent={(index, q) => (
+            <>
+              {cols.map((c) => (
+                <td key={c.id} title={c.cellTitle?.(q)} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
+                  {c.render(q)}
+                </td>
+              ))}
+            </>
+          )}
+        />
       </div>
     </Card>
   );
@@ -830,6 +933,26 @@ function SentimentChip({ value }: { value: number }) {
   const tone = value >= 60 ? "up" : value <= 40 ? "down" : "neutral";
   const label = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
   return <Chip tone={tone}>{label} {value}</Chip>;
+}
+
+function RatingChip({ score, label }: { score?: number; label: string }) {
+  // Mirror the Sentiment chip: green for Buy-ish, red for Sell-ish, neutral for Hold.
+  const tone = score === undefined ? "neutral" : score >= 65 ? "up" : score <= 40 ? "down" : "neutral";
+  return <Chip tone={tone}>{typeof score === "number" ? `${label} ${score}` : label}</Chip>;
+}
+
+/** Map the raw market session to a status label + dot tone (green open, grey closed). */
+function marketStatusFor(session?: string): { tone: "up" | "warn" | "neutral"; label: string } {
+  switch (session) {
+    case "regular":
+      return { tone: "up", label: "Market Open" };
+    case "pre":
+      return { tone: "warn", label: "Pre-market" };
+    case "post":
+      return { tone: "warn", label: "After-hours" };
+    default:
+      return { tone: "neutral", label: "Market Closed" };
+  }
 }
 
 /* ───────────────────────── Performance view ───────────────────────── */
@@ -845,7 +968,11 @@ function PerformanceView({
 }) {
   const perf = snapshot.performance;
   const curve = mode === "paper" ? perf?.paperEquityCurve ?? [] : perf?.liveEquityCurve ?? [];
-  const realized = mode === "paper" ? perf?.paperRealizedPnl ?? 0 : perf?.liveRealizedPnl ?? 0;
+  const realizedGross = mode === "paper" ? perf?.paperRealizedPnl ?? 0 : perf?.liveRealizedPnl ?? 0;
+  // Optionally net realized P&L of the estimated tax burden (toggle in Settings → Tax).
+  const subtractTax = Boolean(snapshot.policy.taxSettings?.subtractFromResults && snapshot.tax);
+  const taxBurden = subtractTax ? snapshot.tax!.estimatedTaxLiability : 0;
+  const realized = realizedGross - taxBurden;
   const unrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
   const winRate = mode === "paper" ? perf?.paperWinRate ?? 0 : perf?.liveWinRate ?? 0;
   const avgReturn = mode === "paper" ? perf?.paperAverageReturnPct ?? 0 : perf?.liveAverageReturnPct ?? 0;
@@ -855,9 +982,9 @@ function PerformanceView({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
-        <PanelHeader title="Equity curve" subtitle={mode === "paper" ? "Paper account" : "Live account"} icon={<TrendingUp size={16} />} />
+        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Paper account" : "Live account"} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
-          <StatTile label="Realized" value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} />
+          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} />
           <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} />
@@ -1015,6 +1142,7 @@ function TaxView({
 function StrategyView({
   snapshot,
   policy,
+  updatePolicy,
   onEdit,
   activateProfile,
   newProfileName,
@@ -1028,6 +1156,7 @@ function StrategyView({
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
+  updatePolicy: (patch: PolicyPatch) => void;
   onEdit: () => void;
   activateProfile: (id: string) => void;
   newProfileName: string;
@@ -1086,14 +1215,14 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="Key parameters" icon={<Shield size={16} />} />
+        <PanelHeader title="Key parameters" subtitle="Edit inline — applies immediately (same values as Settings → Risk & Limits)" icon={<Shield size={16} />} />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 text-sm">
-          <KeyVal label="Max order" value={money(policy.maxOrderNotional)} />
-          <KeyVal label="Daily cap" value={money(policy.maxDailyNotional)} />
-          <KeyVal label="Symbol cap" value={`${policy.maxSymbolExposurePct}%`} />
-          <KeyVal label="Proposals/run" value={String(policy.maxProposalsPerRun)} />
-          <KeyVal label="Stop loss" value={`${policy.riskRules.stopLossPct ?? 0}%`} />
-          <KeyVal label="Take profit" value={`${policy.riskRules.takeProfitPct ?? 0}%`} />
+          <EditableParam label="Max order" prefix="$" value={policy.maxOrderNotional} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
+          <EditableParam label="Daily cap" prefix="$" value={policy.maxDailyNotional} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
+          <EditableParam label="Symbol cap" suffix="%" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
+          <EditableParam label="Proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: v })} />
+          <EditableParam label="Stop loss" suffix="%" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
+          <EditableParam label="Take profit" suffix="%" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
         </div>
       </Card>
 
@@ -1114,6 +1243,51 @@ function KeyVal({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] uppercase text-faint">{label}</div>
       <div className="tnum text-sm text-fg">{value}</div>
     </div>
+  );
+}
+
+function EditableParam({
+  label,
+  value,
+  prefix,
+  suffix,
+  onCommit
+}: {
+  label: string;
+  value: number;
+  prefix?: string;
+  suffix?: string;
+  onCommit: (v: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  function commit() {
+    const n = Number(draft);
+    if (Number.isFinite(n) && n >= 0 && n !== value) onCommit(n);
+    else setDraft(String(value));
+  }
+  return (
+    <label className="rounded-lg border border-line bg-surface-2 px-3 py-2 focus-within:border-accent">
+      <div className="text-[11px] uppercase text-faint">{label}</div>
+      <div className="flex items-baseline gap-0.5">
+        {prefix && <span className="text-sm text-faint">{prefix}</span>}
+        <input
+          type="number"
+          min={0}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          className="w-full bg-transparent tnum text-sm text-fg outline-none"
+        />
+        {suffix && <span className="text-sm text-faint">{suffix}</span>}
+      </div>
+    </label>
   );
 }
 
@@ -1375,11 +1549,12 @@ function SettingsContent({
   remainingOrders: number;
   updatePolicy: (patch: PolicyPatch) => void;
 }) {
-  type Section = "operate" | "risk" | "tax" | "notifications";
+  type Section = "operate" | "risk" | "tax" | "tuning" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [sectorCaps, setSectorCaps] = useState(formatSectorCaps(policy.sectorCaps));
   const [draft, setDraft] = useState("");
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
+  const tuning = policy.tuning ?? {};
 
   function addAllowlist() {
     const next = normalizeSymbols([...policy.allowlist, ...draft.split(/[,\s]+/)]);
@@ -1394,8 +1569,9 @@ function SettingsContent({
         onChange={setSection}
         tabs={[
           { id: "operate", label: "Operate" },
-          { id: "risk", label: "Risk & limits" },
+          { id: "risk", label: "Risk & Limits" },
           { id: "tax", label: "Tax" },
+          { id: "tuning", label: "Tuning" },
           { id: "notifications", label: "Notifications" }
         ]}
       />
@@ -1507,6 +1683,40 @@ function SettingsContent({
             <NumberField label="Long-term rate (%)" value={taxSettings.longTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, longTermRatePct: v } })} />
           </div>
           <p className="text-xs text-faint">Rates are used only for the rough liability estimate on the Tax tab. Defaults: 24% short-term (ordinary), 15% long-term.</p>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Subtract estimated tax from results</span>
+              <span className="block text-xs text-faint">Show realized P&amp;L on the Performance tab net of the estimated tax burden.</span>
+            </span>
+            <Switch checked={Boolean(taxSettings.subtractFromResults)} onChange={(v) => updatePolicy({ taxSettings: { ...taxSettings, subtractFromResults: v } })} />
+          </label>
+        </div>
+      )}
+
+      {section === "tuning" && (
+        <div className="space-y-3">
+          <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[13px] text-muted">
+            Advanced learning-loop knobs that are otherwise fixed code defaults. Leave these alone unless you understand the trade-off.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField
+              label="Shrinkage prior (trades)"
+              value={tuning.shrinkPrior ?? 5}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, shrinkPrior: v } })}
+            />
+            <NumberField
+              label="Min lots for weight shift"
+              value={tuning.minClosedLotsForWeightShift ?? 20}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, minClosedLotsForWeightShift: v } })}
+            />
+          </div>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">Shrinkage prior</span> pulls thin-sample win/return stats toward neutral (higher = more skeptical of small samples; default 5).{" "}
+            <span className="font-medium text-muted">Min lots for weight shift</span> is how many closed trades must accumulate before the auto-tuner may change factor weights (default 20).
+          </p>
+          <p className="text-xs text-faint">
+            Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.
+          </p>
         </div>
       )}
 

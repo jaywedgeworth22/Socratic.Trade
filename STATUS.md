@@ -20,6 +20,12 @@ steps materially change.
 
 - Current publish branch packages the latest dashboard, cockpit UI,
   market-data, strategy, short/cover, and handoff-doc work for review.
+- **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
+- **Regime Detection**: The current market regime is deterministically evaluated using VIX and Fed rates, shifting the responsibility entirely from the LLM.
+- **UI UX Polish**: The cockpit features interactive charting (Recharts Brush for panning/zooming), Sonner toasts for real-time action feedback, and dynamic lazy-loading for heavy bundle dependencies.
+
+## Blockers / Open Questions
+None. Phase 2 backend optimization is complete.
 - 2026-06-16: completed a cockpit-UI optimization pass (presentation-only) —
   fixed the floating-alert positioning bug (now a bottom-right toast stack),
   added modal/tab accessibility (Escape, focus management, scroll-lock, ARIA),

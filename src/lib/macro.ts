@@ -98,6 +98,16 @@ export function pruneMacro(
   return { macro, omitted };
 }
 
+export function determineMarketRegime(macro: MacroData): string {
+  const vix = parseFloat(macro.vix);
+  if (!isNaN(vix)) {
+    if (vix > 30) return "Crisis (Extreme Volatility)";
+    if (vix > 20) return "Risk-Off (High Volatility)";
+    if (vix < 13) return "Risk-On (Low Volatility)";
+  }
+  return "Neutral (Normal Volatility)";
+}
+
 async function fetchFredSeries(seriesId: string, apiKey: string): Promise<string | undefined> {
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&limit=1&sort_order=desc&api_key=${apiKey}&file_type=json`;
   const controller = new AbortController();
