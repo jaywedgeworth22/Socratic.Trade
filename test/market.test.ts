@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEnrichment, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, hasNotableWebSignal, rankMarketQuotes, scoreFactors } from "../src/lib/market";
 import type { SymbolEnrichment } from "../src/lib/data-providers";
 import type { MarketQuote } from "../src/lib/types";
 
@@ -42,6 +42,19 @@ describe("rankMarketQuotes", () => {
     const highBeta = scoreFactors(quote({ symbol: "HB", intradayChangePct: 0, beta: 1.8 }));
     const lowBeta = scoreFactors(quote({ symbol: "LB", intradayChangePct: 0, beta: 0.6 }));
     expect(lowBeta.volatility).toBeGreaterThan(highBeta.volatility); // high beta scores as riskier (lower stability)
+  });
+});
+
+describe("hasNotableWebSignal (event candidate union)", () => {
+  it("flags net congressional buys, insider buying, and elevated short pressure", () => {
+    expect(hasNotableWebSignal({ congress: { netSignal: 2 } as never, bulletins: [] })).toBe(true);
+    expect(hasNotableWebSignal({ insiderSentiment: 80, bulletins: [] })).toBe(true);
+    expect(hasNotableWebSignal({ shortVolumeRatio: 62, bulletins: [] })).toBe(true);
+  });
+  it("does not flag net selling, neutral insider, or ordinary short volume", () => {
+    expect(hasNotableWebSignal({ congress: { netSignal: -1 } as never, bulletins: [] })).toBe(false);
+    expect(hasNotableWebSignal({ insiderSentiment: 40, shortVolumeRatio: 45, bulletins: [] })).toBe(false);
+    expect(hasNotableWebSignal(undefined)).toBe(false);
   });
 });
 

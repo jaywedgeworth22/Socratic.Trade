@@ -1,5 +1,19 @@
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import { getSymbolWebSignals } from "./web-sources";
+import type { SymbolWebSignal } from "./web-sources";
+
+/** How many freshly-disclosed "event" names may be unioned into the candidate set. */
+const EVENT_CANDIDATE_RESERVE = Number(process.env.MARKET_SCAN_EVENT_RESERVE ?? 8);
+
+/** A web signal worth pulling a below-cutoff name into the candidate set for. */
+export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
+  if (!sig) return false;
+  return (
+    (sig.congress?.netSignal ?? 0) > 0 || // net congressional buying
+    (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) || // insider buying
+    (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) // elevated short pressure
+  );
+}
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { normalizeSymbol } from "./money";
 import type {
@@ -61,11 +75,26 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const ranked = rankMarketQuotes(quotes, weights).map((quote) => ({ ...quote, cached }));
     const limit = Number(process.env.MARKET_SCAN_LIMIT ?? DEFAULT_SCAN_LIMIT);
     const quoteLimit = Number.isFinite(limit) && limit > 0 ? limit : DEFAULT_SCAN_LIMIT;
-    let topCandidates: MarketQuote[] = ranked.slice(0, quoteLimit);
 
-    // Enrich the top set with news sentiment + fundamentals, then re-score & re-sort.
-    // Enrichment covers the whole candidate slice (see maxSymbols), so every symbol that
-    // can climb into the displayed set after re-sorting already has data.
+    // Read cached web-source signals for the WHOLE ranked universe (no network) so a
+    // freshly-disclosed congressional/insider/short name that scored below the top-N
+    // cutoff can still be pulled into the candidate set — "event candidate union".
+    let allWebSignals: Record<string, SymbolWebSignal> = {};
+    try {
+      allWebSignals = getSymbolWebSignals(ranked.map((quote) => quote.symbol));
+    } catch (error) {
+      warnings.push(error instanceof Error ? `Web signals failed: ${error.message}` : "Web signals failed.");
+    }
+    const topCut = new Set(ranked.slice(0, quoteLimit).map((quote) => quote.symbol));
+    const eventExtra = ranked
+      .filter((quote) => !topCut.has(quote.symbol) && hasNotableWebSignal(allWebSignals[quote.symbol]))
+      .slice(0, EVENT_CANDIDATE_RESERVE);
+    // Keep the union within the enrichment cap by trimming the lowest-scored top names
+    // to make room for the event names (so both get enriched).
+    const keepTop = Math.max(0, quoteLimit - eventExtra.length);
+    let topCandidates: MarketQuote[] = [...ranked.slice(0, keepTop), ...eventExtra];
+
+    // Enrich the candidate set with news sentiment + fundamentals, then re-score & re-sort.
     const provider = getEnrichmentProvider();
     if (topCandidates.length > 0) {
       try {
@@ -84,33 +113,45 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       }
     }
 
-    // Overlay backend web-source signals (congressional trades, etc.) read from the
-    // persisted cache — no network here. senateTrades is filled only when a keyed
-    // provider didn't already supply it. Never throws into the scan.
-    try {
-      const webSignals = getSymbolWebSignals(topCandidates.map((quote) => quote.symbol));
-      if (Object.keys(webSignals).length > 0) {
-        topCandidates = topCandidates.map((quote) => {
-          const sig = webSignals[quote.symbol];
-          if (!sig) return quote;
-          return {
-            ...quote,
-            senateTrades: quote.senateTrades ?? sig.congress?.netSignal,
-            insiderSentiment: quote.insiderSentiment ?? sig.insiderSentiment,
-            evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins
-          };
-        });
+    // Overlay backend web-source signals onto the candidates and STAMP their provenance
+    // (so source attribution stays honest). senateTrades/insiderSentiment are filled only
+    // when a keyed provider didn't already supply them. No network here.
+    const overlaySources = new Set<string>();
+    topCandidates = topCandidates.map((quote) => {
+      const sig = allWebSignals[quote.symbol];
+      if (!sig) return quote;
+      const sources = { ...(quote.sources ?? {}) };
+      let senateTrades = quote.senateTrades;
+      if (senateTrades == null && typeof sig.congress?.netSignal === "number") {
+        senateTrades = sig.congress.netSignal;
+        sources.senateTrades = "congress";
+        overlaySources.add("congress");
       }
-    } catch (error) {
-      warnings.push(error instanceof Error ? `Web signals failed: ${error.message}` : "Web signals failed.");
-    }
+      let insiderSentiment = quote.insiderSentiment;
+      if (insiderSentiment == null && typeof sig.insiderSentiment === "number") {
+        insiderSentiment = sig.insiderSentiment;
+        sources.insiderSentiment = "sec-edgar";
+        overlaySources.add("sec-edgar");
+      }
+      if (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) overlaySources.add("finra");
+      return {
+        ...quote,
+        senateTrades,
+        insiderSentiment,
+        evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins,
+        sources
+      };
+    });
 
     // Fold enriched candidates back into the full set so quotesBySymbol carries sentiment/PE.
     const enrichedBySymbol = new Map(topCandidates.map((quote) => [quote.symbol, quote]));
     const mergedRanked = ranked.map((quote) => enrichedBySymbol.get(quote.symbol) ?? quote);
 
+    const baseSource = provider.configured ? `${this.name}+${provider.name}` : this.name;
+    const source = overlaySources.size > 0 ? `${baseSource}+${[...overlaySources].join("+")}` : baseSource;
+
     return {
-      source: provider.configured ? `${this.name}+${provider.name}` : this.name,
+      source,
       generatedAt: new Date().toISOString(),
       scannedSymbols: allowed.size,
       returnedQuotes: quotes.length,

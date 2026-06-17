@@ -518,11 +518,11 @@ export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot
  */
 const SHRINK_PRIOR = 5;
 
-/** Shrinkage prior, overridable via policy.tuning.shrinkPrior; falls back to the default. */
+/** Shrinkage prior, overridable via policy.tuning.shrinkPrior (0 = no shrinkage); else the default. */
 function resolveShrinkPrior(): number {
   try {
     const v = getPolicy().tuning?.shrinkPrior;
-    return typeof v === "number" && v > 0 ? v : SHRINK_PRIOR;
+    return typeof v === "number" && v >= 0 ? v : SHRINK_PRIOR;
   } catch {
     return SHRINK_PRIOR;
   }
