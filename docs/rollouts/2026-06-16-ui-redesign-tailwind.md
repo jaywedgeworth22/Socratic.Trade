@@ -90,6 +90,15 @@ learning bars, Activity right slide-over, and the Strategy Studio modal. No
 console errors (Recharts emits benign dev-only "width(-1)" warnings while a chart
 container measures before layout settles).
 
+## Update — saved strategies moved to the Strategy tab
+
+Profile selection + naming/saving was relocated from the Settings → Profiles
+section onto the **Strategy tab** (next to the prompt and LLM review), since
+naming/saving a strategy is more logical co-located with what it saves. The
+Active-strategy card now has a "Saved strategy" dropdown and a "Save current as a
+named strategy" input + Save button with a faint **Optional** label. The Settings
+modal's Profiles tab was removed (now Operate / Risk & limits / Notifications).
+
 ## Follow-ups
 
 - Silence the benign Recharts `ResponsiveContainer` width/height warnings (give

@@ -428,6 +428,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
                 snapshot={snapshot}
                 policy={policy}
                 onEdit={() => setStudioOpen(true)}
+                activateProfile={activateProfile}
+                newProfileName={newProfileName}
+                setNewProfileName={setNewProfileName}
+                createProfile={createProfile}
                 requestStrategyTuning={requestStrategyTuning}
                 tuningBusy={tuningBusy}
                 tuningError={tuningError}
@@ -490,7 +494,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Account, risk, profiles & notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Account, risk & notifications" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -499,10 +503,6 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           remainingNotional={remainingNotional}
           remainingOrders={remainingOrders}
           updatePolicy={updatePolicy}
-          newProfileName={newProfileName}
-          setNewProfileName={setNewProfileName}
-          activateProfile={activateProfile}
-          createProfile={createProfile}
         />
       </Modal>
 
@@ -871,6 +871,10 @@ function StrategyView({
   snapshot,
   policy,
   onEdit,
+  activateProfile,
+  newProfileName,
+  setNewProfileName,
+  createProfile,
   requestStrategyTuning,
   tuningBusy,
   tuningError,
@@ -880,6 +884,10 @@ function StrategyView({
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
   onEdit: () => void;
+  activateProfile: (id: string) => void;
+  newProfileName: string;
+  setNewProfileName: (v: string) => void;
+  createProfile: () => void;
   requestStrategyTuning: () => void;
   tuningBusy: boolean;
   tuningError: string;
@@ -891,11 +899,41 @@ function StrategyView({
       <Card className="lg:col-span-2">
         <PanelHeader
           title="Active strategy"
-          subtitle={`Profile: ${snapshot.activeProfile?.name ?? "Default"} · ${policy.strategyAuthority === "decide" ? "LLM decides autonomously" : "LLM proposes, you approve"}`}
+          subtitle={policy.strategyAuthority === "decide" ? "LLM decides autonomously" : "LLM proposes, you approve"}
           icon={<BrainCircuit size={16} />}
           actions={<Button size="sm" variant="ghost" onClick={onEdit}><SettingsIcon size={14} /> Edit in Studio</Button>}
         />
-        <div className="p-4 pt-3">
+        <div className="grid gap-3 p-4 pt-3 sm:grid-cols-2">
+          <div>
+            <span className="mb-1.5 block text-xs font-medium text-muted">Saved strategy</span>
+            <select className={inputClass} value={snapshot.activeProfile?.id ?? ""} onChange={(e) => activateProfile(e.target.value)}>
+              {snapshot.profiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-medium text-muted">Save current as a named strategy</span>
+            <div className="flex items-center gap-2">
+              <input
+                className={inputClass}
+                value={newProfileName}
+                onChange={(e) => setNewProfileName(e.target.value)}
+                placeholder="Name this strategy"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    createProfile();
+                  }
+                }}
+              />
+              <Button onClick={createProfile} disabled={!newProfileName.trim()}>Save</Button>
+              <span className="text-xs text-faint">Optional</span>
+            </div>
+          </div>
+        </div>
+        <div className="px-4 pb-4">
+          <span className="mb-1.5 block text-xs font-medium text-muted">Prompt</span>
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-bg/60 p-3 text-[13px] leading-relaxed text-muted">
             {snapshot.strategyPrompt}
           </pre>
@@ -1182,11 +1220,7 @@ function SettingsContent({
   enableBlockedReason,
   remainingNotional,
   remainingOrders,
-  updatePolicy,
-  newProfileName,
-  setNewProfileName,
-  activateProfile,
-  createProfile
+  updatePolicy
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -1195,12 +1229,8 @@ function SettingsContent({
   remainingNotional: number;
   remainingOrders: number;
   updatePolicy: (patch: PolicyPatch) => void;
-  newProfileName: string;
-  setNewProfileName: (v: string) => void;
-  activateProfile: (id: string) => void;
-  createProfile: () => void;
 }) {
-  type Section = "operate" | "risk" | "profiles" | "notifications";
+  type Section = "operate" | "risk" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [sectorCaps, setSectorCaps] = useState(formatSectorCaps(policy.sectorCaps));
   const [draft, setDraft] = useState("");
@@ -1219,7 +1249,6 @@ function SettingsContent({
         tabs={[
           { id: "operate", label: "Operate" },
           { id: "risk", label: "Risk & limits" },
-          { id: "profiles", label: "Profiles" },
           { id: "notifications", label: "Notifications" }
         ]}
       />
@@ -1311,23 +1340,6 @@ function SettingsContent({
           <p className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13px] text-muted sm:col-span-2">
             Remaining today: <span className="tnum text-fg">{money(remainingNotional)}</span> notional and <span className="tnum text-fg">{remainingOrders}</span> orders.
           </p>
-        </div>
-      )}
-
-      {section === "profiles" && (
-        <div className="space-y-3">
-          <Field label="Active profile">
-            <select className={inputClass} value={snapshot.activeProfile?.id ?? ""} onChange={(e) => activateProfile(e.target.value)}>
-              {snapshot.profiles.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </Field>
-          <div className="flex gap-2">
-            <input className={inputClass} value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} placeholder="New profile name" />
-            <Button onClick={createProfile} disabled={!newProfileName.trim()}>Create</Button>
-          </div>
-          <p className="text-xs text-faint">Profiles store policy, prompt, scoring weights, and active selection.</p>
         </div>
       )}
 
