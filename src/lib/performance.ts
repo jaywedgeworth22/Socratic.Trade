@@ -16,6 +16,18 @@ import type {
 interface ClosedLot {
   pnl: number;
   returnPct: number;
+  symbol?: string;
+  thesisTag?: string;
+  regime?: string;
+}
+
+/** Realized-outcome stats grouped by the thesis a position was opened under. */
+export interface ThesisStat {
+  thesisTag: string;
+  trades: number;
+  winRate: number;
+  avgReturnPct: number;
+  totalPnl: number;
 }
 
 interface PnlResult {
@@ -189,7 +201,10 @@ export function getPaperPortfolioProjection(input: {
 }
 
 export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, number> = {}): PnlResult {
-  const lots = new Map<string, Array<{ quantity: number; price: number; runId?: string; side: "long" | "short" }>>();
+  const lots = new Map<
+    string,
+    Array<{ quantity: number; price: number; runId?: string; side: "long" | "short"; thesisTag?: string; regime?: string }>
+  >();
   const closedLots: ClosedLot[] = [];
   const attribution = new Map<string, RunAttribution>();
   let realized = 0;
@@ -199,7 +214,15 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     if (!lots.has(symbol)) lots.set(symbol, []);
 
     if (fill.side === "buy" || fill.side === "short") {
-      lots.get(symbol)!.push({ quantity: fill.quantity, price: fill.price, runId: fill.runId, side: fill.side === "buy" ? "long" : "short" });
+      const meta = thesisMetaFromFill(fill);
+      lots.get(symbol)!.push({
+        quantity: fill.quantity,
+        price: fill.price,
+        runId: fill.runId,
+        side: fill.side === "buy" ? "long" : "short",
+        thesisTag: meta.thesisTag,
+        regime: meta.regime
+      });
       addAttribution(attribution, fill, 0);
       continue;
     }
@@ -218,7 +241,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         returnPct = lot.price > 0 ? ((lot.price - fill.price) / lot.price) * 100 : 0;
       }
       realized += pnl;
-      closedLots.push({ pnl, returnPct });
+      // Attribute the realized outcome to the thesis the lot was *opened* under.
+      closedLots.push({ pnl, returnPct, symbol, thesisTag: lot.thesisTag, regime: lot.regime });
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
       remaining -= matched;
@@ -244,6 +268,52 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     unrealized,
     closedLots,
     attribution: Array.from(attribution.values()).sort((a, b) => a.runId.localeCompare(b.runId))
+  };
+}
+
+/**
+ * Per-thesis realized-outcome scorecard for the learning loop: how each
+ * `tradeThesisTag` has actually performed once positions closed. Computed
+ * deterministically in code (no LLM tokens) so it can be fed back to the agent
+ * cheaply as high-signal "what has worked vs lost" context.
+ */
+export function getThesisScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {}
+): ThesisStat[] {
+  const fills = listFillEvents(accountNumber, source);
+  const { closedLots } = calculatePnl(fills, currentPrices);
+  const byTag = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
+  for (const lot of closedLots) {
+    const tag = lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged";
+    const cur = byTag.get(tag) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0 };
+    cur.pnl += lot.pnl;
+    cur.returnSum += lot.returnPct;
+    cur.wins += lot.pnl > 0 ? 1 : 0;
+    cur.trades += 1;
+    byTag.set(tag, cur);
+  }
+  return Array.from(byTag.entries())
+    .map(([thesisTag, s]) => ({
+      thesisTag,
+      trades: s.trades,
+      winRate: Math.round((s.wins / s.trades) * 100),
+      avgReturnPct: Number((s.returnSum / s.trades).toFixed(2)),
+      totalPnl: Number(s.pnl.toFixed(2))
+    }))
+    .sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string } {
+  const raw = fill.raw;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const proposal = (raw as Record<string, unknown>).proposal;
+  if (!proposal || typeof proposal !== "object") return {};
+  const p = proposal as Record<string, unknown>;
+  return {
+    thesisTag: typeof p.tradeThesisTag === "string" ? p.tradeThesisTag : undefined,
+    regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined
   };
 }
 

@@ -1,4 +1,5 @@
-import { getDb, setSetting, audit } from "./db";
+import { getDb, setSetting, audit, getInternalSetting, setInternalSetting, getPolicy } from "./db";
+import { getThesisScorecard } from "./performance";
 
 export async function generateReflectionSummary(accountNumber: string): Promise<void> {
   const db = getDb();
@@ -24,6 +25,13 @@ export async function generateReflectionSummary(accountNumber: string): Promise<
 
   if (rows.length === 0) return;
 
+  // Gate: only regenerate when the trade history actually changed since the last
+  // reflection. The signature is (#trades, latest fill time). This skips a whole
+  // LLM call on the common run where nothing filled, and keeps the Bull agent's
+  // system prompt stable run-to-run so the provider's prompt cache can hit.
+  const signature = `${rows.length}:${rows[0]?.filled_at ?? ""}`;
+  if (getInternalSetting<string>("reflection_signature") === signature) return;
+
   const tradeData = rows.map((r) => ({
     symbol: r.symbol,
     side: r.side,
@@ -33,15 +41,20 @@ export async function generateReflectionSummary(accountNumber: string): Promise<
     filledAt: r.filled_at,
     thesisTag: r.trade_thesis_tag,
     regime: r.entry_market_regime,
-    rationale: r.proposal ? JSON.parse(r.proposal).rationale : undefined
+    rationale: r.proposal ? truncate(JSON.parse(r.proposal).rationale, 240) : undefined
   }));
 
-  const systemPrompt = `You are the Post-Mortem Reflection Engine.
-Your job is to review the recent trades and extract actionable insights, lessons learned, and performance characteristics grouped by 'tradeThesisTag'.
-Identify which thesis tags and regimes are prevalent, and provide a holistic reflection on recent trading behavior.
-Return a single concise paragraph summarizing your findings. This paragraph will be fed back into the Bull Agent's prompt for future runs to improve its trading accuracy.`;
+  // Realized outcomes grouped by thesis tag so the reflection is grounded in what
+  // actually made or lost money, not just what was traded.
+  const source = getPolicy().paperMode ? "paper" : "live";
+  const outcomesByThesis = getThesisScorecard(accountNumber, source);
 
-  const userContent = JSON.stringify({ recentTrades: tradeData });
+  const systemPrompt = `You are the Post-Mortem Reflection Engine.
+Review the recent trades together with 'outcomesByThesis' (realized win rate, average return, and total P&L grouped by 'tradeThesisTag') and extract actionable, outcome-grounded lessons.
+Call out which thesis tags and market regimes have actually been profitable versus losing, and what the agent should do more of or stop doing.
+Return a single concise paragraph (<= 120 words). This paragraph is fed back into the Bull Agent's prompt on future runs to improve trading accuracy, so make it specific and directive.`;
+
+  const userContent = JSON.stringify({ recentTrades: tradeData, outcomesByThesis });
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -85,9 +98,15 @@ Return a single concise paragraph summarizing your findings. This paragraph will
 
     if (text) {
       setSetting("reflection_summary", text);
-      audit("post_mortem_reflection", { summary: text, tradeCount: tradeData.length });
+      setInternalSetting("reflection_signature", signature);
+      audit("post_mortem_reflection", { summary: text, tradeCount: tradeData.length, outcomesByThesis });
     }
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
+}
+
+function truncate(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.length > max ? `${value.slice(0, max)}…` : value;
 }

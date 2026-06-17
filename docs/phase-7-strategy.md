@@ -112,6 +112,25 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
 3. **Prompt Auto-Pruning (OPRO):** During this reflection, the LLM generates a highly condensed **Reflection Summary** (e.g., *"Lesson: Tech breakouts failing due to choppy VIX"*). Furthermore, it actively rewrites and prunes its own prompt instructions, dropping rules that are no longer relevant to the current market regime to save tokens.
 4. **Injection:** Only this concise "Lessons Learned" block and the auto-pruned instructions are injected into the active trading prompt, providing high-signal feedback at a fraction of the token cost.
 
+**Implemented (2026-06-16):**
+- **Outcome-aware Thesis Scorecard** — `getThesisScorecard()` (`performance.ts`)
+  computes realized win rate / avg return / total P&L per `tradeThesisTag` from
+  closed lots (deterministic, zero tokens) and injects it as
+  `tradeOutcomesByThesis` into both the Bull prompt (with an instruction to
+  favor proven theses and avoid repeat losers) and the post-mortem reflection,
+  so the reflection is grounded in what actually made/lost money rather than
+  trade descriptions alone.
+- **Gated reflection** — `generateReflectionSummary` only regenerates when the
+  trade history changed (signature = `#filledTrades:latestFillTime`), instead of
+  every run. This saves an LLM call on no-fill runs and keeps the Bull
+  system-prompt prefix stable so provider prompt-caching can hit.
+- **Context trimming** — large allowlists (e.g. full S&P 500) are sent as a
+  compact note instead of every ticker; `recentOrders` is slimmed to 8 records;
+  the Bear/critique agent receives only the candidates under review rather than
+  a second full copy of the market scan.
+- Still TODO from this section: true delta-only macro pruning, OPRO-style prompt
+  self-rewrite, and MAE/MFE-based excursion lessons (`runPostMortems` stub).
+
 ### E. Human-Approved Weight Shifting
 The ultimate expression of the learning loop is adjusting the Initial Factor Weighting Matrix and Sector Allocations.
 

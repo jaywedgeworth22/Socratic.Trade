@@ -17,13 +17,13 @@ import { mergeQuoteData, scanMarket } from "./market";
 import { fetchMacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getPaperPortfolioProjection, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import { getPaperPortfolioProjection, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
 import { generateReflectionSummary } from "./post-mortem";
 import { getSetting } from "./db";
 import { debateProposal } from "./red-team";
-import type { EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 export interface StrategyResult {
   runId: string;
@@ -83,7 +83,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       policy,
       portfolio: workingPortfolio,
       positions: workingPositions,
-      recentOrders: orders.slice(0, 20),
+      recentOrders: compactRecentOrders(orders),
       marketScan,
       dailyNotionalUsed: daily.notional,
       dailyOrderCount: daily.orderCount
@@ -488,6 +488,9 @@ async function proposeTrades(input: {
       : undefined;
 
   const reflection = getSetting("reflection_summary", "");
+  const thesisScorecard = input.policy.accountNumber
+    ? getThesisScorecard(input.policy.accountNumber, input.policy.paperMode ? "paper" : "live")
+    : [];
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
     "",
@@ -496,6 +499,9 @@ async function proposeTrades(input: {
     "",
     "Historical Reflection & Lessons Learned:",
     reflection || "No historical reflection available yet.",
+    "",
+    "Trade Outcomes By Thesis (your realized track record):",
+    "The user message includes `tradeOutcomesByThesis` — realized win rate, average return, and total P&L grouped by the `tradeThesisTag` you previously assigned. Lean into thesis types with a positive track record and a healthy win rate; be skeptical of, downsize, or avoid thesis types that have repeatedly lost money. Reuse a proven `tradeThesisTag` when the current setup matches it.",
     "",
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
@@ -506,12 +512,24 @@ async function proposeTrades(input: {
 
   const macro = await fetchMacroData();
 
+  // For a large allowed universe (e.g. the full S&P 500) the explicit ticker list
+  // is mostly redundant with the scored marketScan candidates and costs hundreds of
+  // tokens, so send a compact note instead of every symbol.
+  const ALLOWLIST_INLINE_LIMIT = 60;
+  const allowedSymbolsForPrompt =
+    input.policyAllowlist.length > ALLOWLIST_INLINE_LIMIT
+      ? {
+          note: `Large allowed universe (${input.policyAllowlist.length} symbols). Only propose BUYs for symbols present in marketScan.topCandidates; you may SELL/TRIM any current position.`,
+          sample: input.policyAllowlist.slice(0, 20)
+        }
+      : input.policyAllowlist;
+
   const userContent = {
     currentDate: new Date().toISOString(),
     portfolio: input.portfolio,
     positions: input.positions,
     recentOrders: input.recentOrders,
-    allowedSymbols: input.policyAllowlist,
+    allowedSymbols: allowedSymbolsForPrompt,
     marketScan: compactMarketScanForPrompt(input.marketScan),
     limits: {
       maxOrderNotional: input.policy.maxOrderNotional,
@@ -519,7 +537,8 @@ async function proposeTrades(input: {
       remainingDailyOrders: remainingOrders
     },
     macroeconomicData: macro,
-    ...(sectorComposition ? { sectorComposition } : {})
+    ...(sectorComposition ? { sectorComposition } : {}),
+    ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {})
   };
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
@@ -687,8 +706,21 @@ async function proposeTrades(input: {
     }
   };
 
+  // The Bear only critiques the Bull's proposals, so it needs the candidates under
+  // review plus risk context — not a second copy of the full market scan / allowlist.
+  const proposedSymbols = new Set(bullProposals.map((proposal) => normalizeSymbol(proposal.symbol)));
+  const candidatesUnderReview = userContent.marketScan?.topCandidates?.filter((candidate) =>
+    proposedSymbols.has(normalizeSymbol(candidate.symbol))
+  );
   const bearUserContent = {
-    ...userContent,
+    currentDate: userContent.currentDate,
+    macroeconomicData: userContent.macroeconomicData,
+    limits: userContent.limits,
+    portfolio: userContent.portfolio,
+    positions: userContent.positions,
+    ...(sectorComposition ? { sectorComposition } : {}),
+    ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
+    candidatesUnderReview,
     bullAgentProposals: bullProposals
   };
 
@@ -761,6 +793,24 @@ function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
 
 function uniqueSymbols(symbols: string[]): string[] {
   return Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+}
+
+// Broker order objects are verbose; the agent only needs recent intent/outcome.
+// Send a slim, recent slice instead of 20 raw records.
+function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknown>> {
+  return orders.slice(0, 8).map((order) => {
+    const quantity = order.filledQuantity ?? order.quantity;
+    return {
+      symbol: order.symbol,
+      side: order.side,
+      type: order.type,
+      state: order.state,
+      ...(order.dollarAmount ? { dollarAmount: order.dollarAmount } : {}),
+      ...(quantity ? { quantity } : {}),
+      ...(order.averagePrice ? { avgPrice: order.averagePrice } : {}),
+      createdAt: order.createdAt
+    };
+  });
 }
 
 function compactMarketScanForPrompt(marketScan?: MarketScan) {

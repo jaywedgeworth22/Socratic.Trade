@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mergeQuoteData } from "../src/lib/market";
-import { calculatePnl, getPaperPortfolioProjection, recordFillFromProposal } from "../src/lib/performance";
+import { calculatePnl, getPaperPortfolioProjection, getThesisScorecard, recordFillFromProposal } from "../src/lib/performance";
 import type { FillEvent, MarketScan } from "../src/lib/types";
 
 beforeAll(() => {
@@ -104,6 +104,93 @@ describe("calculatePnl", () => {
 
     expect(scan.quotesBySymbol.MSFT?.price).toBeCloseTo(420);
     expect(scan.quotesBySymbol.MSFT?.ask).toBeCloseTo(420.5);
+  });
+});
+
+describe("getThesisScorecard", () => {
+  it("attributes realized P&L to the thesis a position was opened under", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "SCORE1";
+    // Winner opened under "Momentum": buy 1 @ 100, sell 1 @ 120 => +20 (+20%).
+    insertFillEvent(
+      fill({
+        id: "sc-b1",
+        side: "buy",
+        quantity: 1,
+        price: 100,
+        notional: 100,
+        accountNumber: account,
+        symbol: "AAPL",
+        filledAt: "2026-06-15T00:00:01.000Z",
+        raw: { proposal: { tradeThesisTag: "Momentum", entryMarketRegime: "Tech-Bull" } }
+      })
+    );
+    insertFillEvent(
+      fill({
+        id: "sc-s1",
+        side: "sell",
+        quantity: 1,
+        price: 120,
+        notional: 120,
+        accountNumber: account,
+        symbol: "AAPL",
+        filledAt: "2026-06-15T00:00:02.000Z"
+      })
+    );
+    // Loser opened under "MeanReversion": buy 1 @ 100, sell 1 @ 90 => -10 (-10%).
+    insertFillEvent(
+      fill({
+        id: "sc-b2",
+        side: "buy",
+        quantity: 1,
+        price: 100,
+        notional: 100,
+        accountNumber: account,
+        symbol: "MSFT",
+        filledAt: "2026-06-15T00:00:03.000Z",
+        raw: { proposal: { tradeThesisTag: "MeanReversion", entryMarketRegime: "Choppy" } }
+      })
+    );
+    insertFillEvent(
+      fill({
+        id: "sc-s2",
+        side: "sell",
+        quantity: 1,
+        price: 90,
+        notional: 90,
+        accountNumber: account,
+        symbol: "MSFT",
+        filledAt: "2026-06-15T00:00:04.000Z"
+      })
+    );
+
+    const scorecard = getThesisScorecard(account, "paper");
+
+    // Sorted by total P&L descending: winner first.
+    expect(scorecard.map((s) => s.thesisTag)).toEqual(["Momentum", "MeanReversion"]);
+
+    const momentum = scorecard.find((s) => s.thesisTag === "Momentum")!;
+    expect(momentum.trades).toBe(1);
+    expect(momentum.winRate).toBe(100);
+    expect(momentum.avgReturnPct).toBeCloseTo(20);
+    expect(momentum.totalPnl).toBeCloseTo(20);
+
+    const reversion = scorecard.find((s) => s.thesisTag === "MeanReversion")!;
+    expect(reversion.winRate).toBe(0);
+    expect(reversion.avgReturnPct).toBeCloseTo(-10);
+    expect(reversion.totalPnl).toBeCloseTo(-10);
+  });
+
+  it("buckets fills with no thesis tag under 'Untagged'", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "SCORE2";
+    insertFillEvent(fill({ id: "u-b1", side: "buy", quantity: 1, price: 50, notional: 50, accountNumber: account, symbol: "T", filledAt: "2026-06-15T00:00:01.000Z" }));
+    insertFillEvent(fill({ id: "u-s1", side: "sell", quantity: 1, price: 55, notional: 55, accountNumber: account, symbol: "T", filledAt: "2026-06-15T00:00:02.000Z" }));
+
+    const scorecard = getThesisScorecard(account, "paper");
+    expect(scorecard).toHaveLength(1);
+    expect(scorecard[0].thesisTag).toBe("Untagged");
+    expect(scorecard[0].totalPnl).toBeCloseTo(5);
   });
 });
 
