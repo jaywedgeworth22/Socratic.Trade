@@ -140,7 +140,7 @@ export function getTaxSummary(
       const days = lot.entryAt ? Math.max(0, (now.getTime() - new Date(lot.entryAt).getTime()) / MS_PER_DAY) : 0;
       return {
         symbol: normalizeSymbol(lot.symbol),
-        quantity: Number(lot.quantity.toFixed(4)),
+        quantity: lot.quantity, // keep full share precision in the record; the UI formats for display
         entryAt: lot.entryAt,
         daysHeld: Math.floor(days),
         daysToLongTerm: Math.max(0, Math.ceil(LONG_TERM_DAYS - days)),
@@ -164,7 +164,7 @@ export function getTaxSummary(
     }
   }
   const harvestCandidates: HarvestCandidate[] = Array.from(harvestMap.entries())
-    .map(([symbol, v]) => ({ symbol, quantity: Number(v.quantity.toFixed(4)), unrealizedLoss: Number(v.loss.toFixed(2)) }))
+    .map(([symbol, v]) => ({ symbol, quantity: v.quantity, unrealizedLoss: Number(v.loss.toFixed(2)) }))
     .sort((a, b) => a.unrealizedLoss - b.unrealizedLoss);
 
   return {
