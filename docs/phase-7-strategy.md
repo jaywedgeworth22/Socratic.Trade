@@ -128,8 +128,19 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   compact note instead of every ticker; `recentOrders` is slimmed to 8 records;
   the Bear/critique agent receives only the candidates under review rather than
   a second full copy of the market scan.
-- Still TODO from this section: true delta-only macro pruning, OPRO-style prompt
-  self-rewrite, and MAE/MFE-based excursion lessons (`runPostMortems` stub).
+- **Regime-conditioned outcomes** — `getRegimeScorecard()` groups realized
+  outcomes by `entryMarketRegime`; `tradeOutcomesByRegime` is fed to the Bull
+  (compare today's regime to history), Bear, and reflection.
+- **MAE/MFE excursion lessons** — `getExcursionsByThesis()` (replacing the old
+  `runPostMortems` stub) aggregates holding-period adverse/favorable excursions
+  and capture-of-favorable-move per thesis, computed only in the gated async
+  post-mortem so the proposal path stays network-free.
+- **Delta-only macro pruning** — `pruneMacro()` sends only changed (plus
+  regime-critical) macro fields on repeat runs, listing the rest as unchanged.
+- Still TODO from this section: OPRO-style prompt self-rewrite (intentionally
+  kept advisory-only via Strategy Studio's human-approved tuning, not
+  auto-applied) and persisted MAE/MFE per closed lot (currently recomputed each
+  gated reflection).
 
 ### E. Human-Approved Weight Shifting
 The ultimate expression of the learning loop is adjusting the Initial Factor Weighting Matrix and Sector Allocations.

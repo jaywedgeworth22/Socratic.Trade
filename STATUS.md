@@ -30,8 +30,11 @@ steps materially change.
   Scorecard (realized win/return/P&L per `tradeThesisTag`) fed to the Bull agent
   and reflection; gated the post-mortem so it only regenerates on new trades
   (saves a call + enables prompt caching); trimmed redundant prompt context
-  (allowlist cap, slim recent orders, leaner Bear critique). Verified with `tsc`
-  + `npm test` (82) + `npm run build`. See
+  (allowlist cap, slim recent orders, leaner Bear critique). Then deepened it:
+  MAE/MFE excursion timing stats (`getExcursionsByThesis`), regime-conditioned
+  outcomes (`getRegimeScorecard`), and delta-only macro pruning (`pruneMacro`).
+  Adversarially reviewed (P&L/integration clean; one prompt-wording nit fixed).
+  Verified with `tsc` + `npm test` (86) + `npm run build`. See
   `docs/rollouts/2026-06-16-llm-token-and-learning.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning

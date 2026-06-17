@@ -13,17 +13,30 @@ import type {
   TradeProposal
 } from "./types";
 
-interface ClosedLot {
+export interface ClosedLot {
   pnl: number;
   returnPct: number;
   symbol?: string;
   thesisTag?: string;
   regime?: string;
+  side?: "long" | "short";
+  entryPrice?: number;
+  entryAt?: string;
+  exitAt?: string;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
 export interface ThesisStat {
   thesisTag: string;
+  trades: number;
+  winRate: number;
+  avgReturnPct: number;
+  totalPnl: number;
+}
+
+/** Realized-outcome stats grouped by the market regime a position was opened in. */
+export interface RegimeStat {
+  regime: string;
   trades: number;
   winRate: number;
   avgReturnPct: number;
@@ -203,7 +216,15 @@ export function getPaperPortfolioProjection(input: {
 export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, number> = {}): PnlResult {
   const lots = new Map<
     string,
-    Array<{ quantity: number; price: number; runId?: string; side: "long" | "short"; thesisTag?: string; regime?: string }>
+    Array<{
+      quantity: number;
+      price: number;
+      runId?: string;
+      side: "long" | "short";
+      thesisTag?: string;
+      regime?: string;
+      entryAt?: string;
+    }>
   >();
   const closedLots: ClosedLot[] = [];
   const attribution = new Map<string, RunAttribution>();
@@ -221,7 +242,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         runId: fill.runId,
         side: fill.side === "buy" ? "long" : "short",
         thesisTag: meta.thesisTag,
-        regime: meta.regime
+        regime: meta.regime,
+        entryAt: fill.filledAt
       });
       addAttribution(attribution, fill, 0);
       continue;
@@ -241,8 +263,19 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         returnPct = lot.price > 0 ? ((lot.price - fill.price) / lot.price) * 100 : 0;
       }
       realized += pnl;
-      // Attribute the realized outcome to the thesis the lot was *opened* under.
-      closedLots.push({ pnl, returnPct, symbol, thesisTag: lot.thesisTag, regime: lot.regime });
+      // Attribute the realized outcome to the thesis/regime the lot was *opened* under,
+      // and carry entry/exit context for excursion (MAE/MFE) analysis.
+      closedLots.push({
+        pnl,
+        returnPct,
+        symbol,
+        thesisTag: lot.thesisTag,
+        regime: lot.regime,
+        side: lot.side,
+        entryPrice: lot.price,
+        entryAt: lot.entryAt,
+        exitAt: fill.filledAt
+      });
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
       remaining -= matched;
@@ -282,21 +315,45 @@ export function getThesisScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {}
 ): ThesisStat[] {
-  const fills = listFillEvents(accountNumber, source);
-  const { closedLots } = calculatePnl(fills, currentPrices);
-  const byTag = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  return aggregateClosedLots(closedLots, (lot) =>
+    lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"
+  ).map(({ key, ...rest }) => ({ thesisTag: key, ...rest }));
+}
+
+export function getRegimeScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {}
+): RegimeStat[] {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  return aggregateClosedLots(closedLots, (lot) =>
+    lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"
+  ).map(({ key, ...rest }) => ({ regime: key, ...rest }));
+}
+
+/** Closed lots with entry/exit context, oldest-first, for excursion (MAE/MFE) analysis. */
+export function getClosedLotsDetailed(accountNumber: string, source?: FillSource): ClosedLot[] {
+  return calculatePnl(listFillEvents(accountNumber, source)).closedLots;
+}
+
+function aggregateClosedLots(
+  closedLots: ClosedLot[],
+  keyFn: (lot: ClosedLot) => string
+): Array<{ key: string; trades: number; winRate: number; avgReturnPct: number; totalPnl: number }> {
+  const byKey = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
   for (const lot of closedLots) {
-    const tag = lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged";
-    const cur = byTag.get(tag) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0 };
+    const key = keyFn(lot);
+    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0 };
     cur.pnl += lot.pnl;
     cur.returnSum += lot.returnPct;
     cur.wins += lot.pnl > 0 ? 1 : 0;
     cur.trades += 1;
-    byTag.set(tag, cur);
+    byKey.set(key, cur);
   }
-  return Array.from(byTag.entries())
-    .map(([thesisTag, s]) => ({
-      thesisTag,
+  return Array.from(byKey.entries())
+    .map(([key, s]) => ({
+      key,
       trades: s.trades,
       winRate: Math.round((s.wins / s.trades) * 100),
       avgReturnPct: Number((s.returnSum / s.trades).toFixed(2)),

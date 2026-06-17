@@ -76,15 +76,45 @@ The `runStrategyOnce` persistence test still passes, confirming the gated
 post-mortem path (and the "Post-mortem LLM call failed" graceful no-key path)
 is intact.
 
+## Follow-up pass (same day): MAE/MFE + regime + delta-macro
+
+The three deferred items below were then implemented in a second commit on the
+same branch:
+
+1. **MAE/MFE excursion lessons.** `getExcursionsByThesis()` (`learning-loop.ts`,
+   replacing the old `runPostMortems` stub) fetches each recent closed lot's
+   holding-period high/low via the existing `calculateExcursions` and aggregates,
+   per thesis, avg MAE (pain endured), avg MFE (move available), and `capturePct`
+   (share of the favorable move realized — low ⇒ exiting winners early). Bounded
+   to 16 lots, injectable `compute` for testing, and called only in the gated
+   async post-mortem so the proposal hot path makes no network calls.
+2. **Regime-conditioned outcomes.** `getRegimeScorecard()` mirrors the thesis
+   scorecard grouped by `entryMarketRegime`. Closed lots now carry
+   `regime/side/entryPrice/entryAt/exitAt`; aggregation was refactored into a
+   shared `aggregateClosedLots`. `tradeOutcomesByRegime` is fed to the Bull (told
+   to compare today's regime to its history), the Bear, and the reflection.
+3. **Delta-only macro pruning.** `pruneMacro()` (`macro.ts`) sends only macro
+   fields that changed since the last run, always keeping regime-critical ones
+   (VIX, Fed funds, 10Y, asOf), and lists the rest as `unchangedSinceLastRun`.
+   Strategy stores the last macro via `setInternalSetting("last_macro_sent")`.
+
+Adversarially reviewed (3 reviewers + per-finding verification): P&L/scorecard
+math and integration came back with **zero findings** (FIFO P&L confirmed
+behavior-preserving, no import cycles, network-safe, no execution-path change);
+the one confirmed item was a nit — the reflection prompt referenced the proposal
+field names (`tradeThesisTag`/`entryMarketRegime`) instead of the serialized stat
+keys (`thesisTag`/`regime`), now reworded.
+
+Verified: `npx tsc --noEmit`, `npm test` (86 passed; +4 tests:
+regime scorecard, `pruneMacro`, excursion aggregation), `npm run build`.
+
 ## Follow-ups
 
-- `runPostMortems()` / MAE-MFE persistence (`learning-loop.ts`) is still a stub;
-  the scorecard uses realized P&L only, not excursions. Wiring MAE/MFE would let
-  the loop also learn "cutting winners early / holding losers too long."
-- The scorecard attributes to the entry thesis; a regime-aware variant
-  (`outcomes by thesis × entryMarketRegime`) would enable rules like "momentum
-  fails when VIX > 25" — a natural next step now that the join exists.
-- The allowlist-cap and Bear-trim are conservative; once telemetry confirms no
-  proposal-quality regression, the candidate fan-out to the Bull could also be
-  pruned by score.
+- Excursions are computed live each gated reflection (network); if reflection
+  cadence rises, persist MAE/MFE per closed lot to avoid refetching bars.
+- A combined thesis × regime cell (e.g. "Momentum in High-VIX") would be even
+  sharper than the two separate scorecards, once enough closed trades exist.
+- The allowlist-cap and Bear-trim remain conservative; once telemetry confirms no
+  proposal-quality regression, the candidate fan-out to the Bull could be pruned
+  by score.
 </content>

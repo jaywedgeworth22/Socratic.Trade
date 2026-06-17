@@ -73,6 +73,31 @@ export async function fetchMacroData(): Promise<MacroData> {
   }
 }
 
+// Regime-critical fields that are always worth the tokens even when unchanged.
+const MACRO_ALWAYS_KEEP = new Set<keyof MacroData>(["vix", "fedFundsRate", "dgs10Treasury", "asOf"]);
+
+/**
+ * Delta-only macro pruning: macro data moves slowly, so on repeat runs only send
+ * the fields that changed since the last run (plus a few regime-critical ones),
+ * and list the rest as "unchanged" instead of re-spending tokens on them.
+ */
+export function pruneMacro(
+  current: MacroData,
+  previous?: MacroData | null
+): { macro: Record<string, string>; omitted: string[] } {
+  if (!previous) return { macro: { ...current }, omitted: [] };
+  const macro: Record<string, string> = {};
+  const omitted: string[] = [];
+  for (const [key, value] of Object.entries(current) as Array<[keyof MacroData, string]>) {
+    if (MACRO_ALWAYS_KEEP.has(key) || previous[key] !== value) {
+      macro[key] = value;
+    } else {
+      omitted.push(key);
+    }
+  }
+  return { macro, omitted };
+}
+
 async function fetchFredSeries(seriesId: string, apiKey: string): Promise<string | undefined> {
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&limit=1&sort_order=desc&api_key=${apiKey}&file_type=json`;
   const controller = new AbortController();

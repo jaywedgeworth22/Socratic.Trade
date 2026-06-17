@@ -14,14 +14,14 @@ import {
   updateFillEvent
 } from "./db";
 import { mergeQuoteData, scanMarket } from "./market";
-import { fetchMacroData } from "./macro";
+import { fetchMacroData, pruneMacro, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getPaperPortfolioProjection, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import { getPaperPortfolioProjection, getRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
 import { generateReflectionSummary } from "./post-mortem";
-import { getSetting } from "./db";
+import { getSetting, getInternalSetting, setInternalSetting } from "./db";
 import { debateProposal } from "./red-team";
 import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
@@ -488,9 +488,9 @@ async function proposeTrades(input: {
       : undefined;
 
   const reflection = getSetting("reflection_summary", "");
-  const thesisScorecard = input.policy.accountNumber
-    ? getThesisScorecard(input.policy.accountNumber, input.policy.paperMode ? "paper" : "live")
-    : [];
+  const source = input.policy.paperMode ? "paper" : "live";
+  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source) : [];
+  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source) : [];
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
     "",
@@ -500,8 +500,9 @@ async function proposeTrades(input: {
     "Historical Reflection & Lessons Learned:",
     reflection || "No historical reflection available yet.",
     "",
-    "Trade Outcomes By Thesis (your realized track record):",
-    "The user message includes `tradeOutcomesByThesis` — realized win rate, average return, and total P&L grouped by the `tradeThesisTag` you previously assigned. Lean into thesis types with a positive track record and a healthy win rate; be skeptical of, downsize, or avoid thesis types that have repeatedly lost money. Reuse a proven `tradeThesisTag` when the current setup matches it.",
+    "Your realized track record (in the user message):",
+    "- `tradeOutcomesByThesis`: win rate, average return, and total P&L grouped by the `tradeThesisTag` you previously assigned. Lean into thesis types with a positive track record and a healthy win rate; be skeptical of, downsize, or avoid thesis types that have repeatedly lost money. Reuse a proven `tradeThesisTag` when the current setup matches it.",
+    "- `tradeOutcomesByRegime`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
     "",
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
@@ -510,7 +511,16 @@ async function proposeTrades(input: {
     "Return strict JSON only. No markdown. No text outside the JSON object."
   ].join("\n");
 
+  // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
+  // (plus regime-critical) fields and note the rest as unchanged to save tokens.
   const macro = await fetchMacroData();
+  const previousMacro = getInternalSetting<MacroData>("last_macro_sent");
+  const { macro: macroForPrompt, omitted: macroOmitted } = pruneMacro(macro, previousMacro);
+  setInternalSetting("last_macro_sent", macro);
+  const macroeconomicData =
+    macroOmitted.length > 0
+      ? { ...macroForPrompt, unchangedSinceLastRun: macroOmitted }
+      : macroForPrompt;
 
   // For a large allowed universe (e.g. the full S&P 500) the explicit ticker list
   // is mostly redundant with the scored marketScan candidates and costs hundreds of
@@ -536,9 +546,10 @@ async function proposeTrades(input: {
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
-    macroeconomicData: macro,
+    macroeconomicData,
     ...(sectorComposition ? { sectorComposition } : {}),
-    ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {})
+    ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
+    ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {})
   };
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
@@ -720,6 +731,7 @@ async function proposeTrades(input: {
     positions: userContent.positions,
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
+    ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {}),
     candidatesUnderReview,
     bullAgentProposals: bullProposals
   };

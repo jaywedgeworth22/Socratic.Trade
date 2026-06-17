@@ -1,5 +1,6 @@
 import { getDb, setSetting, audit, getInternalSetting, setInternalSetting, getPolicy } from "./db";
-import { getThesisScorecard } from "./performance";
+import { getRegimeScorecard, getThesisScorecard } from "./performance";
+import { getExcursionsByThesis } from "./learning-loop";
 
 export async function generateReflectionSummary(accountNumber: string): Promise<void> {
   const db = getDb();
@@ -44,17 +45,23 @@ export async function generateReflectionSummary(accountNumber: string): Promise<
     rationale: r.proposal ? truncate(JSON.parse(r.proposal).rationale, 240) : undefined
   }));
 
-  // Realized outcomes grouped by thesis tag so the reflection is grounded in what
-  // actually made or lost money, not just what was traded.
+  // Realized outcomes grouped by thesis tag and by market regime, plus MAE/MFE
+  // timing stats, so the reflection is grounded in what actually made or lost money
+  // and how well exits were timed — not just what was traded. Excursions hit the
+  // network, but this whole function is gated above, so it runs only on new trades.
   const source = getPolicy().paperMode ? "paper" : "live";
   const outcomesByThesis = getThesisScorecard(accountNumber, source);
+  const outcomesByRegime = getRegimeScorecard(accountNumber, source);
+  const timingByThesis = await getExcursionsByThesis(accountNumber, source).catch(() => []);
 
   const systemPrompt = `You are the Post-Mortem Reflection Engine.
-Review the recent trades together with 'outcomesByThesis' (realized win rate, average return, and total P&L grouped by 'tradeThesisTag') and extract actionable, outcome-grounded lessons.
-Call out which thesis tags and market regimes have actually been profitable versus losing, and what the agent should do more of or stop doing.
-Return a single concise paragraph (<= 120 words). This paragraph is fed back into the Bull Agent's prompt on future runs to improve trading accuracy, so make it specific and directive.`;
+Review the recent trades together with:
+- 'outcomesByThesis' / 'outcomesByRegime': realized win rate, average return, and total P&L grouped by 'thesisTag' and by 'regime' respectively (these mirror the proposal's tradeThesisTag and entryMarketRegime).
+- 'timingByThesis': average maximum adverse excursion (avgMaePct, pain endured), average maximum favorable excursion (avgMfePct, the move that was available), and capturePct (share of the favorable move actually realized; low => exiting winners too early, large negative avgMaePct => holding losers through deep drawdowns).
+Extract actionable, outcome-grounded lessons: which thesis tags and regimes are profitable vs losing, and whether exits are mistimed.
+Return a single concise paragraph (<= 130 words) that is specific and directive. It is fed back into the Bull Agent's prompt on future runs to improve trading accuracy.`;
 
-  const userContent = JSON.stringify({ recentTrades: tradeData, outcomesByThesis });
+  const userContent = JSON.stringify({ recentTrades: tradeData, outcomesByThesis, outcomesByRegime, timingByThesis });
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -99,7 +106,13 @@ Return a single concise paragraph (<= 120 words). This paragraph is fed back int
     if (text) {
       setSetting("reflection_summary", text);
       setInternalSetting("reflection_signature", signature);
-      audit("post_mortem_reflection", { summary: text, tradeCount: tradeData.length, outcomesByThesis });
+      audit("post_mortem_reflection", {
+        summary: text,
+        tradeCount: tradeData.length,
+        outcomesByThesis,
+        outcomesByRegime,
+        timingByThesis
+      });
     }
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);

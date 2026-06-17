@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mergeQuoteData } from "../src/lib/market";
-import { calculatePnl, getPaperPortfolioProjection, getThesisScorecard, recordFillFromProposal } from "../src/lib/performance";
+import {
+  calculatePnl,
+  getPaperPortfolioProjection,
+  getRegimeScorecard,
+  getThesisScorecard,
+  recordFillFromProposal
+} from "../src/lib/performance";
 import type { FillEvent, MarketScan } from "../src/lib/types";
 
 beforeAll(() => {
@@ -179,6 +185,12 @@ describe("getThesisScorecard", () => {
     expect(reversion.winRate).toBe(0);
     expect(reversion.avgReturnPct).toBeCloseTo(-10);
     expect(reversion.totalPnl).toBeCloseTo(-10);
+
+    // Same closed lots, grouped by the regime each was opened in.
+    const regimes = getRegimeScorecard(account, "paper");
+    expect(regimes.map((r) => r.regime)).toEqual(["Tech-Bull", "Choppy"]);
+    expect(regimes.find((r) => r.regime === "Tech-Bull")!.totalPnl).toBeCloseTo(20);
+    expect(regimes.find((r) => r.regime === "Choppy")!.winRate).toBe(0);
   });
 
   it("buckets fills with no thesis tag under 'Untagged'", async () => {
