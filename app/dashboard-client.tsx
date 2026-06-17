@@ -350,10 +350,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         </div>
 
         <div className="ml-2 hidden items-center gap-2 lg:flex">
-          <StatusPill label="Portfolio" value={money(snapshot.portfolio?.totalMarketValue)} />
-          <StatusPill label="Buying power" value={money(snapshot.portfolio?.buyingPower)} />
+          <StatusPill label="Portfolio" value={money(snapshot.portfolio?.totalMarketValue)} title={`Total ${mode} account value (cash + positions marked to current prices).`} />
+          <StatusPill label="Buying power" value={money(snapshot.portfolio?.buyingPower)} title="Cash currently available to open new positions." />
           <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional} />
-          <StatusPill label="Universe" value={policy.universe === "sp500" ? "S&P 500" : `${allowedCount} tickers`} />
+          <StatusPill label="Universe" value={policy.universe === "sp500" ? "S&P 500" : `${allowedCount} tickers`} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
         </div>
 
         <div className="ml-auto flex items-center gap-2">
@@ -564,9 +564,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
 
 /* ───────────────────────── Command-bar pieces ───────────────────────── */
 
-function StatusPill({ label, value }: { label: string; value: string }) {
+function StatusPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="flex flex-col rounded-lg border border-line bg-surface px-3 py-1">
+    <div className="flex flex-col rounded-lg border border-line bg-surface px-3 py-1" title={title}>
       <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">{label}</span>
       <span className="tnum text-[13px] leading-tight text-fg">{value}</span>
     </div>
@@ -688,7 +688,7 @@ function DecisionView({
                 <div className="flex items-center gap-2">
                   <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
                   <span className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}>{p.proposal.symbol}</span>
-                  <span className="ml-auto tnum text-xs text-muted">{proposalSize(p.proposal)}</span>
+                  <span className="ml-auto tnum text-xs text-muted" title="Estimated total trade value. '(est)' means it's derived from the current price — the actual fill price may differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional)}</span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
                 <div className="mt-3 flex gap-2">
@@ -724,7 +724,7 @@ function DecisionView({
                   <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
                   <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
                   <span className="font-semibold text-fg">{item.proposal.symbol}</span>
-                  <span className="tnum text-xs text-muted">{proposalSize(item.proposal)} · {item.proposal.type}</span>
+                  <span className="tnum text-xs text-muted" title="Estimated total trade value. '(est)' means it's derived from the current price — the actual fill price may differ slightly.">{proposalSize(item.proposal)} · {item.proposal.type}</span>
                   {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
                 </div>
                 <p className="mt-2 text-[13px] leading-snug text-muted">{item.proposal.rationale}</p>
@@ -1057,10 +1057,10 @@ function PerformanceView({
       <Card className="lg:col-span-2">
         <PanelHeader title="Equity" subtitle={mode === "paper" ? "Paper account" : "Live account"} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
-          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} />
-          <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} />
-          <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} />
+          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Paper gain/loss on positions still open, marked to current prices." />
+          <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
+          <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
         </div>
         <div className="h-64 p-4">
           <EquityCurve data={curve} />
@@ -1671,6 +1671,14 @@ function SettingsContent({
               <option value="decide">LLM decides — runs autonomously</option>
             </select>
           </Field>
+          <Field label="Holding horizon" hint="How long you plan to hold most new positions — shapes the agent's setups, exits, and tax awareness" className="sm:col-span-2">
+            <select className={inputClass} value={policy.holdingHorizon ?? "swing"} onChange={(e) => updatePolicy({ holdingHorizon: e.target.value as TradingPolicy["holdingHorizon"] })}>
+              <option value="intraday">Intraday — day trades</option>
+              <option value="swing">Days to weeks — swing trades</option>
+              <option value="position">Weeks to months — position trades</option>
+              <option value="longterm">Months to years — long-term (favors long-term tax treatment)</option>
+            </select>
+          </Field>
           <Field label="Custom allowlist" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed`} className="sm:col-span-2">
             <div className="rounded-lg border border-line bg-bg/60 p-2">
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -1901,9 +1909,16 @@ function displayStatus(status: string): string {
   return status.toUpperCase();
 }
 
-function proposalSize(proposal: TradeProposal): string {
+function proposalSize(proposal: TradeProposal, estimatedNotional?: number): string {
+  // Always present a total dollar figure. A dollar order spends an exact amount; a
+  // share/quantity order's total depends on the fill price, so it's marked "(est)".
   if (proposal.dollarAmount) return money(proposal.dollarAmount);
-  if (proposal.quantity) return `${formatShareQuantity(proposal.quantity, proposal.symbol)} sh`;
+  if (typeof estimatedNotional === "number" && estimatedNotional > 0) return `${money(estimatedNotional)} (est)`;
+  if (proposal.quantity) {
+    const est = proposal.limitPrice && proposal.limitPrice > 0 ? proposal.quantity * proposal.limitPrice : undefined;
+    if (est && est > 0) return `${money(est)} (est)`;
+    return `${formatShareQuantity(proposal.quantity, proposal.symbol)} sh (est)`;
+  }
   return "—";
 }
 

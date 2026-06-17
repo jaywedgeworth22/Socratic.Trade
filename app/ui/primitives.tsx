@@ -264,17 +264,19 @@ export function StatTile({
   value,
   sub,
   tone = "neutral",
-  icon
+  icon,
+  title
 }: {
   label: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   tone?: Tone;
   icon?: React.ReactNode;
+  title?: string;
 }) {
   const valueTone = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <Card className="px-4 py-3">
+    <Card className="px-4 py-3" title={title}>
       <div className="flex items-center justify-between text-muted">
         <span className="text-[11px] font-semibold uppercase tracking-wide">{label}</span>
         {icon && <span className="text-faint">{icon}</span>}

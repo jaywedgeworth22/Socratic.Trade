@@ -61,6 +61,7 @@ export async function PUT(request: Request) {
 async function validatePolicy(policy: TradingPolicy): Promise<string | undefined> {
   if (!["custom", "sp500"].includes(policy.universe)) return "universe must be custom or sp500.";
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
+  if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxDailyNotional < policy.maxOrderNotional) return "maxDailyNotional must be at least maxOrderNotional.";
   if (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100) return "maxSymbolExposurePct must be between 0 and 100.";

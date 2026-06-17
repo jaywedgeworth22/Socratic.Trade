@@ -560,6 +560,17 @@ const THESIS_PLAYBOOK_GUIDE =
   THESIS_PLAYBOOK.join(", ") +
   ". Pick the one that best fits the dominant evidence (e.g. Value-Quality for cheap, low-leverage, FCF-positive names; Momentum-Breakout for strong intraday/volume; Insider-Accumulation when insider/senate signals lead; Risk-Exit for stop-loss/take-profit/de-risking sells).";
 
+const HOLDING_HORIZON_GUIDE: Record<string, string> = {
+  intraday:
+    "Holding horizon = INTRADAY/day-trade. Favor liquid, high-momentum, catalyst-driven setups; use tight stops; avoid illiquid names and multi-day fundamental theses; assume positions are flat or trimmed quickly.",
+  swing:
+    "Holding horizon = SWING (days to a few weeks). Balance momentum/technicals with a near-term catalyst or mean-reversion edge; don't require a multi-quarter fundamental story; size for a days-to-weeks hold.",
+  position:
+    "Holding horizon = POSITION (weeks to months). Lean on fundamentals (FCF, leverage, EPS growth) and sector/regime fit over intraday noise; tolerate normal volatility; let winners run toward the thesis target.",
+  longterm:
+    "Holding horizon = LONG-TERM (months to years). Prioritize durable quality/value and secular trends; ignore short-term noise; strongly prefer holding winners past the 1-year mark for long-term tax treatment; trade infrequently."
+};
+
 async function proposeTrades(input: {
   policyAllowlist: string[];
   prompt: string;
@@ -655,6 +666,8 @@ async function proposeTrades(input: {
           "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
         ]
       : []),
+    "",
+    HOLDING_HORIZON_GUIDE[input.policy.holdingHorizon ?? "swing"] ?? HOLDING_HORIZON_GUIDE.swing,
     "",
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,

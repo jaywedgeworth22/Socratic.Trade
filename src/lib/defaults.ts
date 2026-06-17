@@ -34,6 +34,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   killSwitch: false,
   universe: "custom",
   strategyAuthority: "decide",
+  holdingHorizon: "swing",
   allowlist: [],
   maxOrderNotional: 10,
   maxDailyNotional: 500,

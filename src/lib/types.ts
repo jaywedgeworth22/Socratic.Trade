@@ -4,6 +4,8 @@ export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
 export type AllowlistUniverse = "custom" | "sp500";
 export type StrategyAuthority = "propose" | "decide";
+/** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
+export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
 export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch";
 export type NotificationStatus = "sent" | "failed" | "skipped";
@@ -113,6 +115,8 @@ export interface TradingPolicy {
   accountNumber?: string;
   universe: AllowlistUniverse;
   strategyAuthority: StrategyAuthority;
+  /** Intended holding horizon for new positions (default "swing" — days to weeks). */
+  holdingHorizon?: HoldingHorizon;
   allowlist: string[];
   maxOrderNotional: number;
   maxDailyNotional: number;
