@@ -40,6 +40,7 @@ import {
   formatShareQuantity,
   quoteTitle,
   ratingTitle,
+  receivedLabel,
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
@@ -865,6 +866,9 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
     );
   }
   const cols = SCAN_COLUMNS.filter((c) => visible.includes(c.id));
+  // The quote `asOf` is a display string, not a timestamp; the scan's ISO generatedAt
+  // is the real "received" time for every value in this table.
+  const dataReceived = receivedLabel(scan.generatedAt);
   const sorted = [...scan.topCandidates].sort((a, b) => compare(a[sort.col], b[sort.col], sort.dir));
   return (
     <Card className="overflow-hidden">
@@ -926,7 +930,7 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
           itemContent={(index, q) => (
             <>
               {cols.map((c) => (
-                <td key={c.id} title={c.cellTitle?.(q)} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
+                <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
                   {c.render(q)}
                 </td>
               ))}

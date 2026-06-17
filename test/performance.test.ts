@@ -6,6 +6,7 @@ import { mergeQuoteData } from "../src/lib/market";
 import {
   calculatePnl,
   getClosedLotCount,
+  getConfidenceCalibration,
   getPaperPortfolioProjection,
   getRegimeScorecard,
   getSignalEfficacy,
@@ -231,6 +232,21 @@ describe("getThesisScorecard", () => {
     expect(congress?.trades).toBe(1);
     expect(congress?.winRate).toBe(100);
     expect(eff.find((e) => e.signal.includes("Insider"))?.trades).toBe(1);
+  });
+
+  it("buckets realized outcomes by the agent's entry confidence band", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "CONF1";
+    // High-confidence winner (90 → +20%).
+    insertFillEvent(fill({ id: "cf-b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "AAA", filledAt: "2026-06-15T00:00:01.000Z", raw: { proposal: { tradeThesisTag: "T", confidenceScore: 90 } } }));
+    insertFillEvent(fill({ id: "cf-s1", side: "sell", quantity: 1, price: 120, notional: 120, accountNumber: account, symbol: "AAA", filledAt: "2026-06-15T00:00:02.000Z" }));
+    // Low-confidence loser (40 → −10%).
+    insertFillEvent(fill({ id: "cf-b2", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "BBB", filledAt: "2026-06-15T00:00:03.000Z", raw: { proposal: { tradeThesisTag: "T", confidenceScore: 40 } } }));
+    insertFillEvent(fill({ id: "cf-s2", side: "sell", quantity: 1, price: 90, notional: 90, accountNumber: account, symbol: "BBB", filledAt: "2026-06-15T00:00:04.000Z" }));
+
+    const cal = getConfidenceCalibration(account, "paper");
+    expect(cal.find((c) => c.band.startsWith("85"))?.winRate).toBe(100);
+    expect(cal.find((c) => c.band.startsWith("1-49"))?.winRate).toBe(0);
   });
 
   it("buckets fills with no thesis tag under 'Untagged'", async () => {

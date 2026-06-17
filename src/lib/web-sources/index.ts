@@ -22,11 +22,19 @@ import {
   isInsiderRefreshDue,
   refreshInsider
 } from "./sec";
+import {
+  finraTtlMs,
+  getFinraDataset,
+  getShortVolumeSignals,
+  isFinraRefreshDue,
+  refreshFinra
+} from "./finra";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
 export { getCongressDataset, getCongressSignals, refreshCongress } from "./congress";
 export { getInsiderDataset, getInsiderSignals, refreshInsider } from "./sec";
+export { getFinraDataset, getShortVolumeSignals, refreshFinra } from "./finra";
 
 /** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
@@ -36,6 +44,11 @@ function congressEnabled(): boolean {
 /** Whether the SEC insider connector is enabled (default on; disable with WEB_SOURCE_INSIDER=off). */
 function insiderEnabled(): boolean {
   return (process.env.WEB_SOURCE_INSIDER ?? "on").toLowerCase() !== "off";
+}
+
+/** Whether the FINRA short-volume connector is enabled (default on; disable with WEB_SOURCE_FINRA=off). */
+function finraEnabled(): boolean {
+  return (process.env.WEB_SOURCE_FINRA ?? "on").toLowerCase() !== "off";
 }
 
 // Guard against overlapping refreshes: the scheduler fires this fire-and-forget
@@ -74,6 +87,13 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "insider", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  if (finraEnabled() && isFinraRefreshDue(now)) {
+    try {
+      results.push(await refreshFinra(now));
+    } catch (error) {
+      results.push({ id: "finra", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
   return results;
 }
 
@@ -95,6 +115,12 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
     entry.insiderSentiment = signal.insiderSentiment;
     entry.bulletins.push(signal.bulletin);
   }
+  const shortVol = finraEnabled() ? getShortVolumeSignals(symbols) : {};
+  for (const [symbol, signal] of Object.entries(shortVol)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.shortVolumeRatio = signal.shortVolumeRatio;
+    if (signal.bulletin) entry.bulletins.push(signal.bulletin);
+  }
   return out;
 }
 
@@ -112,9 +138,11 @@ export function collectEvidenceBulletins(symbols: string[], now: number = Date.n
 export function getWebSourcesStatus(): {
   congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+  finra: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
 } {
   const congress = getCongressDataset();
   const insider = getInsiderDataset();
+  const finra = getFinraDataset();
   return {
     congress: {
       enabled: congressEnabled(),
@@ -131,6 +159,15 @@ export function getWebSourcesStatus(): {
       sources: insider ? ["sec-edgar"] : [],
       due: isInsiderRefreshDue(),
       ttlMs: insiderTtlMs()
+    },
+    finra: {
+      enabled: finraEnabled(),
+      fetchedAt: finra?.fetchedAt,
+      recordCount: finra?.recordCount ?? 0,
+      sources: finra ? ["finra"] : [],
+      due: isFinraRefreshDue(),
+      ttlMs: finraTtlMs(),
+      asOf: finra?.asOf
     }
   };
 }

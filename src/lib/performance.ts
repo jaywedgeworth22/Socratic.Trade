@@ -25,6 +25,8 @@ export interface ClosedLot {
   exitAt?: string;
   /** Run that opened this lot — joins to the per-run `signal_snapshot` audit for efficacy analysis. */
   entryRunId?: string;
+  /** Agent confidence (1–100) assigned to the opening proposal, for calibration analysis. */
+  confidence?: number;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -239,6 +241,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       side: "long" | "short";
       thesisTag?: string;
       regime?: string;
+      confidence?: number;
       entryAt?: string;
     }>
   >();
@@ -259,6 +262,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         side: fill.side === "buy" ? "long" : "short",
         thesisTag: meta.thesisTag,
         regime: meta.regime,
+        confidence: meta.confidence,
         entryAt: fill.filledAt
       });
       addAttribution(attribution, fill, 0);
@@ -291,7 +295,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         entryPrice: lot.price,
         entryAt: lot.entryAt,
         exitAt: fill.filledAt,
-        entryRunId: lot.runId
+        entryRunId: lot.runId,
+        confidence: lot.confidence
       });
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
@@ -471,6 +476,35 @@ export function getSignalEfficacy(
  */
 export const MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT = 20;
 
+/**
+ * Confidence calibration: realized win rate / avg return of closed BUY lots grouped by
+ * the agent's entry `confidenceScore` band. Because confidence now drives position size,
+ * this tells the agent whether its high-conviction calls actually win more than its
+ * low-conviction ones (good calibration) or not (overconfidence) — so it can recalibrate.
+ */
+export interface ConfidenceCalibrationStat {
+  band: string;
+  trades: number;
+  winRate: number;
+  shrunkWinRate: number;
+  avgReturnPct: number;
+}
+
+export function getConfidenceCalibration(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {}
+): ConfidenceCalibrationStat[] {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  const bandOf = (c: number): string => (c >= 85 ? "85-100 (high)" : c >= 70 ? "70-84" : c >= 50 ? "50-69" : "1-49 (low)");
+  return aggregateClosedLots(
+    closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
+    (lot) => bandOf(lot.confidence as number)
+  )
+    .map(({ key, trades, winRate, shrunkWinRate, avgReturnPct }) => ({ band: key, trades, winRate, shrunkWinRate, avgReturnPct }))
+    .sort((a, b) => b.band.localeCompare(a.band));
+}
+
 /** Open (unclosed) lots with entry dates, for holding-period and tax analysis. */
 export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot[] {
   return calculatePnl(listFillEvents(accountNumber, source)).openLots;
@@ -531,7 +565,7 @@ function aggregateClosedLots(
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
 
-function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string } {
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number } {
   const raw = fill.raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const proposal = (raw as Record<string, unknown>).proposal;
@@ -539,7 +573,8 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
   const p = proposal as Record<string, unknown>;
   return {
     thesisTag: typeof p.tradeThesisTag === "string" ? p.tradeThesisTag : undefined,
-    regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined
+    regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined,
+    confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined
   };
 }
 

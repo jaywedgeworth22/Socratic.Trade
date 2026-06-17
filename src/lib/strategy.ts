@@ -17,7 +17,7 @@ import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getPaperPortfolioProjection, getRegimeScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import { getConfidenceCalibration, getPaperPortfolioProjection, getRegimeScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
@@ -628,6 +628,9 @@ async function proposeTrades(input: {
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
   const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source) : [];
+  // Confidence calibration: realized outcomes by the agent's own entry confidence band —
+  // since confidence now drives position size, this surfaces over/under-confidence.
+  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source) : [];
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPricesFromScan(input.marketScan), input.policy.taxSettings)
     : null;
@@ -677,6 +680,7 @@ async function proposeTrades(input: {
     "Technical/positioning reads: range52w near 100 = sustained strength/breakout (Momentum-Breakout), near 0 = weakness — could be Value/Mean-Reversion or a falling knife, so demand a catalyst. High shortFloat (>15-20%) raises squeeze potential (Short-Squeeze-Risk) but also signals smart-money bearishness — treat as two-sided. High beta (>1.3) means amplified moves: size more cautiously. Low pb can flag value (cross-check quality/leverage).",
     "smartMoney holds freshly-disclosed congressional (and insider) trade bulletins; senateNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
     "`signalEfficacy` (when present) is YOUR OWN realized track record: the win rate of past buys that had each evidence signal at entry vs the 'All buys (baseline)'. If a signal's shrunkWinRate is at/below baseline, stop over-weighting it; if it beats baseline, lean into it. Let this calibrate how much each evidence type moves your conviction.",
+    "`confidenceCalibration` (when present) is your realized win rate grouped by the confidenceScore you assigned at entry. If your high-confidence band does NOT win more than your low-confidence band, you are over-confident — compress your scores toward the middle. Aim for monotonic calibration (higher confidence → higher realized win rate), since confidence drives size.",
     "Your `confidenceScore` (1–100) now deterministically drives position size (higher conviction + a proven thesis edge = larger size). Calibrate it honestly — don't inflate it.",
     THESIS_PLAYBOOK_GUIDE,
     "",
@@ -728,6 +732,7 @@ async function proposeTrades(input: {
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
     ...(signalEfficacy.length > 1 ? { signalEfficacy } : {}),
+    ...(confidenceCalibration.length > 1 ? { confidenceCalibration } : {}),
     ...(taxContext ? { taxContext } : {})
   };
 

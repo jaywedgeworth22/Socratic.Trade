@@ -45,6 +45,8 @@ export interface SymbolWebSignal {
   congress?: CongressSignal;
   /** Recent insider (Form 4) net buy sentiment 0–100 (50 = balanced), from SEC EDGAR. */
   insiderSentiment?: number;
+  /** Latest daily short volume as % of total volume (FINRA). */
+  shortVolumeRatio?: number;
   /** One-line evidence bulletins from every source, deduped, for the agent prompt. */
   bulletins: string[];
 }

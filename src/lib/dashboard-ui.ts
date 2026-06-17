@@ -50,13 +50,41 @@ export function companyTitle(symbol: string, symbolMetaBySymbol: Record<string, 
   return symbolMetaBySymbol[symbol]?.companyName;
 }
 
-export function cellTitle(label: string, source?: string): string {
-  return source ? `${label}\nSource: ${friendlySource(source)}` : label;
+/**
+ * Human "received" label for a timestamp: the clock time if within the last 24h,
+ * otherwise the date. Used to stamp every data point's hover tooltip with when the
+ * value was last received. Returns "" for a missing/invalid timestamp.
+ */
+export function receivedLabel(ts?: string): string {
+  if (!ts) return "";
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return "";
+  const ageMs = Date.now() - t;
+  const d = new Date(t);
+  if (ageMs >= -60 * 60_000 && ageMs < 24 * 60 * 60_000) {
+    return `Received ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  }
+  return `Received ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+}
+
+export function cellTitle(label: string, source?: string, asOf?: string): string {
+  const parts = [label];
+  if (source) parts.push(`Source: ${friendlySource(source)}`);
+  const received = receivedLabel(asOf);
+  if (received) parts.push(received);
+  return parts.join("\n");
 }
 
 export function quoteTitle(label: string, candidate: MarketQuote): string {
   const source = candidate.provider ? `Source: ${friendlySource(candidate.provider)}` : undefined;
-  const asOf = candidate.asOf ? `Quote time: ${new Date(candidate.asOf).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : undefined;
+  // `asOf` may be a display string ("Last price as of …") rather than a timestamp;
+  // only format it as a clock time when it actually parses to a date.
+  const ts = candidate.asOf ? Date.parse(candidate.asOf) : NaN;
+  const asOf = Number.isFinite(ts)
+    ? `Quote time: ${new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    : typeof candidate.asOf === "string" && candidate.asOf
+      ? candidate.asOf
+      : undefined;
   return [label, source, asOf].filter(Boolean).join("\n");
 }
 
