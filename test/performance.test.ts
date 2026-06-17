@@ -5,8 +5,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { mergeQuoteData } from "../src/lib/market";
 import {
   calculatePnl,
+  getClosedLotCount,
   getPaperPortfolioProjection,
   getRegimeScorecard,
+  getThesisRegimeScorecard,
   getThesisScorecard,
   recordFillFromProposal
 } from "../src/lib/performance";
@@ -195,6 +197,22 @@ describe("getThesisScorecard", () => {
     expect(regimes.map((r) => r.regime)).toEqual(["Tech-Bull", "Choppy"]);
     expect(regimes.find((r) => r.regime === "Tech-Bull")!.totalPnl).toBeCloseTo(20);
     expect(regimes.find((r) => r.regime === "Choppy")!.winRate).toBe(0);
+  });
+
+  it("crosses thesis and regime into combined buckets and counts closed lots", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "SCORE_TR";
+    // Two closed lots under the same thesis but different regimes.
+    insertFillEvent(fill({ id: "tr-b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "AAA", filledAt: "2026-06-15T00:00:01.000Z", raw: { proposal: { tradeThesisTag: "Momentum-Breakout", entryMarketRegime: "Tech-Bull" } } }));
+    insertFillEvent(fill({ id: "tr-s1", side: "sell", quantity: 1, price: 130, notional: 130, accountNumber: account, symbol: "AAA", filledAt: "2026-06-15T00:00:02.000Z" }));
+    insertFillEvent(fill({ id: "tr-b2", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "BBB", filledAt: "2026-06-15T00:00:03.000Z", raw: { proposal: { tradeThesisTag: "Momentum-Breakout", entryMarketRegime: "High-Vol" } } }));
+    insertFillEvent(fill({ id: "tr-s2", side: "sell", quantity: 1, price: 80, notional: 80, accountNumber: account, symbol: "BBB", filledAt: "2026-06-15T00:00:04.000Z" }));
+
+    const combined = getThesisRegimeScorecard(account, "paper");
+    expect(combined.map((b) => `${b.thesisTag} @ ${b.regime}`).sort()).toEqual(["Momentum-Breakout @ High-Vol", "Momentum-Breakout @ Tech-Bull"]);
+    expect(combined.find((b) => b.regime === "Tech-Bull")!.totalPnl).toBeCloseTo(30);
+    expect(combined.find((b) => b.regime === "High-Vol")!.totalPnl).toBeCloseTo(-20);
+    expect(getClosedLotCount(account, "paper")).toBe(2);
   });
 
   it("buckets fills with no thesis tag under 'Untagged'", async () => {

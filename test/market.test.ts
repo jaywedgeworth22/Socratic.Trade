@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import type { SymbolEnrichment } from "../src/lib/data-providers";
 import type { MarketQuote } from "../src/lib/types";
 
 describe("rankMarketQuotes", () => {
@@ -31,6 +32,37 @@ describe("rankMarketQuotes", () => {
     const strong = scoreFactors(quote({ symbol: "S", ...common, fcfYield: 8, debtToEquity: 30, epsGrowth: 0.25 }));
     expect(strong.value).toBeGreaterThan(weak.value); // FCF yield lifts value
     expect(strong.quality).toBeGreaterThan(weak.quality); // low leverage + EPS growth lift quality
+  });
+});
+
+describe("applyEnrichment", () => {
+  it("folds every enriched field (incl. fcf/leverage/growth/congress) onto the quote", () => {
+    // Regression: these four used to be dropped by the scan merge, so scoring/prompt/UI
+    // never saw them even when a provider supplied real values.
+    const extra: SymbolEnrichment = {
+      fcfYield: 7.5,
+      debtToEquity: 0.4,
+      epsGrowth: 0.22,
+      senateTrades: 3,
+      insiderSentiment: 80,
+      peRatio: 18,
+      sector: "Technology",
+      sources: { fcfYield: "yahoo-finance", senateTrades: "congress-trades" }
+    };
+    const enriched = applyEnrichment(quote({ symbol: "NVDA" }), extra);
+    expect(enriched.fcfYield).toBe(7.5);
+    expect(enriched.debtToEquity).toBe(0.4);
+    expect(enriched.epsGrowth).toBe(0.22);
+    expect(enriched.senateTrades).toBe(3);
+    expect(enriched.insiderSentiment).toBe(80);
+    expect(enriched.sources?.fcfYield).toBe("yahoo-finance");
+    expect(enriched.sources?.senateTrades).toBe("congress-trades");
+  });
+
+  it("keeps the existing quote value when enrichment omits a field", () => {
+    const enriched = applyEnrichment(quote({ symbol: "AAPL", senateTrades: 2 }), { peRatio: 30 });
+    expect(enriched.senateTrades).toBe(2); // not clobbered by undefined
+    expect(enriched.peRatio).toBe(30);
   });
 });
 

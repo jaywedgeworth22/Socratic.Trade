@@ -7,6 +7,7 @@
 import { getPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { runStrategyOnce } from "./strategy";
+import { refreshDueWebSources } from "./web-sources";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 
@@ -30,6 +31,12 @@ export function startScheduler(): void {
 }
 
 async function tick(): Promise<void> {
+  // Refresh backend web sources (congressional trades, etc.) independently of the
+  // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
+  // keep the dashboard + agent context fresh even while autonomous trading is paused.
+  // Skipped instantly when not yet due; fully self-guarded so it can't break a tick.
+  void refreshDueWebSources().catch((err) => console.error("[scheduler] web-source refresh error:", err));
+
   try {
     const policy = getPolicy();
 

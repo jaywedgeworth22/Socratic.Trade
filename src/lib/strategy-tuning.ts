@@ -6,7 +6,7 @@ import {
   listStrategyRuns
 } from "./db";
 import { fetchMacroData } from "./macro";
-import { getPerformanceSummary } from "./performance";
+import { getClosedLotCount, getPerformanceSummary, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
 import type {
   FillEvent,
   MarketScan,
@@ -60,6 +60,7 @@ export async function proposeStrategyTuning(): Promise<StrategyTuningProposal> {
   const accountNumber = policy.accountNumber;
   const performance = accountNumber ? getPerformanceSummary(accountNumber) : undefined;
   const fills = accountNumber ? listFillEvents(accountNumber, policy.paperMode ? "paper" : "live", 30) : [];
+  const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, policy.paperMode ? "paper" : "live") : 0;
   const runs = listStrategyRuns(10);
   const context = {
     currentDate: new Date().toISOString(),
@@ -68,6 +69,8 @@ export async function proposeStrategyTuning(): Promise<StrategyTuningProposal> {
     policy: compactPolicy(policy),
     strategyPrompt: prompt,
     performance: compactPerformance(performance, policy.paperMode),
+    closedLotCount,
+    minClosedLotsForWeightShift: MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT,
     recentFills: fills.slice(0, 20).map(compactFill),
     recentRuns: runs.map((run) => ({
       startedAt: run.startedAt,
@@ -96,17 +99,26 @@ export async function proposeStrategyTuning(): Promise<StrategyTuningProposal> {
   };
 
   if (!process.env.OPENAI_API_KEY) {
-    return localRulesProposal({ policy, prompt, performance, fills, latestDecision });
+    return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount });
   }
 
   const payload = await requestLlmTuning(context);
+  const proposedPatch = toPatch(payload, prompt);
+  const cautions = [...payload.cautions];
+  // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
+  // null factor weights below the gate, but never trust prose for a safety rule —
+  // strip any weight changes it returned anyway when the closed-lot sample is too thin.
+  if (closedLotCount < MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT && proposedPatch.scoringWeights && Object.keys(proposedPatch.scoringWeights).length > 0) {
+    delete proposedPatch.scoringWeights;
+    cautions.push(`Withheld model-proposed factor-weight changes: only ${closedLotCount}/${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots (insufficient evidence).`);
+  }
   return {
     summary: payload.summary,
     rationale: payload.rationale,
     marketContext: payload.marketContext,
     performanceReadout: payload.performanceReadout,
-    proposedPatch: toPatch(payload, prompt),
-    cautions: payload.cautions,
+    proposedPatch,
+    cautions,
     confidenceScore: clamp(payload.confidenceScore, 0, 100),
     generatedBy: "llm"
   };
@@ -193,6 +205,7 @@ async function requestLlmTuning(context: unknown): Promise<LlmTuningPayload> {
     "Review recent paper/live performance, latest market scan context, macro context, current risk policy, scoring weights, and the current strategy prompt.",
     "Suggest conservative improvements that can be manually reviewed before being applied.",
     "Do not propose placing trades. Do not remove explicit safety controls.",
+    `Sample-size guardrail: only propose scoringWeights (factor weight) changes when closedLotCount >= minClosedLotsForWeightShift (${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots). Below that the realized sample is too thin to attribute P&L to factors — set EVERY scoringWeights field to null and instead focus on prompt clarity and risk sizing, noting the small sample in cautions.`,
     "Return strict JSON only."
   ].join("\n");
 
@@ -385,26 +398,33 @@ function localRulesProposal(input: {
   performance?: PerformanceSummary;
   fills: FillEvent[];
   latestDecision?: LatestDecisionPayload;
+  closedLotCount: number;
 }): StrategyTuningProposal {
   const perf = compactPerformance(input.performance, input.policy.paperMode);
   const weakPerformance = typeof perf?.averageReturnPct === "number" && perf.averageReturnPct < 0;
   const lowSample = input.fills.length < 5;
+  // Phase-7 §3.E guardrail: don't shift factor weights until enough lots have closed.
+  const enoughLotsForWeights = input.closedLotCount >= MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
   const proposedPrompt = input.prompt.includes("LEARNING LOOP")
     ? input.prompt
     : `${input.prompt.trim()}\n\nLEARNING LOOP\nBefore proposing trades, review recent fills, blocked proposals, and the latest market scan. If the recent sample is small, prefer smaller exploratory orders. If average return is negative, tighten risk and demand a clearer signal from price momentum, volume, valuation, and news sentiment before adding exposure.`;
 
   const riskMultiplier = weakPerformance ? 0.8 : 1;
   const maxOrderNotional = Math.max(1, Math.round(input.policy.maxOrderNotional * riskMultiplier));
-  const scoringWeights: Partial<ScoringWeights> = weakPerformance
-    ? {
-        volatility: round(input.policy.scoringWeights.volatility + 0.2),
-        quality: round(input.policy.scoringWeights.quality + 0.1),
-        momentum: Math.max(0, round(input.policy.scoringWeights.momentum - 0.1))
-      }
-    : {
-        diversification: round(input.policy.scoringWeights.diversification + 0.1),
-        sentiment: round(input.policy.scoringWeights.sentiment + 0.1)
-      };
+  // Only adjust factor weights once the realized sample is large enough to trust;
+  // below the gate we still improve the prompt and risk sizing, just not the weights.
+  const scoringWeights: Partial<ScoringWeights> = !enoughLotsForWeights
+    ? {}
+    : weakPerformance
+      ? {
+          volatility: round(input.policy.scoringWeights.volatility + 0.2),
+          quality: round(input.policy.scoringWeights.quality + 0.1),
+          momentum: Math.max(0, round(input.policy.scoringWeights.momentum - 0.1))
+        }
+      : {
+          diversification: round(input.policy.scoringWeights.diversification + 0.1),
+          sentiment: round(input.policy.scoringWeights.sentiment + 0.1)
+        };
 
   return {
     summary: lowSample
@@ -436,7 +456,10 @@ function localRulesProposal(input: {
     },
     cautions: [
       "Manual approval is required before changes are applied.",
-      lowSample ? "The trade sample is still small, so avoid overfitting." : "Validate with another paper run after applying changes."
+      enoughLotsForWeights
+        ? "Validate with another paper run after applying changes."
+        : `Only ${input.closedLotCount}/${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots — withholding factor-weight changes until the realized sample is large enough to trust.`,
+      ...(lowSample ? ["The trade sample is still small, so avoid overfitting."] : [])
     ],
     confidenceScore: lowSample ? 45 : weakPerformance ? 65 : 55,
     generatedBy: "local_rules"

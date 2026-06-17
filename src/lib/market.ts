@@ -1,4 +1,5 @@
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
+import { getSymbolWebSignals } from "./web-sources";
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { normalizeSymbol } from "./money";
 import type {
@@ -73,28 +74,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
           .map((quote) => {
             const extra = enrichment[quote.symbol];
             if (!extra) return quote;
-            const enriched: MarketQuote = {
-              ...quote,
-              companyName: extra.companyName ?? quote.companyName,
-              sentiment: extra.sentiment ?? quote.sentiment,
-              peRatio: extra.peRatio ?? quote.peRatio,
-              headlines: extra.headlines ?? quote.headlines,
-              analystRating: extra.analystRating ?? quote.analystRating,
-              analystScore: extra.analystScore ?? quote.analystScore,
-              analystBySource: extra.analystBySource ?? quote.analystBySource,
-              sector: extra.sector ?? quote.sector,
-              industry: extra.industry ?? quote.industry,
-              volume: extra.volume && extra.volume > 0 ? extra.volume : quote.volume,
-              dividendYield: extra.dividendYield ?? quote.dividendYield,
-              eps: extra.eps ?? quote.eps,
-              pbRatio: extra.pbRatio ?? quote.pbRatio,
-              shortPercentOfFloat: extra.shortPercentOfFloat ?? quote.shortPercentOfFloat,
-              beta: extra.beta ?? quote.beta,
-              fiftyTwoWeekHigh: extra.fiftyTwoWeekHigh ?? quote.fiftyTwoWeekHigh,
-              fiftyTwoWeekLow: extra.fiftyTwoWeekLow ?? quote.fiftyTwoWeekLow,
-              insiderSentiment: extra.insiderSentiment ?? quote.insiderSentiment,
-              sources: mergeSources(quote, extra)
-            };
+            const enriched = applyEnrichment(quote, extra);
             const factorBreakdown = scoreFactors(enriched, weights);
             return { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal };
           })
@@ -102,6 +82,27 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       } catch (error) {
         warnings.push(error instanceof Error ? `Enrichment failed: ${error.message}` : "Enrichment failed.");
       }
+    }
+
+    // Overlay backend web-source signals (congressional trades, etc.) read from the
+    // persisted cache — no network here. senateTrades is filled only when a keyed
+    // provider didn't already supply it. Never throws into the scan.
+    try {
+      const webSignals = getSymbolWebSignals(topCandidates.map((quote) => quote.symbol));
+      if (Object.keys(webSignals).length > 0) {
+        topCandidates = topCandidates.map((quote) => {
+          const sig = webSignals[quote.symbol];
+          if (!sig) return quote;
+          return {
+            ...quote,
+            senateTrades: quote.senateTrades ?? sig.congress?.netSignal,
+            insiderSentiment: quote.insiderSentiment ?? sig.insiderSentiment,
+            evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins
+          };
+        });
+      }
+    } catch (error) {
+      warnings.push(error instanceof Error ? `Web signals failed: ${error.message}` : "Web signals failed.");
     }
 
     // Fold enriched candidates back into the full set so quotesBySymbol carries sentiment/PE.
@@ -272,6 +273,40 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
   ];
 }
 
+// Merge a provider enrichment record onto a screener quote (first-non-undefined wins,
+// enrichment overriding the screener). Exported + exhaustive on purpose: every enriched
+// field on SymbolEnrichment must be folded here or it silently never reaches the quote —
+// the dashboard, scoring, and the agent prompt all read these off MarketQuote. This is the
+// "merge in market.ts" half of the cross-file enrichment trap documented in CLAUDE.md.
+export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): MarketQuote {
+  return {
+    ...quote,
+    companyName: extra.companyName ?? quote.companyName,
+    sentiment: extra.sentiment ?? quote.sentiment,
+    peRatio: extra.peRatio ?? quote.peRatio,
+    headlines: extra.headlines ?? quote.headlines,
+    analystRating: extra.analystRating ?? quote.analystRating,
+    analystScore: extra.analystScore ?? quote.analystScore,
+    analystBySource: extra.analystBySource ?? quote.analystBySource,
+    sector: extra.sector ?? quote.sector,
+    industry: extra.industry ?? quote.industry,
+    volume: extra.volume && extra.volume > 0 ? extra.volume : quote.volume,
+    dividendYield: extra.dividendYield ?? quote.dividendYield,
+    eps: extra.eps ?? quote.eps,
+    pbRatio: extra.pbRatio ?? quote.pbRatio,
+    shortPercentOfFloat: extra.shortPercentOfFloat ?? quote.shortPercentOfFloat,
+    beta: extra.beta ?? quote.beta,
+    fiftyTwoWeekHigh: extra.fiftyTwoWeekHigh ?? quote.fiftyTwoWeekHigh,
+    fiftyTwoWeekLow: extra.fiftyTwoWeekLow ?? quote.fiftyTwoWeekLow,
+    insiderSentiment: extra.insiderSentiment ?? quote.insiderSentiment,
+    fcfYield: extra.fcfYield ?? quote.fcfYield,
+    debtToEquity: extra.debtToEquity ?? quote.debtToEquity,
+    epsGrowth: extra.epsGrowth ?? quote.epsGrowth,
+    senateTrades: extra.senateTrades ?? quote.senateTrades,
+    sources: mergeSources(quote, extra)
+  };
+}
+
 // Combine enrichment-supplied field sources with screener-supplied ones so each
 // displayed cell can name the single provider its value came from.
 function mergeSources(quote: MarketQuote, extra: SymbolEnrichment): EnrichmentSources {
@@ -392,6 +427,11 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh,
         fiftyTwoWeekLow: quote.fiftyTwoWeekLow,
         insiderSentiment: quote.insiderSentiment,
+        fcfYield: quote.fcfYield,
+        debtToEquity: quote.debtToEquity,
+        epsGrowth: quote.epsGrowth,
+        senateTrades: quote.senateTrades,
+        evidenceBulletins: quote.evidenceBulletins,
         sources: quote.sources
       }
     ])

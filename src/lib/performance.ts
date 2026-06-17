@@ -356,6 +356,54 @@ export function getClosedLotsDetailed(accountNumber: string, source?: FillSource
   return calculatePnl(listFillEvents(accountNumber, source)).closedLots;
 }
 
+/**
+ * Combined thesis × regime realized scorecard — the multi-dimensional learning
+ * bucket. A thesis that wins in a Tech-Bull regime may lose in a High-Vol regime;
+ * crossing the two surfaces those conditional edges. Shrunk like the 1-D cards so
+ * thin buckets don't mislead. (Sector is a further dimension but isn't reliably
+ * carried on closed lots yet — see docs/phase-9-web-sources.md follow-ups.)
+ */
+export interface ThesisRegimeStat {
+  thesisTag: string;
+  regime: string;
+  trades: number;
+  winRate: number;
+  avgReturnPct: number;
+  totalPnl: number;
+  shrunkWinRate: number;
+  shrunkAvgReturnPct: number;
+}
+
+const THESIS_REGIME_SEP = " @ ";
+
+export function getThesisRegimeScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {}
+): ThesisRegimeStat[] {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  return aggregateClosedLots(closedLots, (lot) => {
+    const thesis = lot.thesisTag?.trim() || "Untagged";
+    const regime = lot.regime?.trim() || "Unspecified";
+    return `${thesis}${THESIS_REGIME_SEP}${regime}`;
+  }).map(({ key, ...rest }) => {
+    const sep = key.indexOf(THESIS_REGIME_SEP);
+    return { thesisTag: key.slice(0, sep), regime: key.slice(sep + THESIS_REGIME_SEP.length), ...rest };
+  });
+}
+
+/** Number of closed (realized) lots — the sample size that gates learned weight shifts. */
+export function getClosedLotCount(accountNumber: string, source?: FillSource): number {
+  return calculatePnl(listFillEvents(accountNumber, source)).closedLots.length;
+}
+
+/**
+ * Minimum closed lots before the auto-tuner is allowed to recommend factor-weight
+ * shifts. Below this, suggestions are statistically untrustworthy and could overfit
+ * a handful of trades (docs/phase-7-strategy.md §3.E guardrail).
+ */
+export const MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT = 20;
+
 /** Open (unclosed) lots with entry dates, for holding-period and tax analysis. */
 export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot[] {
   return calculatePnl(listFillEvents(accountNumber, source)).openLots;

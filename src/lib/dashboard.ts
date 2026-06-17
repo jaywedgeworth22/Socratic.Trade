@@ -20,6 +20,7 @@ import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard,
 import { getTaxSummary } from "./tax";
 import { getRobinhoodGateway } from "./robinhood";
 import { getSchedulerState } from "./scheduler";
+import { getWebSourcesStatus } from "./web-sources";
 
 export async function getDashboardSnapshot() {
   const gateway = getRobinhoodGateway();
@@ -134,6 +135,7 @@ export async function getDashboardSnapshot() {
       enabledEvents: policy.notificationSettings.enabledEvents
     },
     scheduler: getSchedulerState(),
+    webSources: getWebSourcesStatus(),
     marketSession: currentMarketSession()
   };
 }

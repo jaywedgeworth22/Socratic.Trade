@@ -749,6 +749,7 @@ const SCAN_COLUMNS: Array<{ key: keyof MarketQuote; label: string; title: string
   { key: "dividendYield", label: "Div", title: "Dividend yield", align: "right" },
   { key: "sentiment", label: "Sentiment", title: "News sentiment" },
   { key: "analystScore", label: "Rating", title: "Analyst consensus" },
+  { key: "senateTrades", label: "Congress", title: "Net congressional buys − sells (recent disclosures)", align: "right" },
   { key: "sector", label: "Sector", title: "Sector" },
   { key: "score", label: "Score", title: "Composite score", align: "right" }
 ];
@@ -807,6 +808,12 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
                   <td className="px-2.5 py-1.5 text-right tnum text-muted">{typeof q.dividendYield === "number" ? `${q.dividendYield.toFixed(2)}%` : "—"}</td>
                   <td className="px-2.5 py-1.5" title={sentimentTitle(q)}>{typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : <span className="text-faint">—</span>}</td>
                   <td className="px-2.5 py-1.5 text-muted" title={ratingTitle(q)}>{q.analystRating ? `${q.analystScore ?? ""} ${q.analystRating}`.trim() : "—"}</td>
+                  <td
+                    className={cn("px-2.5 py-1.5 text-right tnum", typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : "text-muted")}
+                    title={q.evidenceBulletins?.join("\n") || "Net congressional trades (recent disclosures)"}
+                  >
+                    {typeof q.senateTrades === "number" ? (q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades) : "—"}
+                  </td>
                   <td className="px-2.5 py-1.5">{q.sector ? <Chip tone="info">{q.sector}</Chip> : <span className="text-faint">—</span>}</td>
                   <td className="px-2.5 py-1.5 text-right tnum font-semibold text-fg">{q.score.toFixed(1)}</td>
                 </tr>

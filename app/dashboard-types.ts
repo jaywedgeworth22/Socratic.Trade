@@ -52,6 +52,10 @@ export interface DashboardSnapshot {
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };
+  webSources?: {
+    congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+    insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+  };
   marketSession?: string;
   performance?: PerformanceSummary;
   thesisScorecard?: ThesisStat[];

@@ -166,11 +166,28 @@ existing fields end-to-end before adding new providers*.
   `runStrategyOnce` writes a `candidates_considered` audit event per run: what
   the agent chose (symbol/side/status/thesisTag) vs the top-8 skipped scan
   candidates by score, without fabricating fills for un-traded names.
-- Still deferred from sections 1/3 (next phase): the async `EvidenceDigest`/
-  SignalSnapshot bulletin layer (section 1.E "Token Efficiency Mechanism"), the
-  multi-dimensional thesis x regime x sector x factor learning with the 20-lot
-  gate actually wired into sizing (section 3.E), and the new providers (Alpha
-  Vantage, FMP senate/insider, SEC EDGAR, FINRA, Cboe, FRED, Kenneth French).
+**Implemented (2026-06-16, web-sources pass — branch `web-sources`, see
+`docs/phase-9-web-sources.md`):**
+- **EvidenceDigest / SignalSnapshot** (section 1.E "Token Efficiency Mechanism").
+  Backend connectors digest congressional disclosures (Senate eFD + Capitol
+  Trades) and SEC EDGAR Form 4 insider trades into 1-line `smartMoneyEvidence`
+  bulletins fed to the prompt — raw rows stay out. `runStrategyOnce` also writes a
+  `signal_snapshot` audit per run (per-symbol factor sub-scores + congress/insider
+  net + bulletins + thesis × regime) so outcomes can later be correlated with the
+  signals that preceded them.
+- **Multi-dimensional learning** (section 3): `getThesisRegimeScorecard()` crosses
+  thesis × regime (shrunk like the 1-D cards) and feeds `tradeOutcomesByThesisRegime`
+  to the agent. Sector remains a deferred 4th dimension (not yet on closed lots).
+- **20-outcome guardrail** (section 3.E): `MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT = 20`
+  now gates the auto-tuner — factor-weight changes are withheld (local-rules path
+  emits no weight patch; LLM path is instructed to null all weights) until ≥20 lots
+  have closed.
+- **New providers**: congressional (Senate eFD / Capitol Trades) and SEC EDGAR
+  Form 4 insider are live as backend web-sources (the user's FMP key is
+  rate-limited, so those FMP senate/insider paths returned nothing).
+- Still deferred: SEC 8-K bulletins, the sector learning dimension, House
+  congressional coverage, weight shifts wired into *sizing* (currently advisory via
+  Strategy Studio), and FINRA / Cboe / Kenneth French providers.
 
 ### E. Human-Approved Weight Shifting
 The ultimate expression of the learning loop is adjusting the Initial Factor Weighting Matrix and Sector Allocations.

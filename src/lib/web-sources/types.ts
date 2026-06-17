@@ -1,0 +1,73 @@
+// Shared types for the backend "web sources" subsystem.
+//
+// These connectors read data from sources that have NO free, key-based API — most
+// of it is scraped/parsed from public disclosure sites (Senate eFD, SEC EDGAR) or
+// public JSON back-ends (Capitol Trades). Everything here runs server-side only.
+//
+// Design rules (see docs/phase-9-web-sources.md):
+//   1. Never fabricate. If every adapter fails, the connector yields NOTHING — the
+//      dashboard shows "—" and the agent simply has no signal, never a fake one.
+//   2. Low frequency. Each connector refreshes on its own cadence (default daily),
+//      gated by a persisted "fetchedAt" timestamp so restarts don't re-scrape.
+//   3. Persisted. Datasets live in the SQLite `settings` KV via setInternalSetting,
+//      so a scrape survives a server restart and is reused until the next refresh.
+
+/** A single normalized congressional (or other "smart money") trade disclosure. */
+export interface CongressTrade {
+  symbol: string; // normalized ticker (uppercase, no class suffix)
+  member: string; // e.g. "John Boozman"
+  chamber: "senate" | "house";
+  side: "buy" | "sell";
+  amountLow?: number; // lower bound of the disclosed dollar range
+  amountHigh?: number; // upper bound of the disclosed dollar range
+  owner?: string; // Self / Joint / Spouse / Child
+  tradedAt: string; // ISO date the trade occurred (txDate)
+  disclosedAt?: string; // ISO date the report was filed
+  source: string; // adapter id that produced this record
+}
+
+/** Per-symbol aggregate of recent congressional trading (the overlay the scan reads). */
+export interface CongressSignal {
+  /** Net directional vote within the window: distinct-buy members minus distinct-sell members. */
+  netSignal: number;
+  buyCount: number; // number of buy disclosures in window
+  sellCount: number; // number of sell disclosures in window
+  buyMembers: string[]; // distinct members who bought (most recent first)
+  sellMembers: string[]; // distinct members who sold
+  windowDays: number;
+  lastTradedAt?: string;
+  /** One-line bulletin for the agent prompt (raw rows are kept OUT of the prompt). */
+  bulletin: string;
+}
+
+/** The per-symbol overlay produced by all web sources, merged onto quotes in the scan. */
+export interface SymbolWebSignal {
+  congress?: CongressSignal;
+  /** Recent insider (Form 4) net buy sentiment 0–100 (50 = balanced), from SEC EDGAR. */
+  insiderSentiment?: number;
+  /** One-line evidence bulletins from every source, deduped, for the agent prompt. */
+  bulletins: string[];
+}
+
+/** Result of a single connector refresh, for auditing + the dashboard health panel. */
+export interface WebSourceRefreshResult {
+  id: string;
+  ok: boolean;
+  recordCount: number;
+  sources: string[]; // which adapter(s) actually contributed
+  fetchedAt: string;
+  skipped?: boolean; // true when not yet due (no network performed)
+  warning?: string;
+}
+
+/** A registered backend connector. Each owns its cadence, persistence, and parsing. */
+export interface WebSourceConnector {
+  id: string;
+  label: string;
+  /** Refresh cadence in ms (how stale the cache may get before a re-scrape). */
+  cadenceMs: number;
+  /** Whether this connector should run at all (env gate; default enabled). */
+  isEnabled(): boolean;
+  /** Re-scrape if the persisted dataset is older than cadenceMs. No-op (skipped) otherwise. */
+  refresh(now?: number): Promise<WebSourceRefreshResult>;
+}

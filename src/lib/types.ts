@@ -196,7 +196,8 @@ export interface MarketQuote {
   fcfYield?: number;
   debtToEquity?: number;
   epsGrowth?: number;
-  senateTrades?: number; // Net aggregate value or count
+  senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
 }
 
@@ -247,6 +248,7 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  evidenceBulletins?: string[];
   sources?: EnrichmentSources;
 }
 

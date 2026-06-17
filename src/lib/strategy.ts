@@ -17,7 +17,7 @@ import { mergeQuoteData, scanMarket } from "./market";
 import { fetchMacroData, pruneMacro, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getPaperPortfolioProjection, getRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import { getPaperPortfolioProjection, getRegimeScorecard, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
@@ -247,6 +247,32 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       runId,
       chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
       topSkipped: skippedCandidates
+    });
+
+    // SignalSnapshot / EvidenceDigest: persist the deterministic per-symbol evidence
+    // that informed each chosen proposal (factor sub-scores, congressional/insider net
+    // signals, 1-line bulletins, thesis × regime), so future learning can correlate the
+    // signals that preceded a trade with its realized outcome. Raw rows stay out — only
+    // this compact digest is stored.
+    const quoteBySymbol = new Map((marketScan?.topCandidates ?? []).map((q) => [normalizeSymbol(q.symbol), q]));
+    audit("signal_snapshot", {
+      runId,
+      asOf: new Date().toISOString(),
+      signals: results.map((r) => {
+        const q = quoteBySymbol.get(normalizeSymbol(r.proposal.symbol));
+        return {
+          symbol: r.proposal.symbol,
+          side: r.proposal.side,
+          status: r.status,
+          thesisTag: r.proposal.tradeThesisTag,
+          entryRegime: r.proposal.entryMarketRegime,
+          score: q?.score,
+          factorBreakdown: q?.factorBreakdown,
+          congressNet: q?.senateTrades,
+          insiderSentiment: q?.insiderSentiment,
+          bulletins: q?.evidenceBulletins?.slice(0, 3)
+        };
+      })
     });
 
     const placed = results.filter((r) => r.status === "placed").length;
@@ -537,6 +563,12 @@ async function proposeTrades(input: {
   const source = input.policy.paperMode ? "paper" : "live";
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source) : [];
   const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source) : [];
+  // Multi-dimensional learning: thesis × regime buckets with >=2 closed lots (thin
+  // buckets are noise; shrunk rates temper the rest). Top movers by |total P&L|.
+  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source) : [])
+    .filter((bucket) => bucket.trades >= 2)
+    .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
+    .slice(0, 8);
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPricesFromScan(input.marketScan), input.policy.taxSettings)
     : null;
@@ -565,6 +597,7 @@ async function proposeTrades(input: {
     "Your realized track record (in the user message):",
     "- `tradeOutcomesByThesis`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
     "- `tradeOutcomesByRegime`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
+    "- `tradeOutcomesByThesisRegime`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
     ...(taxContext
       ? [
           "",
@@ -579,7 +612,8 @@ async function proposeTrades(input: {
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
     "",
-    "Evidence per candidate (in marketScan.topCandidates): factorBreakdown sub-scores, fcfYieldPct, debtToEquity, epsGrowth, newsSentiment, insiderSentiment, senateTradesNet, analyst rating, headlines. Justify each proposal from this structured evidence, not vibes.",
+    "Evidence per candidate (in marketScan.topCandidates): factorBreakdown sub-scores, fcfYieldPct, debtToEquity, epsGrowth, newsSentiment, insiderSentiment, senateTradesNet, smartMoneyEvidence, analyst rating, headlines. Justify each proposal from this structured evidence, not vibes.",
+    "smartMoneyEvidence holds freshly-disclosed congressional (and insider) trade bulletins; senateTradesNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
     THESIS_PLAYBOOK_GUIDE,
     "",
     "Return strict JSON only. No markdown. No text outside the JSON object."
@@ -624,6 +658,7 @@ async function proposeTrades(input: {
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {}),
+    ...(thesisRegimeScorecard.length > 0 ? { tradeOutcomesByThesisRegime: thesisRegimeScorecard } : {}),
     ...(taxContext ? { taxContext } : {})
   };
 
@@ -807,6 +842,7 @@ async function proposeTrades(input: {
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { tradeOutcomesByThesis: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { tradeOutcomesByRegime: regimeScorecard.slice(0, 8) } : {}),
+    ...(thesisRegimeScorecard.length > 0 ? { tradeOutcomesByThesisRegime: thesisRegimeScorecard } : {}),
     candidatesUnderReview,
     bullAgentProposals: bullProposals
   };
@@ -929,6 +965,7 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
       newsSentiment: quote.sentiment,
       insiderSentiment: quote.insiderSentiment,
       senateTradesNet: quote.senateTrades,
+      smartMoneyEvidence: quote.evidenceBulletins?.slice(0, 3),
       analystRating: quote.analystRating,
       analystScore: quote.analystScore,
       headlines: quote.headlines?.slice(0, 2),

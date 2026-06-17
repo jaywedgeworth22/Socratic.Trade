@@ -69,6 +69,21 @@ steps materially change.
   Deferred to next phase: new providers (Alpha Vantage/FMP/SEC/FINRA/Cboe/FRED/
   Kenneth French), SignalSnapshot/EvidenceDigest layer, thesis×regime×sector×factor
   learning with a 20-lot gate, async digests.
+- 2026-06-16 (branch `web-sources`, off merged `main`): backend **web-sources**
+  subsystem + finished Codex learning-loop remainder. (a) Fixed a real bug — the
+  scan enrichment merge dropped `fcfYield`/`debtToEquity`/`epsGrowth`/`senateTrades`,
+  so the Phase-6 plumbing was dead; extracted `applyEnrichment` + fixed the summary
+  projection. (b) New `src/lib/web-sources/`: a Senate eFD + Capitol Trades
+  **congressional-trades** connector and a **SEC EDGAR Form 4** insider connector
+  (open-market P/S only), polite cached fetch, persistent daily-refreshed datasets,
+  scheduler hook, scan overlay (cache-only, no network in hot path), Congress scan
+  column, `smartMoneyEvidence` prompt bulletins with front-running guidance. Never
+  fabricates — sources down → no signal. (c) `signal_snapshot` audit per run;
+  `getThesisRegimeScorecard` (thesis×regime) fed to the agent; **min-20-closed-lot
+  gate** on auto-tuner factor-weight shifts. `tsc` + 113 tests + build pass; live
+  scrapes verified (78 real congress trades; SEC parser on live filings). See
+  `docs/rollouts/2026-06-16-web-sources-and-learning.md` and
+  `docs/phase-9-web-sources.md`. Branch not yet pushed/merged.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
