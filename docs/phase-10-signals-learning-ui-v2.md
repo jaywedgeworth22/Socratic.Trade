@@ -62,8 +62,10 @@ learning … counterfactual return."
 ## Phase C — New free data sources (each a `web-sources` connector)
 Codex: "major planned sources remain unimplemented." Default to free/official first.
 
-- **C1 `[todo]` SEC 8-K material-event bulletins.** Reuse the EDGAR plumbing; the
-  current-8-K feed + CIK→ticker map → 1-line catalyst bulletins. Feeds A2 + prompt.
+- **C1 `[done]` SEC 8-K material-event bulletins.** New `web-sources/sec8k.ts`: the
+  current-8-K atom feed + a weekly-cached CIK→ticker map → per-symbol "filed an 8-K"
+  catalyst bulletins (rolling 4-day window), wired into the overlay/prompt + status.
+  Live-verified (94 events). Coarse (no per-item 8-K detail yet — follow-up).
 - **C2 `[todo]` Market breadth** (advancers/decliners, % above 50/200-DMA) as a
   regime input. Free. Small/M.
 - **C3 `[todo]` Kenneth French factor returns** (free CSV) as factor priors. M.

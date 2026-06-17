@@ -29,12 +29,20 @@ import {
   isFinraRefreshDue,
   refreshFinra
 } from "./finra";
+import {
+  eightKTtlMs,
+  getEightKDataset,
+  getEightKSignals,
+  isEightKRefreshDue,
+  refreshEightK
+} from "./sec8k";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
 export { getCongressDataset, getCongressSignals, refreshCongress } from "./congress";
 export { getInsiderDataset, getInsiderSignals, refreshInsider } from "./sec";
 export { getFinraDataset, getShortVolumeSignals, refreshFinra } from "./finra";
+export { getEightKDataset, getEightKSignals, refreshEightK } from "./sec8k";
 
 /** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
@@ -49,6 +57,11 @@ function insiderEnabled(): boolean {
 /** Whether the FINRA short-volume connector is enabled (default on; disable with WEB_SOURCE_FINRA=off). */
 function finraEnabled(): boolean {
   return (process.env.WEB_SOURCE_FINRA ?? "on").toLowerCase() !== "off";
+}
+
+/** Whether the SEC 8-K connector is enabled (default on; disable with WEB_SOURCE_SEC8K=off). */
+function eightKEnabled(): boolean {
+  return (process.env.WEB_SOURCE_SEC8K ?? "on").toLowerCase() !== "off";
 }
 
 // Guard against overlapping refreshes: the scheduler fires this fire-and-forget
@@ -94,6 +107,13 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "finra", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  if (eightKEnabled() && isEightKRefreshDue(now)) {
+    try {
+      results.push(await refreshEightK(now));
+    } catch (error) {
+      results.push({ id: "sec8k", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
   return results;
 }
 
@@ -121,6 +141,11 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
     entry.shortVolumeRatio = signal.shortVolumeRatio;
     if (signal.bulletin) entry.bulletins.push(signal.bulletin);
   }
+  const eightK = eightKEnabled() ? getEightKSignals(symbols, now) : {};
+  for (const [symbol, signal] of Object.entries(eightK)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.bulletins.push(signal.bulletin);
+  }
   return out;
 }
 
@@ -139,10 +164,12 @@ export function getWebSourcesStatus(): {
   congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   finra: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
+  sec8k: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
 } {
   const congress = getCongressDataset();
   const insider = getInsiderDataset();
   const finra = getFinraDataset();
+  const sec8k = getEightKDataset();
   return {
     congress: {
       enabled: congressEnabled(),
@@ -168,6 +195,14 @@ export function getWebSourcesStatus(): {
       due: isFinraRefreshDue(),
       ttlMs: finraTtlMs(),
       asOf: finra?.asOf
+    },
+    sec8k: {
+      enabled: eightKEnabled(),
+      fetchedAt: sec8k?.fetchedAt,
+      recordCount: sec8k?.recordCount ?? 0,
+      sources: sec8k ? ["sec-edgar"] : [],
+      due: isEightKRefreshDue(),
+      ttlMs: eightKTtlMs()
     }
   };
 }
