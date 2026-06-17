@@ -8,6 +8,7 @@ import {
   getClosedLotCount,
   getPaperPortfolioProjection,
   getRegimeScorecard,
+  getSignalEfficacy,
   getThesisRegimeScorecard,
   getThesisScorecard,
   recordFillFromProposal
@@ -213,6 +214,23 @@ describe("getThesisScorecard", () => {
     expect(combined.find((b) => b.regime === "Tech-Bull")!.totalPnl).toBeCloseTo(30);
     expect(combined.find((b) => b.regime === "High-Vol")!.totalPnl).toBeCloseTo(-20);
     expect(getClosedLotCount(account, "paper")).toBe(2);
+  });
+
+  it("attributes realized win rate to entry signals via the signal_snapshot join", async () => {
+    const { insertFillEvent, audit } = await import("../src/lib/db");
+    const account = "SIGEFF1";
+    const runId = "run-sigeff-1";
+    // A winning buy (100 -> 130) opened in a run that recorded a congressional + insider tailwind.
+    insertFillEvent(fill({ id: "se-b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "NVDA", runId, filledAt: "2026-06-15T00:00:01.000Z" }));
+    insertFillEvent(fill({ id: "se-s1", side: "sell", quantity: 1, price: 130, notional: 130, accountNumber: account, symbol: "NVDA", filledAt: "2026-06-15T00:00:02.000Z" }));
+    audit("signal_snapshot", { runId, signals: [{ symbol: "NVDA", side: "buy", congressNet: 2, insiderSentiment: 80 }] });
+
+    const eff = getSignalEfficacy(account, "paper");
+    expect(eff.find((e) => e.signal.includes("baseline"))?.trades).toBe(1);
+    const congress = eff.find((e) => e.signal.includes("Congressional"));
+    expect(congress?.trades).toBe(1);
+    expect(congress?.winRate).toBe(100);
+    expect(eff.find((e) => e.signal.includes("Insider"))?.trades).toBe(1);
   });
 
   it("buckets fills with no thesis tag under 'Untagged'", async () => {

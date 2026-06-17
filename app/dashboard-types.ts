@@ -56,6 +56,10 @@ export interface DashboardSnapshot {
     congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
     insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   };
+  smartMoney?: {
+    congress: Array<{ symbol: string; member: string; chamber: string; side: "buy" | "sell"; amountLow?: number; amountHigh?: number; tradedAt: string; disclosedAt?: string }>;
+    insider: Array<{ symbol: string; owner: string; buyTx: number; sellTx: number; filedAt: string }>;
+  };
   marketSession?: string;
   performance?: PerformanceSummary;
   thesisScorecard?: ThesisStat[];

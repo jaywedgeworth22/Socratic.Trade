@@ -36,6 +36,10 @@ export interface TuningSettings {
   shrinkPrior?: number;
   /** Minimum closed lots before the auto-tuner may shift factor weights (phase-7 §3.E). Default 20. */
   minClosedLotsForWeightShift?: number;
+  /** Minimum % of max order notional the deterministic sizer will ever allocate. Default 10. */
+  sizingFloorPct?: number;
+  /** Maximum % of max order notional the deterministic sizer will ever allocate. Default 100. */
+  sizingCeilingPct?: number;
 }
 
 export interface RiskRules {

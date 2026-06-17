@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pruneMacro } from "../src/lib/macro";
+import { determineMarketRegime, pruneMacro } from "../src/lib/macro";
 import type { MacroData } from "../src/lib/macro";
 
 const base: MacroData = {
@@ -13,6 +13,22 @@ const base: MacroData = {
   vix: "15.00",
   asOf: "2026-06-16"
 };
+
+describe("determineMarketRegime", () => {
+  it("uses VIX for the primary volatility tier", () => {
+    expect(determineMarketRegime({ ...base, vix: "35" })).toContain("Crisis");
+    expect(determineMarketRegime({ ...base, vix: "24" })).toContain("Risk-Off");
+    expect(determineMarketRegime({ ...base, vix: "11", fedFundsRate: "2.00%", dgs10Treasury: "4.00%" })).toContain("Risk-On");
+    expect(determineMarketRegime({ ...base, vix: "16", fedFundsRate: "2.00%", dgs10Treasury: "4.00%" })).toContain("Neutral");
+  });
+
+  it("lets an inverted yield curve actually influence the regime (rates now matter)", () => {
+    // Calm VIX but inverted curve (10y < fed funds) -> Cautious, not Risk-On.
+    expect(determineMarketRegime({ ...base, vix: "12", fedFundsRate: "5.25%", dgs10Treasury: "4.20%" })).toContain("Cautious");
+    // Borderline VIX + inversion tips into Risk-Off.
+    expect(determineMarketRegime({ ...base, vix: "18", fedFundsRate: "5.25%", dgs10Treasury: "4.20%" })).toContain("Risk-Off");
+  });
+});
 
 describe("pruneMacro", () => {
   it("sends every field on the first run (no previous snapshot)", () => {

@@ -17,7 +17,7 @@ import { mergeQuoteData, scanMarket } from "./market";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getPaperPortfolioProjection, getRegimeScorecard, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import { getPaperPortfolioProjection, getRegimeScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
@@ -345,22 +345,31 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
   
   const comboStat = regimeScorecard.find(s => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
   const thesisStat = thesisScorecard.find(s => s.thesisTag === proposal.tradeThesisTag);
-  
-  const winRate = comboStat && comboStat.trades >= 5 ? comboStat.shrunkWinRate : (thesisStat?.shrunkWinRate ?? 50);
+
+  // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
+  const stat = comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
+  const winRate = stat?.shrunkWinRate ?? 50;
+  const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
   const conviction = (proposal.confidenceScore ?? 50) / 100;
-  
-  // Deterministic sizing: scale max Order Notional by Conviction and Historical Win Rate
-  const multiplier = (winRate / 100) * conviction;
-  
-  // Bound between 10% and 100% of maxOrderNotional
-  const boundedMultiplier = Math.max(0.1, Math.min(1.0, multiplier));
+
+  // Edge-aware Kelly-lite: scale by win rate AND conviction AND the realized EDGE.
+  // A thesis that wins often but with no/negative expectancy shouldn't get full size;
+  // one with a proven positive edge earns more. This uses the learned shrunk avg return
+  // so a handful of lucky trades can't inflate sizing.
+  const edgeFactor = avgReturn > 1 ? 1 : avgReturn >= 0 ? 0.7 : avgReturn > -1 ? 0.5 : 0.3;
+  const multiplier = (winRate / 100) * conviction * edgeFactor;
+
+  // Bounds are configurable (policy.tuning.sizingFloorPct / sizingCeilingPct); default 10–100%.
+  const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
+  const ceiling = (policy.tuning?.sizingCeilingPct ?? 100) / 100;
+  const boundedMultiplier = Math.max(floor, Math.min(ceiling, multiplier));
   const targetNotional = Math.floor(policy.maxOrderNotional * boundedMultiplier);
-  
+
   return {
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + `\n\n[Sizing] Sized deterministically to $${targetNotional} (${Math.round(boundedMultiplier*100)}% of max) based on ${winRate}% historical win rate and ${Math.round(conviction*100)}% AI conviction.`
+    rationale: proposal.rationale + `\n\n[Sizing] Sized to $${targetNotional} (${Math.round(boundedMultiplier * 100)}% of max) from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`
   };
 }
 
@@ -605,6 +614,9 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 2)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
+  // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
+  // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
+  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source) : [];
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPricesFromScan(input.marketScan), input.policy.taxSettings)
     : null;
@@ -650,6 +662,8 @@ async function proposeTrades(input: {
     "",
     "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
     "smartMoney holds freshly-disclosed congressional (and insider) trade bulletins; senateNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
+    "`signalEfficacy` (when present) is YOUR OWN realized track record: the win rate of past buys that had each evidence signal at entry vs the 'All buys (baseline)'. If a signal's shrunkWinRate is at/below baseline, stop over-weighting it; if it beats baseline, lean into it. Let this calibrate how much each evidence type moves your conviction.",
+    "Your `confidenceScore` (1–100) now deterministically drives position size (higher conviction + a proven thesis edge = larger size). Calibrate it honestly — don't inflate it.",
     THESIS_PLAYBOOK_GUIDE,
     "",
     "Return strict JSON only. No markdown. No text outside the JSON object."
@@ -699,6 +713,7 @@ async function proposeTrades(input: {
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
+    ...(signalEfficacy.length > 1 ? { signalEfficacy } : {}),
     ...(taxContext ? { taxContext } : {})
   };
 

@@ -98,14 +98,26 @@ export function pruneMacro(
   return { macro, omitted };
 }
 
+/**
+ * Deterministic market-regime classifier. Primary axis is VIX (volatility), but the
+ * yield curve (10y vs Fed funds) actually participates now: an inverted curve — a
+ * classic recession/risk signal — nudges borderline VIX readings toward risk-off and
+ * surfaces a distinct "Cautious (Inverted Curve)" regime in calm-but-inverted markets.
+ * Kept to a small, repeatable label set so the thesis×regime learning buckets stay
+ * dense enough to learn from. Richer macro detail still reaches the LLM via the prompt.
+ */
 export function determineMarketRegime(macro: MacroData): string {
   const vix = parseFloat(macro.vix);
-  if (!isNaN(vix)) {
+  const fedFunds = parseFloat(macro.fedFundsRate);
+  const dgs10 = parseFloat(macro.dgs10Treasury);
+  // Curve inversion: 10y meaningfully below the policy rate.
+  const inverted = Number.isFinite(fedFunds) && Number.isFinite(dgs10) && dgs10 < fedFunds - 0.1;
+  if (Number.isFinite(vix)) {
     if (vix > 30) return "Crisis (Extreme Volatility)";
-    if (vix > 20) return "Risk-Off (High Volatility)";
-    if (vix < 13) return "Risk-On (Low Volatility)";
+    if (vix > 20 || (inverted && vix > 17)) return "Risk-Off (High Volatility)";
+    if (vix < 13 && !inverted) return "Risk-On (Low Volatility)";
   }
-  return "Neutral (Normal Volatility)";
+  return inverted ? "Cautious (Inverted Curve)" : "Neutral (Normal Volatility)";
 }
 
 async function fetchFredSeries(seriesId: string, apiKey: string): Promise<string | undefined> {

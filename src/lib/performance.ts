@@ -1,4 +1,4 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listFillEvents, listPortfolioSnapshots } from "./db";
+import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listPortfolioSnapshots } from "./db";
 import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
@@ -23,6 +23,8 @@ export interface ClosedLot {
   entryPrice?: number;
   entryAt?: string;
   exitAt?: string;
+  /** Run that opened this lot — joins to the per-run `signal_snapshot` audit for efficacy analysis. */
+  entryRunId?: string;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -288,7 +290,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         side: lot.side,
         entryPrice: lot.price,
         entryAt: lot.entryAt,
-        exitAt: fill.filledAt
+        exitAt: fill.filledAt,
+        entryRunId: lot.runId
       });
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
@@ -395,6 +398,70 @@ export function getThesisRegimeScorecard(
 /** Number of closed (realized) lots — the sample size that gates learned weight shifts. */
 export function getClosedLotCount(accountNumber: string, source?: FillSource): number {
   return calculatePnl(listFillEvents(accountNumber, source)).closedLots.length;
+}
+
+/**
+ * Realized win rate of long entries that DID vs DID NOT have a given evidence signal
+ * at entry — so the agent can learn which signals actually predict winners rather than
+ * trusting them on faith. Joins closed lots to the per-run `signal_snapshot` audit via
+ * the opening run id. Compare each signal bucket's win rate to "All buys (baseline)".
+ */
+export interface SignalEfficacyStat {
+  signal: string;
+  trades: number;
+  winRate: number;
+  shrunkWinRate: number;
+  avgReturnPct: number;
+}
+
+export function getSignalEfficacy(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {}
+): SignalEfficacyStat[] {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  if (closedLots.length === 0) return [];
+
+  // runId|symbol -> entry signals, from the signal_snapshot audit trail.
+  const signalByKey = new Map<string, { congressNet?: number; insiderSentiment?: number }>();
+  for (const event of listAudit(500)) {
+    if (event.kind !== "signal_snapshot") continue;
+    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; congressNet?: number; insiderSentiment?: number }> };
+    if (!payload?.runId || !Array.isArray(payload.signals)) continue;
+    for (const s of payload.signals) {
+      if (!s.symbol) continue;
+      signalByKey.set(`${payload.runId}|${normalizeSymbol(s.symbol)}`, { congressNet: s.congressNet, insiderSentiment: s.insiderSentiment });
+    }
+  }
+
+  const buckets = new Map<string, { wins: number; trades: number; returnSum: number }>();
+  const bump = (name: string, lot: ClosedLot) => {
+    const b = buckets.get(name) ?? { wins: 0, trades: 0, returnSum: 0 };
+    b.trades += 1;
+    b.wins += lot.pnl > 0 ? 1 : 0;
+    b.returnSum += lot.returnPct;
+    buckets.set(name, b);
+  };
+
+  for (const lot of closedLots) {
+    if (lot.side !== "long") continue; // evaluate BUY-signal efficacy
+    bump("All buys (baseline)", lot);
+    const sig = lot.entryRunId && lot.symbol ? signalByKey.get(`${lot.entryRunId}|${normalizeSymbol(lot.symbol)}`) : undefined;
+    if (!sig) continue;
+    if (typeof sig.congressNet === "number" && sig.congressNet > 0) bump("Congressional buying tailwind", lot);
+    if (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) bump("Insider buying tailwind", lot);
+  }
+
+  const prior = resolveShrinkPrior();
+  return Array.from(buckets.entries())
+    .map(([signal, b]) => ({
+      signal,
+      trades: b.trades,
+      winRate: Math.round((b.wins / b.trades) * 100),
+      shrunkWinRate: Math.round(((b.wins + 0.5 * prior) / (b.trades + prior)) * 100),
+      avgReturnPct: Number((b.returnSum / b.trades).toFixed(2))
+    }))
+    .sort((a, b) => b.trades - a.trades);
 }
 
 /**

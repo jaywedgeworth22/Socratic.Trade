@@ -20,7 +20,7 @@ import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard,
 import { getTaxSummary } from "./tax";
 import { getRobinhoodGateway } from "./robinhood";
 import { getSchedulerState } from "./scheduler";
-import { getWebSourcesStatus } from "./web-sources";
+import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
 
 export async function getDashboardSnapshot() {
   const gateway = getRobinhoodGateway();
@@ -136,6 +136,14 @@ export async function getDashboardSnapshot() {
     },
     scheduler: getSchedulerState(),
     webSources: getWebSourcesStatus(),
+    smartMoney: {
+      congress: [...(getCongressDataset()?.trades ?? [])]
+        .sort((a, b) => (b.tradedAt ?? "").localeCompare(a.tradedAt ?? ""))
+        .slice(0, 12),
+      insider: [...(getInsiderDataset()?.filings ?? [])]
+        .sort((a, b) => (b.filedAt ?? "").localeCompare(a.filedAt ?? ""))
+        .slice(0, 8)
+    },
     marketSession: currentMarketSession()
   };
 }

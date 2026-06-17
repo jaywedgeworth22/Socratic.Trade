@@ -454,7 +454,12 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
                 reject={rejectProposal}
               />
             )}
-            {workspaceTab === "market" && <MarketScanView snapshot={snapshot} />}
+            {workspaceTab === "market" && (
+              <div className="space-y-3">
+                <MarketScanView snapshot={snapshot} />
+                <SmartMoneyView snapshot={snapshot} />
+              </div>
+            )}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "strategy" && (
@@ -933,6 +938,74 @@ function SentimentChip({ value }: { value: number }) {
   const tone = value >= 60 ? "up" : value <= 40 ? "down" : "neutral";
   const label = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
   return <Chip tone={tone}>{label} {value}</Chip>;
+}
+
+function freshness(fetchedAt?: string): string {
+  if (!fetchedAt) return "never";
+  const mins = Math.round((Date.now() - new Date(fetchedAt).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+}
+
+/** Surfaces the full scraped congressional + insider datasets (the scan's Congress column
+ *  only shows symbols that overlap the scan; this shows everything recently disclosed). */
+function SmartMoneyView({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const sm = snapshot.smartMoney;
+  const ws = snapshot.webSources;
+  const congress = sm?.congress ?? [];
+  const insider = sm?.insider ?? [];
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <Card className="overflow-hidden">
+        <PanelHeader
+          title="Congressional trades"
+          subtitle={ws?.congress ? `${ws.congress.recordCount} on file · ${ws.congress.sources.join("+") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
+          icon={<Landmark size={16} />}
+        />
+        {congress.length === 0 ? (
+          <EmptyState icon={<Landmark size={20} />} title="No disclosures cached yet" hint="The connector refreshes daily in the background; check back after the next refresh." />
+        ) : (
+          <div className="max-h-72 overflow-auto p-2">
+            {congress.map((t, i) => (
+              <div key={`${t.symbol}-${t.member}-${t.tradedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
+                <Chip tone={t.side === "buy" ? "up" : "down"}>{t.side === "buy" ? "BUY" : "SELL"}</Chip>
+                <span className="font-semibold text-fg">{t.symbol}</span>
+                <span className="truncate text-muted" title={`${t.member} (${t.chamber})`}>{t.member}</span>
+                <span className="ml-auto whitespace-nowrap text-faint">{t.tradedAt}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="overflow-hidden">
+        <PanelHeader
+          title="Insider (Form 4) activity"
+          subtitle={ws?.insider ? `${ws.insider.recordCount} on file · SEC EDGAR · ${freshness(ws.insider.fetchedAt)}` : "SEC EDGAR — open-market buys/sells only"}
+          icon={<Shield size={16} />}
+        />
+        {insider.length === 0 ? (
+          <EmptyState icon={<Shield size={20} />} title="No insider filings cached yet" hint="Open-market Form 4 buys/sells accumulate here as they're filed." />
+        ) : (
+          <div className="max-h-72 overflow-auto p-2">
+            {insider.map((f, i) => {
+              const net = f.buyTx - f.sellTx;
+              return (
+                <div key={`${f.symbol}-${f.owner}-${f.filedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
+                  <Chip tone={net > 0 ? "up" : net < 0 ? "down" : "neutral"}>{net > 0 ? "BUY" : net < 0 ? "SELL" : "MIXED"}</Chip>
+                  <span className="font-semibold text-fg">{f.symbol}</span>
+                  <span className="truncate text-muted" title={f.owner}>{f.owner}</span>
+                  <span className="ml-auto whitespace-nowrap text-faint">{f.filedAt}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }
 
 function RatingChip({ score, label }: { score?: number; label: string }) {
@@ -1708,6 +1781,16 @@ function SettingsContent({
               label="Min lots for weight shift"
               value={tuning.minClosedLotsForWeightShift ?? 20}
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, minClosedLotsForWeightShift: v } })}
+            />
+            <NumberField
+              label="Sizing floor (% of max)"
+              value={tuning.sizingFloorPct ?? 10}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, sizingFloorPct: v } })}
+            />
+            <NumberField
+              label="Sizing ceiling (% of max)"
+              value={tuning.sizingCeilingPct ?? 100}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, sizingCeilingPct: v } })}
             />
           </div>
           <p className="text-xs text-faint">
