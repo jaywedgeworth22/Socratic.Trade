@@ -16,7 +16,7 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPaperPortfolioProjection, getPerformanceSummary } from "./performance";
+import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getRobinhoodGateway } from "./robinhood";
 import { getSchedulerState } from "./scheduler";
 
@@ -64,6 +64,9 @@ export async function getDashboardSnapshot() {
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices) : undefined;
+  const scorecardSource = policy.paperMode ? "paper" : "live";
+  const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices) : [];
+  const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices) : [];
   const profiles = listStrategyProfiles();
   const activeProfile = getActiveStrategyProfile();
   const notifications = listNotificationEvents(50);
@@ -118,6 +121,8 @@ export async function getDashboardSnapshot() {
     strategyRuns: listStrategyRuns(15),
     pendingProposals,
     performance,
+    thesisScorecard,
+    regimeScorecard,
     profiles,
     activeProfile,
     notifications,

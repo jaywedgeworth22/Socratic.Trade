@@ -12,6 +12,7 @@ import type {
   TradingPolicy,
   TradeProposal
 } from "@/lib/types";
+import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
@@ -52,6 +53,8 @@ export interface DashboardSnapshot {
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };
   marketSession?: string;
   performance?: PerformanceSummary;
+  thesisScorecard?: ThesisStat[];
+  regimeScorecard?: RegimeStat[];
   profiles: StrategyProfile[];
   activeProfile?: StrategyProfile;
   notifications: NotificationEvent[];

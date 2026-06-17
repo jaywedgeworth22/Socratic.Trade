@@ -40,6 +40,15 @@ steps materially change.
   minimum height (~2 entries) and a discoverable resize grip; content scrolls.
   See the resizable-bottom-drawer section in
   `docs/rollouts/2026-06-16-ui-optimization-pass.md`.
+- 2026-06-16 (branch `ui-redesign`): full presentation redesign into a themable
+  dark/light "trading terminal" — Tailwind 4 + Recharts + Motion, command bar,
+  Portfolio rail + tabbed workspace (Decision/Market/Performance/Strategy),
+  feeds as a right slide-over, modal Settings/Strategy Studio, ⌘K palette, and a
+  Recharts learning-loop visualization (P&L by thesis/regime). Data/agent layer
+  unchanged (snapshot now also carries thesis/regime scorecards). `tsc` + 86
+  tests + build pass. See `docs/rollouts/2026-06-16-ui-redesign-tailwind.md`.
+  Analyzed `RobinAgent-MCP`: a thin AI-Studio mockup — borrowed UI polish only;
+  our agent engine is far ahead.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

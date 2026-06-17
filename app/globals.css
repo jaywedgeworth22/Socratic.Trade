@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: utilities prefixed `dark:` apply under a `.dark` ancestor. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Semantic design tokens ───────────────────────────────────────────────
+   Components reference these via Tailwind utilities (bg-surface, text-fg,
+   border-line, text-up …). The values flip between light and dark, so the
+   same markup themes automatically. */
+:root {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #f4f6f9;
+  --surface-3: #eaeef3;
+  --line: #dde3ea;
+  --line-strong: #cbd3dd;
+  --fg: #0f1722;
+  --muted: #5d6b7a;
+  --faint: #8b97a6;
+  --accent: #0e9f6e;
+  --accent-fg: #ffffff;
+  --up: #0e9f6e;
+  --down: #e11d48;
+  --warn: #c2740a;
+  --info: #2563eb;
+  --ring: rgba(14, 159, 110, 0.45);
+  --shadow: 0 12px 32px -8px rgba(15, 23, 34, 0.18);
+  --shadow-lg: 0 24px 60px -12px rgba(15, 23, 34, 0.28);
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #070b11;
+  --surface: #0e141c;
+  --surface-2: #131b25;
+  --surface-3: #1a232f;
+  --line: #1e2935;
+  --line-strong: #2a3947;
+  --fg: #e7eef6;
+  --muted: #8a97a7;
+  --faint: #5c6b7b;
+  --accent: #10b981;
+  --accent-fg: #04130d;
+  --up: #34d399;
+  --down: #fb5e74;
+  --warn: #fbbf24;
+  --info: #60a5fa;
+  --ring: rgba(16, 185, 129, 0.5);
+  --shadow: 0 18px 45px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 30px 70px -15px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Subtle ambient backdrop that reads as a "trading desk" without noise. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 600px at 88% -8%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 60%),
+    radial-gradient(900px 520px at -6% 8%, color-mix(in oklab, var(--info) 10%, transparent), transparent 55%);
+  opacity: 0.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Tabular, monospace numerals everywhere numbers matter. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* Thin, themed scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: content-box;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--fg) 6%, transparent), transparent);
+  animation: shimmer 1.4s infinite;
+}

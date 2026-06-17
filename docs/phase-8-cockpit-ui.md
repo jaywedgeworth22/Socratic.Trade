@@ -1,5 +1,16 @@
 # Phase 8 - Cockpit UI and Strategy Studio
 
+> **2026-06-16 redesign (branch `ui-redesign`) supersedes the layout below.**
+> The cockpit was rebuilt on Tailwind CSS 4 + Recharts + Motion with a
+> dark/light theme system. The `react-resizable-panels` shell and the always-on
+> bottom drawer are replaced by: a slim command bar, a persistent Portfolio rail
+> + a tabbed workspace (Decision / Market Scan / Performance / Strategy), feeds
+> in a right slide-over, and modal Settings / Strategy Studio, plus a ⌘K command
+> palette and a Recharts learning-loop visualization (P&L by thesis/regime).
+> See `docs/rollouts/2026-06-16-ui-redesign-tailwind.md`. The sections below
+> describe the prior (now-replaced) panel-based cockpit and are kept for history.
+
+
 This phase restructures the dashboard from a long vertical page into a
 single-screen trading cockpit. The goal is to make the app usable during active
 paper/live supervision without requiring page-level scrolling on a desktop
