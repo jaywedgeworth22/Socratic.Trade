@@ -33,6 +33,16 @@ describe("rankMarketQuotes", () => {
     expect(strong.value).toBeGreaterThan(weak.value); // FCF yield lifts value
     expect(strong.quality).toBeGreaterThan(weak.quality); // low leverage + EPS growth lift quality
   });
+
+  it("blends 52-week position into momentum and beta into volatility", () => {
+    const nearHigh = scoreFactors(quote({ symbol: "H", intradayChangePct: 1, price: 99, fiftyTwoWeekLow: 50, fiftyTwoWeekHigh: 100 }));
+    const nearLow = scoreFactors(quote({ symbol: "L", intradayChangePct: 1, price: 51, fiftyTwoWeekLow: 50, fiftyTwoWeekHigh: 100 }));
+    expect(nearHigh.momentum).toBeGreaterThan(nearLow.momentum); // near the 52-week high = stronger momentum
+
+    const highBeta = scoreFactors(quote({ symbol: "HB", intradayChangePct: 0, beta: 1.8 }));
+    const lowBeta = scoreFactors(quote({ symbol: "LB", intradayChangePct: 0, beta: 0.6 }));
+    expect(lowBeta.volatility).toBeGreaterThan(highBeta.volatility); // high beta scores as riskier (lower stability)
+  });
 });
 
 describe("applyEnrichment", () => {

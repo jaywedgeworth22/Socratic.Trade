@@ -13,7 +13,7 @@ import {
   updateProposalStatus,
   updateFillEvent
 } from "./db";
-import { mergeQuoteData, scanMarket } from "./market";
+import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -673,7 +673,8 @@ async function proposeTrades(input: {
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
     "",
-    "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
+    "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, pb (price/book), shortFloat (% of float sold short), beta, range52w (0=at 52-week low, 100=at 52-week high), newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
+    "Technical/positioning reads: range52w near 100 = sustained strength/breakout (Momentum-Breakout), near 0 = weakness — could be Value/Mean-Reversion or a falling knife, so demand a catalyst. High shortFloat (>15-20%) raises squeeze potential (Short-Squeeze-Risk) but also signals smart-money bearishness — treat as two-sided. High beta (>1.3) means amplified moves: size more cautiously. Low pb can flag value (cross-check quality/leverage).",
     "smartMoney holds freshly-disclosed congressional (and insider) trade bulletins; senateNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
     "`signalEfficacy` (when present) is YOUR OWN realized track record: the win rate of past buys that had each evidence signal at entry vs the 'All buys (baseline)'. If a signal's shrunkWinRate is at/below baseline, stop over-weighting it; if it beats baseline, lean into it. Let this calibrate how much each evidence type moves your conviction.",
     "Your `confidenceScore` (1–100) now deterministically drives position size (higher conviction + a proven thesis edge = larger size). Calibrate it honestly — don't inflate it.",
@@ -1034,6 +1035,10 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
       fcf: quote.fcfYield,
       de: quote.debtToEquity,
       epsGr: quote.epsGrowth,
+      pb: quote.pbRatio,
+      shortFloat: quote.shortPercentOfFloat,
+      beta: quote.beta,
+      range52w: pricePosition52w(quote),
       newsSent: quote.sentiment,
       insiderSent: quote.insiderSentiment,
       senateNet: quote.senateTrades,

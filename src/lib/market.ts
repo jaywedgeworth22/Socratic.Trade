@@ -136,10 +136,10 @@ export function rankMarketQuotes(quotes: MarketQuote[], weights: ScoringWeights 
 export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): MarketFactorBreakdown {
   const factors: Record<MarketFactor, number> = {
     liquidity: liquidityScore(quote),
-    momentum: clamp(((quote.intradayChangePct + 5) / 10) * 100),
+    momentum: momentumScore(quote),
     value: valueScore(quote),
     quality: qualityScore(quote),
-    volatility: clamp(100 - Math.abs(quote.intradayChangePct) * 12),
+    volatility: volatilityScore(quote),
     sentiment: clamp(quote.sentiment ?? 50),
     diversification: quote.positionMarketValue > 0 ? 45 : 80
   };
@@ -347,6 +347,33 @@ function liquidityScore(quote: MarketQuote): number {
   if (quote.volume > 0) return clamp(((Math.log10(Math.max(quote.volume, 1)) - 4) / 4) * 100);
   if (quote.marketCap && quote.marketCap > 0) return clamp(((Math.log10(quote.marketCap) - 8) / 4) * 100);
   return 35;
+}
+
+/** Position within the trailing 52-week range, 0 (at the low) … 100 (at the high). */
+export function pricePosition52w(quote: MarketQuote): number | undefined {
+  const { fiftyTwoWeekHigh: hi, fiftyTwoWeekLow: lo, price } = quote;
+  if (typeof hi !== "number" || typeof lo !== "number" || hi <= lo) return undefined;
+  return Math.round(clamp(((price - lo) / (hi - lo)) * 100));
+}
+
+function momentumScore(quote: MarketQuote): number {
+  const intraday = ((quote.intradayChangePct + 5) / 10) * 100;
+  // Blend in the 52-week price position when available: near the high reflects
+  // sustained strength/breakout; near the low reflects weakness (or mean-reversion).
+  const pos = pricePosition52w(quote);
+  return typeof pos === "number" ? clamp(intraday * 0.6 + pos * 0.4) : clamp(intraday);
+}
+
+function volatilityScore(quote: MarketQuote): number {
+  // Higher = steadier (less realized + systematic volatility). Beta, when available,
+  // adjusts the intraday-only base so high-beta names score as riskier.
+  let base = 100 - Math.abs(quote.intradayChangePct) * 12;
+  if (typeof quote.beta === "number" && quote.beta > 0) {
+    if (quote.beta > 1.5) base -= 15;
+    else if (quote.beta > 1.1) base -= 6;
+    else if (quote.beta < 0.8) base += 6;
+  }
+  return clamp(base);
 }
 
 function valueScore(quote: MarketQuote): number {
