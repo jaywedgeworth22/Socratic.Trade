@@ -17,7 +17,7 @@ import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getConfidenceCalibration, getPaperPortfolioProjection, getRegimeScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import { getConfidenceCalibration, getPaperPortfolioProjection, getRegimeScorecard, getSectorScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
@@ -631,6 +631,11 @@ async function proposeTrades(input: {
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
   const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source) : [];
+  // Sector learning: realized outcomes grouped by the sector each position was opened in.
+  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source) : [])
+    .filter((bucket) => bucket.trades >= 2 && bucket.sector !== "Unknown")
+    .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
+    .slice(0, 8);
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPricesFromScan(input.marketScan), input.policy.taxSettings)
     : null;
@@ -660,6 +665,7 @@ async function proposeTrades(input: {
     "- `thesisOutcomes`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
     "- `regimeOutcomes`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
     "- `comboOutcomes`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
+    "- `sectorOutcomes`: realized win/return grouped by the SECTOR each position was opened in. Lean toward sectors where your shrunk record is positive; demand more conviction in sectors that have repeatedly lost for you.",
     ...(taxContext
       ? [
           "",
@@ -733,6 +739,7 @@ async function proposeTrades(input: {
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
     ...(signalEfficacy.length > 1 ? { signalEfficacy } : {}),
     ...(confidenceCalibration.length > 1 ? { confidenceCalibration } : {}),
+    ...(sectorScorecard.length > 0 ? { sectorOutcomes: sectorScorecard } : {}),
     ...(taxContext ? { taxContext } : {})
   };
 

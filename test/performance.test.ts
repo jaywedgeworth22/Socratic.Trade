@@ -9,6 +9,7 @@ import {
   getConfidenceCalibration,
   getPaperPortfolioProjection,
   getRegimeScorecard,
+  getSectorScorecard,
   getSignalEfficacy,
   getThesisRegimeScorecard,
   getThesisScorecard,
@@ -232,6 +233,15 @@ describe("getThesisScorecard", () => {
     expect(congress?.trades).toBe(1);
     expect(congress?.winRate).toBe(100);
     expect(eff.find((e) => e.signal.includes("Insider"))?.trades).toBe(1);
+  });
+
+  it("groups realized outcomes by the sector each position was opened in", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "SECT1";
+    insertFillEvent(fill({ id: "sec-b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "AAA", filledAt: "2026-06-15T00:00:01.000Z", raw: { proposal: { tradeThesisTag: "T" }, sector: "Technology" } }));
+    insertFillEvent(fill({ id: "sec-s1", side: "sell", quantity: 1, price: 120, notional: 120, accountNumber: account, symbol: "AAA", filledAt: "2026-06-15T00:00:02.000Z" }));
+    const sc = getSectorScorecard(account, "paper");
+    expect(sc.find((s) => s.sector === "Technology")?.totalPnl).toBeCloseTo(20);
   });
 
   it("buckets realized outcomes by the agent's entry confidence band", async () => {

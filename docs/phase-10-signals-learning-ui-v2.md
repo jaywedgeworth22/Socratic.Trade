@@ -44,10 +44,11 @@ add smart-money/catalyst sub-scores instead of leaving the LLM to infer from pro
 Codex: "store full EvidenceDigest for chosen AND skipped … sector/factor-dimensional
 learning … counterfactual return."
 
-- **B1 `[todo]` Sector on fills → sector learning dimension.** Stamp `sector` onto
-  the fill at record time (from the scan quote), carry it onto `ClosedLot` (like
-  `entryRunId`/`confidence`), and add `getSectorScorecard` + a thesis×regime×sector
-  view. Unblocks the plan's 4th learning dimension. Risk: M.
+- **B1 `[done]` Sector on fills → sector learning dimension.** `recordFillFromProposal`
+  stamps `sector` (from the scan quote) into the fill raw; `thesisMetaFromFill` carries
+  it onto the lot + `ClosedLot.sector`; `getSectorScorecard` groups realized outcomes
+  by sector and feeds the agent `sectorOutcomes`. `tsc` + 131 tests + build green.
+  (thesis×regime×sector composite view still a follow-up.)
 - **B2 `[todo]` Full EvidenceDigest for chosen AND skipped candidates.** Persist per
   candidate (not just chosen): factor sub-scores, source freshness, bulletins,
   sector, regime — extend `signal_snapshot` to cover the scored set and enrich the

@@ -27,6 +27,8 @@ export interface ClosedLot {
   entryRunId?: string;
   /** Agent confidence (1–100) assigned to the opening proposal, for calibration analysis. */
   confidence?: number;
+  /** Sector the position was opened in (stamped at fill time), for the sector dimension. */
+  sector?: string;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -132,7 +134,9 @@ export function recordFillFromProposal(input: {
     notional: Math.abs(finalNotional),
     status: input.status ?? (input.source === "paper" ? "filled" : "pending_reconciliation"),
     brokerOrderId: input.execution?.orderId,
-    raw: { proposal: input.proposal, review: input.review, execution: input.execution }
+    // Stamp the symbol's sector at fill time so closed lots can be grouped by sector
+    // for the sector learning dimension (sector isn't on the proposal itself).
+    raw: { proposal: input.proposal, review: input.review, execution: input.execution, sector: input.marketScan?.quotesBySymbol[symbol]?.sector }
   });
 }
 
@@ -242,6 +246,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       thesisTag?: string;
       regime?: string;
       confidence?: number;
+      sector?: string;
       entryAt?: string;
     }>
   >();
@@ -263,6 +268,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         thesisTag: meta.thesisTag,
         regime: meta.regime,
         confidence: meta.confidence,
+        sector: meta.sector,
         entryAt: fill.filledAt
       });
       addAttribution(attribution, fill, 0);
@@ -296,7 +302,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         entryAt: lot.entryAt,
         exitAt: fill.filledAt,
         entryRunId: lot.runId,
-        confidence: lot.confidence
+        confidence: lot.confidence,
+        sector: lot.sector
       });
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
@@ -357,6 +364,27 @@ export function getRegimeScorecard(
   return aggregateClosedLots(closedLots, (lot) =>
     lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"
   ).map(({ key, ...rest }) => ({ regime: key, ...rest }));
+}
+
+/** Realized-outcome stats grouped by the sector a position was opened in. */
+export interface SectorStat {
+  sector: string;
+  trades: number;
+  winRate: number;
+  avgReturnPct: number;
+  totalPnl: number;
+  shrunkWinRate: number;
+  shrunkAvgReturnPct: number;
+}
+
+export function getSectorScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {}
+): SectorStat[] {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  return aggregateClosedLots(closedLots, (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"))
+    .map(({ key, ...rest }) => ({ sector: key, ...rest }));
 }
 
 /** Closed lots with entry/exit context, oldest-first, for excursion (MAE/MFE) analysis. */
@@ -565,16 +593,19 @@ function aggregateClosedLots(
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
 
-function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number } {
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string } {
   const raw = fill.raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const proposal = (raw as Record<string, unknown>).proposal;
-  if (!proposal || typeof proposal !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const proposal = r.proposal;
+  const sector = typeof r.sector === "string" ? r.sector : undefined;
+  if (!proposal || typeof proposal !== "object") return { sector };
   const p = proposal as Record<string, unknown>;
   return {
     thesisTag: typeof p.tradeThesisTag === "string" ? p.tradeThesisTag : undefined,
     regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined,
-    confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined
+    confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
+    sector
   };
 }
 
