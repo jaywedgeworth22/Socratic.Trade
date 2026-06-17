@@ -1917,26 +1917,18 @@ function displayStatus(status: string): string {
   return status.toUpperCase();
 }
 
-/** Format to N significant figures; whole numbers stay whole (e.g. 0.412, 12.3, 5). */
-function toSigFigs(n: number, figs = 3): string {
-  if (!Number.isFinite(n)) return "—";
-  if (Number.isInteger(n)) return String(n);
-  if (n === 0) return "0";
-  const digits = Math.max(0, figs - Math.floor(Math.log10(Math.abs(n))) - 1);
-  return n.toFixed(digits);
-}
-
 function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price?: number): string {
-  // Show the estimated total cost AND the share count (3 sig figs). All of it is an
-  // estimate (the "~"): the fill price can differ from the quote used here.
+  // Show the estimated total cost AND the share count. The "~" means it's an estimate
+  // (fill price can differ). Shares use the app-wide formatter (up to 3 significant
+  // figures, trailing zeros stripped — e.g. 0.5, 0.25, 1.5).
   const px = price && price > 0 ? price : proposal.limitPrice && proposal.limitPrice > 0 ? proposal.limitPrice : undefined;
   const cost = proposal.dollarAmount ?? estimatedNotional ?? (proposal.quantity && px ? proposal.quantity * px : undefined);
   const shares = proposal.quantity ?? (cost && px ? cost / px : undefined);
   if (typeof cost === "number" && cost > 0 && typeof shares === "number" && shares > 0) {
-    return `~ ${money(cost)} for ${toSigFigs(shares, 3)} shares`;
+    return `~${money(cost)} for ${formatShareQuantity(shares, proposal.symbol)} shares`;
   }
-  if (typeof cost === "number" && cost > 0) return `~ ${money(cost)}`;
-  if (typeof shares === "number" && shares > 0) return `~ ${toSigFigs(shares, 3)} shares`;
+  if (typeof cost === "number" && cost > 0) return `~${money(cost)}`;
+  if (typeof shares === "number" && shares > 0) return `~${formatShareQuantity(shares, proposal.symbol)} shares`;
   return "—";
 }
 
