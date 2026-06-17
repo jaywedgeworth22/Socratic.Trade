@@ -24,6 +24,14 @@ describe("rankMarketQuotes", () => {
     expect(scored.weightedTotal).toBeGreaterThan(40);
     expect(scored.weightedTotal).toBeLessThanOrEqual(100);
   });
+
+  it("rewards strong fundamentals in the value and quality sub-scores", () => {
+    const common = { marketCap: 2_000_000_000, volume: 2_000_000, peRatio: 30 };
+    const weak = scoreFactors(quote({ symbol: "W", ...common, fcfYield: -2, debtToEquity: 350, epsGrowth: -0.2 }));
+    const strong = scoreFactors(quote({ symbol: "S", ...common, fcfYield: 8, debtToEquity: 30, epsGrowth: 0.25 }));
+    expect(strong.value).toBeGreaterThan(weak.value); // FCF yield lifts value
+    expect(strong.quality).toBeGreaterThan(weak.quality); // low leverage + EPS growth lift quality
+  });
 });
 
 function quote(input: Partial<MarketQuote> & { symbol: string }): MarketQuote {

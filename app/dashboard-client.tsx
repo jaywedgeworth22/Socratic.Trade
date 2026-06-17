@@ -743,6 +743,9 @@ const SCAN_COLUMNS: Array<{ key: keyof MarketQuote; label: string; title: string
   { key: "volume", label: "Vol", title: "Volume", align: "right" },
   { key: "marketCap", label: "Mkt Cap", title: "Market cap", align: "right" },
   { key: "peRatio", label: "P/E", title: "Price/earnings", align: "right" },
+  { key: "fcfYield", label: "FCF%", title: "Free-cash-flow yield", align: "right" },
+  { key: "debtToEquity", label: "D/E", title: "Debt / equity", align: "right" },
+  { key: "epsGrowth", label: "EPS gr", title: "EPS growth (YoY)", align: "right" },
   { key: "dividendYield", label: "Div", title: "Dividend yield", align: "right" },
   { key: "sentiment", label: "Sentiment", title: "News sentiment" },
   { key: "analystScore", label: "Rating", title: "Analyst consensus" },
@@ -798,6 +801,9 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
                   <td className="px-2.5 py-1.5 text-right tnum text-muted">{q.volume > 0 ? compactNum(q.volume) : "—"}</td>
                   <td className="px-2.5 py-1.5 text-right tnum text-muted">{q.marketCap && q.marketCap > 0 ? compactMoney(q.marketCap) : "—"}</td>
                   <td className="px-2.5 py-1.5 text-right tnum text-muted" title={cellTitle("P/E", q.sources?.peRatio)}>{peText}</td>
+                  <td className="px-2.5 py-1.5 text-right tnum text-muted" title={cellTitle("Free-cash-flow yield", q.sources?.fcfYield)}>{typeof q.fcfYield === "number" ? `${q.fcfYield.toFixed(1)}%` : "—"}</td>
+                  <td className="px-2.5 py-1.5 text-right tnum text-muted" title={cellTitle("Debt / equity", q.sources?.debtToEquity)}>{typeof q.debtToEquity === "number" ? (q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)) : "—"}</td>
+                  <td className={cn("px-2.5 py-1.5 text-right tnum", typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : "text-muted")} title={cellTitle("EPS growth (YoY)", q.sources?.epsGrowth)}>{typeof q.epsGrowth === "number" ? `${(q.epsGrowth * 100).toFixed(0)}%` : "—"}</td>
                   <td className="px-2.5 py-1.5 text-right tnum text-muted">{typeof q.dividendYield === "number" ? `${q.dividendYield.toFixed(2)}%` : "—"}</td>
                   <td className="px-2.5 py-1.5" title={sentimentTitle(q)}>{typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : <span className="text-faint">—</span>}</td>
                   <td className="px-2.5 py-1.5 text-muted" title={ratingTitle(q)}>{q.analystRating ? `${q.analystScore ?? ""} ${q.analystRating}`.trim() : "—"}</td>

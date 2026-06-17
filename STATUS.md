@@ -55,6 +55,20 @@ steps materially change.
   tax-loss-harvest candidates, days-to-long-term), after-tax agent context, and
   Tax settings. New `src/lib/tax.ts`. `tsc` + 92 tests + build pass. See
   `docs/rollouts/2026-06-16-tax-mitigation.md`. Estimates only — not tax advice.
+- 2026-06-16 (branch `ui-redesign`): signals + learning-loop pass (tractable
+  subset of Codex's "Stronger Trading Signals And Learning Loop" research plan).
+  Plumbed five already-fetched-but-orphaned fields (`fcfYield`, `debtToEquity`,
+  `epsGrowth`, `insiderSentiment`, `senateTrades`) end-to-end into factor scoring
+  (`valueScore`/`qualityScore`), the agent prompt, and the Market Scan table
+  (FCF% / D/E / EPS gr columns). Constrained `tradeThesisTag` to a fixed 10-tag
+  `THESIS_PLAYBOOK` enum on both Bull + Bear schemas. Added Bayesian shrinkage
+  (`shrunkWinRate`/`shrunkAvgReturnPct`, 5-trade neutral prior) to the
+  thesis/regime scorecards. Added a `candidates_considered` audit logging chosen
+  vs top-skipped scan candidates per run for future counterfactual learning.
+  `tsc` + 93 tests + build pass. See `docs/rollouts/2026-06-16-signals-learning.md`.
+  Deferred to next phase: new providers (Alpha Vantage/FMP/SEC/FINRA/Cboe/FRED/
+  Kenneth French), SignalSnapshot/EvidenceDigest layer, thesis×regime×sector×factor
+  learning with a 20-lot gate, async digests.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

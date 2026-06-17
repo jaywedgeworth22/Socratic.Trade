@@ -142,6 +142,36 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   auto-applied) and persisted MAE/MFE per closed lot (currently recomputed each
   gated reflection).
 
+**Implemented (2026-06-16, signals + learning pass — branch `ui-redesign`):**
+This pass implemented the tractable subset of Codex's "Stronger Trading Signals
+And Learning Loop" research plan, honoring its directive to *finish plumbing
+existing fields end-to-end before adding new providers*.
+- **Pillar-B/E fields plumbed end-to-end.** `fcfYield`, `debtToEquity`, and
+  `epsGrowth` (Pillar B, section 1.B) now feed `valueScore`/`qualityScore`
+  (`market.ts`); `insiderSentiment` and `senateTrades` (Pillar E, section 1.E)
+  plus the three fundamentals are now emitted per candidate by
+  `compactMarketScanForPrompt` and shown in the Market Scan table (FCF% / D/E /
+  EPS gr columns). These fields were already fetched through the enrichment
+  cascade but dead-ended before reaching scoring/prompt/UI.
+- **Fixed thesis playbook** (replaces the free-form `tradeThesisTag`).
+  `THESIS_PLAYBOOK` (10 tags) now constrains both the Bull and Bear JSON schemas
+  (`enum`), so the thesis x outcome scorecards bucket consistently and can
+  accumulate learnable samples. The proactive risk-exit tag is now `"Risk-Exit"`.
+- **Bayesian shrinkage on the scorecards** (section 3.E small-sample guardrail).
+  `aggregateClosedLots` adds `shrunkWinRate`/`shrunkAvgReturnPct` (neutral
+  50%/0% prior, 5-trade pseudo-count); the Bull prompt instructs the agent to
+  prefer the shrunk rates when `trades` is small. This is a prerequisite for the
+  section 3.E "minimum 20 outcomes" gate to behave sanely on partial samples.
+- **Counterfactual candidate log** (raw material for section 3 learning).
+  `runStrategyOnce` writes a `candidates_considered` audit event per run: what
+  the agent chose (symbol/side/status/thesisTag) vs the top-8 skipped scan
+  candidates by score, without fabricating fills for un-traded names.
+- Still deferred from sections 1/3 (next phase): the async `EvidenceDigest`/
+  SignalSnapshot bulletin layer (section 1.E "Token Efficiency Mechanism"), the
+  multi-dimensional thesis x regime x sector x factor learning with the 20-lot
+  gate actually wired into sizing (section 3.E), and the new providers (Alpha
+  Vantage, FMP senate/insider, SEC EDGAR, FINRA, Cboe, FRED, Kenneth French).
+
 ### E. Human-Approved Weight Shifting
 The ultimate expression of the learning loop is adjusting the Initial Factor Weighting Matrix and Sector Allocations.
 

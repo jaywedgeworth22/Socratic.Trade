@@ -316,23 +316,44 @@ function liquidityScore(quote: MarketQuote): number {
 
 function valueScore(quote: MarketQuote): number {
   // Prefer a real P/E signal when available; otherwise fall back to a market-cap heuristic.
+  let base: number;
   if (quote.peRatio && quote.peRatio > 0) {
-    if (quote.peRatio <= 15) return 78;
-    if (quote.peRatio <= 25) return 64;
-    if (quote.peRatio <= 40) return 50;
-    return 36;
+    base = quote.peRatio <= 15 ? 78 : quote.peRatio <= 25 ? 64 : quote.peRatio <= 40 ? 50 : 36;
+  } else if (!quote.marketCap || quote.marketCap <= 0) {
+    base = 50;
+  } else {
+    base = quote.marketCap >= 5_000_000_000 ? 65 : quote.marketCap >= 1_000_000_000 ? 55 : 45;
   }
-  if (!quote.marketCap || quote.marketCap <= 0) return 50;
-  if (quote.marketCap >= 5_000_000_000) return 65;
-  if (quote.marketCap >= 1_000_000_000) return 55;
-  return 45;
+  // Free-cash-flow yield is a real value signal independent of earnings multiples.
+  if (typeof quote.fcfYield === "number") {
+    if (quote.fcfYield >= 6) base += 12;
+    else if (quote.fcfYield >= 3) base += 6;
+    else if (quote.fcfYield < 0) base -= 8;
+  }
+  return clamp(base);
 }
 
 function qualityScore(quote: MarketQuote): number {
-  if (!quote.marketCap || quote.marketCap <= 0) return 50;
-  if (quote.marketCap >= 10_000_000_000 && quote.volume >= 1_000_000) return 70;
-  if (quote.marketCap >= 1_000_000_000) return 60;
-  return 45;
+  let base: number;
+  if (!quote.marketCap || quote.marketCap <= 0) base = 50;
+  else if (quote.marketCap >= 10_000_000_000 && quote.volume >= 1_000_000) base = 70;
+  else if (quote.marketCap >= 1_000_000_000) base = 60;
+  else base = 45;
+  // Leverage: lower debt/equity = higher quality. Providers report D/E as a ratio
+  // (1.5) or a percentage (150); normalize to a ratio before bucketing.
+  if (typeof quote.debtToEquity === "number") {
+    const de = quote.debtToEquity > 10 ? quote.debtToEquity / 100 : quote.debtToEquity;
+    if (de >= 0 && de <= 0.5) base += 10;
+    else if (de <= 1.5) base += 3;
+    else if (de > 3) base -= 10;
+  }
+  // Earnings growth (fractional YoY, e.g. 0.15 = +15%) is a durability signal.
+  if (typeof quote.epsGrowth === "number") {
+    if (quote.epsGrowth >= 0.15) base += 8;
+    else if (quote.epsGrowth > 0) base += 3;
+    else if (quote.epsGrowth < -0.1) base -= 8;
+  }
+  return clamp(base);
 }
 
 function sectorBySymbol(quotes: MarketQuote[]): Record<string, string> {

@@ -230,6 +230,25 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: execution.orderId });
     }
 
+    // Counterfactual log: record the top-ranked scan candidates the agent did NOT
+    // act on this run, so post-mortems can compare "what we bought" vs "what we
+    // skipped" without pretending the skipped names had real fills.
+    const chosenSymbols = new Set(results.map((r) => normalizeSymbol(r.proposal.symbol)));
+    const skippedCandidates = (marketScan?.topCandidates ?? [])
+      .filter((candidate) => !chosenSymbols.has(normalizeSymbol(candidate.symbol)))
+      .slice(0, 8)
+      .map((candidate) => ({
+        symbol: candidate.symbol,
+        score: candidate.score,
+        sector: candidate.sector,
+        intradayChangePct: candidate.intradayChangePct
+      }));
+    audit("candidates_considered", {
+      runId,
+      chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
+      topSkipped: skippedCandidates
+    });
+
     const placed = results.filter((r) => r.status === "placed").length;
     const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
@@ -447,6 +466,29 @@ export function rejectProposal(proposalId: string): void {
   });
 }
 
+/**
+ * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
+ * the thesis × outcome learning loop consistent (free-form tags fragment the
+ * scorecards and never accumulate enough samples to learn from).
+ */
+export const THESIS_PLAYBOOK = [
+  "Momentum-Breakout",
+  "Mean-Reversion",
+  "Value-Quality",
+  "Earnings-Catalyst",
+  "Analyst-Revision",
+  "Insider-Accumulation",
+  "Short-Squeeze-Risk",
+  "Defensive-Rotation",
+  "Sector-Relative-Strength",
+  "Risk-Exit"
+] as const;
+
+const THESIS_PLAYBOOK_GUIDE =
+  "You MUST set `tradeThesisTag` to exactly one of the playbook tags: " +
+  THESIS_PLAYBOOK.join(", ") +
+  ". Pick the one that best fits the dominant evidence (e.g. Value-Quality for cheap, low-leverage, FCF-positive names; Momentum-Breakout for strong intraday/volume; Insider-Accumulation when insider/senate signals lead; Risk-Exit for stop-loss/take-profit/de-risking sells).";
+
 async function proposeTrades(input: {
   policyAllowlist: string[];
   prompt: string;
@@ -521,7 +563,7 @@ async function proposeTrades(input: {
     reflection || "No historical reflection available yet.",
     "",
     "Your realized track record (in the user message):",
-    "- `tradeOutcomesByThesis`: win rate, average return, and total P&L grouped by the `tradeThesisTag` you previously assigned. Lean into thesis types with a positive track record and a healthy win rate; be skeptical of, downsize, or avoid thesis types that have repeatedly lost money. Reuse a proven `tradeThesisTag` when the current setup matches it.",
+    "- `tradeOutcomesByThesis`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
     "- `tradeOutcomesByRegime`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
     ...(taxContext
       ? [
@@ -536,6 +578,9 @@ async function proposeTrades(input: {
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
+    "",
+    "Evidence per candidate (in marketScan.topCandidates): factorBreakdown sub-scores, fcfYieldPct, debtToEquity, epsGrowth, newsSentiment, insiderSentiment, senateTradesNet, analyst rating, headlines. Justify each proposal from this structured evidence, not vibes.",
+    THESIS_PLAYBOOK_GUIDE,
     "",
     "Return strict JSON only. No markdown. No text outside the JSON object."
   ].join("\n");
@@ -625,7 +670,7 @@ async function proposeTrades(input: {
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
-            tradeThesisTag: { type: "string" },
+            tradeThesisTag: { enum: THESIS_PLAYBOOK },
             entryMarketRegime: { type: "string" },
             confidenceScore: { type: "number", description: "Conviction score from 1 to 100" }
           }
@@ -697,7 +742,7 @@ async function proposeTrades(input: {
     "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
-    "If you approve a trade, you MUST add a concise 'tradeThesisTag' (e.g., 'GLP1-trend', 'Value-Reversion', 'Momentum-Breakout') and 'entryMarketRegime' (e.g., 'High-Inflation-Bear', 'Tech-Bull') to track the learning loop.",
+    `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}) and add a concise 'entryMarketRegime' (e.g., 'High-Inflation-Bear', 'Tech-Bull') to track the learning loop.`,
     "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
     "If none survive, return an empty array."
   ].join("\\n");
@@ -739,7 +784,7 @@ async function proposeTrades(input: {
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
-            tradeThesisTag: { type: "string" },
+            tradeThesisTag: { enum: THESIS_PLAYBOOK },
             entryMarketRegime: { type: "string" }
           }
         }
@@ -878,7 +923,12 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
       peRatio: quote.peRatio,
       eps: quote.eps,
       dividendYield: quote.dividendYield,
+      fcfYieldPct: quote.fcfYield,
+      debtToEquity: quote.debtToEquity,
+      epsGrowth: quote.epsGrowth,
       newsSentiment: quote.sentiment,
+      insiderSentiment: quote.insiderSentiment,
+      senateTradesNet: quote.senateTrades,
       analystRating: quote.analystRating,
       analystScore: quote.analystScore,
       headlines: quote.headlines?.slice(0, 2),
@@ -1035,7 +1085,7 @@ export function generateProactiveRiskProposals(
           timeInForce: "gfd",
           marketHours: "regular_hours",
           rationale: reason,
-          tradeThesisTag: "Risk Management Exit",
+          tradeThesisTag: "Risk-Exit",
           entryMarketRegime: "Active Risk Check"
         });
       }

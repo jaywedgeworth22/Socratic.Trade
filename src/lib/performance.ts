@@ -32,6 +32,8 @@ export interface ThesisStat {
   winRate: number;
   avgReturnPct: number;
   totalPnl: number;
+  shrunkWinRate: number;
+  shrunkAvgReturnPct: number;
 }
 
 /** Realized-outcome stats grouped by the market regime a position was opened in. */
@@ -41,6 +43,8 @@ export interface RegimeStat {
   winRate: number;
   avgReturnPct: number;
   totalPnl: number;
+  shrunkWinRate: number;
+  shrunkAvgReturnPct: number;
 }
 
 /** An open (unclosed) tax lot with its entry date, for holding-period / tax analysis. */
@@ -357,10 +361,26 @@ export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot
   return calculatePnl(listFillEvents(accountNumber, source)).openLots;
 }
 
+/**
+ * Pseudo-count for Bayesian shrinkage of small-sample win rate / average return
+ * toward a neutral prior (50% win, 0% return). With K=5, a single 100%-win trade
+ * shrinks to ~58% rather than a misleading 100%, so the learning loop doesn't
+ * overfit a handful of trades.
+ */
+const SHRINK_PRIOR = 5;
+
 function aggregateClosedLots(
   closedLots: ClosedLot[],
   keyFn: (lot: ClosedLot) => string
-): Array<{ key: string; trades: number; winRate: number; avgReturnPct: number; totalPnl: number }> {
+): Array<{
+  key: string;
+  trades: number;
+  winRate: number;
+  avgReturnPct: number;
+  totalPnl: number;
+  shrunkWinRate: number;
+  shrunkAvgReturnPct: number;
+}> {
   const byKey = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
@@ -377,7 +397,10 @@ function aggregateClosedLots(
       trades: s.trades,
       winRate: Math.round((s.wins / s.trades) * 100),
       avgReturnPct: Number((s.returnSum / s.trades).toFixed(2)),
-      totalPnl: Number(s.pnl.toFixed(2))
+      totalPnl: Number(s.pnl.toFixed(2)),
+      // Shrink toward neutral (0.5 win, 0% return) with SHRINK_PRIOR pseudo-trades.
+      shrunkWinRate: Math.round(((s.wins + 0.5 * SHRINK_PRIOR) / (s.trades + SHRINK_PRIOR)) * 100),
+      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + SHRINK_PRIOR)).toFixed(2))
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }

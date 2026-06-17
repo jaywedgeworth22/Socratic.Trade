@@ -180,6 +180,10 @@ describe("getThesisScorecard", () => {
     expect(momentum.winRate).toBe(100);
     expect(momentum.avgReturnPct).toBeCloseTo(20);
     expect(momentum.totalPnl).toBeCloseTo(20);
+    // Bayesian shrinkage (5-trade neutral prior) tempers the 1-trade sample:
+    // win rate (1 + 2.5)/(1 + 5) = 58%; avg return 20/(1 + 5) = 3.33%.
+    expect(momentum.shrunkWinRate).toBe(58);
+    expect(momentum.shrunkAvgReturnPct).toBeCloseTo(3.33);
 
     const reversion = scorecard.find((s) => s.thesisTag === "MeanReversion")!;
     expect(reversion.winRate).toBe(0);
