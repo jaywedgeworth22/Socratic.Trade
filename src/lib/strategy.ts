@@ -664,6 +664,7 @@ async function proposeTrades(input: {
     "Your realized track record (in the user message):",
     "- `thesisOutcomes`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
     "- `regimeOutcomes`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
+    "- `marketBreadth.advancingPct`: share of the broad market advancing today. >60 = broad risk-on (favor adding exposure/momentum); <40 = broad risk-off (tighten, prefer defensive/quality, wary of longs); ~50 = mixed.",
     "- `comboOutcomes`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
     "- `sectorOutcomes`: realized win/return grouped by the SECTOR each position was opened in. Lean toward sectors where your shrunk record is positive; demand more conviction in sectors that have repeatedly lost for you.",
     ...(taxContext
@@ -733,6 +734,7 @@ async function proposeTrades(input: {
       remainingDailyOrders: remainingOrders
     },
     macroeconomicData,
+    ...(typeof input.marketScan?.breadthPct === "number" ? { marketBreadth: { advancingPct: input.marketScan.breadthPct } } : {}),
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),

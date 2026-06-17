@@ -66,8 +66,10 @@ Codex: "major planned sources remain unimplemented." Default to free/official fi
   current-8-K atom feed + a weekly-cached CIK→ticker map → per-symbol "filed an 8-K"
   catalyst bulletins (rolling 4-day window), wired into the overlay/prompt + status.
   Live-verified (94 events). Coarse (no per-item 8-K detail yet — follow-up).
-- **C2 `[todo]` Market breadth** (advancers/decliners, % above 50/200-DMA) as a
-  regime input. Free. Small/M.
+- **C2 `[done]` Market breadth.** `scanMarket` computes `breadthPct` (% of the full
+  screener advancing today — free, from data already fetched) onto `MarketScan`; the
+  agent gets `marketBreadth.advancingPct` with risk-on/off guidance. (% above
+  50/200-DMA is a richer follow-up needing price history.)
 - **C3 `[todo]` Kenneth French factor returns** (free CSV) as factor priors. M.
 - **C4 `[todo/blocked]` Options / put-call ratios.** Cboe's CSV is 403 and the page
   is HTML-only; research a working free source before building. L.

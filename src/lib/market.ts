@@ -61,13 +61,19 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const warnings: string[] = [];
     let quotes: MarketQuote[] = [];
     let cached = false;
+    let breadthPct: number | undefined;
 
     try {
       const result = await fetchNasdaqScreener(options?.ttlMs ?? marketCacheTtlMs());
       cached = result.cached;
-      quotes = result.rows
-        .flatMap((row) => toMarketQuote(row, positions, this.name, result.asOf))
-        .filter((quote) => allowed.has(quote.symbol));
+      const allQuotes = result.rows.flatMap((row) => toMarketQuote(row, positions, this.name, result.asOf));
+      quotes = allQuotes.filter((quote) => allowed.has(quote.symbol));
+      // Market breadth: % of the full screener that's advancing today — a free,
+      // market-wide risk-on/risk-off gauge (computed from data we already fetched).
+      const moved = allQuotes.filter((q) => q.intradayChangePct !== 0);
+      if (moved.length >= 20) {
+        breadthPct = Math.round((moved.filter((q) => q.intradayChangePct > 0).length / moved.length) * 100);
+      }
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : "Market data request failed.");
     }
@@ -161,6 +167,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       generatedAt: new Date().toISOString(),
       scannedSymbols: allowed.size,
       returnedQuotes: quotes.length,
+      breadthPct,
       topCandidates,
       sectorBySymbol: sectorBySymbol(mergedRanked),
       quotesBySymbol: quotesBySymbol(mergedRanked),

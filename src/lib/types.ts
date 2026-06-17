@@ -227,6 +227,8 @@ export interface MarketScan {
   generatedAt: string;
   scannedSymbols: number;
   returnedQuotes: number;
+  /** Market breadth: % of the full screener advancing today (risk-on/off gauge). */
+  breadthPct?: number;
   topCandidates: MarketQuote[];
   sectorBySymbol: Record<string, string>;
   quotesBySymbol: Record<string, MarketQuoteSummary>;
