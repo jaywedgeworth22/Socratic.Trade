@@ -122,6 +122,37 @@ plus a `min-height: 220px` floor on the textarea as a safety net. Applies to
 both the Strategy Studio modal and the center-workspace Strategy tab (same
 component). Verified live: textarea now renders ~520px and shows the full prompt.
 
+### Resizable bottom drawer with per-tab minimum height
+
+The bottom drawer (Activity / Runs / Notifications) now has a **per-tab minimum
+height** sized to show that tab's header plus ~2 entries, and a **discoverable
+resize handle**:
+
+- `BOTTOM_MIN_PCT_BY_TAB` (`dashboard-client.tsx`) gives each tab a minimum as a
+  percentage of the cockpit's vertical space — `activity: 58` (cards are tall:
+  meta + title + 2-line detail + tags ≈ 115px each), `notifications: 28`,
+  `runs: 24`. It's used for both the drawer panel's `defaultSize` and `minSize`,
+  so the drawer opens at, and can't shrink below, ~2 entries for the active tab.
+- A small `useEffect` grows the drawer up to the new tab's minimum on tab change
+  (only grows, never shrinks a drawer the user enlarged). It calls
+  `panel.resize("<pct>%")` — the `%` string matters because this library
+  (`react-resizable-panels@4.11.2`) treats a bare number passed to `resize()` as
+  **pixels**, while a number passed to the `minSize`/`defaultSize` props is a
+  **percentage**. (Earlier attempts using px-string `minSize` or numeric
+  `resize()` drifted/collapsed; percentages via the props + `"%"` string via
+  `resize()` are the reliable path.)
+- The divider handles (`.panel-resize-handle-*` in `styles.css`) now render a
+  visible grip pill (faint by default, green on hover/drag) so it's clear the
+  drawer's top border can be dragged to enlarge it; the content scrolls inside
+  (`.bottom-pane { overflow: auto }`).
+
+Verified live (1440×900): Activity drawer opens at ~375px showing the header +
+~2 cards; switching into Activity from another tab grows it back to the
+minimum; Notifications/Runs floor lower and show several rows; all stable.
+Note: the bottom drawer's draggable border is its **top** edge (it sits at the
+viewport bottom), and on the Activity tab the 58% floor keeps the main cockpit
+around ~42% — the user can drag the divider to rebalance.
+
 ## Follow-ups
 
 - The body still uses `zoom: 0.9` for density. It is load-bearing for the dense

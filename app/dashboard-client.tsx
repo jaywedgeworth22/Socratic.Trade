@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle, Info, Pause, Play, RefreshCw, RotateCcw, Shield, X, XCircle, Zap, Settings, LayoutDashboard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, type PanelImperativeHandle } from "react-resizable-panels";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { cellTitle, companyTitle, enrichPositionsForDisplay, formatShareQuantity, quoteTitle, ratingTitle, sentimentTitle } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
@@ -30,6 +30,18 @@ type WorkspaceTab = "decision" | "market" | "performance" | "strategy";
 type InspectorTab = "operate" | "risk" | "profile";
 type BottomTab = "activity" | "runs" | "notifications";
 
+// Minimum height for the bottom drawer per tab, as a percentage of the cockpit's
+// vertical space: roughly the tab bar plus that tab's header and ~2 content entries
+// on a desktop viewport. Activity cards are tall (meta + title + 2-line detail +
+// tags); Runs/Notifications rows are short — hence the per-tab values. Percentages
+// are used because the panel library sizes reliably in percentages (pixel props
+// drift after layout).
+const BOTTOM_MIN_PCT_BY_TAB: Record<BottomTab, number> = {
+  activity: 58,
+  runs: 24,
+  notifications: 28
+};
+
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
@@ -56,6 +68,38 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [showCenterWorkspace, setShowCenterWorkspace] = useState(true);
   const [showRightInspector, setShowRightInspector] = useState(true);
   const [showBottomDrawer, setShowBottomDrawer] = useState(true);
+  const bottomPanelRef = useRef<PanelImperativeHandle>(null);
+
+  // Keep the drawer at least as tall as the active tab's minimum (header + ~2
+  // entries). Applied after layout settles on mount, on every tab change, and on
+  // viewport resize. Only grows (never shrinks a drawer the user enlarged). Uses a
+  // "%" string because this panel library's resize() treats a bare number as pixels
+  // while the same number in the minSize/defaultSize props is a percentage, and the
+  // numeric minSize prop alone does not reliably re-clamp an already-laid-out panel.
+  useEffect(() => {
+    function applyMinimum() {
+      const panel = bottomPanelRef.current;
+      if (!panel) return;
+      const target = BOTTOM_MIN_PCT_BY_TAB[bottomTab];
+      if (panel.getSize().asPercentage < target - 0.5) panel.resize(`${target}%`);
+    }
+    // Apply immediately, after the panel library's initial layout settles (a double
+    // rAF lands after layout+paint), and once more shortly after — the first paint's
+    // reported size is occasionally stale, which would otherwise leave the drawer short.
+    applyMinimum();
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(applyMinimum);
+    });
+    const timer = setTimeout(applyMinimum, 150);
+    window.addEventListener("resize", applyMinimum);
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+      clearTimeout(timer);
+      window.removeEventListener("resize", applyMinimum);
+    };
+  }, [bottomTab]);
 
   // Close dropdown when clicking outside
   const layoutMenuRef = useRef<HTMLDivElement>(null);
@@ -509,7 +553,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             <PanelResizeHandle className="panel-resize-handle-vertical" />
           )}
           {showBottomDrawer && (
-            <Panel defaultSize={25} minSize={10}>
+            <Panel panelRef={bottomPanelRef} defaultSize={BOTTOM_MIN_PCT_BY_TAB[bottomTab]} minSize={BOTTOM_MIN_PCT_BY_TAB[bottomTab]}>
               <section className="cockpit-bottom">
                 <TabBar
                   tabs={[

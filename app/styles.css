@@ -281,28 +281,54 @@ label {
   height: 100%;
 }
 
-.panel-resize-handle-horizontal {
-  width: 10px;
-  cursor: col-resize;
+.panel-resize-handle-horizontal,
+.panel-resize-handle-vertical {
+  align-items: center;
   background: transparent;
-  transition: background 0.2s ease;
+  display: flex;
   flex-shrink: 0;
+  justify-content: center;
+  transition: background 0.2s ease;
 }
-.panel-resize-handle-horizontal:hover,
-.panel-resize-handle-horizontal[data-resize-handle-active] {
-  background: rgba(17, 107, 75, 0.15);
+
+/* Visible grip so the divider reads as draggable. */
+.panel-resize-handle-horizontal::after,
+.panel-resize-handle-vertical::after {
+  content: "";
+  background: rgba(16, 21, 16, 0.18);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+.panel-resize-handle-horizontal {
+  width: 12px;
+  cursor: col-resize;
+}
+.panel-resize-handle-horizontal::after {
+  width: 4px;
+  height: 40px;
 }
 
 .panel-resize-handle-vertical {
-  height: 10px;
+  height: 12px;
   cursor: row-resize;
-  background: transparent;
-  transition: background 0.2s ease;
-  flex-shrink: 0;
 }
+.panel-resize-handle-vertical::after {
+  width: 48px;
+  height: 4px;
+}
+
+.panel-resize-handle-horizontal:hover,
+.panel-resize-handle-horizontal[data-resize-handle-active],
 .panel-resize-handle-vertical:hover,
 .panel-resize-handle-vertical[data-resize-handle-active] {
-  background: rgba(17, 107, 75, 0.15);
+  background: rgba(17, 107, 75, 0.12);
+}
+.panel-resize-handle-horizontal:hover::after,
+.panel-resize-handle-horizontal[data-resize-handle-active]::after,
+.panel-resize-handle-vertical:hover::after,
+.panel-resize-handle-vertical[data-resize-handle-active]::after {
+  background: var(--green);
 }
 
 .cockpit-rail,

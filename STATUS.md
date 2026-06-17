@@ -36,6 +36,10 @@ steps materially change.
   Adversarially reviewed (P&L/integration clean; one prompt-wording nit fixed).
   Verified with `tsc` + `npm test` (86) + `npm run build`. See
   `docs/rollouts/2026-06-16-llm-token-and-learning.md`.
+- 2026-06-16: bottom drawer (Activity/Runs/Notifications) now has a per-tab
+  minimum height (~2 entries) and a discoverable resize grip; content scrolls.
+  See the resizable-bottom-drawer section in
+  `docs/rollouts/2026-06-16-ui-optimization-pass.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
