@@ -18,19 +18,25 @@ steps materially change.
 
 ## Active Focus
 
-- 2026-06-17: `main` is pushed to GitHub (`origin/main` @ the merged web-sources
-  work). Active dev is on branch **`phase-10`**, executing
+- 2026-06-17: Active dev is on branch **`phase-10`**, executing
   `docs/phase-10-signals-learning-ui-v2.md` (status markers in that doc are the
-  source of truth for what's next). Done so far on `phase-10`: **A1** positioning
-  ScoringWeights sub-score (scraped smart-money signals now move the deterministic
-  score + re-rank after overlay); **B1** sector learning dimension
-  (`getSectorScorecard` → prompt); **C1** SEC 8-K catalyst connector
-  (`web-sources/sec8k.ts`, 94 live events). Next per the plan: C2 market breadth,
-  B2 full EvidenceDigest, D1/D2 prompt efficiency, E1/E2 UI. Also planned:
-  `docs/phase-11-multi-user.md` (per-user keys/preferences; API-keys settings
-  section first). 136 tests; tsc + build green. Git commits use the CLT workaround
+  source of truth for what's next). `phase-10` is a strict descendant of
+  `web-sources` and of `main`, so it **fast-forward-merges into `main`** — this is
+  now the canonical merge (it supersedes the old "merge web-sources → main", F3).
+  Done so far on `phase-10`: **A1** positioning ScoringWeights sub-score (scraped
+  smart-money signals now move the deterministic score + re-rank after overlay);
+  **B1** sector learning dimension (`getSectorScorecard` → prompt); **C1** SEC 8-K
+  catalyst connector (`web-sources/sec8k.ts`, 94 live events); **C2** market breadth
+  (`breadthPct` on `MarketScan`). Plus the share-quantity number policy finalized:
+  **records keep full double precision; display = 3 sig figs OR all whole-number
+  digits, whichever is larger, comma-grouped** (`formatQuantity`; see
+  `docs/rollouts/2026-06-17-quantity-precision-display.md`). Next per the plan:
+  **B2** full EvidenceDigest (chosen + skipped), then D1/D2 prompt efficiency,
+  E1/E2 UI, remaining C sources. Also planned: `docs/phase-11-multi-user.md`
+  (per-user keys/preferences; API-keys settings section first). 136 tests; tsc +
+  build green. Git commits use the CLT workaround
   (`DEVELOPER_DIR=/Library/Developer/CommandLineTools`) until the Xcode license is
-  accepted.
+  accepted. iCloud sync-conflict files (`"<name> 2.<ext>"`) are now gitignored.
 - Current publish branch packages the latest dashboard, cockpit UI,
   market-data, strategy, short/cover, and handoff-doc work for review.
 - **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.

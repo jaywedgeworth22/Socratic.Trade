@@ -172,16 +172,19 @@ describe("dashboard feed helpers", () => {
     expect(formatShareQuantity(0.5)).toBe("0.5");
     expect(formatShareQuantity(12)).toBe("12");
     expect(formatShareQuantity(123.456)).toBe("123");
-    expect(formatShareQuantity(1234.56)).toBe("1235");
-    expect(formatShareQuantity(12345.6)).toBe("12346");
+    // >=3 integer digits: all whole-number digits preserved (no longer truncated to
+    // 3 sig figs), comma-grouped for readability.
+    expect(formatShareQuantity(1234.56)).toBe("1,235");
+    expect(formatShareQuantity(12345.6)).toBe("12,346");
+    expect(formatShareQuantity(12489.242)).toBe("12,489");
 
     expect(formatShareQuantity(1.55548, "NVDA")).toBe("1.56");
     expect(formatShareQuantity(0.00448933, "intc")).toBe("0.00449");
     expect(formatShareQuantity(0.5, "QCOM")).toBe("0.5");
     expect(formatShareQuantity(12, "NVDA")).toBe("12");
     expect(formatShareQuantity(123.456, "INTC")).toBe("123");
-    expect(formatShareQuantity(1234.56, "QCOM")).toBe("1235");
-    expect(formatShareQuantity(12345.6, "NVDA")).toBe("12346");
+    expect(formatShareQuantity(1234.56, "QCOM")).toBe("1,235");
+    expect(formatShareQuantity(12345.6, "NVDA")).toBe("12,346");
   });
 
   it("applies Paper prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {

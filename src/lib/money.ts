@@ -14,24 +14,17 @@ export function normalizeSymbol(symbol: string): string {
   return symbol.trim().toUpperCase();
 }
 
-export function formatQuantity(value: number | undefined | null, symbol?: string): string {
+export function formatQuantity(value: number | undefined | null, _symbol?: string): string {
   if (value == null) return "0";
   const abs = Math.abs(value);
   if (abs === 0) return "0";
 
-  if (abs >= 1000) {
-    return Math.round(value).toString();
-  }
-
-  // Under 1000 shares: 3 significant figures
-  // Using Number(...) removes trailing zeros like "10.0" -> "10"
-  let str = Number(value.toPrecision(3)).toString();
-  
-  // For extremely small numbers that use e-notation
-  if (str.includes("e")) {
-    str = Number(value.toPrecision(3)).toLocaleString("en-US", { maximumFractionDigits: 10, useGrouping: false });
-  }
-  
-  return str;
+  // Significant figures to show: at least 3, but always enough to show EVERY integer
+  // digit so a large whole-share count is never truncated — i.e. "3 significant figures
+  // OR all digits of the whole number, whichever is larger" (12,489.242 -> "12,489";
+  // 0.167333 -> "0.167"; 1.5 -> "1.5"). Comma-grouped; trailing zeros stripped.
+  const intDigits = abs >= 1 ? Math.trunc(abs).toString().length : 0;
+  const sigFigs = Math.max(3, intDigits);
+  return Number(value.toPrecision(sigFigs)).toLocaleString("en-US", { maximumFractionDigits: 20 });
 }
 

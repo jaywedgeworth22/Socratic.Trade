@@ -16,3 +16,14 @@ yarn-error.log*
 pnpm-debug.log*
 scratch/
 .git_diff.txt
+
+# macOS / iCloud Drive conflict copies — this repo lives under ~/Documents, which
+# is iCloud-synced; sync conflicts spawn duplicate files named "<name> 2.<ext>"
+# (or " 3", " 4"...). They are stale snapshots, not real source. Ignore them so
+# they never clutter `git status` or get swept into a commit via `git add -A`.
+* [0-9].ts
+* [0-9].tsx
+* [0-9].md
+* [0-9].js
+* [0-9].json
+* [0-9].css
