@@ -7,8 +7,11 @@
 > + a tabbed workspace (Decision / Market Scan / Performance / Strategy), feeds
 > in a right slide-over, and modal Settings / Strategy Studio, plus a ⌘K command
 > palette and a Recharts learning-loop visualization (P&L by thesis/regime).
-> See `docs/rollouts/2026-06-16-ui-redesign-tailwind.md`. The sections below
-> describe the prior (now-replaced) panel-based cockpit and are kept for history.
+> A 2026-06-18 glassmorphism pass then changed the visual treatment without
+> changing the core information architecture. See
+> `docs/rollouts/2026-06-16-ui-redesign-tailwind.md` and
+> `docs/rollouts/2026-06-18-glassmorphism-ui.md`. The sections below describe
+> the prior panel-based cockpit and current semantics that still matter.
 
 
 This phase restructures the dashboard from a long vertical page into a
@@ -99,12 +102,11 @@ until dismissed. Each toast carries an icon and an accessible dismiss button.
 
 ## Styling Conventions
 
-Cockpit panels are styled with CSS classes in `app/styles.css`, not inline
-styles. The Activity Feed (group rows, status pills, tags, expanded timeline),
-the market-scan column-settings popover, the filter bar, and the layout menu all
-use dedicated classes. Status colors reuse a shared class family
-(`.activity-status.is-*`) rather than re-deriving rgba values inline, so theming
-stays in one place.
+Current cockpit styling lives primarily in `app/globals.css` and Tailwind 4
+utility classes, with semantic CSS variables for surface, line, text, status,
+and glass effects. Avoid reintroducing large inline style objects or per-component
+rgba constants; add reusable variables/classes when a visual rule will be shared
+across panels, feeds, popovers, or status chips.
 
 ## Display Semantics
 
@@ -114,6 +116,12 @@ stays in one place.
   direction or a buy/sell signal.
 - Top status values are kept visible in the command bar: mode, portfolio,
   buying power, autonomy, daily risk, and allowed universe.
+- Account switching should always preserve a nearby management path. The
+  command-bar account selector includes `Manage Accounts...` so an empty or
+  incomplete account list does not strand the user away from Settings.
+- Symbol drilldown factor values are normalized 0-100 **factor scores**, not
+  signed contribution deltas. Avoid labeling that panel as a waterfall unless
+  the UI is changed to show actual weighted contributions around a baseline.
 
 ## Verification Expectations
 

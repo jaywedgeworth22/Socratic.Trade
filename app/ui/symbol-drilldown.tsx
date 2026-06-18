@@ -55,37 +55,37 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
   // Backend-computed ratios (not returned by any API) — see src/lib/derived-metrics.ts.
   const derivedTiles: { label: string; value: string | null; title: string; tone?: "up" | "down" }[] = [
     { label: "PEG", value: typeof dm.peg === "number" ? dm.peg.toFixed(2) : null,
-      title: "P/E ÷ EPS-growth%. <1 = cheap for its growth, >2 = expensive.",
+      title: "P/E ÷ EPS-growth%. <1 = cheap for its growth, >2 = expensive. Source: Calculated from live quotes.",
       tone: typeof dm.peg === "number" ? (dm.peg < 1 ? "up" : dm.peg > 2.5 ? "down" : undefined) : undefined },
     { label: "Earnings yield", value: typeof dm.earnYld === "number" ? `${dm.earnYld.toFixed(2)}%` : null,
-      title: "EPS ÷ price (inverse of P/E). Negative = the company is losing money.",
+      title: "EPS ÷ price (inverse of P/E). Negative = the company is losing money. Source: Calculated from live quotes.",
       tone: typeof dm.earnYld === "number" ? (dm.earnYld >= 0 ? "up" : "down") : undefined },
     { label: "ROE", value: typeof dm.roe === "number" ? `${dm.roe.toFixed(1)}%` : null,
-      title: "Return on equity = EPS ÷ book value per share. Higher = more efficient capital use.",
+      title: "Return on equity = EPS ÷ book value per share. Higher = more efficient capital use. Source: Calculated from live quotes.",
       tone: typeof dm.roe === "number" ? (dm.roe >= 0 ? "up" : "down") : undefined },
     { label: "Payout ratio", value: typeof dm.payout === "number" ? `${dm.payout.toFixed(0)}%` : null,
-      title: "Dividends ÷ EPS. >100% means the dividend exceeds earnings (at risk).",
+      title: "Dividends ÷ EPS. >100% means the dividend exceeds earnings (at risk). Source: Calculated from live quotes.",
       tone: typeof dm.payout === "number" && dm.payout > 100 ? "down" : undefined },
     { label: "Daily $ volume", value: typeof dm.dollarVolM === "number" ? formatDollarsM(dm.dollarVolM) : null,
-      title: "Price × volume — liquidity gauge for sizing and slippage." },
+      title: "Price × volume — liquidity gauge for sizing and slippage. Source: Calculated from live quotes." },
     { label: "Bid-ask spread", value: typeof dm.spreadBps === "number" ? `${dm.spreadBps.toFixed(1)} bps` : null,
-      title: "(ask − bid) ÷ mid in basis points — execution cost; wide spreads favor limit orders." },
+      title: "(ask − bid) ÷ mid in basis points — execution cost; wide spreads favor limit orders. Source: Calculated from live quotes." },
     { label: "Graham value", value: typeof dm.grahamNumber === "number" ? `$${dm.grahamNumber.toFixed(2)}` : null,
-      title: "Benjamin Graham's intrinsic-value estimate = √(22.5 × EPS × book value per share). A defensive fair-value yardstick." },
+      title: "Benjamin Graham's intrinsic-value estimate = √(22.5 × EPS × book value per share). A defensive fair-value yardstick. Source: Calculated from live quotes." },
     { label: "Margin of safety", value: typeof dm.marginOfSafety === "number" ? `${dm.marginOfSafety >= 0 ? "+" : ""}${dm.marginOfSafety.toFixed(1)}%` : null,
-      title: "(Graham value − price) ÷ price. Positive = trading below intrinsic value (a value cushion); negative = above it.",
+      title: "(Graham value − price) ÷ price. Positive = trading below intrinsic value (a value cushion); negative = above it. Source: Calculated from live quotes.",
       tone: typeof dm.marginOfSafety === "number" ? (dm.marginOfSafety >= 0 ? "up" : "down") : undefined },
     { label: "% from 52w high", value: typeof dm.pctFromHigh === "number" ? `${dm.pctFromHigh.toFixed(1)}%` : null,
-      title: "(price − 52-week high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback." },
+      title: "(price − 52-week high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback. Source: Calculated from live quotes." },
     { label: "Reward:risk (52w)", value: typeof dm.rr52w === "number" ? dm.rr52w.toFixed(2) : null,
-      title: "(52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low.",
+      title: "(52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low. Source: Calculated from live quotes.",
       tone: typeof dm.rr52w === "number" ? (dm.rr52w >= 1 ? "up" : "down") : undefined },
     { label: "Sector rel. strength", value: typeof quote.sectorRelStrength === "number" ? `${quote.sectorRelStrength >= 0 ? "+" : ""}${quote.sectorRelStrength.toFixed(2)}%` : null,
-      title: "Intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today.",
+      title: "Intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today. Source: Calculated from live quotes.",
       tone: typeof quote.sectorRelStrength === "number" ? (quote.sectorRelStrength >= 0 ? "up" : "down") : undefined }
   ];
 
-  // We visualize the factor breakdown as a waterfall
+  // Factor subscores are normalized 0-100; the weighted score is shown separately.
   const factorItems = fb ? [
     { label: "Value", value: fb.value },
     { label: "Momentum", value: fb.momentum },
@@ -170,33 +170,24 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
       <div className="grid gap-6 md:grid-cols-2">
         {/* Score Waterfall */}
         <div className="rounded-xl border border-line p-4">
-          <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><TrendingUp size={16} className="text-[var(--accent)]" /> Factor Breakdown</h3>
+          <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><TrendingUp size={16} className="text-[var(--accent)]" /> Factor Scores</h3>
           {fb ? (
             <div className="space-y-3">
               {factorItems.map(item => (
                 <div key={item.label} className="relative">
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-faint">{item.label}</span>
-                    <span className={item.value >= 0 ? "text-up" : "text-down"}>{item.value >= 0 ? "+" : ""}{item.value.toFixed(3)}</span>
+                    <span className="text-fg font-medium">{item.value.toFixed(1)}</span>
                   </div>
                   {/* Visual bar */}
-                  <div className="h-1.5 w-full bg-surface-3 rounded-full overflow-hidden flex">
-                    <div className="w-1/2 flex justify-end pr-0.5">
-                      {item.value < 0 && (
-                        <div className="h-full bg-down rounded-full" style={{ width: `${Math.min(100, Math.abs(item.value) * 100)}%` }} />
-                      )}
-                    </div>
-                    <div className="w-1/2 flex justify-start pl-0.5">
-                      {item.value >= 0 && (
-                        <div className="h-full bg-up rounded-full" style={{ width: `${Math.min(100, item.value * 100)}%` }} />
-                      )}
-                    </div>
+                  <div className="h-1.5 w-full bg-surface-3 rounded-full overflow-hidden">
+                    <div className="h-full bg-up rounded-full" style={{ width: `${Math.max(0, Math.min(100, item.value))}%` }} />
                   </div>
                 </div>
               ))}
               <div className="mt-4 pt-3 border-t border-line flex justify-between font-bold">
                 <span>Composite Score</span>
-                <span className={quote.score >= 0 ? "text-up" : "text-down"}>{quote.score.toFixed(3)}</span>
+                <span className="text-fg">{quote.score.toFixed(1)}</span>
               </div>
             </div>
           ) : (
@@ -208,6 +199,10 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
         <div className="rounded-xl border border-line p-4">
           <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><Database size={16} className="text-info" /> Source Provenance</h3>
           <div className="space-y-2 text-xs">
+            <div className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
+              <span className="text-faint capitalize">Derived Metrics</span>
+              <Chip tone="neutral" className="bg-surface-2">Calculated</Chip>
+            </div>
             {quote.sources ? (
               Object.entries(quote.sources).map(([key, provider]) => (
                 <div key={key} className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">

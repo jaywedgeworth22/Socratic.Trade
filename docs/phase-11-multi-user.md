@@ -13,10 +13,17 @@ auth. A real login/identity layer is the last milestone.
   `deleteUserApiKey`/`resolveApiKey(service, userId?)` in `src/lib/db.ts`
   (scaffolding, currently unused by providers). `resolveApiKey` already falls back
   to the matching `process.env` var when a user hasn't supplied a key.
+- `connected_accounts` brokerage-account storage for the default `local` user.
+  Connected account credentials are encrypted at rest, omitted from dashboard
+  snapshots, decrypted only for backend active-account use, and preserved when
+  editing account metadata with blank key fields. Alpaca now resolves credentials
+  from the active connected account before falling back to legacy per-user/env keys.
+- Strategy profiles and prompts are now consistently scoped by `userId` for the
+  default-user path; active-profile persistence writes to `user_settings`.
 
 ## Milestones
 
-### M1 `[todo]` API-keys Settings section (buildable now, single-user)
+### M1 `[partial]` API-keys Settings section (buildable now, single-user)
 A Settings → **"API Keys"** tab listing every required + optional/helpful key with a
 status badge (Set / Using env / Not set) and a masked input to save/clear it. Stored
 per-user via `upsertUserApiKey` under the default user.
@@ -30,11 +37,19 @@ per-user via `upsertUserApiKey` under the default user.
 - Each row shows what it unlocks and links to where to get it. Never display stored
   secrets (mask), and never log them.
 
-### M2 `[todo]` Route providers through `resolveApiKey(service, userId)`
+Current partial implementation: Settings → Integrations manages brokerage accounts
+and keeps connected-account secrets server-only, but there is not yet a general API
+Keys tab for market-data/LLM provider keys.
+
+### M2 `[partial]` Route providers through `resolveApiKey(service, userId)`
 Replace direct `process.env.X` reads in `data-providers.ts`, `macro.ts`, the LLM
 caller, and `web-sources/*` with `resolveApiKey(service, userId)` so a user's own key
 takes precedence, with the env var as the shared fallback. Keep capability-gating:
 missing key → that provider is skipped (neutral/stale signal), never faked.
+
+Current partial implementation: Alpaca uses the active connected account first;
+Voyage/Pinecone use `getUserApiKey`; broad market-data, macro, and LLM providers
+still need consistent `resolveApiKey(service, userId)` routing.
 
 ### M3 `[todo]` Per-user preferences & policy
 Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope them

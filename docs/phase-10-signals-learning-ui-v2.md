@@ -17,7 +17,10 @@ congress (Senate eFD + Capitol Trades), SEC Form 4, and **FINRA short-volume**
 connectors; `candidates_considered` log; signal-efficacy + confidence-calibration
 feedback; **event candidate union** (discovery); **source attribution** for web
 signals; **/api/scan broker merge**; **shrinkPrior=0 = no shrinkage**; holding
-horizon; tuning/tax settings; universal received-time tooltips; Smart Money panel.
+horizon; tuning/tax settings; universal received-time tooltips; Smart Money panel;
+SEC 8-K coarse bulletins; market breadth and internals; expanded FRED/macro
+derived metrics; a Macro workspace tab; Fama-French, Cboe SKEW/VVIX, and CFTC
+COT market-wide signals; Voyage/Pinecone RAG scaffolding for retrieved context.
 
 Codex review findings P2(attribution), P3(/api/scan merge), P3(shrinkPrior=0), and
 the discovery half of P2 are all **done**. What remains of P2 is the *ranking* half
@@ -39,8 +42,9 @@ add smart-money/catalyst sub-scores instead of leaving the LLM to infer from pro
 - **A2 `[partial]` Expand the event union as new signal sources land.** The union
   pulls congress/insider/FINRA-short names and now **strong-bullish technical signals**
   (`hasNotableWebSignal` extended for `technical.direction==="bullish" && score>=70`; see
-  the technical web source below). Still to add as Phase C delivers them: 8-K / earnings /
-  options / analyst-revision signals.
+  the technical web source below). SEC 8-K currently contributes evidence bulletins/status
+  but does not by itself union a below-cutoff name into the candidate set. Still to add:
+  8-K event-union criteria if useful, earnings, options, and analyst-revision signals.
 - **A2.1 `[done]` Technical-signal web source (TradingView push + in-house computed).**
   New `src/lib/indicators.ts` (pure RSI/MACD/SMA → `computeTechnicals`),
   `src/lib/web-sources/technical.ts` (one dataset, two producers, `TECHNICAL_SOURCE`
@@ -89,9 +93,12 @@ Codex: "major planned sources remain unimplemented." Default to free/official fi
   screener advancing today — free, from data already fetched) onto `MarketScan`; the
   agent gets `marketBreadth.advancingPct` with risk-on/off guidance. (% above
   50/200-DMA is a richer follow-up needing price history.)
-- **C3 `[todo]` Kenneth French factor returns** (free CSV) as factor priors. M.
-- **C4 `[todo/blocked]` Options / put-call ratios.** Cboe's CSV is 403 and the page
-  is HTML-only; research a working free source before building. L.
+- **C3 `[done]` Kenneth French factor returns.** `src/lib/market-signals/famafrench.ts`
+  pulls free Data Library CSV ZIPs and feeds trailing factor returns into the
+  `marketSignals` prompt block. Data lags, so treat it as a slow style-regime prior.
+- **C4 `[partial]` Options / market-wide risk gauges.** `src/lib/market-signals/cboe.ts`
+  pulls free Cboe SKEW and VVIX, and `cftc.ts` adds COT E-mini S&P positioning.
+  True put/call ratios remain unimplemented; keep researching a stable free source.
 - **C5 `[todo]` Analyst revisions / price-target changes / earnings calendar.** FMP
   endpoints are rate-limited on the current key → capability-gate behind a paid key,
   or find a free feed. M.
@@ -106,24 +113,28 @@ Codex: "make prompt compaction adaptive."
   globally send only fields changed since last run; hard-cap bulletins per symbol.
 - **D2 `[todo]` Prompt-cache the stable system prefix** (keep dynamic learning blocks
   last) to cut token cost.
-- **D3 `[todo]` Async raw-document digests** (filings/transcripts/options) into
-  bulletins with **source links, timestamps, and stale-data flags** — raw never in
-  the prompt.
+- **D3 `[partial]` Async raw-document digests / retrieval.** Voyage + Pinecone RAG
+  now stores/retrieves filing context for the Bull prompt path, but it is still a
+  lightweight scaffold: add source links, timestamps, stale-data flags, timeout/cache
+  behavior, and richer per-document summaries before calling it production-grade.
 - **D4 `[todo]` Cross-source agreement flags** when providers disagree on a value.
 
 ## Phase E — UI
 Codex: "symbol drilldown drawer … learning matrix."
 
-- **E1 `[todo]` Symbol drilldown drawer.** Click a scan row → **score waterfall**
-  (factor contributions), source provenance + freshness, raw evidence links, and a
-  "why this matters" summary.
-- **E2 `[todo]` Learning-matrix UI.** Thesis×regime grid with raw vs shrunk stats and
-  sample-size gates; surface signal-efficacy, confidence-calibration, and FINRA
-  short-pressure to the human (all agent-only today).
-- **E3 `[todo]` Polish & customizability.** Sparklines in the scan; saved column
-  presets + density toggle; a holding-horizon chip near the strategy status; extend
-  received-time tooltips to the Decision/Tax chips and portfolio rail; a styleable,
-  touch-friendly tooltip component to replace native `title`.
+- **E1 `[partial]` Symbol drilldown drawer.** Click a scan row opens a drawer with
+  normalized 0-100 factor scores, provenance mappings, derived-metric tiles, and an
+  AI conviction summary. Still missing: true weighted contribution/waterfall math,
+  raw evidence links, and fuller freshness details.
+- **E2 `[partial]` Learning-matrix UI.** The UI has learning-loop charts by
+  thesis/regime, but not the full thesis×regime grid with raw vs shrunk stats,
+  sample-size gates, signal-efficacy, confidence-calibration, and FINRA short-pressure
+  surfaced to humans.
+- **E3 `[partial]` Polish & customizability.** Macro tab and symbol price chart are
+  live; still open: sparklines in the scan, saved column presets + density toggle,
+  a holding-horizon chip near the strategy status, extend received-time tooltips to
+  the Decision/Tax chips and portfolio rail, and a styleable touch-friendly tooltip
+  component to replace native `title`.
 - **E4 `[todo]` Expose scoring thresholds as settings** (FCF/D-E/EPS buckets, regime
   VIX cutoffs, red-team conviction trigger, edge-factor tiers) — currently code-level.
 - **E5 `[todo]` De-risk-in-Crisis guardrail** (deterministic exposure cap when
@@ -135,15 +146,17 @@ Codex: "symbol drilldown drawer … learning matrix."
 - **F2 `[user]` Fix git/Xcode license** — `xcode-select` points at full Xcode;
   commits go through the CLT workaround. Fix: `sudo xcode-select -s
   /Library/Developer/CommandLineTools`.
-- **F3 `[user]` Merge `web-sources` → `main`** (clean fast-forward; left to you).
+- **F3 `[done/superseded]` Merge `web-sources` → `main`.** `phase-10`, `main`, and
+  `origin/main` are now aligned at `b86e461`; do not chase the old standalone
+  `web-sources` merge item.
 
 ## Suggested sequencing
-1. **A1 + A2** (ranking) — biggest leverage, makes existing scraped data matter.
-2. **B1 (sector) + B2 (EvidenceDigest)** — unlock the deferred learning dimensions.
-3. **C1 (8-K) + C2 (breadth)** — cheap, high-signal free sources that feed A2/D.
-4. **D1 + D2** (efficiency) before sources balloon the prompt.
-5. **E1 + E2** (drilldown + learning matrix) once the underlying data exists.
-6. **C3–C6, B3/B4, D3/D4, E3–E5** as capacity allows.
+1. **D1 + D2** (efficiency) before sources balloon the prompt further.
+2. **B3 + B4** (counterfactual skipped-name returns + factor-bucket learning).
+3. **E1/E2 completion** (true contribution math, raw evidence links, learning matrix).
+4. **C5 + C6** (analyst/earnings revisions and SEC XBRL facts).
+5. **D3/D4 + E3–E5** (production-grade digests/RAG, cross-source disagreement,
+   UI polish/settings/guardrails) as capacity allows.
 
 ## Cross-cutting acceptance (every phase)
 `npx tsc --noEmit` clean · `npm test` green (with fixtures per new signal/source) ·

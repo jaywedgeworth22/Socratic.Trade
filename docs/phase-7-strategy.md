@@ -2,9 +2,11 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
-## 1. Strategy Architecture: The 4 Evaluation Pillars
+## 1. Strategy Architecture: Evaluation Lenses
 
-To ensure balanced and resilient trade proposals, the LLM evaluates candidates across four distinct pillars before making a decision. 
+To ensure balanced and resilient trade proposals, the LLM evaluates candidates
+across macro, fundamental, technical, sentiment/news, alternative-data, and
+adversarial-debate lenses before making a decision.
 
 ### A. Macro, Thematic, & Market Context
 *Don't fight the Fed, and don't fight the broader trend.*
@@ -48,7 +50,7 @@ To ensure balanced and resilient trade proposals, the LLM evaluates candidates a
 
 ## 2. Initial Factor Weighting Matrix
 
-When initially deployed (or for new Strategy Profiles), the system uses a default scoring matrix to blend the four pillars. The LLM scales these weights to generate a final confidence score for a proposed trade.
+When initially deployed (or for new Strategy Profiles), the system uses a default scoring matrix to blend the core deterministic factor scores. The LLM sees these scores plus source evidence and scales its confidence around them rather than replacing deterministic policy gates.
 
 **Baseline Default Weights:**
 - **Fundamentals (Value/Growth): 30%** (Anchor the portfolio in real business health)
@@ -100,7 +102,7 @@ export interface StrategyOutcome {
 ```
 
 ### C. Risk Management & Short Selling Guardrails
-While the strategy evaluates trades across the 4 pillars, it must also respect absolute risk parameters, especially given the infinite risk profile of short selling.
+While the strategy evaluates trades across the strategy lenses, it must also respect absolute risk parameters, especially given the infinite risk profile of short selling.
 - **Short Selling Risk Cap:** Short positions must be heavily scrutinized. The maximum allowable portfolio allocation for any single short position will be strictly capped (e.g., lower than long positions).
 - **Hard Stop-Losses:** Any short proposal must carry an absolute, non-negotiable stop-loss logic (e.g., max 5% adverse excursion) to prevent runaway losses.
 
@@ -177,7 +179,8 @@ existing fields end-to-end before adding new providers*.
   signals that preceded them.
 - **Multi-dimensional learning** (section 3): `getThesisRegimeScorecard()` crosses
   thesis × regime (shrunk like the 1-D cards) and feeds `tradeOutcomesByThesisRegime`
-  to the agent. Sector remains a deferred 4th dimension (not yet on closed lots).
+  to the agent. Phase 10 later added sector-on-fills and `getSectorScorecard()`;
+  the fully composite thesis × regime × sector × factor view is still a follow-up.
 - **20-outcome guardrail** (section 3.E): `MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT = 20`
   now gates the auto-tuner — factor-weight changes are withheld (local-rules path
   emits no weight patch; LLM path is instructed to null all weights) until ≥20 lots
@@ -185,14 +188,16 @@ existing fields end-to-end before adding new providers*.
 - **New providers**: congressional (Senate eFD / Capitol Trades) and SEC EDGAR
   Form 4 insider are live as backend web-sources (the user's FMP key is
   rate-limited, so those FMP senate/insider paths returned nothing).
-- Still deferred: SEC 8-K bulletins, the sector learning dimension, House
-  congressional coverage, weight shifts wired into *sizing* (currently advisory via
-  Strategy Studio), and FINRA / Cboe / Kenneth French providers.
+- Later Phase 10 work added SEC 8-K bulletins, FINRA short-volume, market breadth,
+  technical signals, Fama-French factors, Cboe SKEW/VVIX, CFTC COT, and sector
+  learning. Still deferred: House congressional coverage when a stable free feed is
+  available, weight shifts wired into *sizing* (currently advisory via Strategy
+  Studio), richer per-filing document digests, and factor-bucket learning.
 
 ### E. Human-Approved Weight Shifting
 The ultimate expression of the learning loop is adjusting the Initial Factor Weighting Matrix and Sector Allocations.
 
-- The system generates advisory suggestions that analyze outcome performance across the 4 pillars, `tradeThesisTag`, and industry sectors.
+- The system generates advisory suggestions that analyze outcome performance across factor scores, `tradeThesisTag`, market regime, and industry sectors.
 - **Dynamic Factor Weight Shifting:** If the Post-Mortem reveals that trades heavily weighted by "Fundamentals" are losing money in a speculative market, but "Technicals" are winning, the system will suggest a policy patch: *"Decrease Fundamental Weight by 5%, Increase Technical Weight by 5%."*
 - **Dynamic Sector Allocation Shifting:** The system continuously evaluates portfolio performance by industry sector. It will suggest *mild to moderate* target allocation shifts over time (e.g., reducing Technology exposure from 30% to 20% if the sector begins underperforming). It is explicitly designed to avoid extreme concentration (e.g., it will never suddenly recommend shifting the portfolio to 99% in one stock or sector).
 - **Guardrails:** 

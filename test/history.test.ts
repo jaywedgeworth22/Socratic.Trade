@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 
-beforeEach(() => clearHistoryCache());
+beforeEach(() => {
+  clearHistoryCache();
+  // Keep the cascade on the (mocked) free sources — keyed providers are skipped without keys.
+  delete process.env.TRADIER_API_KEY;
+  delete process.env.MARKETSTACK_API_KEY;
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("toBusinessDay", () => {
@@ -27,12 +32,67 @@ describe("parseStooqCsv", () => {
 });
 
 describe("fetchDailyOHLC", () => {
+  const tradierBody = JSON.stringify({
+    history: {
+      day: [
+        { date: "2026-06-16", open: 10, high: 11, low: 9, close: 10.5, volume: 1000 },
+        { date: "2026-06-17", open: 10.5, high: 12, low: 10, close: 11.8, volume: 2000 }
+      ]
+    }
+  });
+
+  const marketstackBody = JSON.stringify({
+    data: [
+      { date: "2026-06-16T00:00:00+0000", open: 20, high: 21, low: 19, close: 20.5, volume: 3000 },
+      { date: "2026-06-17T00:00:00+0000", open: 20.5, high: 22, low: 20, close: 21.8, volume: 4000 }
+    ]
+  });
+
   const yahooBody = (n: number) => {
     const timestamp = Array.from({ length: n }, (_, i) => Math.floor(Date.UTC(2025, 0, 1) / 1000) + i * 86_400);
     const arr = (base: number) => Array.from({ length: n }, (_, i) => base + i);
     const quote = [{ open: arr(100), high: arr(101), low: arr(99), close: arr(100), volume: arr(1000) }];
     return JSON.stringify({ chart: { result: [{ timestamp, indicators: { quote } }] } });
   };
+
+  it("uses Tradier before free history sources when the key is set", async () => {
+    process.env.TRADIER_API_KEY = "tradier-test-key";
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars).toHaveLength(2);
+    expect(bars![0]).toMatchObject({ time: "2026-06-16", close: 10.5, volume: 1000 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("api.tradier.com");
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-test-key" });
+  });
+
+  it("falls back from Tradier to Marketstack before free sources", async () => {
+    process.env.TRADIER_API_KEY = "tradier-test-key";
+    process.env.MARKETSTACK_API_KEY = "marketstack-test-key";
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).includes("api.tradier.com")) return new Response("tradier down", { status: 500 });
+      if (String(url).includes("api.marketstack.com")) return new Response(marketstackBody, { status: 200 });
+      return new Response("unexpected source", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(bars).toHaveLength(2);
+    expect(bars![0]).toMatchObject({ time: "2026-06-16T00:00:00+0000", close: 20.5, volume: 3000 });
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      expect.stringContaining("api.tradier.com"),
+      expect.stringContaining("api.tradier.com"),
+      expect.stringContaining("api.marketstack.com")
+    ]);
+  });
 
   it("fetches Yahoo OHLC and caches the result (one network call across two reads)", async () => {
     const fetchMock = vi.fn(async (url: string) =>

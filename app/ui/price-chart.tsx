@@ -101,7 +101,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
         vol.setData(
           bars
             .filter((b) => typeof b.volume === "number")
-            .map((b) => ({ time: b.time, value: b.volume as number, color: `color-mix(in oklab, ${b.close >= b.open ? up : down} 45%, transparent)` }))
+            .map((b) => ({ time: b.time, value: b.volume as number, color: b.close >= b.open ? up : down }))
         );
 
         c.timeScale().fitContent();

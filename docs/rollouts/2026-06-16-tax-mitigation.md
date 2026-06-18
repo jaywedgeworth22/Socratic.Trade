@@ -81,4 +81,3 @@ in-browser (dark): all panels render.
 - Optionally model "substantially identical" lockouts for known ETF pairs.
 - A "trade in a tax-advantaged account" hint, and §475(f) MTM info, are
   informational follow-ups.
-</content>

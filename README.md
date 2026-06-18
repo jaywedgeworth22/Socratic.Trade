@@ -7,20 +7,24 @@ Local-only Next.js dashboard for managing a Robinhood agentic account through MC
 Read these before changing code:
 
 1. `AGENTS.md` for durable repo rules, verification commands, and cross-file traps.
+   `CLAUDE.md` is a symlink to the same file so Claude Code reads identical rules.
 2. `STATUS.md` for the current handoff snapshot.
 3. `PLAN.md` for the roadmap and acceptance checks.
-4. `docs/HANDOFF.md` for how to document work so Codex, Claude Code,
+4. `docs/rollouts/` for chronological handoff notes so Codex, Claude Code,
    Antigravity/Gemini, Cursor, or a human can resume cleanly.
 5. The relevant `docs/phase-*.md` and latest matching `docs/rollouts/*.md`.
 
-Non-trivial changes should update either a design doc, a rollout note, or
-`STATUS.md` when the current project state changes.
+Non-trivial changes must update `STATUS.md`, `PLAN.md`, the relevant phase doc,
+and a dated rollout note before commit/push. Do not recreate a single
+`docs/HANDOFF.md`; that was intentionally replaced by rollout notes.
 
 ## What It Does
 
 - Shows accounts, portfolio, positions, orders, and an audit feed.
 - Runs an equity strategy loop in either proposal-only or decision mode.
-- Scans the allowed equity universe with delayed quote data before asking the LLM for proposals.
+- Scans the allowed equity universe with delayed quote data, fundamentals,
+  technicals, macro/market signals, and cached public web-source evidence before
+  asking the LLM for proposals.
 - Lets an LLM propose trades, then enforces deterministic policy gates before live order placement.
 - Reviews every order with Robinhood before placement.
 - Uses idempotency keys for live order placement.
@@ -58,14 +62,15 @@ Use **Strategy Authority** in the dashboard controls:
 ```bash
 cp .env.example .env.local
 npm install
-npm run dev -- --hostname 127.0.0.1 --port 3000
+npm run dev
 ```
 
 Open `http://127.0.0.1:3000`.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
 `.next` assets after a build. Stop old `node` listeners on ports `3000` / `3001`
-and restart `npm run dev -- --hostname 127.0.0.1 --port 3000`.
+and restart `npm run dev`. The current dev script clears an existing port-3000
+listener before starting Next.
 
 ## Environment
 
@@ -75,8 +80,10 @@ OPENAI_MODEL=gpt-4.1-mini        # or gpt-4o for deeper reasoning
 OPENAI_API_URL=...               # optional: override to use an OpenAI-compatible endpoint
 ROBINHOOD_ADAPTER=mock           # "mock" (default) or "mcp" for real Robinhood MCP
 DATABASE_URL=file:./data/app.db
+ENCRYPTION_KEY=...               # optional 64-char hex key; used for stored API keys
 MARKET_SCAN_LIMIT=30
 MARKET_SCAN_CACHE_TTL_MS=300000
+MARKET_SCAN_EVENT_RESERVE=8
 
 # Optional: fundamentals + analyst enrichment (Finnhub).
 # Provides P/E, EPS, dividend yield, analyst ratings, sector/industry, and news
@@ -96,9 +103,39 @@ NEWS_CACHE_TTL_MS=21600000       # enrichment cache TTL (default 6h)
 ALPHAVANTAGE_API_KEY=...
 
 # Optional: macroeconomic context injected into LLM prompt (Federal Reserve FRED API).
-# Adds fed funds rate, 10-yr treasury yield, CPI, unemployment rate, and VIX to strategy context.
+# Adds rates, inflation, labor, credit, oil, dollar, VIX/VIX3M, and derived curves.
 # Without a key the prompt uses hardcoded recent defaults (updated periodically in macro.ts).
 FRED_API_KEY=...
+
+# Optional: public web-source and technical-signal controls.
+SEC_EDGAR_USER_AGENT=RobinhoodAgenticTrading/1.0 (contact: you@example.com)
+WEB_SOURCE_CONGRESS=on
+WEB_SOURCE_INSIDER=on
+WEB_SOURCE_FINRA=on
+WEB_SOURCE_SEC8K=on
+WEB_SOURCE_TECHNICAL=on
+TECHNICAL_SOURCE=tradingview       # "tradingview" webhook or free "computed" Yahoo/Stooq OHLC
+WEB_SOURCE_TECHNICAL_MAX=40
+TRADINGVIEW_WEBHOOK_SECRET=...
+TRADINGVIEW_WEBHOOK_IPS=...
+
+# Optional: RAG context for filings/research.
+VOYAGE_API_KEY=...
+PINECONE_API_KEY=...
+
+# Optional: native Alpaca paper account credentials. The UI-connected account
+# store takes precedence when an active Alpaca account is selected.
+ALPACA_PAPER_API_KEY=...
+ALPACA_PAPER_SECRET_KEY=...
+
+# Optional/future provider keys routed through the per-user key system as it lands.
+MARKETSTACK_API_KEY=...
+TRADIER_API_KEY=...
+MASSIVE_API_KEY=...
+MASSIVE_S3_ENDPOINT=...
+MASSIVE_BUCKET=...
+MASSIVE_ACCESS_KEY_ID=...
+MASSIVE_SECRET_ACCESS_KEY=...
 
 # Optional: webhook for trade notifications.
 # Discord webhook URLs receive rich embeds; any other URL receives generic JSON.
@@ -151,7 +188,8 @@ npm test
 npm run build
 ```
 
-78 tests across 10 suites (vitest). Run after `npm install`.
+As of 2026-06-18 the suite is roughly 190 tests across 26 files; treat the
+command output as authoritative because the count changes frequently.
 
 ## Design Docs
 

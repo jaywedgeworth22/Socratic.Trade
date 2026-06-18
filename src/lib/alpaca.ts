@@ -16,7 +16,7 @@ import type {
   EquityOrderInput
 } from "./types";
 import { normalizeSymbol } from "./money";
-import { getUserApiKey } from "./db";
+import { getActiveConnectedAccount, getUserApiKey } from "./db";
 
 export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
   return new AlpacaBrokerGateway(userId);
@@ -26,13 +26,24 @@ class AlpacaBrokerGateway implements BrokerGateway {
   private alpaca: Alpaca;
 
   constructor(userId: string) {
-    const keyId = getUserApiKey(userId, "ALPACA_PAPER_API_KEY")?.apiKey || process.env.ALPACA_PAPER_API_KEY || "";
-    const secretKey = getUserApiKey(userId, "ALPACA_PAPER_SECRET_KEY")?.apiKey || process.env.ALPACA_PAPER_SECRET_KEY || "";
+    const activeAccount = getActiveConnectedAccount(userId);
+    const accountKeys = activeAccount?.broker === "alpaca" ? activeAccount : undefined;
+    const keyId =
+      accountKeys?.apiKey ||
+      getUserApiKey(userId, "ALPACA_PAPER_API_KEY")?.apiKey ||
+      getUserApiKey(userId, "alpaca")?.apiKey ||
+      process.env.ALPACA_PAPER_API_KEY ||
+      "";
+    const secretKey =
+      accountKeys?.apiSecret ||
+      getUserApiKey(userId, "ALPACA_PAPER_SECRET_KEY")?.apiKey ||
+      process.env.ALPACA_PAPER_SECRET_KEY ||
+      "";
     
     this.alpaca = new Alpaca({
       keyId,
       secretKey,
-      paper: true,
+      paper: accountKeys?.environment !== "live",
       usePolygon: false
     });
   }

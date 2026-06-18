@@ -21,6 +21,7 @@
 - Quality
 - Volatility
 - Sentiment
+- Positioning
 - Diversification
 
 Weights are normalized before scoring. Missing provider data uses neutral factor values instead of failing the scan.
@@ -39,6 +40,14 @@ Both clamp to 0-100. The Market Scan table surfaces these as FCF% / D/E / EPS gr
 columns with source-attribution tooltips; cells show `-` when no provider
 supplied the value (never a fabricated number). See
 `docs/rollouts/2026-06-16-signals-learning.md`.
+
+**Positioning and technical overlay (2026-06-17/18, branch `phase-10`):**
+the scoring model now includes a `positioning` factor driven by congressional net
+buying, SEC Form 4 insider sentiment, and squeeze-level short pressure. Cached
+web-source overlays are applied before final scoring, and the scan is re-sorted
+after overlay so those signals can move deterministic ranking. Bar-based
+technicals from TradingView webhook or in-house Yahoo/Stooq computation blend
+into the existing Momentum score rather than adding a separate technical weight.
 
 ## Acceptance
 

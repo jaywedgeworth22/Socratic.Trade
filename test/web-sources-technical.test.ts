@@ -25,6 +25,12 @@ beforeEach(async () => {
   delete process.env.TECHNICAL_SOURCE;
   delete process.env.WEB_SOURCE_TECHNICAL_TTL_MS;
   delete process.env.TRADINGVIEW_WEBHOOK_SECRET;
+  // The computed producer pulls via fetchDailyOHLC; clear keyed sources so the mocked
+  // free path (Yahoo) is exercised deterministically.
+  delete process.env.TRADIER_API_KEY;
+  delete process.env.MARKETSTACK_API_KEY;
+  const { clearHistoryCache } = await import("../src/lib/history");
+  clearHistoryCache();
 });
 
 afterEach(() => vi.unstubAllGlobals());

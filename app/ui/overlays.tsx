@@ -165,7 +165,7 @@ export function SlideOver({
             exit={{ x: "100%" }}
             transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "absolute right-0 top-0 flex h-full w-full flex-col border-l border-line bg-surface shadow-[var(--shadow-lg)]",
+              "absolute right-0 top-0 flex h-full w-full flex-col border-l border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)]",
               width
             )}
           >

@@ -117,4 +117,3 @@ regime scorecard, `pruneMacro`, excursion aggregation), `npm run build`.
 - The allowlist-cap and Bear-trim remain conservative; once telemetry confirms no
   proposal-quality regression, the candidate fan-out to the Bull could be pruned
   by score.
-</content>

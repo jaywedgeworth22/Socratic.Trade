@@ -314,7 +314,7 @@ export function setPolicy(policy: TradingPolicy, userId: string = "local"): void
 }
 
 export function getStrategyPrompt(userId: string = "local"): string {
-  return getActiveStrategyProfile()?.prompt ?? getUserSetting(userId, "strategyPrompt", DEFAULT_STRATEGY_PROMPT);
+  return getActiveStrategyProfile(userId)?.prompt ?? getUserSetting(userId, "strategyPrompt", DEFAULT_STRATEGY_PROMPT);
 }
 
 export function setStrategyPrompt(prompt: string, userId: string = "local"): void {
@@ -992,7 +992,7 @@ function syncActiveProfile(patch: { policy?: TradingPolicy; prompt?: string; sco
 function setSettingDirect(userId: string, key: string, value: unknown, updatedAt: string): void {
   getDb()
     .prepare(
-      "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      "INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
     )
     .run(`${userId}_${key}`, userId, key, JSON.stringify(value), updatedAt);
 }
@@ -1105,8 +1105,6 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
     environment: r.environment,
     accountNumber: r.account_number ?? undefined,
     label: r.label,
-    apiKey: r.api_key ?? undefined,
-    apiSecret: r.api_secret ?? undefined,
     isActive: r.is_active === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at
@@ -1125,8 +1123,8 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
     environment: row.environment,
     accountNumber: row.account_number ?? undefined,
     label: row.label,
-    apiKey: row.api_key ?? undefined,
-    apiSecret: row.api_secret ?? undefined,
+    apiKey: row.api_key ? decryptValue(row.api_key) : undefined,
+    apiSecret: row.api_secret ? decryptValue(row.api_secret) : undefined,
     isActive: row.is_active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -1135,36 +1133,48 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
 
 export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdAt" | "updatedAt">): void {
   const now = new Date().toISOString();
-  getDb()
-    .prepare(
-      `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-        account_number = excluded.account_number,
-        label = excluded.label,
-        api_key = excluded.api_key,
-        api_secret = excluded.api_secret,
-        is_active = excluded.is_active,
-        updated_at = excluded.updated_at`
-    )
-    .run(
-      account.id,
-      account.userId,
-      account.broker,
-      account.environment,
-      account.accountNumber ?? null,
-      account.label,
-      account.apiKey ?? null,
-      account.apiSecret ?? null,
-      account.isActive ? 1 : 0,
-      now,
-      now
-    );
+  const encryptedApiKey = account.apiKey?.trim() ? encryptValue(account.apiKey.trim()) : null;
+  const encryptedApiSecret = account.apiSecret?.trim() ? encryptValue(account.apiSecret.trim()) : null;
+  const database = getDb();
+  database.transaction(() => {
+    if (account.isActive) {
+      database.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(account.userId);
+    }
+    database
+      .prepare(
+        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+          broker = excluded.broker,
+          environment = excluded.environment,
+          account_number = excluded.account_number,
+          label = excluded.label,
+          api_key = COALESCE(excluded.api_key, connected_accounts.api_key),
+          api_secret = COALESCE(excluded.api_secret, connected_accounts.api_secret),
+          is_active = excluded.is_active,
+          updated_at = excluded.updated_at`
+      )
+      .run(
+        account.id,
+        account.userId,
+        account.broker,
+        account.environment,
+        account.accountNumber ?? null,
+        account.label,
+        encryptedApiKey,
+        encryptedApiSecret,
+        account.isActive ? 1 : 0,
+        now,
+        now
+      );
+  })();
 }
 
 export function setActiveConnectedAccount(id: string, userId: string = "local"): void {
   const db = getDb();
   db.transaction(() => {
+    const exists = db.prepare("SELECT id FROM connected_accounts WHERE id = ? AND user_id = ?").get(id, userId);
+    if (!exists) throw new Error("Connected account not found.");
     db.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(userId);
     db.prepare("UPDATE connected_accounts SET is_active = 1 WHERE id = ? AND user_id = ?").run(id, userId);
   })();

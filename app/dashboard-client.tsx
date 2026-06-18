@@ -67,6 +67,7 @@ const EquityCurve = dynamic(() => import("./ui/charts").then((m) => m.EquityCurv
 const ScorecardBars = dynamic(() => import("./ui/charts").then((m) => m.ScorecardBars), { ssr: false });
 import { CommandPalette, type Command } from "./ui/command-palette";
 import { StrategyFlow } from "./ui/strategy-flow";
+import { MacroBoardView } from "./ui/macro-panel";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import {
@@ -88,7 +89,7 @@ import { ThemeToggle } from "./ui/theme";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "market" | "performance" | "tax" | "strategy";
+type WorkspaceTab = "decision" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications";
 
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
@@ -324,6 +325,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     { id: "refresh", label: "Refresh data", icon: <RefreshCw size={15} />, run: () => void load() },
     { id: "decision", label: "Go to Decision", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
     { id: "market", label: "Go to Market Scan", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
+    { id: "macro", label: "Go to Macro", icon: <Landmark size={15} />, run: () => setWorkspaceTab("macro") },
     { id: "perf", label: "Go to Performance", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
     { id: "tax", label: "Go to Tax", icon: <Landmark size={15} />, run: () => setWorkspaceTab("tax") },
     { id: "strategy", label: "Go to Strategy", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("strategy") },
@@ -384,15 +386,18 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               value={policy.connectedAccountId ?? ""}
               onChange={(e) => {
                 const id = e.target.value;
-                if (id === "new") setSettingsOpen(true);
-                else void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                if (id === "manage") {
+                  setSettingsOpen(true);
+                  return;
+                }
+                void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
               }}
             >
               <option value="" disabled>Select Account...</option>
               {snapshot.connectedAccounts?.map(acc => (
                 <option key={acc.id} value={acc.id}>{acc.label} ({acc.environment})</option>
               ))}
-              <option value="new">+ Manage Accounts</option>
+              <option value="manage">Manage Accounts...</option>
             </select>
           </div>
           <button
@@ -454,6 +459,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               tabs={[
                 { id: "decision", label: "Decision" },
                 { id: "market", label: "Market Scan" },
+                { id: "macro", label: "Macro" },
                 { id: "performance", label: "Performance" },
                 { id: "tax", label: "Tax" },
                 { id: "strategy", label: "Strategy" }
@@ -482,6 +488,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
                 <SmartMoneyView snapshot={snapshot} />
               </div>
             )}
+            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "strategy" && (
@@ -818,31 +825,31 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "dividendYield", label: "Div", title: "Annual dividend yield = trailing dividends per share ÷ price. Source: Yahoo / Finnhub.", align: "right", sortKey: "dividendYield",
     render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH) },
   // ── Backend-derived ratios (computed by us, not returned by any API). See src/lib/derived-metrics.ts. ──
-  { id: "peg", label: "PEG", title: "PEG ratio (derived) = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive. Blank when unprofitable or no growth. Computed in-house.", align: "right", sortValue: (q) => deriveMetrics(q).peg,
+  { id: "peg", label: "PEG", title: "[CALCULATED] PEG ratio = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive. Blank when unprofitable or no growth.", align: "right", sortValue: (q) => deriveMetrics(q).peg,
     render: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? <span className="tnum">{v.toFixed(2)}</span> : DASH; },
     cellClass: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? (v < 1 ? "text-up" : v > 2.5 ? "text-down" : "") : ""; } },
-  { id: "roe", label: "ROE", title: "Return on equity (derived) = EPS ÷ book value per share, where BVPS = price ÷ P/B. Higher = more efficient use of capital; negative = losing money on equity. Computed in-house.", align: "right", sortValue: (q) => deriveMetrics(q).roe,
+  { id: "roe", label: "ROE", title: "[CALCULATED] Return on equity = EPS ÷ book value per share, where BVPS = price ÷ P/B. Higher = more efficient use of capital; negative = losing money on equity.", align: "right", sortValue: (q) => deriveMetrics(q).roe,
     render: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? <span className="tnum">{v.toFixed(1)}%</span> : DASH; },
     cellClass: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
-  { id: "earnYld", label: "Earn Yld", title: "Earnings yield (derived) = EPS ÷ price (the inverse of P/E). Usable when P/E is n/a; negative = the company is losing money. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).earnYld,
+  { id: "earnYld", label: "Earn Yld", title: "[CALCULATED] Earnings yield = EPS ÷ price (the inverse of P/E). Usable when P/E is n/a; negative = the company is losing money.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).earnYld,
     render: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}%</span> : DASH; },
     cellClass: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
-  { id: "payout", label: "Payout", title: "Dividend payout ratio (derived) = dividends per share ÷ EPS. >100% means the dividend exceeds earnings and may be unsustainable. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).payout,
+  { id: "payout", label: "Payout", title: "[CALCULATED] Dividend payout ratio = dividends per share ÷ EPS. >100% means the dividend exceeds earnings and may be unsustainable.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).payout,
     render: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(0)}%</span> : DASH; },
     cellClass: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" && v > 100 ? "text-down" : ""; } },
-  { id: "dollarVolM", label: "$ Vol", title: "Daily dollar volume (derived) = price × volume — liquidity gauge for position sizing and slippage. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).dollarVolM,
+  { id: "dollarVolM", label: "$ Vol", title: "[CALCULATED] Daily dollar volume = price × volume — liquidity gauge for position sizing and slippage.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).dollarVolM,
     render: (q) => { const v = deriveMetrics(q).dollarVolM; return typeof v === "number" ? <span className="tnum text-muted">{compactMoney(v * 1e6)}</span> : DASH; } },
-  { id: "spreadBps", label: "Spread", title: "Bid-ask spread in basis points (derived) = (ask − bid) ÷ mid × 10000 — execution cost; wide spreads favor limit orders. Computed in-house when both quotes are present.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).spreadBps,
+  { id: "spreadBps", label: "Spread", title: "[CALCULATED] Bid-ask spread in basis points = (ask − bid) ÷ mid × 10000 — execution cost; wide spreads favor limit orders.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).spreadBps,
     render: (q) => { const v = deriveMetrics(q).spreadBps; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}</span> : DASH; } },
-  { id: "sectorRelStrength", label: "Sec RS", title: "Sector relative strength (derived) = this name's intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today. Computed in-house.", align: "right", defaultHidden: true, sortKey: "sectorRelStrength",
+  { id: "sectorRelStrength", label: "Sec RS", title: "[CALCULATED] Sector relative strength = this name's intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today.", align: "right", defaultHidden: true, sortKey: "sectorRelStrength",
     render: (q) => (typeof q.sectorRelStrength === "number" ? <span className="tnum">{q.sectorRelStrength >= 0 ? "+" : ""}{q.sectorRelStrength.toFixed(2)}%</span> : DASH),
     cellClass: (q) => (typeof q.sectorRelStrength === "number" ? (q.sectorRelStrength >= 0 ? "text-up" : "text-down") : "") },
-  { id: "marginOfSafety", label: "MoS", title: "Margin of safety (derived) = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share). Positive = trading below intrinsic value. Computed in-house for profitable names.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).marginOfSafety,
+  { id: "marginOfSafety", label: "MoS", title: "[CALCULATED] Margin of safety = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share). Positive = trading below intrinsic value.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).marginOfSafety,
     render: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? <span className="tnum">{v >= 0 ? "+" : ""}{v.toFixed(0)}%</span> : DASH; },
     cellClass: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
-  { id: "pctFromHigh", label: "% off Hi", title: "% from the 52-week high (derived) = (price − 52w high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).pctFromHigh,
+  { id: "pctFromHigh", label: "% off Hi", title: "[CALCULATED] % from the 52-week high = (price − 52w high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).pctFromHigh,
     render: (q) => { const v = deriveMetrics(q).pctFromHigh; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}%</span> : DASH; } },
-  { id: "rr52w", label: "R:R", title: "Reward:risk to the 52-week band (derived) = (52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).rr52w,
+  { id: "rr52w", label: "R:R", title: "[CALCULATED] Reward:risk to the 52-week band = (52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).rr52w,
     render: (q) => { const v = deriveMetrics(q).rr52w; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}</span> : DASH; } },
   { id: "shortPercentOfFloat", label: "Short %", title: "Percent of the tradable float sold short. High (>15–20%) raises short-squeeze potential but also signals bearish positioning. Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "shortPercentOfFloat",
     render: (q) => (typeof q.shortPercentOfFloat === "number" ? <span className="tnum text-muted">{q.shortPercentOfFloat.toFixed(1)}%</span> : DASH) },

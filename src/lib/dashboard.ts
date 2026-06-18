@@ -22,10 +22,15 @@ import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
+import { fetchMacroData, determineMarketRegime } from "./macro";
+import { deriveMacroMetrics } from "./macro-metrics";
+import { computeMarketInternals } from "./market-internals";
+import { getMarketSignals, type MarketSignals } from "./market-signals";
+import type { MarketQuote, MarketScan } from "./types";
 
 export async function getDashboardSnapshot(userId: string = "local") {
   const policy = getPolicy(userId);
-  const gateway = getBrokerGateway(policy);
+  const gateway = getBrokerGateway(policy, userId);
   const accounts = await gateway.getAccounts();
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
   const [portfolio, positions, orders] = accountNumber
@@ -93,10 +98,26 @@ export async function getDashboardSnapshot(userId: string = "local") {
     }
   });
 
+  // Macro & market-regime board for the Macro tab (FRED macro + derived metrics + free
+  // market-wide signals). Caches keep this cheap; failures degrade to defaults / omitted.
+  const macro = await fetchMacroData();
+  // Only compute internals from a full scan. Some historical/trimmed audit shapes only
+  // preserve symbol metadata, which is useful for UI labels but not valuation math.
+  const scanForInternals = fullMarketScan(latestStrategyRun?.marketScan);
+  const marketEarningsYield = scanForInternals
+    ? computeMarketInternals(scanForInternals).medianEarnYld
+    : undefined;
+  const macroBoard = {
+    macro,
+    derived: deriveMacroMetrics(macro, { marketEarningsYield }),
+    signals: await getMarketSignals().catch((): MarketSignals => ({})),
+    regime: determineMarketRegime(macro)
+  };
+
   const unifiedFeed = buildUnifiedFeed({
     audit,
     notifications,
-    fills: accountNumber ? listFillEvents(accountNumber) : [],
+    fills: accountNumber ? listFillEvents(accountNumber, undefined, 500, userId) : [],
     orders,
     symbolMetaBySymbol,
     getProposalById: (proposalId) => {
@@ -107,7 +128,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
 
   return {
     policy,
-    strategyPrompt: getStrategyPrompt(),
+    strategyPrompt: getStrategyPrompt(userId),
     accounts,
     portfolio: displayPortfolio,
     positions: displayPositions,
@@ -120,10 +141,10 @@ export async function getDashboardSnapshot(userId: string = "local") {
     audit,
     auditFeed,
     unifiedFeed,
-    connectedAccounts: listConnectedAccounts(),
+    connectedAccounts: listConnectedAccounts(userId),
     latestStrategyRun,
     dailyStats,
-    strategyRuns: listStrategyRuns(15),
+    strategyRuns: listStrategyRuns(15, userId),
     pendingProposals,
     performance,
     thesisScorecard,
@@ -146,6 +167,15 @@ export async function getDashboardSnapshot(userId: string = "local") {
         .sort((a, b) => (b.filedAt ?? "").localeCompare(a.filedAt ?? ""))
         .slice(0, 8)
     },
-    marketSession: currentMarketSession()
+    marketSession: currentMarketSession(),
+    macroBoard
   };
+}
+
+function fullMarketScan(scan: StrategyDecisionLike["marketScan"] | undefined): MarketScan | undefined {
+  if (!scan || !Array.isArray(scan.topCandidates) || scan.topCandidates.length === 0) return undefined;
+  const first = scan.topCandidates[0] as Partial<MarketQuote>;
+  return typeof first.price === "number" && typeof first.intradayChangePct === "number"
+    ? (scan as MarketScan)
+    : undefined;
 }

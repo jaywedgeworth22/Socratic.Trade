@@ -60,6 +60,53 @@ describe("persistence and notifications", () => {
     expect(policy.dryRun).toBeUndefined();
   });
 
+  it("activates strategy profiles without corrupting user-scoped settings", async () => {
+    const userId = `profile-user-${randomUUID()}`;
+    const { createStrategyProfile, getStrategyPrompt } = await import("../src/lib/db");
+
+    createStrategyProfile({ name: "Active Test", prompt: "profile prompt", active: true }, userId);
+
+    expect(getStrategyPrompt(userId)).toBe("profile prompt");
+  });
+
+  it("keeps connected account credentials server-only and preserves them on metadata edits", async () => {
+    const accountId = randomUUID();
+    const { getActiveConnectedAccount, listConnectedAccounts, setActiveConnectedAccount, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: accountId,
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-TEST",
+      label: "Alpaca Test",
+      apiKey: "key-123",
+      apiSecret: "secret-456",
+      isActive: true
+    });
+
+    const listed = listConnectedAccounts().find((account) => account.id === accountId);
+    expect(listed?.apiKey).toBeUndefined();
+    expect(listed?.apiSecret).toBeUndefined();
+    expect(getActiveConnectedAccount()?.apiKey).toBe("key-123");
+    expect(getActiveConnectedAccount()?.apiSecret).toBe("secret-456");
+
+    upsertConnectedAccount({
+      id: accountId,
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-TEST",
+      label: "Renamed Alpaca",
+      isActive: true
+    });
+
+    expect(getActiveConnectedAccount()?.label).toBe("Renamed Alpaca");
+    expect(getActiveConnectedAccount()?.apiKey).toBe("key-123");
+    expect(() => setActiveConnectedAccount("missing-account")).toThrow("Connected account not found.");
+    expect(getActiveConnectedAccount()?.id).toBe(accountId);
+  });
+
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;

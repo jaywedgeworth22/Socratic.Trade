@@ -2,9 +2,11 @@
 //
 // Two consumers share this: the technical connector (`web-sources/technical.ts`, which
 // only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
-// full candles). Sources are free and key-less: Yahoo's chart endpoint first (same host
-// the Yahoo enrichment provider uses), Stooq CSV as a fallback. Server-side only; results
-// are cached briefly. Never fabricates — no bars → returns null, callers degrade to "—".
+// full candles). Sources cascade keyed-first then free: Tradier → Marketstack → Yahoo →
+// Stooq. Keyed providers are reliable from datacenter IPs; the free endpoints (Yahoo/Stooq)
+// are frequently rate-limited (HTTP 429) or bot-challenged server-side, so a keyed provider
+// is strongly recommended. Server-side only; cached briefly. Never fabricates — no bars →
+// returns null, callers degrade to "—".
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
@@ -50,8 +52,14 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   if (hit && hit.expiresAt > now) return hit.bars;
 
   const startDate = new Date(now - 400 * 24 * 60 * 60_000).toISOString().slice(0, 10);
-  const sources: Array<() => Promise<OHLCBar[] | null>> = [];
-  sources.push(() => fetchYahoo(symbol), () => fetchStooq(symbol));
+  // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
+  // then the free fallbacks. Keyed sources self-skip when their env key is unset.
+  const sources: Array<() => Promise<OHLCBar[] | null>> = [
+    () => fetchTradier(symbol, startDate),
+    () => fetchMarketstack(symbol),
+    () => fetchYahoo(symbol),
+    () => fetchStooq(symbol)
+  ];
 
   for (const fetchFrom of sources) {
     const bars = await fetchFrom();
@@ -61,6 +69,70 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     }
   }
   return null;
+}
+
+interface TradierHistoryDay {
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+}
+interface TradierHistoryResponse {
+  history?: { day?: TradierHistoryDay | TradierHistoryDay[] } | null;
+}
+
+/** Tradier daily history — brokerage-grade, generous rate limits. Best primary source. */
+async function fetchTradier(symbol: string, startDate: string): Promise<OHLCBar[] | null> {
+  const key = process.env.TRADIER_API_KEY;
+  if (!key) return null;
+  const base = process.env.TRADIER_BASE_URL ?? "https://api.tradier.com";
+  try {
+    const url = `${base}/v1/markets/history?symbol=${encodeURIComponent(symbol)}&interval=daily&start=${startDate}`;
+    const json = await politeFetchJson<TradierHistoryResponse>(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } });
+    const day = json?.history?.day;
+    const days = Array.isArray(day) ? day : day ? [day] : [];
+    const bars: OHLCBar[] = [];
+    for (const d of days) {
+      if (typeof d.close !== "number" || !Number.isFinite(d.close) || !d.date) continue;
+      bars.push({ time: d.date, open: numOrUndef(d.open), high: numOrUndef(d.high), low: numOrUndef(d.low), close: d.close, volume: numOrUndef(d.volume) });
+    }
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
+interface MarketstackEodRow {
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+}
+interface MarketstackEodResponse {
+  data?: MarketstackEodRow[];
+}
+
+/** Marketstack EOD — keyed fallback (free tier is monthly-capped, so secondary to Tradier). */
+async function fetchMarketstack(symbol: string): Promise<OHLCBar[] | null> {
+  const key = process.env.MARKETSTACK_API_KEY;
+  if (!key) return null;
+  try {
+    const url = `https://api.marketstack.com/v1/eod?access_key=${key}&symbols=${encodeURIComponent(symbol)}&limit=300&sort=ASC`;
+    const json = await politeFetchJson<MarketstackEodResponse>(url, {});
+    const rows = json?.data ?? [];
+    const bars: OHLCBar[] = [];
+    for (const r of rows) {
+      if (typeof r.close !== "number" || !Number.isFinite(r.close) || !r.date) continue;
+      bars.push({ time: r.date, open: numOrUndef(r.open), high: numOrUndef(r.high), low: numOrUndef(r.low), close: r.close, volume: numOrUndef(r.volume) });
+    }
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {

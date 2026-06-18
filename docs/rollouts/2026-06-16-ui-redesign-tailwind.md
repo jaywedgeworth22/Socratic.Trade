@@ -108,4 +108,3 @@ modal's Profiles tab was removed (now Operate / Risk & limits / Notifications).
 - Wire the kill-switch/blocked alert paths through the new toast/modal once more
   with a live OPENAI key to confirm end-to-end.
 - Consider per-section collapse + a denser "compact" density toggle.
-</content>

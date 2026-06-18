@@ -91,15 +91,17 @@ Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
 2. Register it in `index.ts`: refresh in `refreshDueWebSources`, merge its
    per-symbol contribution into `getSymbolWebSignals`, add to `getWebSourcesStatus`.
 3. If it produces a new numeric field, follow the enrichment add-a-field checklist
-   in `docs/phase-4-market-data-scoring.md` / CLAUDE.md (interface → union →
+   in `docs/phase-4-market-data-scoring.md` / `AGENTS.md` (`CLAUDE.md` symlinks
+   there) (interface → union →
    EMPTY_SOURCED → cascade → MarketQuote → market.ts `applyEnrichment` → summary
    projection → prompt → UI).
 
 ## Follow-ups
 
-- SEC **8-K** material-event bulletins (cheap from the current-8-K feed + CIK map).
-- Sector as a fourth learning dimension (thesis × regime × **sector** × factor) —
-  needs sector threaded onto closed lots first.
+- SEC **8-K** material-event bulletins are now implemented as coarse per-symbol
+  "filed an 8-K" catalysts; richer per-item 8-K document summaries remain open.
+- Sector is now threaded onto fills and has a scorecard; the composite thesis ×
+  regime × **sector** × factor view remains open.
 - Substantially-identical / House coverage for congress once a stable free House
   feed is available (the eFD scrape is Senate-only; Capitol Trades adds House when
   its back-end is up).

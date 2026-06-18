@@ -161,5 +161,3 @@ around ~42% — the user can drag the divider to rebalance.
   system and drop `zoom` to remove residual subpixel softness.
 - Strategy tuning tests and pane-density polish from Phase 8 remain open
   (unchanged by this pass).
-</content>
-</invoke>

@@ -1,8 +1,14 @@
 # Phase 1 Spec — Autonomy Loop
 
-**Audience:** an implementer (Sonnet) working in a fresh session. This spec is the source
-of truth. Follow it exactly; do not redesign. Where it says "see existing X," read that
-file first.
+**Historical implementation spec.** This was the original Phase 1 handoff for a
+fresh implementation session. The core scheduler, run lock, market-session state,
+and dashboard controls now exist; keep this file as design history and use
+`STATUS.md` plus current code as the live source of truth before changing the
+autonomy path.
+
+Current hardening gaps: market holidays are still not modeled, scheduler behavior
+is local single-process, and any dev-server `EMFILE` watcher issue is operational
+rather than a strategy-loop feature gap.
 
 ## Objective
 
@@ -179,6 +185,9 @@ practice. In production (`next start`) it runs once.
 - Multi-process / serverless scheduling (this app is single-process local).
 
 ## Acceptance criteria
+
+These criteria describe the original implementation target. Re-verify them when
+touching scheduler, lock, market-hours, or dashboard runtime controls.
 
 - [ ] With `ROBINHOOD_ADAPTER=mock`, enabling autonomy and setting cadence to 1 minute
       causes `runStrategyOnce()` to fire automatically during a simulated open session;

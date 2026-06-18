@@ -11,32 +11,34 @@ steps materially change.
   design roadmap.
 - Roadmap: `PLAN.md` tracks the cross-phase implementation order; `docs/`
   contains the per-phase design details.
-- Latest completed design area in docs: `docs/phase-8-cockpit-ui.md` describes
-  the single-screen cockpit UI and Strategy Studio review/apply workflow.
+- Latest documentation audit: 2026-06-18 reviewed all repo-authored Markdown
+  outside dependency/generated directories, including ignored iCloud conflict
+  copies. Canonical current docs were refreshed; ignored `" 2.md"` files are
+  stale conflict snapshots and should not be used as source of truth.
+- Latest completed design area in docs: `docs/phase-10-signals-learning-ui-v2.md`
+  now reflects current shipped signals/learning/UI work and remaining gaps.
 - Cloud branch: `codex/upload-current-state` is pushed to `origin`.
 - Draft PR: https://github.com/jaywedgeworth22/robinhood-agentic-trading/pull/2
 
 ## Active Focus
 
-- 2026-06-17: Active dev is on branch **`phase-10`**, executing
+- 2026-06-18: Active dev is on branch **`phase-10`**, executing
   `docs/phase-10-signals-learning-ui-v2.md` (status markers in that doc are the
-  source of truth for what's next). `phase-10` is a strict descendant of
-  `web-sources` and of `main`, so it **fast-forward-merges into `main`** — this is
-  now the canonical merge (it supersedes the old "merge web-sources → main", F3).
-  Done so far on `phase-10`: **A1** positioning ScoringWeights sub-score (scraped
-  smart-money signals now move the deterministic score + re-rank after overlay);
-  **B1** sector learning dimension (`getSectorScorecard` → prompt); **C1** SEC 8-K
-  catalyst connector (`web-sources/sec8k.ts`, 94 live events); **C2** market breadth
-  (`breadthPct` on `MarketScan`). Plus the share-quantity number policy finalized:
-  **records keep full double precision; display = 3 sig figs OR all whole-number
-  digits, whichever is larger, comma-grouped** (`formatQuantity`; see
-  `docs/rollouts/2026-06-17-quantity-precision-display.md`). Next per the plan:
-  **B2** full EvidenceDigest (chosen + skipped), then D1/D2 prompt efficiency,
-  E1/E2 UI, remaining C sources. Also planned: `docs/phase-11-multi-user.md`
-  (per-user keys/preferences; API-keys settings section first). 136 tests; tsc +
-  build green. Git commits use the CLT workaround
-  (`DEVELOPER_DIR=/Library/Developer/CommandLineTools`) until the Xcode license is
-  accepted. iCloud sync-conflict files (`"<name> 2.<ext>"`) are now gitignored.
+  source of truth for what's next). `phase-10`, `main`, and `origin/main` are
+  aligned at `b86e461`; the old standalone "merge web-sources → main" item is
+  superseded. Shipped Phase 10 work now includes positioning re-score/re-sort,
+  sector scorecard, full chosen+skipped EvidenceDigest, SEC 8-K coarse bulletins,
+  market breadth/internals, expanded FRED/macro metrics, Fama-French, Cboe
+  SKEW/VVIX, CFTC COT, technical signals, RAG scaffold, and symbol drilldown.
+  Next highest leverage: D1/D2 prompt efficiency, B3/B4 skipped-name/factor
+  learning, E1/E2 completion, C5/C6 analyst/XBRL sources, and API-key routing from
+  `docs/phase-11-multi-user.md`. Share-quantity policy is finalized: records keep
+  full double precision; display = 3 sig figs OR all whole-number digits,
+  whichever is larger, comma-grouped (`formatQuantity`; see
+  `docs/rollouts/2026-06-17-quantity-precision-display.md`). Git commits use the
+  CLT workaround (`DEVELOPER_DIR=/Library/Developer/CommandLineTools`) until the
+  Xcode license is accepted. iCloud sync-conflict files (`"<name> 2.<ext>"`) are
+  gitignored.
 - Current publish branch packages the latest dashboard, cockpit UI,
   market-data, strategy, short/cover, and handoff-doc work for review.
 - **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
@@ -108,8 +110,9 @@ None. Phase 2 backend optimization is complete.
   gate** on auto-tuner factor-weight shifts. `tsc` + 113 tests + build pass; live
   scrapes verified (78 real congress trades; SEC parser on live filings). See
   `docs/rollouts/2026-06-16-web-sources-and-learning.md` and
-  `docs/phase-9-web-sources.md`. Branch not yet pushed/merged.
-- 2026-06-17: Phase 10 (E1) - Symbol Drilldown Drawer. Added a clickable row action to `MarketScanView` that slides out a `SymbolDrilldown` drawer. Shows factor breakdown waterfall, provenance mappings, and an AI Conviction summary. See `docs/rollouts/2026-06-17-symbol-drilldown-drawer.md`.
+  `docs/phase-9-web-sources.md`. This branch status is historical; the work is now
+  included in the `phase-10`/`main` lineage.
+- 2026-06-17: Phase 10 (E1) - Symbol Drilldown Drawer. Added a clickable row action to `MarketScanView` that slides out a `SymbolDrilldown` drawer. It now labels normalized 0-100 values as factor scores, not a true weighted waterfall. See `docs/rollouts/2026-06-17-symbol-drilldown-drawer.md`.
 - 2026-06-17: Alpaca Broker Integration. Added `@alpacahq/alpaca-trade-api` and native `AlpacaBrokerGateway` (`src/lib/alpaca.ts`). Scaffolded `user_api_keys` and getters/setters in `src/lib/db.ts` for multi-tenant keys. See `docs/rollouts/2026-06-17-alpaca-integration.md`. Next up: Broker selection in UI and integrating into strategy runs.
 - 2026-06-18: Multi-Account Architecture. Replaced the single-account toggle with a robust multi-account switcher in the UI. Added an `Integrations` tab to `SettingsModal` for adding/removing Robinhood and Alpaca accounts with their API keys. Modified `src/lib/db.ts` so `getPolicy` dynamically inherits `paperMode`, `accountNumber` and `activeBroker` from the active connected account, meaning execution and tracking are isolated to the active account without needing to refactor `runStrategyOnce`. See `docs/rollouts/2026-06-18-multi-account-architecture.md`.
 - 2026-06-18: **Technical-signal web source (Phase 10 A2.1)** — the first bar-based
@@ -124,6 +127,16 @@ None. Phase 2 backend optimization is complete.
   Lighter `momentum`-blend used instead of a new ScoringWeights factor to avoid colliding
   with concurrent scoring edits. Operator guide: `docs/tradingview-pine-setup.md`. See
   `docs/rollouts/2026-06-18-technical-signals-tradingview.md`. Not yet committed.
+- 2026-06-18: **Price chart in the symbol drilldown** — TradingView **Lightweight Charts v5**
+  (MIT, lazy-loaded) showing 1Y candlesticks + SMA50/200 + volume, themed via CSS vars, fed
+  our own OHLC via new `GET /api/history`. Generalized the OHLC fetch into `src/lib/history.ts`
+  with a **keyed-first cascade Tradier → Marketstack → Yahoo → Stooq** (free endpoints are
+  blocked server-side: Yahoo 429, Stooq bot-challenge; Tradier/Marketstack keys work, 276
+  bars). Technical `computed` producer refactored to reuse it. New `price-chart.tsx`,
+  `history.ts`, route, +7 tests (188 total). Browser-verified (NVDA drilldown renders).
+  **Open blocker (concurrent edit, not this work):** `src/lib/dashboard.ts:107` fails `tsc`
+  — `computeMarketInternals` is fed a trimmed `latestStrategyRun.marketScan`; owner of the
+  macro-internals work to resolve. See `docs/rollouts/2026-06-18-price-chart-lightweight-charts.md`.
 - 2026-06-18: **Voyage AI & Pinecone RAG Integration** — Replaced the stubbed RAG layer with 
   a production-ready integration using `voyage-finance-2` embeddings and Pinecone vector 
   database. Wired up the backend to asynchronously inject SEC 8-K filings into the vector DB 
@@ -134,6 +147,30 @@ None. Phase 2 backend optimization is complete.
   and adjusted semantic design tokens (`--surface`, `--line`) to natively use translucent RGBA values. 
   This transforms all existing `bg-surface/50 backdrop-blur` classes across the app into genuine 
   beveled glass panels with inner white/dark highlights. Build is green. See `docs/rollouts/2026-06-18-glassmorphism-ui.md`.
+- 2026-06-18: **Multi-account credential hardening + UI clarity fixes** — fixed active-profile
+  setting persistence (`user_settings`, not malformed `settings` writes), kept connected-account
+  API keys server-only in dashboard snapshots, encrypted connected-account credentials at rest,
+  preserved credentials when editing account metadata, made Alpaca use the selected connected
+  account credentials, restored a command-bar "Manage Accounts..." escape hatch, and clarified
+  symbol drilldown factor values as normalized 0-100 scores. `npx tsc --noEmit`, `npm test`
+  (**188 tests**), and `npm run build` pass after deleting stale `.next` output. Dev-server
+  follow-up: local `next dev` hit repeated `EMFILE: too many open files, watch` warnings and an
+  orphan port-3000 Node listener could not be stopped because escalation was rejected by the
+  environment. See `docs/rollouts/2026-06-18-multi-account-hardening-review.md`.
+- 2026-06-18: **Markdown documentation audit** — read all repo-authored Markdown
+  files (including `CLAUDE.md` symlink and ignored iCloud conflict copies, excluding
+  `node_modules`, `.git`, and `.next`) and updated stale current docs. Notable
+  findings: `README.md` still pointed to deleted `docs/HANDOFF.md`; Phase 10 was
+  stale for later June 18 signal/RAG/UI work; Phase 9 still pointed at `CLAUDE.md`
+  instead of `AGENTS.md`; Phase 1/8 needed clearer historical-vs-current framing.
+  See `docs/rollouts/2026-06-18-markdown-doc-audit.md`.
+- 2026-06-18: **Continuation hardening pass** — updated `.env.example` to match the
+  expanded provider surface, fixed the Macro tab's dashboard internals path so it
+  does not cast trimmed audit scans into full `MarketScan` data, passed `userId`
+  through dashboard prompt/account/run/fill list reads, typed `webSources.technical`,
+  and added regression tests proving the OHLC cascade uses Tradier first and
+  Marketstack before free sources. See
+  `docs/rollouts/2026-06-18-keys-macro-panel-and-history-keys.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
@@ -153,6 +190,10 @@ None. Phase 2 backend optimization is complete.
 - If the browser shows plain unstyled HTML, verify
   `/_next/static/css/app/layout.css` is returning `200`; if it returns `404`,
   restart the dev server on `127.0.0.1:3000`.
+- If `next dev` repeatedly logs `EMFILE: too many open files, watch`, stop duplicate Node
+  listeners on port `3000`, clean stale generated output only if needed, and restart with a
+  higher file-descriptor limit or reduced watcher scope. A production `npm run build` remains
+  the authoritative verification path.
 
 ## Read This First
 
