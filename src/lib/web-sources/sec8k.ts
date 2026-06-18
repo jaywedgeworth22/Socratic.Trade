@@ -172,5 +172,18 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
   setInternalSetting(DATASET_KEY, dataset);
   const ok = fresh.length > 0;
   audit("web_source_refresh", { id: "sec8k", ok, recordCount: merged.length, fresh: fresh.length, warning });
+
+  // Store new filings into vector DB for RAG
+  if (fresh.length > 0) {
+    import("../vector-db").then(({ storeContext }) => {
+      for (const e of fresh) {
+        storeContext(
+          `SEC 8-K Filing for ${e.symbol} on ${e.filedAt}. Accession: ${e.accession}.`,
+          { symbol: e.symbol, source: "sec-8k", timestamp: e.filedAt }
+        ).catch(console.error);
+      }
+    }).catch(console.error);
+  }
+
   return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };
 }

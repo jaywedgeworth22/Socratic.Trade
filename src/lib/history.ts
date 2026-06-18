@@ -51,8 +51,6 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
 
   const startDate = new Date(now - 400 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   const sources: Array<() => Promise<OHLCBar[] | null>> = [];
-  if (process.env.TRADIER_API_KEY) sources.push(() => fetchTradier(symbol, startDate));
-  if (process.env.MARKETSTACK_API_KEY) sources.push(() => fetchMarketstack(symbol));
   sources.push(() => fetchYahoo(symbol), () => fetchStooq(symbol));
 
   for (const fetchFrom of sources) {

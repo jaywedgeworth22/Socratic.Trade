@@ -124,6 +124,16 @@ None. Phase 2 backend optimization is complete.
   Lighter `momentum`-blend used instead of a new ScoringWeights factor to avoid colliding
   with concurrent scoring edits. Operator guide: `docs/tradingview-pine-setup.md`. See
   `docs/rollouts/2026-06-18-technical-signals-tradingview.md`. Not yet committed.
+- 2026-06-18: **Voyage AI & Pinecone RAG Integration** — Replaced the stubbed RAG layer with 
+  a production-ready integration using `voyage-finance-2` embeddings and Pinecone vector 
+  database. Wired up the backend to asynchronously inject SEC 8-K filings into the vector DB 
+  upon scraping. Integrated retrieval directly into `runStrategyOnce`, injecting top candidates' 
+  financial context directly into the Bull Agent prompt. See `docs/rollouts/2026-06-18-voyage-pinecone-rag.md`.
+- 2026-06-18: **Glassmorphic UI Redesign** — Enhanced the UI aesthetics to a premium, modern 
+  glassmorphism design. Updated `globals.css` with animated, vibrant mesh gradient backgrounds 
+  and adjusted semantic design tokens (`--surface`, `--line`) to natively use translucent RGBA values. 
+  This transforms all existing `bg-surface/50 backdrop-blur` classes across the app into genuine 
+  beveled glass panels with inner white/dark highlights. Build is green. See `docs/rollouts/2026-06-18-glassmorphism-ui.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

@@ -93,6 +93,21 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
 
+    let ragContext = "";
+    try {
+      const { retrieveContext } = await import("./vector-db");
+      const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
+      const contexts = await Promise.all(topSymbols.map(sym => 
+        retrieveContext(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
+      ));
+      const validContexts = contexts.flat().filter(Boolean);
+      if (validContexts.length > 0) {
+        ragContext = validContexts.join("\n\n");
+      }
+    } catch (e) {
+      console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
+    }
+
     const llmProposals = await proposeTrades({
       userId,
       policyAllowlist: allowedSymbols,
@@ -103,7 +118,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       recentOrders: compactRecentOrders(orders),
       marketScan,
       dailyNotionalUsed: daily.notional,
-      dailyOrderCount: daily.orderCount
+      dailyOrderCount: daily.orderCount,
+      ragContext
     });
 
     const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy));
@@ -594,6 +610,7 @@ async function proposeTrades(input: {
   marketScan?: MarketScan;
   dailyNotionalUsed: number;
   dailyOrderCount: number;
+  ragContext?: string;
 }): Promise<TradeProposal[]> {
   if (!process.env.OPENAI_API_KEY) return fallbackProposal(input);
 
@@ -709,6 +726,7 @@ async function proposeTrades(input: {
     "Your `confidenceScore` (1–100) now deterministically drives position size (higher conviction + a proven thesis edge = larger size). Calibrate it honestly — don't inflate it.",
     THESIS_PLAYBOOK_GUIDE,
     "",
+    ...(input.ragContext ? ["", "--- RETRIEVED FINANCIAL CONTEXT (RAG) ---", input.ragContext, "------------------------------------------", ""] : []),
     "Return strict JSON only. No markdown. No text outside the JSON object."
   ].join("\n");
 

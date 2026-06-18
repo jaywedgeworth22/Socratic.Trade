@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
+    "@pinecone-database/pinecone": "^8.0.0",
     "@xyflow/react": "^12.11.0",
     "better-sqlite3": "^11.10.0",
     "clsx": "^2.1.1",
@@ -27,6 +28,7 @@
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
+    "voyageai": "^0.4.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
