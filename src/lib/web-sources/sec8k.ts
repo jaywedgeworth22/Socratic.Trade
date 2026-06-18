@@ -25,6 +25,8 @@ export interface EightKEvent {
   symbol: string;
   filedAt: string; // ISO date
   accession: string;
+  filingUrl?: string;
+  items?: string[];
 }
 export interface EightKDataset {
   events: EightKEvent[];
@@ -46,9 +48,9 @@ export function getEightKDataset(): EightKDataset | undefined {
 
 // ── Pure parsers (unit-tested) ───────────────────────────────────────────────
 
-/** Parse the current-8-K atom feed into {cik, accession, filedAt} rows. */
-export function parseCurrent8KFeed(atomXml: string): Array<{ cik: string; accession: string; filedAt?: string }> {
-  const out: Array<{ cik: string; accession: string; filedAt?: string }> = [];
+/** Parse the current-8-K atom feed into {cik, accession, filedAt, filingUrl} rows. */
+export function parseCurrent8KFeed(atomXml: string): Array<{ cik: string; accession: string; filedAt?: string; filingUrl?: string }> {
+  const out: Array<{ cik: string; accession: string; filedAt?: string; filingUrl?: string }> = [];
   const seen = new Set<string>();
   for (const entry of atomXml.split(/<entry>/i).slice(1)) {
     const title = entry.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "";
@@ -58,7 +60,7 @@ export function parseCurrent8KFeed(atomXml: string): Array<{ cik: string; access
     const updated = entry.match(/<updated>([\s\S]*?)<\/updated>/i)?.[1];
     if (!cik || !accession || seen.has(accession)) continue;
     seen.add(accession);
-    out.push({ cik: String(Number(cik)), accession, filedAt: updated ? updated.slice(0, 10) : undefined });
+    out.push({ cik: String(Number(cik)), accession, filedAt: updated ? updated.slice(0, 10) : undefined, filingUrl: link });
   }
   return out;
 }
@@ -99,10 +101,12 @@ export function getEightKSignals(symbols: string[], now: number = Date.now()): R
   for (const [symbol, events] of bySymbol) {
     events.sort((a, b) => Date.parse(b.filedAt) - Date.parse(a.filedAt));
     const last = events[0]?.filedAt;
+    const items = events.flatMap((event) => event.items ?? []).slice(0, 3);
+    const itemText = items.length > 0 ? ` Items: ${items.join("; ")}.` : "";
     out[symbol] = {
       count: events.length,
       lastFiledAt: last,
-      bulletin: `Catalyst: ${symbol} filed ${events.length > 1 ? `${events.length} 8-Ks` : "an 8-K"} (material event) ${last ? `on ${last}` : "recently"} — check for fresh news.`
+      bulletin: `Catalyst: ${symbol} filed ${events.length > 1 ? `${events.length} 8-Ks` : "an 8-K"} (material event) ${last ? `on ${last}` : "recently"}.${itemText} Check for fresh news.`
     };
   }
   return out;
@@ -139,6 +143,67 @@ export function mergeEightK(existing: EightKEvent[], fresh: EightKEvent[], now: 
   return Array.from(byAccession.values());
 }
 
+function absoluteSecUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/")) return `${SEC_BASE}${url}`;
+  return `${SEC_BASE}/${url}`;
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+export function parseEightKItemsFromHtml(html: string): string[] {
+  const items = new Set<string>();
+  const infoBlocks = html.match(/<div[^>]*class=["']info["'][^>]*>[\s\S]*?<\/div>/gi) ?? [];
+  for (const block of infoBlocks) {
+    const text = decodeXmlEntities(block.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    for (const match of text.matchAll(/Item\s+\d+\.\d{2}\s+[^;.]+/gi)) {
+      items.add(match[0].trim());
+    }
+  }
+  for (const match of html.matchAll(/Item\s+\d+\.\d{2}\s+[^<\n\r;.]+/gi)) {
+    items.add(decodeXmlEntities(match[0].replace(/\s+/g, " ").trim()));
+  }
+  return Array.from(items).slice(0, 8);
+}
+
+async function enrichEightKEvents(events: EightKEvent[]): Promise<EightKEvent[]> {
+  const limit = Number(process.env.WEB_SOURCE_SEC8K_DETAIL_LIMIT ?? 25);
+  const maxDetails = Number.isFinite(limit) && limit > 0 ? limit : 25;
+  const enriched = await Promise.all(
+    events.slice(0, maxDetails).map(async (event) => {
+      const url = absoluteSecUrl(event.filingUrl);
+      if (!url) return event;
+      try {
+        const html = await politeFetchText(url, { headers: { "user-agent": secUserAgent(), accept: "text/html" } });
+        const items = parseEightKItemsFromHtml(html);
+        return items.length > 0 ? { ...event, filingUrl: url, items } : { ...event, filingUrl: url };
+      } catch {
+        return { ...event, filingUrl: url };
+      }
+    })
+  );
+  return [...enriched, ...events.slice(maxDetails)];
+}
+
+export function buildEightKContext(event: EightKEvent): string {
+  return [
+    `SEC 8-K filing for ${event.symbol}.`,
+    `Filed: ${event.filedAt}.`,
+    `Accession: ${event.accession}.`,
+    event.items?.length ? `Reported item(s): ${event.items.join("; ")}.` : "Reported item(s): not available from the filing summary page.",
+    event.filingUrl ? `SEC filing page: ${event.filingUrl}.` : "",
+    "Use this as catalyst context only; infer bullish/bearish impact from item details and other market evidence."
+  ].filter(Boolean).join("\n");
+}
+
 export async function refreshEightK(now: number = Date.now(), force = false): Promise<import("./types").WebSourceRefreshResult> {
   if (!force && !isEightKRefreshDue(now)) {
     const ds = getEightKDataset();
@@ -155,8 +220,13 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
       { headers: { "user-agent": secUserAgent(), accept: "application/atom+xml" } }
     );
     fresh = parseCurrent8KFeed(feed)
-      .map((row) => ({ symbol: cikMap[row.cik], filedAt: row.filedAt ?? new Date(now).toISOString().slice(0, 10), accession: row.accession }))
-      .filter((e): e is EightKEvent => Boolean(e.symbol));
+      .map((row): EightKEvent | undefined => {
+        const symbol = cikMap[row.cik];
+        if (!symbol) return undefined;
+        return { symbol, filedAt: row.filedAt ?? new Date(now).toISOString().slice(0, 10), accession: row.accession, ...(row.filingUrl ? { filingUrl: row.filingUrl } : {}) };
+      })
+      .filter((event): event is EightKEvent => Boolean(event));
+    fresh = await enrichEightKEvents(fresh);
   } catch (error) {
     warning = error instanceof Error ? error.message : "sec8k failed";
   }
@@ -173,16 +243,24 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
   const ok = fresh.length > 0;
   audit("web_source_refresh", { id: "sec8k", ok, recordCount: merged.length, fresh: fresh.length, warning });
 
-  // Store new filings into vector DB for RAG
+  // Store new filings into vector DB for RAG. This is best-effort and batched so refresh
+  // durability does not depend on Pinecone/Voyage availability.
   if (fresh.length > 0) {
-    import("../vector-db").then(({ storeContext }) => {
-      for (const e of fresh) {
-        storeContext(
-          `SEC 8-K Filing for ${e.symbol} on ${e.filedAt}. Accession: ${e.accession}.`,
-          { symbol: e.symbol, source: "sec-8k", timestamp: e.filedAt }
-        ).catch(console.error);
-      }
-    }).catch(console.error);
+    import("../vector-db")
+      .then(({ storeContexts }) =>
+        storeContexts(fresh.map((event) => ({
+          text: buildEightKContext(event),
+          metadata: {
+            symbol: event.symbol,
+            source: "sec-8k",
+            timestamp: event.filedAt,
+            accession: event.accession,
+            filingUrl: event.filingUrl,
+            items: event.items ?? []
+          }
+        })))
+      )
+      .catch(console.error);
   }
 
   return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };

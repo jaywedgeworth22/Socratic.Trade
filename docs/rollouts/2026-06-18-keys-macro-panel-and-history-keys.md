@@ -6,7 +6,7 @@ technicals; (B) built the Macro & Market UI tab; and wired the previously-unused
 keys (Tradier, Marketstack) into the actual fetch cascade.
 
 ## A) Env / keys (.env.local — gitignored)
-- `SEC_EDGAR_USER_AGENT="John Wedgeworth mail@jaywedgeworth.com"` — SEC insider/8-K connectors now identify politely (SEC asks for a contact UA; reduces throttling).
+- `SEC_EDGAR_USER_AGENT=<descriptive app/contact user agent>` — SEC insider/8-K connectors now identify politely (SEC asks for a contact UA; reduces throttling).
 - `ENCRYPTION_KEY=<32-byte hex>` — **self-generated** with `crypto.randomBytes(32).toString("hex")` (not a provider key). `db.ts` does `Buffer.from(ENCRYPTION_KEY,"hex")` for AES-256-GCM; without it the app used a memory-only key (encrypted broker keys lost on restart). Now persistent.
 - `FRED_API_KEY` — set last round; validated live this round (real macro now flows).
 - `TECHNICAL_SOURCE=computed` — activates the in-house technical producer (RSI/MACD/MA from price bars) instead of the push-only TradingView producer.

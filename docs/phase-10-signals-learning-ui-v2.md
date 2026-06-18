@@ -88,7 +88,9 @@ Codex: "major planned sources remain unimplemented." Default to free/official fi
 - **C1 `[done]` SEC 8-K material-event bulletins.** New `web-sources/sec8k.ts`: the
   current-8-K atom feed + a weekly-cached CIK→ticker map → per-symbol "filed an 8-K"
   catalyst bulletins (rolling 4-day window), wired into the overlay/prompt + status.
-  Live-verified (94 events). Coarse (no per-item 8-K detail yet — follow-up).
+  Fresh events now fetch the SEC filing summary page and capture item labels (for
+  example Item 2.02 / Item 5.02) for richer bulletins and RAG context. Still not
+  a full filing-text digest.
 - **C2 `[done]` Market breadth.** `scanMarket` computes `breadthPct` (% of the full
   screener advancing today — free, from data already fetched) onto `MarketScan`; the
   agent gets `marketBreadth.advancingPct` with risk-on/off guidance. (% above
@@ -114,9 +116,13 @@ Codex: "make prompt compaction adaptive."
 - **D2 `[todo]` Prompt-cache the stable system prefix** (keep dynamic learning blocks
   last) to cut token cost.
 - **D3 `[partial]` Async raw-document digests / retrieval.** Voyage + Pinecone RAG
-  now stores/retrieves filing context for the Bull prompt path, but it is still a
-  lightweight scaffold: add source links, timestamps, stale-data flags, timeout/cache
-  behavior, and richer per-document summaries before calling it production-grade.
+  now stores/retrieves filing context for the Bull prompt path. The vector layer is
+  tracked, initializes Pinecone once per key/index, supports batched `storeContexts`,
+  embeds documents/queries with the right input type, and stores SEC 8-K item labels
+  + filing links. Retrieved snippets are sent in the dynamic user payload as
+  `retrievedFinancialContext`, not in the stable system prompt. Still open: full
+  filing-text/news digests, stale-data flags, and timeout budgets for a
+  production-grade document memory.
 - **D4 `[todo]` Cross-source agreement flags** when providers disagree on a value.
 
 ## Phase E — UI

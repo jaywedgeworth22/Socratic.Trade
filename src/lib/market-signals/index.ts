@@ -1,6 +1,7 @@
 import { fetchCboeVolStats, type CboeVolStats } from "./cboe";
 import { fetchCftcSpPositioning } from "./cftc";
 import { fetchFamaFrenchFactors, type FamaFrenchFactors } from "./famafrench";
+import { fetchFullMarketBreadth } from "./massive";
 
 /**
  * Market-wide regime/sentiment signals from free, no-key sources — Cboe (options-implied
@@ -24,19 +25,29 @@ export interface MarketSignals {
   factors1m?: Partial<Record<"mktRf" | "smb" | "hml" | "mom", number>>;
   /** Latest factor observation date. */
   factorsAsOf?: string;
+  /** True full-universe market breadth (% of all US stocks advancing), from Massive grouped daily. */
+  marketBreadthPct?: number;
+  marketAdvancers?: number;
+  marketDecliners?: number;
+  /** Biggest liquid movers across the whole market. */
+  marketTopGainers?: Array<{ sym: string; pct: number }>;
+  marketTopLosers?: Array<{ sym: string; pct: number }>;
+  marketBreadthAsOf?: string;
 }
 
-const CACHE_TTL_MS = 6 * 60 * 60_000; // these move daily/weekly; 6h is plenty
+// Breadth wants daily freshness, so the combined cache is short; the other sources are cheap.
+const CACHE_TTL_MS = 60 * 60_000; // 1h
 const cache: { expiresAt: number; data: MarketSignals | null } = { expiresAt: 0, data: null };
 
 export async function getMarketSignals(): Promise<MarketSignals> {
   const now = nowMs();
   if (cache.data && cache.expiresAt > now) return cache.data;
 
-  const [cboe, cot, ff] = await Promise.all([
+  const [cboe, cot, ff, breadth] = await Promise.all([
     fetchCboeVolStats().catch((): CboeVolStats => ({})),
     fetchCftcSpPositioning().catch(() => undefined),
-    fetchFamaFrenchFactors().catch((): FamaFrenchFactors => ({}))
+    fetchFamaFrenchFactors().catch((): FamaFrenchFactors => ({})),
+    fetchFullMarketBreadth().catch(() => undefined)
   ]);
 
   const data: MarketSignals = {};
@@ -47,6 +58,14 @@ export async function getMarketSignals(): Promise<MarketSignals> {
   if (cot?.reportDate) data.cotReportDate = cot.reportDate;
   if (ff.factors1m) data.factors1m = ff.factors1m;
   if (ff.asOf) data.factorsAsOf = ff.asOf;
+  if (breadth) {
+    if (typeof breadth.breadthPct === "number") data.marketBreadthPct = breadth.breadthPct;
+    data.marketAdvancers = breadth.advancers;
+    data.marketDecliners = breadth.decliners;
+    if (breadth.topGainers.length > 0) data.marketTopGainers = breadth.topGainers;
+    if (breadth.topLosers.length > 0) data.marketTopLosers = breadth.topLosers;
+    if (breadth.asOf) data.marketBreadthAsOf = breadth.asOf;
+  }
 
   cache.data = data;
   cache.expiresAt = now + CACHE_TTL_MS;

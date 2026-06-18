@@ -47,7 +47,7 @@ Run all three, in this order, before saying a change is complete:
 
 ```bash
 npx tsc --noEmit   # type errors — fast, do this first
-npm test           # vitest, ~76 tests across 10 suites
+npm test           # vitest, ~195 tests across 27 files as of 2026-06-18
 npm run build      # full Next.js build; also re-checks types
 ```
 

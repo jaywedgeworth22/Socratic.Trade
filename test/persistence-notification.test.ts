@@ -6,7 +6,10 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
-  upsertExperiences: async () => {}
+  upsertExperiences: async () => {},
+  retrieveContext: async () => ["SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition."],
+  storeContext: async () => {},
+  storeContexts: async () => {}
 }));
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-test-${randomUUID()}.db`)}`;
@@ -166,6 +169,76 @@ describe("persistence and notifications", () => {
       expect(after).toBe(before + 1);
     } finally {
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+    }
+  });
+
+  it("sends retrieved context in user content instead of the stable system prompt", async () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const openAiBodies: any[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("api.openai.com")) {
+        openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (href.includes("nasdaq.com")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-06-15",
+              table: {
+                rows: [
+                  {
+                    symbol: "AAPL",
+                    lastsale: "$200",
+                    pctchange: "1%",
+                    volume: "1000000",
+                    marketCap: "3000000000000",
+                    sector: "Technology",
+                    industry: "Consumer Electronics"
+                  }
+                ]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
+      const { runStrategyOnce } = await import("../src/lib/strategy");
+
+      const mockAccountId = randomUUID();
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "robinhood",
+        environment: "paper",
+        accountNumber: "RH-MOCK-AGENT",
+        label: "Prompt Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+      setPolicy({ ...DEFAULT_POLICY, enabled: true, allowlist: ["AAPL"], strategyAuthority: "decide" });
+
+      await runStrategyOnce();
+
+      const bullBody = openAiBodies[0];
+      const systemContent = bullBody.input.find((item: any) => item.role === "system")?.content ?? "";
+      const userContent = JSON.parse(bullBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
+      expect(systemContent).toContain("`retrievedFinancialContext`");
+      expect(systemContent).not.toContain("Item 2.02 Results of Operations");
+      expect(userContent.retrievedFinancialContext).toContain("Item 2.02 Results of Operations");
+    } finally {
+      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
     }
   });
 

@@ -26,6 +26,7 @@ import { fetchMacroData, determineMarketRegime } from "./macro";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
+import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan } from "./types";
 
 export async function getDashboardSnapshot(userId: string = "local") {
@@ -111,7 +112,8 @@ export async function getDashboardSnapshot(userId: string = "local") {
     macro,
     derived: deriveMacroMetrics(macro, { marketEarningsYield }),
     signals: await getMarketSignals().catch((): MarketSignals => ({})),
-    regime: determineMarketRegime(macro)
+    regime: determineMarketRegime(macro),
+    history: await fetchMacroHistory().catch(() => ({} as Record<string, number[]>))
   };
 
   const unifiedFeed = buildUnifiedFeed({

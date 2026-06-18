@@ -69,8 +69,9 @@ Open `http://127.0.0.1:3000`.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
 `.next` assets after a build. Stop old `node` listeners on ports `3000` / `3001`
-and restart `npm run dev`. The current dev script clears an existing port-3000
-listener before starting Next.
+and restart `npm run dev`. If you intentionally want the old force-clean behavior,
+use `npm run dev:clean`; the default `dev` script does not kill unrelated port-3000
+processes.
 
 ## Environment
 
@@ -188,7 +189,7 @@ npm test
 npm run build
 ```
 
-As of 2026-06-18 the suite is roughly 190 tests across 26 files; treat the
+As of 2026-06-18 the suite is roughly 195 tests across 27 files; treat the
 command output as authoritative because the count changes frequently.
 
 ## Design Docs

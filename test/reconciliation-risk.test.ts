@@ -10,7 +10,10 @@ import type { EquityOrder, TradingPolicy } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
-  upsertExperiences: async () => {}
+  upsertExperiences: async () => {},
+  retrieveContext: async () => [],
+  storeContext: async () => {},
+  storeContexts: async () => {}
 }));
 
 // Type-cast mock helper so we don't need to implement the full interface

@@ -75,6 +75,8 @@ export interface DashboardSnapshot {
     derived: MacroDerivedMetrics;
     signals: MarketSignals;
     regime: string;
+    /** Trailing ~90-day daily histories for sparklines (keyed: tenY, twoY, vix, hyCreditSpread, usd, wti). */
+    history?: Record<string, number[]>;
   };
   performance?: PerformanceSummary;
   thesisScorecard?: ThesisStat[];

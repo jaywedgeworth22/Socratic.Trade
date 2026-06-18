@@ -17,22 +17,23 @@ steps materially change.
   stale conflict snapshots and should not be used as source of truth.
 - Latest completed design area in docs: `docs/phase-10-signals-learning-ui-v2.md`
   now reflects current shipped signals/learning/UI work and remaining gaps.
-- Cloud branch: `codex/upload-current-state` is pushed to `origin`.
-- Draft PR: https://github.com/jaywedgeworth22/robinhood-agentic-trading/pull/2
+- GitHub: `main` and `phase-10` were pushed at `9bcf133` before the current
+  follow-on Phase 10 work. Check `git status` before committing because Massive
+  breadth/macro-sparkline work and RAG hardening may be in the local worktree.
 
 ## Active Focus
 
 - 2026-06-18: Active dev is on branch **`phase-10`**, executing
   `docs/phase-10-signals-learning-ui-v2.md` (status markers in that doc are the
   source of truth for what's next). `phase-10`, `main`, and `origin/main` are
-  aligned at `b86e461`; the old standalone "merge web-sources → main" item is
+  aligned at `9bcf133`; the old standalone "merge web-sources → main" item is
   superseded. Shipped Phase 10 work now includes positioning re-score/re-sort,
-  sector scorecard, full chosen+skipped EvidenceDigest, SEC 8-K coarse bulletins,
+  sector scorecard, full chosen+skipped EvidenceDigest, SEC 8-K item-enriched bulletins,
   market breadth/internals, expanded FRED/macro metrics, Fama-French, Cboe
-  SKEW/VVIX, CFTC COT, technical signals, RAG scaffold, and symbol drilldown.
-  Next highest leverage: D1/D2 prompt efficiency, B3/B4 skipped-name/factor
-  learning, E1/E2 completion, C5/C6 analyst/XBRL sources, and API-key routing from
-  `docs/phase-11-multi-user.md`. Share-quantity policy is finalized: records keep
+  SKEW/VVIX, CFTC COT, technical signals, batched Voyage/Pinecone RAG scaffold,
+  and symbol drilldown. Next highest leverage: D1/D2 prompt efficiency, B3/B4
+  skipped-name/factor learning, E1/E2 completion, C5/C6 analyst/XBRL sources,
+  and API-key routing from `docs/phase-11-multi-user.md`. Share-quantity policy is finalized: records keep
   full double precision; display = 3 sig figs OR all whole-number digits,
   whichever is larger, comma-grouped (`formatQuantity`; see
   `docs/rollouts/2026-06-17-quantity-precision-display.md`). Git commits use the
@@ -171,6 +172,15 @@ None. Phase 2 backend optimization is complete.
   and added regression tests proving the OHLC cascade uses Tradier first and
   Marketstack before free sources. See
   `docs/rollouts/2026-06-18-keys-macro-panel-and-history-keys.md`.
+- 2026-06-18: **RAG review resolution pass** — closed the prior review items around
+  `src/lib/vector-db.ts`: the file is tracked; vector writes now use batched
+  `storeContexts` with centralized Pinecone index initialization; SEC 8-K RAG
+  context now includes item labels and SEC filing links; retrieved snippets are sent
+  as dynamic `retrievedFinancialContext` in the user payload instead of the system
+  prompt; `npm run dev` no longer force-kills port 3000 (`npm run dev:clean` is the
+  explicit clean-start script). Added direct vector/SEC/strategy prompt tests. Full
+  combined worktree verification passed: `npx tsc --noEmit`, `npm test` (195 tests,
+  27 files), `npm run build`. See `docs/rollouts/2026-06-18-rag-review-resolution.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
@@ -192,8 +202,9 @@ None. Phase 2 backend optimization is complete.
   restart the dev server on `127.0.0.1:3000`.
 - If `next dev` repeatedly logs `EMFILE: too many open files, watch`, stop duplicate Node
   listeners on port `3000`, clean stale generated output only if needed, and restart with a
-  higher file-descriptor limit or reduced watcher scope. A production `npm run build` remains
-  the authoritative verification path.
+  higher file-descriptor limit or reduced watcher scope. Use `npm run dev:clean` only when
+  intentionally clearing port 3000; `npm run dev` is non-destructive. A production
+  `npm run build` remains the authoritative verification path.
 
 ## Read This First
 
