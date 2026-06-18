@@ -1,24 +1,46 @@
 export interface MacroData {
   fedFundsRate: string;
+  dgs3moTreasury: string;
+  dgs2Treasury: string;
   dgs10Treasury: string;
+  inflationExpectation10y: string; // 10Y breakeven — market-implied inflation
   cpiInflation: string;
+  corePCE: string; // Fed's preferred inflation gauge (core PCE YoY)
+  realGDPGrowth: string; // real GDP, annualized % (SAAR)
   unemploymentRate: string;
+  initialClaims: string; // weekly initial jobless claims (labor-market pulse)
   m2MoneySupply: string;
+  m2GrowthYoY: string;
+  hyCreditSpread: string; // ICE BofA US high-yield OAS — credit risk appetite
+  usdIndex: string; // broad trade-weighted USD index
+  wtiOil: string; // WTI crude spot
   housingStarts: string;
   consumerSentiment: string;
   vix: string;
+  vix3m: string; // 3-month VIX (for term structure)
   asOf: string;
 }
 
 const DEFAULT_MACRO: MacroData = {
   fedFundsRate: "5.25%",
+  dgs3moTreasury: "5.10%",
+  dgs2Treasury: "4.60%",
   dgs10Treasury: "4.20%",
+  inflationExpectation10y: "2.30%",
   cpiInflation: "3.10%",
+  corePCE: "2.80%",
+  realGDPGrowth: "2.00%",
   unemploymentRate: "3.90%",
+  initialClaims: "220K",
   m2MoneySupply: "20.8T",
+  m2GrowthYoY: "2.50%",
+  hyCreditSpread: "3.20%",
+  usdIndex: "121.00",
+  wtiOil: "$75.00",
   housingStarts: "1.3M",
   consumerSentiment: "75.0",
   vix: "15.00",
+  vix3m: "17.00",
   asOf: new Date().toISOString().split("T")[0]
 };
 
@@ -41,26 +63,54 @@ export async function fetchMacroData(): Promise<MacroData> {
   }
 
   try {
-    const [fedFunds, dgs10, cpi, unemployment, m2, houst, umcsent, vix] = await Promise.all([
+    const [
+      fedFunds, dgs3mo, dgs2, dgs10, breakeven10y, cpi, corePce, realGdp, unemployment,
+      claims, m2, m2Growth, hySpread, usd, oil, houst, umcsent, vix, vix3m
+    ] = await Promise.all([
       fetchFredSeries("FEDFUNDS", apiKey),
+      fetchFredSeries("DGS3MO", apiKey),
+      fetchFredSeries("DGS2", apiKey),
       fetchFredSeries("DGS10", apiKey),
-      fetchFredSeries("CPIAUCSL", apiKey),
+      fetchFredSeries("T10YIE", apiKey), // 10Y breakeven inflation (market-implied)
+      // CPIAUCSL is an index level; `units=pc1` asks FRED for the year-over-year % change
+      // so cpiInflation is a true inflation rate (not a ~310 index value rendered as "%").
+      fetchFredSeries("CPIAUCSL", apiKey, "pc1"),
+      fetchFredSeries("PCEPILFE", apiKey, "pc1"), // core PCE YoY (Fed's preferred gauge)
+      fetchFredSeries("A191RL1Q225SBEA", apiKey), // real GDP, % change SAAR (already a rate)
       fetchFredSeries("UNRATE", apiKey),
+      fetchFredSeries("ICSA", apiKey), // initial jobless claims (level)
       fetchFredSeries("M2SL", apiKey),
+      // M2 money-supply YoY growth (liquidity) — `pc1` gives the year-over-year % change.
+      fetchFredSeries("M2SL", apiKey, "pc1"),
+      fetchFredSeries("BAMLH0A0HYM2", apiKey), // ICE BofA US high-yield OAS (%)
+      fetchFredSeries("DTWEXBGS", apiKey), // broad trade-weighted USD index
+      fetchFredSeries("DCOILWTICO", apiKey), // WTI crude spot ($)
       fetchFredSeries("HOUST", apiKey),
       fetchFredSeries("UMCSENT", apiKey),
-      fetchFredSeries("VIXCLS", apiKey)
+      fetchFredSeries("VIXCLS", apiKey),
+      fetchFredSeries("VXVCLS", apiKey) // 3-month VIX (term structure)
     ]);
 
     const data: MacroData = {
       fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : DEFAULT_MACRO.fedFundsRate,
+      dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : DEFAULT_MACRO.dgs3moTreasury,
+      dgs2Treasury: dgs2 ? `${Number(dgs2).toFixed(2)}%` : DEFAULT_MACRO.dgs2Treasury,
       dgs10Treasury: dgs10 ? `${Number(dgs10).toFixed(2)}%` : DEFAULT_MACRO.dgs10Treasury,
+      inflationExpectation10y: breakeven10y ? `${Number(breakeven10y).toFixed(2)}%` : DEFAULT_MACRO.inflationExpectation10y,
       cpiInflation: cpi ? `${Number(cpi).toFixed(2)}%` : DEFAULT_MACRO.cpiInflation,
+      corePCE: corePce ? `${Number(corePce).toFixed(2)}%` : DEFAULT_MACRO.corePCE,
+      realGDPGrowth: realGdp ? `${Number(realGdp).toFixed(2)}%` : DEFAULT_MACRO.realGDPGrowth,
       unemploymentRate: unemployment ? `${Number(unemployment).toFixed(2)}%` : DEFAULT_MACRO.unemploymentRate,
+      initialClaims: claims ? `${Math.round(Number(claims) / 1000)}K` : DEFAULT_MACRO.initialClaims,
       m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : DEFAULT_MACRO.m2MoneySupply,
+      m2GrowthYoY: m2Growth ? `${Number(m2Growth).toFixed(2)}%` : DEFAULT_MACRO.m2GrowthYoY,
+      hyCreditSpread: hySpread ? `${Number(hySpread).toFixed(2)}%` : DEFAULT_MACRO.hyCreditSpread,
+      usdIndex: usd ? `${Number(usd).toFixed(2)}` : DEFAULT_MACRO.usdIndex,
+      wtiOil: oil ? `$${Number(oil).toFixed(2)}` : DEFAULT_MACRO.wtiOil,
       housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : DEFAULT_MACRO.housingStarts,
       consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : DEFAULT_MACRO.consumerSentiment,
       vix: vix ? `${Number(vix).toFixed(2)}` : DEFAULT_MACRO.vix,
+      vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : DEFAULT_MACRO.vix3m,
       asOf: new Date().toISOString().split("T")[0]
     };
 
@@ -120,8 +170,9 @@ export function determineMarketRegime(macro: MacroData): string {
   return inverted ? "Cautious (Inverted Curve)" : "Neutral (Normal Volatility)";
 }
 
-async function fetchFredSeries(seriesId: string, apiKey: string): Promise<string | undefined> {
-  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&limit=1&sort_order=desc&api_key=${apiKey}&file_type=json`;
+async function fetchFredSeries(seriesId: string, apiKey: string, units?: string): Promise<string | undefined> {
+  const unitsParam = units ? `&units=${units}` : "";
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&limit=1&sort_order=desc${unitsParam}&api_key=${apiKey}&file_type=json`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {

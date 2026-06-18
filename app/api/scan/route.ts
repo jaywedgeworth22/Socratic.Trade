@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getPolicy } from "@/lib/db";
 import { mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
-import { getRobinhoodGateway } from "@/lib/robinhood";
+import { getBrokerGateway } from "@/lib/broker";
 import type { EquityPosition } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export async function GET() {
   try {
     const policy = getPolicy();
     const symbols = allowedSymbolsForPolicy(policy);
-    const gateway = getRobinhoodGateway();
+    const gateway = getBrokerGateway(policy);
     let positions: EquityPosition[] = [];
     if (policy.accountNumber) {
       try {

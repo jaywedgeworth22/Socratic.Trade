@@ -109,6 +109,21 @@ None. Phase 2 backend optimization is complete.
   scrapes verified (78 real congress trades; SEC parser on live filings). See
   `docs/rollouts/2026-06-16-web-sources-and-learning.md` and
   `docs/phase-9-web-sources.md`. Branch not yet pushed/merged.
+- 2026-06-17: Phase 10 (E1) - Symbol Drilldown Drawer. Added a clickable row action to `MarketScanView` that slides out a `SymbolDrilldown` drawer. Shows factor breakdown waterfall, provenance mappings, and an AI Conviction summary. See `docs/rollouts/2026-06-17-symbol-drilldown-drawer.md`.
+- 2026-06-17: Alpaca Broker Integration. Added `@alpacahq/alpaca-trade-api` and native `AlpacaBrokerGateway` (`src/lib/alpaca.ts`). Scaffolded `user_api_keys` and getters/setters in `src/lib/db.ts` for multi-tenant keys. See `docs/rollouts/2026-06-17-alpaca-integration.md`. Next up: Broker selection in UI and integrating into strategy runs.
+- 2026-06-18: Multi-Account Architecture. Replaced the single-account toggle with a robust multi-account switcher in the UI. Added an `Integrations` tab to `SettingsModal` for adding/removing Robinhood and Alpaca accounts with their API keys. Modified `src/lib/db.ts` so `getPolicy` dynamically inherits `paperMode`, `accountNumber` and `activeBroker` from the active connected account, meaning execution and tracking are isolated to the active account without needing to refactor `runStrategyOnce`. See `docs/rollouts/2026-06-18-multi-account-architecture.md`.
+- 2026-06-18: **Technical-signal web source (Phase 10 A2.1)** — the first bar-based
+  technical pipeline (RSI/MACD/MA crossovers), filling the stack's one signal gap. One
+  per-symbol dataset, two interchangeable producers via `TECHNICAL_SOURCE`: **TradingView**
+  push (Pine `alert()` → secret-gated `POST /api/webhooks/tradingview`) for the trial
+  window, and **in-house computed** (free Yahoo/Stooq OHLC → `computeTechnicals`) as the
+  durable free fallback. Overlays the scan, blends the `momentum` factor, joins the event
+  union, emits bulletins, captured in the evidence digest. New `src/lib/indicators.ts`,
+  `src/lib/web-sources/technical.ts`, the route, + 18 tests. `tsc` + **178 tests** + build
+  green; webhook live smoke-tested (fixed a `node:crypto` dev-webpack break → `crypto`).
+  Lighter `momentum`-blend used instead of a new ScoringWeights factor to avoid colliding
+  with concurrent scoring edits. Operator guide: `docs/tradingview-pine-setup.md`. See
+  `docs/rollouts/2026-06-18-technical-signals-tradingview.md`. Not yet committed.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

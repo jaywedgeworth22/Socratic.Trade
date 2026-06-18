@@ -1,7 +1,7 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
 import { normalizeSymbol } from "@/lib/money";
-import { getRobinhoodGateway } from "@/lib/robinhood";
+import { getBrokerGateway } from "@/lib/broker";
 import type { NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
 
@@ -93,7 +93,7 @@ async function validatePolicy(policy: TradingPolicy): Promise<string | undefined
   if (policy.enabled && !policy.accountNumber) return "Select an account before enabling autonomy.";
   if (policy.enabled && policy.universe === "custom" && policy.allowlist.length === 0) return "Configure an allowlist before enabling autonomy.";
   if (policy.enabled && policy.accountNumber) {
-    const account = (await getRobinhoodGateway().getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
+    const account = (await getBrokerGateway(policy).getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
     if (!account) return "Selected account is not available.";
     if (!account.agenticAllowed) return "Selected account is not agentic_allowed.";
   }

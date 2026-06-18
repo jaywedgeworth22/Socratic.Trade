@@ -1,0 +1,149 @@
+// Free daily OHLC price-history fetch — the single source of bars for the app.
+//
+// Two consumers share this: the technical connector (`web-sources/technical.ts`, which
+// only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
+// full candles). Sources are free and key-less: Yahoo's chart endpoint first (same host
+// the Yahoo enrichment provider uses), Stooq CSV as a fallback. Server-side only; results
+// are cached briefly. Never fabricates — no bars → returns null, callers degrade to "—".
+
+import type { OHLCBar } from "./indicators";
+import { normalizeSymbol } from "./money";
+import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
+
+const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
+const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
+
+interface YahooChartResponse {
+  chart?: {
+    result?: Array<{
+      timestamp?: number[];
+      indicators?: {
+        quote?: Array<{
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
+          volume?: Array<number | null>;
+        }>;
+      };
+    }>;
+  };
+}
+
+function historyTtlMs(): number {
+  const v = Number(process.env.HISTORY_TTL_MS ?? DEFAULT_TTL_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_TTL_MS;
+}
+
+/**
+ * Fetch ~1y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
+ * first (reliable, generous limits) then free sources: Tradier → Marketstack → Yahoo →
+ * Stooq. Keyed sources are skipped when their env key is unset. Returns the first source
+ * that yields ≥2 bars, or null (never fabricated). Free endpoints (Yahoo/Stooq) are
+ * frequently rate-limited or bot-challenged from datacenter IPs, so a keyed provider is
+ * strongly recommended for reliable charts + the in-house technical "computed" producer.
+ */
+export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()): Promise<OHLCBar[] | null> {
+  const symbol = normalizeSymbol(rawSymbol);
+  if (!symbol) return null;
+  const hit = cache.get(symbol);
+  if (hit && hit.expiresAt > now) return hit.bars;
+
+  const startDate = new Date(now - 400 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+  const sources: Array<() => Promise<OHLCBar[] | null>> = [];
+  if (process.env.TRADIER_API_KEY) sources.push(() => fetchTradier(symbol, startDate));
+  if (process.env.MARKETSTACK_API_KEY) sources.push(() => fetchMarketstack(symbol));
+  sources.push(() => fetchYahoo(symbol), () => fetchStooq(symbol));
+
+  for (const fetchFrom of sources) {
+    const bars = await fetchFrom();
+    if (bars && bars.length >= 2) {
+      cache.set(symbol, { expiresAt: now + historyTtlMs(), bars });
+      return bars;
+    }
+  }
+  return null;
+}
+
+async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=1d`;
+    const json = await politeFetchJson<YahooChartResponse>(url, { headers: { "user-agent": BROWSER_UA, accept: "application/json" } });
+    const result = json?.chart?.result?.[0];
+    const ts = result?.timestamp ?? [];
+    const q = result?.indicators?.quote?.[0];
+    const close = q?.close ?? [];
+    if (ts.length === 0 || close.length === 0) return null;
+    const bars: OHLCBar[] = [];
+    for (let i = 0; i < ts.length; i++) {
+      const c = close[i];
+      if (typeof c !== "number" || !Number.isFinite(c)) continue; // skip null/holiday gaps
+      bars.push({
+        time: ts[i] * 1000, // seconds → ms epoch
+        open: numOrUndef(q?.open?.[i]),
+        high: numOrUndef(q?.high?.[i]),
+        low: numOrUndef(q?.low?.[i]),
+        close: c,
+        volume: numOrUndef(q?.volume?.[i])
+      });
+    }
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchStooq(symbol: string): Promise<OHLCBar[] | null> {
+  try {
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol.toLowerCase())}.us&i=d`;
+    const text = await politeFetchText(url, { headers: { "user-agent": BROWSER_UA } });
+    const bars = parseStooqCsv(text);
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Parse a Stooq daily CSV (Date,Open,High,Low,Close,Volume) into bars. Pure / unit-tested. */
+export function parseStooqCsv(text: string): OHLCBar[] {
+  const out: OHLCBar[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.split(",");
+    if (parts.length < 5) continue;
+    const [date, open, high, low, close, volume] = parts;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue; // skips the header row
+    const c = Number(close);
+    if (!Number.isFinite(c)) continue;
+    out.push({
+      time: date,
+      open: Number(open),
+      high: Number(high),
+      low: Number(low),
+      close: c,
+      volume: volume ? Number(volume) : undefined
+    });
+  }
+  return out;
+}
+
+/** Normalize a bar's `time` (ms-epoch number or date string) to a 'YYYY-MM-DD' business day. */
+export function toBusinessDay(time: number | string | undefined): string | undefined {
+  if (typeof time === "number" && Number.isFinite(time)) {
+    const ms = time > 1e12 ? time : time * 1000;
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+  if (typeof time === "string") {
+    if (/^\d{4}-\d{2}-\d{2}/.test(time)) return time.slice(0, 10);
+    const parsed = Date.parse(time);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  }
+  return undefined;
+}
+
+function numOrUndef(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function clearHistoryCache(): void {
+  cache.clear();
+}

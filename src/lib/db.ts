@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
+import crypto from "crypto";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
 import type {
   FillEvent,
@@ -16,7 +17,8 @@ import type {
   StrategyProfile,
   StrategyRunRow,
   TradingPolicy,
-  TradeProposal
+  TradeProposal,
+  ConnectedAccount
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -142,7 +144,51 @@ function migrate(database: Database.Database): void {
       UNIQUE(user_id, service)
     );
     CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys (user_id);
+
+    -- Multi-account storage
+    CREATE TABLE IF NOT EXISTS connected_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      broker TEXT NOT NULL,
+      environment TEXT NOT NULL,
+      account_number TEXT,
+      label TEXT NOT NULL,
+      api_key TEXT,
+      api_secret TEXT,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_connected_accounts_user ON connected_accounts (user_id);
+
+    -- Multi-user settings
+    CREATE TABLE IF NOT EXISTS user_settings (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, key)
+    );
   `);
+
+  // Migrate tables to include user_id
+  const tablesWithUserId = [
+    "strategy_runs",
+    "trade_proposals",
+    "strategy_profiles",
+    "portfolio_snapshots",
+    "fill_events",
+    "notification_events",
+    "audit_events"
+  ];
+  for (const table of tablesWithUserId) {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "user_id")) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'`);
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table} (user_id)`);
+    }
+  }
 
   const columns = database.prepare("PRAGMA table_info(trade_proposals)").all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === "account_number")) {
@@ -169,7 +215,8 @@ function migrate(database: Database.Database): void {
 }
 
 function ensureDefaultProfile(database: Database.Database, now: string): void {
-  const existing = database.prepare("SELECT COUNT(*) AS count FROM strategy_profiles").get() as { count: number };
+  const userId = "local";
+  const existing = database.prepare("SELECT COUNT(*) AS count FROM strategy_profiles WHERE user_id = ?").get(userId) as { count: number };
   if (existing.count === 0) {
     const policyRow = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
     const promptRow = database.prepare("SELECT value FROM settings WHERE key = 'strategyPrompt'").get() as { value: string } | undefined;
@@ -178,16 +225,30 @@ function ensureDefaultProfile(database: Database.Database, now: string): void {
     const prompt = promptRow ? (JSON.parse(promptRow.value) as string) : DEFAULT_STRATEGY_PROMPT;
     database
       .prepare(
-        "INSERT INTO strategy_profiles (id, name, policy, prompt, scoring_weights, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+        "INSERT INTO strategy_profiles (id, user_id, name, policy, prompt, scoring_weights, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
-      .run("default", "Default Strategy", JSON.stringify(policy), prompt, JSON.stringify(policy.scoringWeights), now, now);
+      .run("default", userId, "Default Strategy", JSON.stringify(policy), prompt, JSON.stringify(policy.scoringWeights), 1, now, now);
     return;
   }
 
-  const active = database.prepare("SELECT id FROM strategy_profiles WHERE active = 1 LIMIT 1").get();
+  const active = database.prepare("SELECT id FROM strategy_profiles WHERE user_id = ? AND active = 1 LIMIT 1").get(userId);
   if (!active) {
-    database.prepare("UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = (SELECT id FROM strategy_profiles ORDER BY created_at LIMIT 1)").run(now);
+    database.prepare("UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = (SELECT id FROM strategy_profiles WHERE user_id = ? ORDER BY created_at LIMIT 1)").run(now, userId);
   }
+}
+
+export function getUserSetting<T>(userId: string, key: string, fallback: T): T {
+  const row = getDb().prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = ?").get(userId, key) as { value: string } | undefined;
+  if (!row) return fallback;
+  try { return JSON.parse(row.value) as T; } catch { return row.value as T; }
+}
+
+export function setUserSetting(userId: string, key: string, value: unknown): void {
+  const id = `${userId}_${key}`;
+  getDb().prepare(
+    "INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+  ).run(id, userId, key, JSON.stringify(value), new Date().toISOString());
+  audit("policy_change", { userId, key, value }, userId);
 }
 
 export function getSetting<T>(key: string, fallback: T): T {
@@ -227,37 +288,50 @@ export function deleteInternalSetting(key: string): void {
   getDb().prepare("DELETE FROM settings WHERE key = ?").run(key);
 }
 
-export function getPolicy(): TradingPolicy {
-  const active = getActiveStrategyProfile();
-  if (active) return mergePolicy({ ...active.policy, activeProfileId: active.id });
-  return mergePolicy(getSetting("policy", DEFAULT_POLICY));
+
+
+export function getPolicy(userId: string = "local"): TradingPolicy {
+  let policy: TradingPolicy;
+  const active = getActiveStrategyProfile(userId);
+  if (active) policy = mergePolicy({ ...active.policy, activeProfileId: active.id });
+  else policy = mergePolicy(getUserSetting(userId, "policy", DEFAULT_POLICY));
+
+  const activeAccount = getActiveConnectedAccount(userId);
+  if (activeAccount) {
+    policy.connectedAccountId = activeAccount.id;
+    policy.activeBroker = activeAccount.broker;
+    policy.paperMode = activeAccount.environment === "paper";
+    policy.accountNumber = activeAccount.accountNumber;
+  }
+  
+  return policy;
 }
 
-export function setPolicy(policy: TradingPolicy): void {
+export function setPolicy(policy: TradingPolicy, userId: string = "local"): void {
   const merged = mergePolicy(policy);
-  setSetting("policy", merged);
-  syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights });
+  setUserSetting(userId, "policy", merged);
+  syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
 }
 
-export function getStrategyPrompt(): string {
-  return getActiveStrategyProfile()?.prompt ?? getSetting("strategyPrompt", DEFAULT_STRATEGY_PROMPT);
+export function getStrategyPrompt(userId: string = "local"): string {
+  return getActiveStrategyProfile()?.prompt ?? getUserSetting(userId, "strategyPrompt", DEFAULT_STRATEGY_PROMPT);
 }
 
-export function setStrategyPrompt(prompt: string): void {
-  setSetting("strategyPrompt", prompt);
-  syncActiveProfile({ prompt });
+export function setStrategyPrompt(prompt: string, userId: string = "local"): void {
+  setUserSetting(userId, "strategyPrompt", prompt);
+  syncActiveProfile({ prompt }, userId);
 }
 
-export function audit(kind: string, payload: unknown): void {
+export function audit(kind: string, payload: unknown, userId: string = "local"): void {
   getDb()
-    .prepare("INSERT INTO audit_events (id, created_at, kind, payload) VALUES (?, ?, ?, ?)")
-    .run(crypto.randomUUID(), new Date().toISOString(), kind, JSON.stringify(payload));
+    .prepare("INSERT INTO audit_events (id, user_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?)")
+    .run(crypto.randomUUID(), userId, new Date().toISOString(), kind, JSON.stringify(payload));
 }
 
-export function listAudit(limit = 100): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
   const rows = getDb()
-    .prepare("SELECT id, created_at, kind, payload FROM audit_events ORDER BY created_at DESC LIMIT ?")
-    .all(limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.created_at,
@@ -266,92 +340,89 @@ export function listAudit(limit = 100): Array<{ id: string; createdAt: string; k
   }));
 }
 
-export function listStrategyProfiles(): StrategyProfile[] {
+export function listStrategyProfiles(userId: string = "local"): StrategyProfile[] {
   const rows = getDb()
-    .prepare("SELECT id, name, policy, prompt, scoring_weights, active, created_at, updated_at FROM strategy_profiles ORDER BY active DESC, name ASC")
-    .all() as RawStrategyProfile[];
+    .prepare("SELECT id, name, policy, prompt, scoring_weights, active, created_at, updated_at FROM strategy_profiles WHERE user_id = ? ORDER BY active DESC, name ASC")
+    .all(userId) as RawStrategyProfile[];
   return rows.map(toStrategyProfile);
 }
 
-export function getActiveStrategyProfile(): StrategyProfile | undefined {
+export function getActiveStrategyProfile(userId: string = "local"): StrategyProfile | undefined {
   const row = getDb()
-    .prepare("SELECT id, name, policy, prompt, scoring_weights, active, created_at, updated_at FROM strategy_profiles WHERE active = 1 LIMIT 1")
-    .get() as RawStrategyProfile | undefined;
+    .prepare("SELECT id, name, policy, prompt, scoring_weights, active, created_at, updated_at FROM strategy_profiles WHERE active = 1 AND user_id = ? LIMIT 1")
+    .get(userId) as RawStrategyProfile | undefined;
   return row ? toStrategyProfile(row) : undefined;
 }
 
-export function createStrategyProfile(input: { name: string; policy?: Partial<TradingPolicy>; prompt?: string; active?: boolean }): StrategyProfile {
+export function createStrategyProfile(input: { name: string; policy?: Partial<TradingPolicy>; prompt?: string; active?: boolean }, userId: string = "local"): StrategyProfile {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  const currentPolicy = getPolicy();
+  const currentPolicy = getPolicy(userId);
   const policy = mergePolicy({ ...currentPolicy, ...(input.policy ?? {}), activeProfileId: id });
-  const prompt = input.prompt ?? getStrategyPrompt();
+  const prompt = input.prompt ?? getStrategyPrompt(userId);
   const database = getDb();
   const create = database.transaction(() => {
-    if (input.active) database.prepare("UPDATE strategy_profiles SET active = 0, updated_at = ?").run(now);
+    if (input.active) database.prepare("UPDATE strategy_profiles SET active = 0, updated_at = ? WHERE user_id = ?").run(now, userId);
     database
       .prepare(
-        "INSERT INTO strategy_profiles (id, name, policy, prompt, scoring_weights, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO strategy_profiles (id, user_id, name, policy, prompt, scoring_weights, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
-      .run(id, input.name, JSON.stringify(policy), prompt, JSON.stringify(policy.scoringWeights), input.active ? 1 : 0, now, now);
+      .run(id, userId, input.name, JSON.stringify(policy), prompt, JSON.stringify(policy.scoringWeights), input.active ? 1 : 0, now, now);
   });
   create();
   if (input.active) {
-    setSettingDirect("policy", policy, now);
-    setSettingDirect("strategyPrompt", prompt, now);
+    setSettingDirect(userId, "policy", policy, now);
+    setSettingDirect(userId, "strategyPrompt", prompt, now);
   }
-  audit("profile_change", { action: "create", id, name: input.name, active: Boolean(input.active) });
-  return getStrategyProfile(id)!;
+  audit("profile_change", { action: "create", id, name: input.name, active: Boolean(input.active) }, userId);
+  return getStrategyProfile(id, userId)!;
 }
 
-export function getStrategyProfile(id: string): StrategyProfile | undefined {
+export function getStrategyProfile(id: string, userId: string = "local"): StrategyProfile | undefined {
   const row = getDb()
-    .prepare("SELECT id, name, policy, prompt, scoring_weights, active, created_at, updated_at FROM strategy_profiles WHERE id = ?")
-    .get(id) as RawStrategyProfile | undefined;
+    .prepare("SELECT id, name, policy, prompt, scoring_weights, active, created_at, updated_at FROM strategy_profiles WHERE id = ? AND user_id = ?")
+    .get(id, userId) as RawStrategyProfile | undefined;
   return row ? toStrategyProfile(row) : undefined;
 }
 
-export function updateStrategyProfile(
-  id: string,
-  patch: { name?: string; policy?: Partial<TradingPolicy>; prompt?: string; scoringWeights?: Partial<ScoringWeights> }
-): StrategyProfile {
-  const existing = getStrategyProfile(id);
+export function updateStrategyProfile(id: string, patch: { name?: string; policy?: Partial<TradingPolicy>; prompt?: string; scoringWeights?: Partial<ScoringWeights> }, userId: string = "local"): StrategyProfile {
+  const existing = getStrategyProfile(id, userId);
   if (!existing) throw new Error("Strategy profile not found.");
   const now = new Date().toISOString();
   const scoringWeights = normalizeScoringWeights({ ...existing.scoringWeights, ...(patch.scoringWeights ?? {}) });
   const policy = mergePolicy({ ...existing.policy, ...(patch.policy ?? {}), scoringWeights, activeProfileId: id });
   const prompt = patch.prompt ?? existing.prompt;
   getDb()
-    .prepare("UPDATE strategy_profiles SET name = ?, policy = ?, prompt = ?, scoring_weights = ?, updated_at = ? WHERE id = ?")
-    .run(patch.name ?? existing.name, JSON.stringify(policy), prompt, JSON.stringify(scoringWeights), now, id);
+    .prepare("UPDATE strategy_profiles SET name = ?, policy = ?, prompt = ?, scoring_weights = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(patch.name ?? existing.name, JSON.stringify(policy), prompt, JSON.stringify(scoringWeights), now, id, userId);
   if (existing.active) {
-    setSettingDirect("policy", policy, now);
-    setSettingDirect("strategyPrompt", prompt, now);
+    setSettingDirect(userId, "policy", policy, now);
+    setSettingDirect(userId, "strategyPrompt", prompt, now);
   }
-  audit("profile_change", { action: "update", id, name: patch.name ?? existing.name });
-  return getStrategyProfile(id)!;
+  audit("profile_change", { action: "update", id, name: patch.name ?? existing.name }, userId);
+  return getStrategyProfile(id, userId)!;
 }
 
-export function activateStrategyProfile(id: string): StrategyProfile {
-  const profile = getStrategyProfile(id);
+export function activateStrategyProfile(id: string, userId: string = "local"): StrategyProfile {
+  const profile = getStrategyProfile(id, userId);
   if (!profile) throw new Error("Strategy profile not found.");
   const now = new Date().toISOString();
   const database = getDb();
   const activate = database.transaction(() => {
-    database.prepare("UPDATE strategy_profiles SET active = 0, updated_at = ?").run(now);
-    database.prepare("UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = ?").run(now, id);
-    setSettingDirect("policy", mergePolicy({ ...profile.policy, activeProfileId: id }), now);
-    setSettingDirect("strategyPrompt", profile.prompt, now);
+    database.prepare("UPDATE strategy_profiles SET active = 0, updated_at = ? WHERE user_id = ?").run(now, userId);
+    database.prepare("UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = ? AND user_id = ?").run(now, id, userId);
+    setSettingDirect(userId, "policy", mergePolicy({ ...profile.policy, activeProfileId: id }), now);
+    setSettingDirect(userId, "strategyPrompt", profile.prompt, now);
   });
   activate();
-  audit("profile_change", { action: "activate", id, name: profile.name });
-  return getStrategyProfile(id)!;
+  audit("profile_change", { action: "activate", id, name: profile.name }, userId);
+  return getStrategyProfile(id, userId)!;
 }
 
-export function latestAuditByKind(kind: string): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
+export function latestAuditByKind(kind: string, userId: string = "local"): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
   const row = getDb()
-    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE kind = ? ORDER BY created_at DESC LIMIT 1")
-    .get(kind) as { id: string; created_at: string; kind: string; payload: string } | undefined;
+    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
+    .get(kind, userId) as { id: string; created_at: string; kind: string; payload: string } | undefined;
   if (!row) return undefined;
   return {
     id: row.id,
@@ -361,16 +432,16 @@ export function latestAuditByKind(kind: string): { id: string; createdAt: string
   };
 }
 
-export function dailyExecutionStats(accountNumber: string, now = new Date()): { orderCount: number; notional: number } {
+export function dailyExecutionStats(accountNumber: string, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
   const dayStart = new Date(now);
   dayStart.setHours(0, 0, 0, 0);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND status IN ('placed', 'paper')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(dayStart.toISOString(), accountNumber) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(dayStart.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -425,19 +496,19 @@ export function releaseStrategyLock(): void {
   getDb().prepare("DELETE FROM settings WHERE key = 'strategy_run_lock'").run();
 }
 
-export function insertStrategyRun(id: string): void {
+export function insertStrategyRun(id: string, userId: string = "local"): void {
   getDb()
-    .prepare("INSERT INTO strategy_runs (id, started_at, status) VALUES (?, ?, 'running')")
-    .run(id, new Date().toISOString());
+    .prepare("INSERT INTO strategy_runs (id, user_id, started_at, status) VALUES (?, ?, ?, 'running')")
+    .run(id, userId, new Date().toISOString());
 }
 
-export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string): void {
+export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
   getDb()
-    .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ?")
-    .run(new Date().toISOString(), status, summary, id);
+    .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
+    .run(new Date().toISOString(), status, summary, id, userId);
 }
 
-export function listStrategyRuns(limit = 20): StrategyRunRow[] {
+export function listStrategyRuns(limit = 20, userId: string = "local"): StrategyRunRow[] {
   type RawRow = {
     id: string;
     started_at: string;
@@ -466,11 +537,12 @@ export function listStrategyRuns(limit = 20): StrategyRunRow[] {
         COUNT(tp.id)                                        AS total_count
        FROM strategy_runs sr
        LEFT JOIN trade_proposals tp ON tp.run_id = sr.id
+       WHERE sr.user_id = ?
        GROUP BY sr.id
        ORDER BY sr.started_at DESC
        LIMIT ?`
     )
-    .all(limit) as RawRow[];
+    .all(userId, limit) as RawRow[];
 
   return rows.map((r) => ({
     id: r.id,
@@ -486,13 +558,13 @@ export function listStrategyRuns(limit = 20): StrategyRunRow[] {
   }));
 }
 
-export function listPendingProposals(accountNumber: string): PendingProposal[] {
+export function listPendingProposals(accountNumber: string, userId: string = "local"): PendingProposal[] {
   type RawRow = { id: string; created_at: string; proposal: string; decision: string; review: string | null };
   const rows = getDb()
     .prepare(
-      "SELECT id, created_at, proposal, decision, review FROM trade_proposals WHERE account_number = ? AND status = 'proposed' ORDER BY created_at DESC"
+      "SELECT id, created_at, proposal, decision, review FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
     )
-    .all(accountNumber) as RawRow[];
+    .all(accountNumber, userId) as RawRow[];
 
   return rows.map((r) => ({
     id: r.id,
@@ -503,7 +575,7 @@ export function listPendingProposals(accountNumber: string): PendingProposal[] {
   }));
 }
 
-export function getProposal(id: string):
+export function getProposal(id: string, userId: string = "local"):
   | {
       id: string;
       runId: string;
@@ -532,8 +604,8 @@ export function getProposal(id: string):
     entry_market_regime: string | null;
   };
   const row = getDb()
-    .prepare("SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, trade_thesis_tag, entry_market_regime FROM trade_proposals WHERE id = ?")
-    .get(id) as RawRow | undefined;
+    .prepare("SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, trade_thesis_tag, entry_market_regime FROM trade_proposals WHERE id = ? AND user_id = ?")
+    .get(id, userId) as RawRow | undefined;
   if (!row) return undefined;
   return {
     id: row.id,
@@ -550,15 +622,16 @@ export function getProposal(id: string):
   };
 }
 
-export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number): void {
+export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local"): void {
   getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional) WHERE id = ?"
+      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional) WHERE id = ? AND user_id = ?"
     )
-    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, id);
+    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, id, userId);
 }
 
 export function insertProposal(input: {
+  userId?: string;
   id: string;
   runId: string;
   accountNumber: string;
@@ -574,10 +647,11 @@ export function insertProposal(input: {
 }): void {
   getDb()
     .prepare(
-      "INSERT INTO trade_proposals (id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       input.id,
+      input.userId ?? "local",
       input.runId,
       input.accountNumber,
       new Date().toISOString(),
@@ -594,6 +668,7 @@ export function insertProposal(input: {
 }
 
 export function insertPortfolioSnapshot(input: {
+  userId?: string;
   id?: string;
   runId?: string;
   accountNumber: string;
@@ -619,10 +694,11 @@ export function insertPortfolioSnapshot(input: {
   };
   getDb()
     .prepare(
-      "INSERT INTO portfolio_snapshots (id, run_id, account_number, source, equity, cash, buying_power, positions_value, positions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO portfolio_snapshots (id, user_id, run_id, account_number, source, equity, cash, buying_power, positions_value, positions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       snapshot.id,
+      input.userId ?? "local",
       snapshot.runId ?? null,
       snapshot.accountNumber,
       snapshot.source,
@@ -636,18 +712,18 @@ export function insertPortfolioSnapshot(input: {
   return snapshot;
 }
 
-export function listPortfolioSnapshots(accountNumber: string, source?: FillSource, limit = 250): PortfolioSnapshot[] {
+export function listPortfolioSnapshots(accountNumber: string, source?: FillSource, limit = 100, userId: string = "local"): PortfolioSnapshot[] {
   const rows = source
     ? (getDb()
-        .prepare("SELECT * FROM portfolio_snapshots WHERE account_number = ? AND source = ? ORDER BY created_at ASC LIMIT ?")
-        .all(accountNumber, source, limit) as RawPortfolioSnapshot[])
+        .prepare("SELECT * FROM portfolio_snapshots WHERE account_number = ? AND source = ? AND user_id = ? ORDER BY created_at ASC LIMIT ?")
+        .all(accountNumber, source, userId, limit) as RawPortfolioSnapshot[])
     : (getDb()
-        .prepare("SELECT * FROM portfolio_snapshots WHERE account_number = ? ORDER BY created_at ASC LIMIT ?")
-        .all(accountNumber, limit) as RawPortfolioSnapshot[]);
+        .prepare("SELECT * FROM portfolio_snapshots WHERE account_number = ? AND user_id = ? ORDER BY created_at ASC LIMIT ?")
+        .all(accountNumber, userId, limit) as RawPortfolioSnapshot[]);
   return rows.map(toPortfolioSnapshot);
 }
 
-export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id?: string; filledAt?: string }): FillEvent {
+export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id?: string; filledAt?: string; userId?: string }): FillEvent {
   const fill: FillEvent = {
     ...input,
     id: input.id ?? crypto.randomUUID(),
@@ -655,10 +731,11 @@ export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id
   };
   getDb()
     .prepare(
-      "INSERT INTO fill_events (id, proposal_id, run_id, account_number, source, symbol, side, quantity, price, notional, status, broker_order_id, raw, filled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO fill_events (id, user_id, proposal_id, run_id, account_number, source, symbol, side, quantity, price, notional, status, broker_order_id, raw, filled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       fill.id,
+      input.userId ?? "local",
       fill.proposalId ?? null,
       fill.runId ?? null,
       fill.accountNumber,
@@ -676,18 +753,18 @@ export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id
   return fill;
 }
 
-export function listFillEvents(accountNumber: string, source?: FillSource, limit = 500): FillEvent[] {
+export function listFillEvents(accountNumber: string, source?: FillSource, limit = 500, userId: string = "local"): FillEvent[] {
   const rows = source
     ? (getDb()
-        .prepare("SELECT * FROM fill_events WHERE account_number = ? AND source = ? ORDER BY filled_at ASC LIMIT ?")
-        .all(accountNumber, source, limit) as RawFillEvent[])
+        .prepare("SELECT * FROM fill_events WHERE account_number = ? AND source = ? AND user_id = ? ORDER BY filled_at ASC LIMIT ?")
+        .all(accountNumber, source, userId, limit) as RawFillEvent[])
     : (getDb()
-        .prepare("SELECT * FROM fill_events WHERE account_number = ? ORDER BY filled_at ASC LIMIT ?")
-        .all(accountNumber, limit) as RawFillEvent[]);
+        .prepare("SELECT * FROM fill_events WHERE account_number = ? AND user_id = ? ORDER BY filled_at ASC LIMIT ?")
+        .all(accountNumber, userId, limit) as RawFillEvent[]);
   return rows.map(toFillEvent);
 }
 
-export function updateFillEvent(id: string, patch: Partial<FillEvent>): void {
+export function updateFillEvent(id: string, patch: Partial<FillEvent>, userId: string = "local"): void {
   const database = getDb();
   const sets: string[] = [];
   const args: unknown[] = [];
@@ -719,11 +796,12 @@ export function updateFillEvent(id: string, patch: Partial<FillEvent>): void {
 
   if (sets.length === 0) return;
 
-  args.push(id);
-  database.prepare(`UPDATE fill_events SET ${sets.join(", ")} WHERE id = ?`).run(...args);
+  args.push(id, userId);
+  database.prepare(`UPDATE fill_events SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`).run(...args);
 }
 
 export function insertNotificationEvent(input: {
+  userId?: string;
   type: NotificationEventType;
   title: string;
   status: NotificationStatus;
@@ -742,15 +820,15 @@ export function insertNotificationEvent(input: {
     error: input.error
   };
   getDb()
-    .prepare("INSERT INTO notification_events (id, created_at, type, title, status, webhook_url, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(event.id, event.createdAt, event.type, event.title, event.status, event.webhookUrl ?? null, JSON.stringify(event.payload), event.error ?? null);
+    .prepare("INSERT INTO notification_events (id, user_id, created_at, type, title, status, webhook_url, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(event.id, input.userId ?? "local", event.createdAt, event.type, event.title, event.status, event.webhookUrl ?? null, JSON.stringify(event.payload), event.error ?? null);
   return event;
 }
 
-export function listNotificationEvents(limit = 50): NotificationEvent[] {
+export function listNotificationEvents(userId: string = "local", limit: number = 50): NotificationEvent[] {
   const rows = getDb()
-    .prepare("SELECT id, created_at, type, title, status, webhook_url, payload, error FROM notification_events ORDER BY created_at DESC LIMIT ?")
-    .all(limit) as RawNotificationEvent[];
+    .prepare("SELECT id, created_at, type, title, status, webhook_url, payload, error FROM notification_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit) as RawNotificationEvent[];
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.created_at,
@@ -900,23 +978,57 @@ function normalizeScoringWeights(weights: Partial<ScoringWeights>): ScoringWeigh
   };
 }
 
-function syncActiveProfile(patch: { policy?: TradingPolicy; prompt?: string; scoringWeights?: ScoringWeights }): void {
-  const active = getActiveStrategyProfile();
+function syncActiveProfile(patch: { policy?: TradingPolicy; prompt?: string; scoringWeights?: ScoringWeights }, userId: string = "local"): void {
+  const active = getActiveStrategyProfile(userId);
   if (!active) return;
   const policy = patch.policy ? mergePolicy({ ...patch.policy, activeProfileId: active.id }) : active.policy;
   const prompt = patch.prompt ?? active.prompt;
   const scoringWeights = patch.scoringWeights ?? policy.scoringWeights;
   getDb()
-    .prepare("UPDATE strategy_profiles SET policy = ?, prompt = ?, scoring_weights = ?, updated_at = ? WHERE id = ?")
-    .run(JSON.stringify(policy), prompt, JSON.stringify(scoringWeights), new Date().toISOString(), active.id);
+    .prepare("UPDATE strategy_profiles SET policy = ?, prompt = ?, scoring_weights = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(JSON.stringify(policy), prompt, JSON.stringify(scoringWeights), new Date().toISOString(), active.id, userId);
 }
 
-function setSettingDirect(key: string, value: unknown, updatedAt: string): void {
+function setSettingDirect(userId: string, key: string, value: unknown, updatedAt: string): void {
   getDb()
     .prepare(
       "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
     )
-    .run(key, JSON.stringify(value), updatedAt);
+    .run(`${userId}_${key}`, userId, key, JSON.stringify(value), updatedAt);
+}
+
+// ── Field-Level Encryption ──────────────────────────────────────────────────
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
+  ? Buffer.from(process.env.ENCRYPTION_KEY, "hex")
+  : crypto.randomBytes(32); // Fallback to memory-only key if not set (keys will be lost on restart!)
+const ALGORITHM = "aes-256-gcm";
+
+function encryptValue(text: string): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const authTag = cipher.getAuthTag().toString("hex");
+  return `${iv.toString("hex")}:${authTag}:${encrypted}`;
+}
+
+function decryptValue(encryptedText: string): string {
+  try {
+    const parts = encryptedText.split(":");
+    if (parts.length !== 3) return encryptedText; // Legacy unencrypted fallback
+    const iv = Buffer.from(parts[0], "hex");
+    const authTag = Buffer.from(parts[1], "hex");
+    const encrypted = parts[2];
+    const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encrypted, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (e) {
+    console.error("Failed to decrypt field:", e);
+    return "";
+  }
 }
 
 // ── Multi-User API Key Storage ──────────────────────────────────────────────
@@ -940,7 +1052,7 @@ export function getUserApiKey(userId: string, service: string): UserApiKey | und
     id: row.id,
     userId: row.user_id,
     service: row.service,
-    apiKey: row.api_key,
+    apiKey: decryptValue(row.api_key),
     label: row.label ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -955,7 +1067,7 @@ export function listUserApiKeys(userId: string): UserApiKey[] {
     id: row.id,
     userId: row.user_id,
     service: row.service,
-    apiKey: row.api_key,
+    apiKey: decryptValue(row.api_key),
     label: row.label ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -965,21 +1077,101 @@ export function listUserApiKeys(userId: string): UserApiKey[] {
 export function upsertUserApiKey(userId: string, service: string, apiKey: string, label?: string): UserApiKey {
   const now = new Date().toISOString();
   const id = `${userId}_${service}`;
+  const encryptedKey = encryptValue(apiKey);
   getDb()
     .prepare(
       `INSERT INTO user_api_keys (id, user_id, service, api_key, label, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     )
-    .run(id, userId, service, apiKey, label ?? null, now, now);
+    .run(id, userId, service, encryptedKey, label ?? null, now, now);
   return { id, userId, service, apiKey, label, createdAt: now, updatedAt: now };
 }
 
-export function deleteUserApiKey(userId: string, service: string): boolean {
-  const result = getDb()
+export function deleteUserApiKey(userId: string, service: string): void {
+  getDb()
     .prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?")
     .run(userId, service);
-  return result.changes > 0;
+}
+
+export function listConnectedAccounts(userId: string = "local"): ConnectedAccount[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM connected_accounts WHERE user_id = ? ORDER BY created_at ASC")
+    .all(userId) as any[];
+  return rows.map(r => ({
+    id: r.id,
+    userId: r.user_id,
+    broker: r.broker,
+    environment: r.environment,
+    accountNumber: r.account_number ?? undefined,
+    label: r.label,
+    apiKey: r.api_key ?? undefined,
+    apiSecret: r.api_secret ?? undefined,
+    isActive: r.is_active === 1,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at
+  }));
+}
+
+export function getActiveConnectedAccount(userId: string = "local"): ConnectedAccount | undefined {
+  const row = getDb()
+    .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND is_active = 1 LIMIT 1")
+    .get(userId) as any;
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    broker: row.broker,
+    environment: row.environment,
+    accountNumber: row.account_number ?? undefined,
+    label: row.label,
+    apiKey: row.api_key ?? undefined,
+    apiSecret: row.api_secret ?? undefined,
+    isActive: row.is_active === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdAt" | "updatedAt">): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+        account_number = excluded.account_number,
+        label = excluded.label,
+        api_key = excluded.api_key,
+        api_secret = excluded.api_secret,
+        is_active = excluded.is_active,
+        updated_at = excluded.updated_at`
+    )
+    .run(
+      account.id,
+      account.userId,
+      account.broker,
+      account.environment,
+      account.accountNumber ?? null,
+      account.label,
+      account.apiKey ?? null,
+      account.apiSecret ?? null,
+      account.isActive ? 1 : 0,
+      now,
+      now
+    );
+}
+
+export function setActiveConnectedAccount(id: string, userId: string = "local"): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(userId);
+    db.prepare("UPDATE connected_accounts SET is_active = 1 WHERE id = ? AND user_id = ?").run(id, userId);
+  })();
+}
+
+export function deleteConnectedAccount(id: string, userId: string = "local"): void {
+  getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
 /**
@@ -1007,4 +1199,10 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   };
   const envVar = envMap[service.toLowerCase()];
   return envVar ? process.env[envVar] : undefined;
+}
+
+export function listUsers(): string[] {
+  const rows = getDb().prepare("SELECT DISTINCT user_id FROM user_settings").all() as Array<{ user_id: string }>;
+  if (rows.length === 0) return ["local"];
+  return rows.map(r => r.user_id);
 }

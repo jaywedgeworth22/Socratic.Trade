@@ -9,42 +9,19 @@ import type {
   OrderType,
   Portfolio,
   ReviewedOrder,
-  TimeInForce
+  TimeInForce,
+  BrokerGateway,
+  EquityOrderInput
 } from "./types";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 
-export interface RobinhoodGateway {
-  getAccounts(): Promise<BrokerageAccount[]>;
-  getPortfolio(accountNumber: string): Promise<Portfolio>;
-  getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;
-  getEquityOrders(accountNumber: string): Promise<EquityOrder[]>;
-  getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>>;
-  getEquityTradability(accountNumber: string, symbols: string[]): Promise<Record<string, { tradable: boolean; fractional: boolean; reason?: string }>>;
-  reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder>;
-  placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder>;
-  cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder>;
-}
-
-export interface EquityOrderInput {
-  accountNumber: string;
-  symbol: string;
-  side: OrderSide;
-  type: OrderType;
-  quantity?: number;
-  dollarAmount?: number;
-  limitPrice?: number;
-  stopPrice?: number;
-  timeInForce: TimeInForce;
-  marketHours: MarketHours;
-}
-
-export function getRobinhoodGateway(): RobinhoodGateway {
+export function getRobinhoodGateway(): BrokerGateway {
   if (process.env.ROBINHOOD_ADAPTER === "mcp") return new HttpMcpRobinhoodGateway();
   return new MockRobinhoodGateway();
 }
 
-class HttpMcpRobinhoodGateway implements RobinhoodGateway {
+class HttpMcpRobinhoodGateway implements BrokerGateway {
   private readonly url = required("ROBINHOOD_MCP_URL");
 
   async getAccounts(): Promise<BrokerageAccount[]> {
@@ -263,7 +240,7 @@ const MOCK_PRICES: Record<string, number> = {
   GOOG: 170
 };
 
-class MockRobinhoodGateway implements RobinhoodGateway {
+class MockRobinhoodGateway implements BrokerGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
     return [{ accountNumber: "RH-MOCK-AGENT", label: "Mock agentic account", agenticAllowed: true }];
   }

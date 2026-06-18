@@ -1,3 +1,5 @@
+import type { TechnicalDirection } from "../types";
+
 // Shared types for the backend "web sources" subsystem.
 //
 // These connectors read data from sources that have NO free, key-based API — most
@@ -47,6 +49,15 @@ export interface SymbolWebSignal {
   insiderSentiment?: number;
   /** Latest daily short volume as % of total volume (FINRA). */
   shortVolumeRatio?: number;
+  /** Bar-based technical read (TradingView push or in-house computed). */
+  technical?: {
+    score: number; // 0–100, 50 = neutral
+    direction: TechnicalDirection;
+    signals: string[];
+    tf?: string;
+    asOf?: string;
+    source: "tradingview" | "computed";
+  };
   /** One-line evidence bulletins from every source, deduped, for the agent prompt. */
   bulletins: string[];
 }

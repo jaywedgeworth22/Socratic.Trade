@@ -36,6 +36,14 @@ import {
   isEightKRefreshDue,
   refreshEightK
 } from "./sec8k";
+import {
+  getTechnicalStatus,
+  getTechnicalSignals,
+  isTechnicalRefreshDue,
+  refreshTechnical,
+  setTechnicalWatchlist,
+  technicalEnabled
+} from "./technical";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -43,6 +51,18 @@ export { getCongressDataset, getCongressSignals, refreshCongress } from "./congr
 export { getInsiderDataset, getInsiderSignals, refreshInsider } from "./sec";
 export { getFinraDataset, getShortVolumeSignals, refreshFinra } from "./finra";
 export { getEightKDataset, getEightKSignals, refreshEightK } from "./sec8k";
+export {
+  getTechnicalDataset,
+  getTechnicalSignals,
+  getTechnicalStatus,
+  recordTradingViewSignal,
+  refreshTechnical,
+  setTechnicalWatchlist,
+  technicalEnabled,
+  technicalSource,
+  verifyWebhookSecret
+} from "./technical";
+export type { TechnicalSignal, TechnicalSource, TradingViewWebhookPayload } from "./technical";
 
 /** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
@@ -114,6 +134,16 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "sec8k", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  // Technical: only the in-house "computed" producer has anything to pull here; the
+  // TradingView producer is push-fed via /api/webhooks/tradingview, so refreshTechnical
+  // returns skipped in that mode.
+  if (technicalEnabled() && isTechnicalRefreshDue(now)) {
+    try {
+      results.push(await refreshTechnical(now));
+    } catch (error) {
+      results.push({ id: "technical", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
   return results;
 }
 
@@ -146,6 +176,19 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
     const entry = (out[symbol] ??= { bulletins: [] });
     entry.bulletins.push(signal.bulletin);
   }
+  const technical = technicalEnabled() ? getTechnicalSignals(symbols, now) : {};
+  for (const [symbol, signal] of Object.entries(technical)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.technical = {
+      score: signal.score,
+      direction: signal.direction,
+      signals: signal.signals,
+      tf: signal.tf,
+      asOf: signal.asOf,
+      source: signal.source
+    };
+    entry.bulletins.push(signal.bulletin);
+  }
   return out;
 }
 
@@ -165,6 +208,7 @@ export function getWebSourcesStatus(): {
   insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   finra: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
   sec8k: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+  technical: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
 } {
   const congress = getCongressDataset();
   const insider = getInsiderDataset();
@@ -203,6 +247,7 @@ export function getWebSourcesStatus(): {
       sources: sec8k ? ["sec-edgar"] : [],
       due: isEightKRefreshDue(),
       ttlMs: eightKTtlMs()
-    }
+    },
+    technical: getTechnicalStatus()
   };
 }

@@ -84,7 +84,7 @@ export function CommandPalette({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98 }}
             transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-            className="relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]"
+            className="relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface/70 backdrop-blur-2xl shadow-[var(--shadow-lg)]"
             onKeyDown={onKeyDown}
           >
             <div className="flex items-center gap-3 border-b border-line px-4">
@@ -111,7 +111,7 @@ export function CommandPalette({
                       cmd.run();
                     }}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
-                      i === active ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2"
+                      i === active ? "bg-surface-3/50 text-fg" : "text-muted hover:bg-surface-2/50"
                     }`}
                   >
                     <span className="text-faint">{cmd.icon}</span>

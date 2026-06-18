@@ -1,8 +1,9 @@
-import { getRobinhoodGateway } from "@/lib/robinhood";
+import { getBrokerGateway } from "@/lib/broker";
+import { getPolicy } from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(await getRobinhoodGateway().getAccounts());
+  return NextResponse.json(await getBrokerGateway(getPolicy()).getAccounts());
 }

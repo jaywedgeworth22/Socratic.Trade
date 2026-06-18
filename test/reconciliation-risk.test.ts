@@ -1,12 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { reconcilePendingFills, generateProactiveRiskProposals } from "../src/lib/strategy";
 import { insertFillEvent, listFillEvents } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import type { RobinhoodGateway } from "../src/lib/robinhood";
+import type { BrokerGateway } from "../src/lib/types";
 import type { EquityOrder, TradingPolicy } from "../src/lib/types";
+
+vi.mock("../src/lib/vector-db", () => ({
+  findRelevantExperiences: async () => [],
+  upsertExperiences: async () => {}
+}));
+
+// Type-cast mock helper so we don't need to implement the full interface
+function createMockGateway(overrides: Partial<BrokerGateway>): BrokerGateway {
+  return overrides as BrokerGateway;
+}
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-reconciliation-${randomUUID()}.db`)}`;
@@ -32,7 +42,7 @@ describe("reconcilePendingFills", () => {
       raw: { test: true }
     });
 
-    const mockGateway = {
+    const mockGateway = createMockGateway({
       getEquityOrders: async () => [
         {
           id: brokerOrderId,
@@ -46,7 +56,7 @@ describe("reconcilePendingFills", () => {
           updatedAt: "2026-06-15T12:00:00.000Z"
         } as EquityOrder
       ]
-    } as unknown as RobinhoodGateway;
+    }) as unknown as BrokerGateway;
 
     await reconcilePendingFills(mockGateway, "ACC123");
 
@@ -88,7 +98,7 @@ describe("reconcilePendingFills", () => {
           createdAt: new Date().toISOString()
         } as EquityOrder
       ]
-    } as unknown as RobinhoodGateway;
+    } as unknown as BrokerGateway;
 
     await reconcilePendingFills(mockGateway, "ACC123");
 

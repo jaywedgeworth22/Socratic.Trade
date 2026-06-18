@@ -37,8 +37,20 @@ add smart-money/catalyst sub-scores instead of leaving the LLM to infer from pro
   `ScoringWeights`, `DEFAULT_SCORING_WEIGHTS` (0.8), `normalizeWeights`, the tuning
   LLM schema, and the UI weight editor (auto). `tsc` + 130 tests + build green.
 - **A2 `[partial]` Expand the event union as new signal sources land.** The union
-  already pulls congress/insider/FINRA-short names; extend `hasNotableWebSignal` to
-  8-K / earnings / options / analyst-revision signals as Phase C delivers them.
+  pulls congress/insider/FINRA-short names and now **strong-bullish technical signals**
+  (`hasNotableWebSignal` extended for `technical.direction==="bullish" && score>=70`; see
+  the technical web source below). Still to add as Phase C delivers them: 8-K / earnings /
+  options / analyst-revision signals.
+- **A2.1 `[done]` Technical-signal web source (TradingView push + in-house computed).**
+  New `src/lib/indicators.ts` (pure RSI/MACD/SMA → `computeTechnicals`),
+  `src/lib/web-sources/technical.ts` (one dataset, two producers, `TECHNICAL_SOURCE`
+  env-selected), and `POST /api/webhooks/tradingview` (secret-gated receiver). The read
+  overlays onto the scan, blends the `momentum` factor, joins the event union, emits a
+  bulletin, and is captured in the evidence digest. `tsc` + 178 tests + build green; live
+  webhook smoke-tested. Operator guide: `docs/tradingview-pine-setup.md`. Rollout:
+  `docs/rollouts/2026-06-18-technical-signals-tradingview.md`. Deferred: a dedicated
+  `technical` ScoringWeights factor (lighter `momentum`-blend chosen to avoid colliding
+  with concurrent scoring edits); a real-time run trigger on high-conviction pushes.
 
 ## Phase B — Richer learning + full EvidenceDigest
 Codex: "store full EvidenceDigest for chosen AND skipped … sector/factor-dimensional
@@ -49,10 +61,17 @@ learning … counterfactual return."
   it onto the lot + `ClosedLot.sector`; `getSectorScorecard` groups realized outcomes
   by sector and feeds the agent `sectorOutcomes`. `tsc` + 131 tests + build green.
   (thesis×regime×sector composite view still a follow-up.)
-- **B2 `[todo]` Full EvidenceDigest for chosen AND skipped candidates.** Persist per
-  candidate (not just chosen): factor sub-scores, source freshness, bulletins,
-  sector, regime — extend `signal_snapshot` to cover the scored set and enrich the
-  `candidates_considered` log beyond its current minimal fields. Risk: M.
+- **B2 `[done]` Full EvidenceDigest for chosen AND skipped candidates.** New
+  `CandidateEvidence` type + `src/lib/evidence.ts` `buildCandidateEvidence()`; a single
+  digest (factor sub-scores, `refPrice`, source freshness `asOf`/`provider`/`sources`,
+  bulletins, sector, regime, congress/insider/short signals) now persists for the WHOLE
+  scored set — `signal_snapshot.signals` = chosen + top-25 skipped (each tagged
+  `chosen`), and `candidates_considered.topSkipped` upgraded from 4 fields to the full
+  digest. `getSignalEfficacy` filters `chosen === false` (lot-driven join unaffected;
+  old chosen-only snapshots without the flag still attribute). Unlocks B3
+  (counterfactual forward return from `refPrice`) and B4 (factor-bucket learning).
+  `tsc` + 139 tests + build green. See
+  `docs/rollouts/2026-06-17-phase-10-b2-evidence-digest.md`.
 - **B3 `[todo]` Counterfactual learning from skipped names.** Periodically mark the
   forward return of logged-but-skipped candidates and feed "names you passed that
   then ran" into the reflection. Needs lightweight price tracking. Risk: L.

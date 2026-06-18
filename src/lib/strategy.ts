@@ -14,17 +14,31 @@ import {
   updateFillEvent
 } from "./db";
 import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
+import { deriveMetrics } from "./derived-metrics";
+import { deriveMacroMetrics } from "./macro-metrics";
+import { computeMarketInternals } from "./market-internals";
+import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
+import { buildCandidateEvidence } from "./evidence";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { getConfidenceCalibration, getPaperPortfolioProjection, getRegimeScorecard, getSectorScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
-import { getRobinhoodGateway, type RobinhoodGateway } from "./robinhood";
+import { getBrokerGateway } from "./broker";
+import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { getSetting, getInternalSetting, setInternalSetting } from "./db";
 import { debateProposal } from "./red-team";
 import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
+
+/**
+ * How many top-ranked-but-skipped candidates to persist with full evidence each run.
+ * `scanMarket` already caps the scored universe (~30 names, score >= 40), so this
+ * effectively covers the whole skipped set while bounding audit-row growth. This log
+ * is for learning only (never sent to the LLM), so size affects storage, not tokens.
+ */
+const MAX_SKIPPED_EVIDENCE = 25;
 
 export interface StrategyResult {
   runId: string;
@@ -34,22 +48,22 @@ export interface StrategyResult {
   marketScan?: MarketScan;
 }
 
-export async function runStrategyOnce(): Promise<StrategyResult> {
+export async function runStrategyOnce(userId: string = "local"): Promise<StrategyResult> {
   // Run lock: prevent overlapping runs from double-counting daily limits.
   if (!acquireStrategyLock()) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
   const runId = crypto.randomUUID();
-  insertStrategyRun(runId);
+  insertStrategyRun(runId, userId);
   let result: StrategyResult;
 
   try {
-    const policy = getPolicy();
+    const policy = getPolicy(userId);
     if (!policy.accountNumber) throw new Error("No account selected.");
     if (policy.killSwitch) throw new Error("Kill switch is active.");
 
-    const gateway = getRobinhoodGateway();
+    const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
@@ -80,8 +94,9 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
 
     const llmProposals = await proposeTrades({
+      userId,
       policyAllowlist: allowedSymbols,
-      prompt: getStrategyPrompt(),
+      prompt: getStrategyPrompt(userId),
       policy,
       portfolio: workingPortfolio,
       positions: workingPositions,
@@ -122,7 +137,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       if (!tradability[normalizedProposal.symbol]?.tradable) {
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -150,7 +165,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
 
       if (!decision.approved) {
         const proposalId = crypto.randomUUID();
-        insertProposal({ id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -165,7 +180,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
 
       if (policy.strategyAuthority === "propose") {
         const proposalId = crypto.randomUUID();
-        insertProposal({ id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy }
@@ -176,7 +191,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
 
       if (policy.paperMode) {
         const proposalId = crypto.randomUUID();
-        insertProposal({ id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
+        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
         const fill = recordFillFromProposal({
           accountNumber: policy.accountNumber,
           proposalId,
@@ -202,7 +217,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       const refId = crypto.randomUUID();
       const execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       const proposalId = crypto.randomUUID();
-      insertProposal({
+      insertProposal({ userId, 
         id: proposalId,
         runId,
         accountNumber: policy.accountNumber,
@@ -232,49 +247,46 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: execution.orderId });
     }
 
-    // Counterfactual log: record the top-ranked scan candidates the agent did NOT
-    // act on this run, so post-mortems can compare "what we bought" vs "what we
-    // skipped" without pretending the skipped names had real fills.
+    // Phase 10 B2 — full EvidenceDigest for the WHOLE scored set (chosen AND skipped):
+    // factor sub-scores, source freshness, bulletins, sector, regime, and a decision-time
+    // reference price. Persisting the skipped names (not just what we bought) is what lets
+    // later learning run counterfactuals ("names you passed that then ran") and attribute
+    // outcomes to factors. The run regime is deterministic and shared across candidates.
+    const runRegime = determineMarketRegime(await fetchMacroData());
+    const quoteBySymbol = new Map((marketScan?.topCandidates ?? []).map((q) => [normalizeSymbol(q.symbol), q]));
     const chosenSymbols = new Set(results.map((r) => normalizeSymbol(r.proposal.symbol)));
-    const skippedCandidates = (marketScan?.topCandidates ?? [])
+
+    const chosenEvidence = results.map((r) =>
+      buildCandidateEvidence(quoteBySymbol.get(normalizeSymbol(r.proposal.symbol)), {
+        symbol: r.proposal.symbol,
+        chosen: true,
+        regime: runRegime,
+        side: r.proposal.side,
+        status: r.status,
+        thesisTag: r.proposal.tradeThesisTag
+      })
+    );
+    const skippedEvidence = (marketScan?.topCandidates ?? [])
       .filter((candidate) => !chosenSymbols.has(normalizeSymbol(candidate.symbol)))
-      .slice(0, 8)
-      .map((candidate) => ({
-        symbol: candidate.symbol,
-        score: candidate.score,
-        sector: candidate.sector,
-        intradayChangePct: candidate.intradayChangePct
-      }));
+      .slice(0, MAX_SKIPPED_EVIDENCE)
+      .map((candidate) => buildCandidateEvidence(candidate, { symbol: candidate.symbol, chosen: false, regime: runRegime }));
+
+    // Counterfactual decision index: which names we bought vs the top-ranked names we
+    // passed. The skipped half now carries full evidence (was symbol/score/sector/change
+    // only), so post-mortems can compare like-for-like without re-deriving the scan.
     audit("candidates_considered", {
       runId,
       chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
-      topSkipped: skippedCandidates
+      topSkipped: skippedEvidence
     });
 
-    // SignalSnapshot / EvidenceDigest: persist the deterministic per-symbol evidence
-    // that informed each chosen proposal (factor sub-scores, congressional/insider net
-    // signals, 1-line bulletins, thesis × regime), so future learning can correlate the
-    // signals that preceded a trade with its realized outcome. Raw rows stay out — only
-    // this compact digest is stored.
-    const quoteBySymbol = new Map((marketScan?.topCandidates ?? []).map((q) => [normalizeSymbol(q.symbol), q]));
+    // SignalSnapshot: the full scored set, each a complete CandidateEvidence digest.
+    // getSignalEfficacy joins closed lots → signals by runId|symbol, so skipped entries
+    // (no fills) are simply never matched.
     audit("signal_snapshot", {
       runId,
       asOf: new Date().toISOString(),
-      signals: results.map((r) => {
-        const q = quoteBySymbol.get(normalizeSymbol(r.proposal.symbol));
-        return {
-          symbol: r.proposal.symbol,
-          side: r.proposal.side,
-          status: r.status,
-          thesisTag: r.proposal.tradeThesisTag,
-          entryRegime: r.proposal.entryMarketRegime,
-          score: q?.score,
-          factorBreakdown: q?.factorBreakdown,
-          congressNet: q?.senateTrades,
-          insiderSentiment: q?.insiderSentiment,
-          bulletins: q?.evidenceBulletins?.slice(0, 3)
-        };
-      })
+      signals: [...chosenEvidence, ...skippedEvidence]
     });
 
     const placed = results.filter((r) => r.status === "placed").length;
@@ -292,7 +304,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
       .filter(Boolean)
       .join(" ");
 
-    finishStrategyRun(runId, "completed", summary);
+    finishStrategyRun(runId, "completed", summary, userId);
     // Always snapshot the real account; snapshot the paper account too when in Paper mode.
     recordPortfolioSnapshot({ runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
     if (policy.paperMode) {
@@ -318,7 +330,7 @@ export async function runStrategyOnce(): Promise<StrategyResult> {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     finishStrategyRun(runId, "failed", summary);
     result = { runId, status: "failed", summary, proposals: [] };
-    const policy = getPolicy();
+    const policy = getPolicy(userId);
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy });
     } else {
@@ -373,21 +385,21 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
   };
 }
 
-export async function executeProposal(proposalId: string): Promise<{
+export async function executeProposal(proposalId: string, userId: string = "local"): Promise<{
   status: string;
   orderId?: string;
   reasons?: string[];
 }> {
-  const policy = getPolicy();
+  const policy = getPolicy(userId);
   if (!policy.accountNumber) throw new Error("No account selected.");
   if (policy.killSwitch) throw new Error("Kill switch is active.");
 
-  const row = getProposal(proposalId);
+  const row = getProposal(proposalId, userId);
   if (!row) throw new Error("Proposal not found.");
   if (row.status !== "proposed") throw new Error(`Proposal is already ${row.status}.`);
 
   const proposal = row.proposal;
-  const gateway = getRobinhoodGateway();
+  const gateway = getBrokerGateway(policy, userId);
 
   const [portfolio, positions] = await Promise.all([
     gateway.getPortfolio(policy.accountNumber),
@@ -572,6 +584,7 @@ const HOLDING_HORIZON_GUIDE: Record<string, string> = {
 };
 
 async function proposeTrades(input: {
+  userId: string;
   policyAllowlist: string[];
   prompt: string;
   policy: TradingPolicy;
@@ -683,7 +696,12 @@ async function proposeTrades(input: {
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
     "",
-    "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, pb (price/book), shortFloat (% of float sold short), beta, range52w (0=at 52-week low, 100=at 52-week high), newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
+    "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, pb (price/book), shortFloat (% of float sold short), beta, range52w (0=at 52-week low, 100=at 52-week high), secRelStr (today's % move minus its sector's average — positive = outperforming its sector, a relative-strength tell), newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
+    "Backend-derived ratios (computed by us, not invented — present only when their inputs exist): peg = P/E ÷ EPS-growth% (<1 cheap for its growth, >2 pricey; absent for unprofitable or no-growth names); earnYld = earnings yield % = EPS÷price (use this instead of P/E when pe is missing — a negative earnYld means the company is losing money); roe = return-on-equity % (capital efficiency; higher is better, negative = losing money on equity); payout = dividend payout ratio % (>100 = paying out more than it earns, dividend at risk); dollarVolM = daily $ volume in millions (liquidity — prefer names that can absorb the order size without slippage; thin names warrant smaller size or limit orders); spreadBps = bid-ask spread in basis points (execution cost; wide spreads argue for limit orders); grahamNumber = Graham intrinsic-value estimate ($) and marginOfSafety = % the price sits below (positive) or above (negative) it — a value cushion for defensive names; pctFromHigh = % from the 52-week high (0 = at the high/breakout zone, deeply negative = a big pullback); rr52w = reward:risk to the 52-week band (>1 = more upside room to the high than downside to the low). Use these as quantitative cross-checks on valuation, quality, income safety, tradability, and entry timing.",
+    "`macroeconomicData` now also carries: dgs3moTreasury/dgs2Treasury (short rates), inflationExpectation10y (10Y breakeven — market-implied inflation), corePCE (the Fed's preferred inflation gauge), realGDPGrowth, initialClaims (weekly labor pulse), hyCreditSpread (high-yield credit spread — a key risk-appetite gauge; widening = risk-off), usdIndex (broad dollar — a strong dollar pressures multinationals/commodities), wtiOil (energy/inflation), and vix3m. Read hyCreditSpread and the curve together for recession risk; read realGDPGrowth vs inflation for the growth/inflation mix.",
+    "`macroDerived` (backend-computed from FRED data): curve3m10y = 10Y − 3M in pp (the Fed's preferred recession curve); curve2s10s = 10Y − 2Y in pp (the canonical recession curve — negative = inverted); vixTermStructure = VIX ÷ 3-month VIX (>1 = backwardation/acute near-term fear, <1 = calm contango); yieldCurveSpread = 10Y − Fed funds in pp (negative = inverted curve, a classic recession warning — favor quality/defensives, demand more conviction on cyclicals/high-beta); real10Y = 10Y − CPI in pp (the real risk-free rate — high real rates pressure long-duration/high-multiple growth names); realFedFunds = Fed funds − CPI (>0 = restrictive policy); miseryIndex = unemployment + inflation (higher = more macro stress); equityRiskPremium = market earnings yield − 10Y in pp (low/negative = stocks expensive vs bonds, be selective; high = stocks broadly cheap). Weigh these when setting overall risk posture and sizing.",
+    "`marketInternals` (across the scan candidates): breadthPct (full-screener % advancing), advancers/decliners, pctAboveRangeMid (% of names above their 52-week midpoint), medianPE/medianEarnYld (universe valuation), and sectorRotation (avg intraday move per sector, leaders first). Use sectorRotation to favor leadership sectors and to read whether a name's move is sector-wide or name-specific; use breadth to gauge whether risk-taking is being rewarded today.",
+    "`marketSignals` (free market-wide gauges): skew = Cboe SKEW (tail-risk/crash-hedging demand; >135–145 = elevated, the market is paying up for downside protection); vvix = volatility of VIX (high = unstable vol, often near turning points); cotSpNonCommNet / cotSpNonCommNetPctOI = large-speculator net positioning in E-mini S&P 500 futures (extreme net-long = crowded/complacent, extreme net-short can precede squeezes); factors1m = trailing ~1-month cumulative returns for the market (mktRf), size (smb), value (hml) and momentum (mom) factors — read this as the current STYLE regime and tilt toward the factors that are working (e.g. positive mom = momentum names favored, positive hml = value favored). Use these to set overall risk posture and style tilt, not as single-name triggers.",
     "Technical/positioning reads: range52w near 100 = sustained strength/breakout (Momentum-Breakout), near 0 = weakness — could be Value/Mean-Reversion or a falling knife, so demand a catalyst. High shortFloat (>15-20%) raises squeeze potential (Short-Squeeze-Risk) but also signals smart-money bearishness — treat as two-sided. High beta (>1.3) means amplified moves: size more cautiously. Low pb can flag value (cross-check quality/leverage).",
     "smartMoney holds freshly-disclosed congressional (and insider) trade bulletins; senateNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
     "`signalEfficacy` (when present) is YOUR OWN realized track record: the win rate of past buys that had each evidence signal at entry vs the 'All buys (baseline)'. If a signal's shrunkWinRate is at/below baseline, stop over-weighting it; if it beats baseline, lean into it. Let this calibrate how much each evidence type moves your conviction.",
@@ -706,6 +724,16 @@ async function proposeTrades(input: {
       : macroForPrompt;
 
   const currentMarketRegime = determineMarketRegime(macro);
+
+  // Market internals (breadth, sector rotation, median valuation) across the scan candidates,
+  // and backend-derived macro metrics (curve spread, real rates, misery index, equity risk
+  // premium). The median earnings yield feeds the ERP so it reflects today's actual universe.
+  const marketInternals = input.marketScan ? computeMarketInternals(input.marketScan) : undefined;
+  const macroDerived = deriveMacroMetrics(macro, { marketEarningsYield: marketInternals?.medianEarnYld });
+
+  // Market-wide regime/sentiment from free, no-key sources (Cboe tail-risk, CFTC positioning,
+  // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
+  const marketSignals = await getMarketSignals().catch(() => undefined);
 
   // [PHASE 2 OPTIMIZATION] Total Allowlist Abstraction
   // Instead of sending hundreds of allowed symbols to the LLM, we just tell it to only trade
@@ -734,7 +762,9 @@ async function proposeTrades(input: {
       remainingDailyOrders: remainingOrders
     },
     macroeconomicData,
-    ...(typeof input.marketScan?.breadthPct === "number" ? { marketBreadth: { advancingPct: input.marketScan.breadthPct } } : {}),
+    ...(Object.keys(macroDerived).length > 0 ? { macroDerived } : {}),
+    ...(marketInternals ? { marketInternals } : {}),
+    ...(marketSignals && Object.keys(marketSignals).length > 0 ? { marketSignals } : {}),
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
@@ -1053,6 +1083,10 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
       shortFloat: quote.shortPercentOfFloat,
       beta: quote.beta,
       range52w: pricePosition52w(quote),
+      // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) — not
+      // provided by any API, computed deterministically so the LLM doesn't have to.
+      ...deriveMetrics(quote),
+      secRelStr: quote.sectorRelStrength, // intraday move vs sector average (relative strength)
       newsSent: quote.sentiment,
       insiderSent: quote.insiderSentiment,
       senateNet: quote.senateTrades,
@@ -1124,7 +1158,7 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
     }));
 }
 
-export async function reconcilePendingFills(gateway: RobinhoodGateway, accountNumber: string): Promise<void> {
+export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string): Promise<void> {
   const pending = listFillEvents(accountNumber, "live").filter(
     (fill) => fill.status === "pending_reconciliation" && fill.brokerOrderId
   );

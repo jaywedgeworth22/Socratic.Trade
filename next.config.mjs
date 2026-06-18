@@ -13,17 +13,22 @@ const nextConfig = {
         ...(config.resolve.alias ?? {}),
         "better-sqlite3": false,
         "node:fs": false,
-        "node:path": false
+        "node:path": false,
+        "node:crypto": false,
+        "node:zlib": false
       };
       config.resolve.fallback = {
         ...(config.resolve.fallback ?? {}),
         fs: false,
         path: false,
-        util: false
+        util: false,
+        crypto: false,
+        zlib: false
       };
     }
     return config;
   },
+  turbopack: {},
   experimental: {
     serverActions: {
       bodySizeLimit: "1mb"

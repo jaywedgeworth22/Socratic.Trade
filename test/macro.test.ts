@@ -4,13 +4,24 @@ import type { MacroData } from "../src/lib/macro";
 
 const base: MacroData = {
   fedFundsRate: "5.25%",
+  dgs3moTreasury: "5.10%",
+  dgs2Treasury: "4.60%",
   dgs10Treasury: "4.20%",
+  inflationExpectation10y: "2.30%",
   cpiInflation: "3.10%",
+  corePCE: "2.80%",
+  realGDPGrowth: "2.00%",
   unemploymentRate: "3.90%",
+  initialClaims: "220K",
   m2MoneySupply: "20.8T",
+  m2GrowthYoY: "2.50%",
+  hyCreditSpread: "3.20%",
+  usdIndex: "121.00",
+  wtiOil: "$75.00",
   housingStarts: "1.3M",
   consumerSentiment: "75.0",
   vix: "15.00",
+  vix3m: "17.00",
   asOf: "2026-06-16"
 };
 

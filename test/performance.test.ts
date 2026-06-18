@@ -225,12 +225,21 @@ describe("getThesisScorecard", () => {
     // A winning buy (100 -> 130) opened in a run that recorded a congressional + insider tailwind.
     insertFillEvent(fill({ id: "se-b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "NVDA", runId, filledAt: "2026-06-15T00:00:01.000Z" }));
     insertFillEvent(fill({ id: "se-s1", side: "sell", quantity: 1, price: 130, notional: 130, accountNumber: account, symbol: "NVDA", filledAt: "2026-06-15T00:00:02.000Z" }));
-    audit("signal_snapshot", { runId, signals: [{ symbol: "NVDA", side: "buy", congressNet: 2, insiderSentiment: 80 }] });
+    // The snapshot now records the full scored set; the skipped TSLA entry (chosen:false,
+    // no fill) must NOT inflate any signal bucket. The NVDA entry has no `chosen` field
+    // (older shape) and must still attribute, proving backward compatibility.
+    audit("signal_snapshot", {
+      runId,
+      signals: [
+        { symbol: "NVDA", side: "buy", congressNet: 2, insiderSentiment: 80 },
+        { symbol: "TSLA", chosen: false, congressNet: 5, insiderSentiment: 90 }
+      ]
+    });
 
     const eff = getSignalEfficacy(account, "paper");
     expect(eff.find((e) => e.signal.includes("baseline"))?.trades).toBe(1);
     const congress = eff.find((e) => e.signal.includes("Congressional"));
-    expect(congress?.trades).toBe(1);
+    expect(congress?.trades).toBe(1); // only NVDA, not the skipped TSLA
     expect(congress?.winRate).toBe(100);
     expect(eff.find((e) => e.signal.includes("Insider"))?.trades).toBe(1);
   });

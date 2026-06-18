@@ -50,7 +50,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
-  taxSettings: DEFAULT_TAX_SETTINGS
+  taxSettings: DEFAULT_TAX_SETTINGS,
+  activeBroker: "robinhood"
 };
 
 export const DEFAULT_STRATEGY_PROMPT = `OBJECTIVE

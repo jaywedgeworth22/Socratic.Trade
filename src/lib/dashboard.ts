@@ -10,7 +10,8 @@ import {
   listPendingProposals,
   listStrategyProfiles,
   listStrategyRuns,
-  listFillEvents
+  listFillEvents,
+  listConnectedAccounts
 } from "./db";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
@@ -18,13 +19,13 @@ import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getTaxSummary } from "./tax";
-import { getRobinhoodGateway } from "./robinhood";
+import { getBrokerGateway } from "./broker";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
 
-export async function getDashboardSnapshot() {
-  const gateway = getRobinhoodGateway();
-  const policy = getPolicy();
+export async function getDashboardSnapshot(userId: string = "local") {
+  const policy = getPolicy(userId);
+  const gateway = getBrokerGateway(policy);
   const accounts = await gateway.getAccounts();
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
   const [portfolio, positions, orders] = accountNumber
@@ -36,7 +37,7 @@ export async function getDashboardSnapshot() {
     : [undefined, [], []];
 
   const dailyStats = accountNumber
-    ? dailyExecutionStats(accountNumber)
+    ? dailyExecutionStats(accountNumber, new Date(), userId)
     : { orderCount: 0, notional: 0 };
 
   // Build a live current-price map (broker quotes for held + paper symbols) so the paper
@@ -64,17 +65,17 @@ export async function getDashboardSnapshot() {
   const displayPortfolio = policy.paperMode ? paperProjection?.portfolio ?? portfolio : portfolio;
   const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
 
-  const pendingProposals = accountNumber ? listPendingProposals(accountNumber) : [];
+  const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices) : undefined;
   const scorecardSource = policy.paperMode ? "paper" : "live";
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices) : [];
   const tax = accountNumber ? getTaxSummary(accountNumber, scorecardSource, currentPrices, policy.taxSettings) : undefined;
-  const profiles = listStrategyProfiles();
-  const activeProfile = getActiveStrategyProfile();
-  const notifications = listNotificationEvents(50);
-  const latestStrategyRun = latestAuditByKind("strategy_run")?.payload as StrategyDecisionLike | undefined;
-  const audit = listAudit(100);
+  const profiles = listStrategyProfiles(userId);
+  const activeProfile = getActiveStrategyProfile(userId);
+  const notifications = listNotificationEvents(userId, 50);
+  const latestStrategyRun = latestAuditByKind("strategy_run", userId)?.payload as StrategyDecisionLike | undefined;
+  const audit = listAudit(100, userId);
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,
     livePositions: positions,
@@ -119,6 +120,7 @@ export async function getDashboardSnapshot() {
     audit,
     auditFeed,
     unifiedFeed,
+    connectedAccounts: listConnectedAccounts(),
     latestStrategyRun,
     dailyStats,
     strategyRuns: listStrategyRuns(15),

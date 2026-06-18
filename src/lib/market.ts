@@ -1,5 +1,5 @@
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
-import { getSymbolWebSignals } from "./web-sources";
+import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
 import type { SymbolWebSignal } from "./web-sources";
 
 /** How many freshly-disclosed "event" names may be unioned into the candidate set. */
@@ -11,7 +11,8 @@ export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
   return (
     (sig.congress?.netSignal ?? 0) > 0 || // net congressional buying
     (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) || // insider buying
-    (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) // elevated short pressure
+    (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) || // elevated short pressure
+    (sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70) // strong bullish technical
   );
 }
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
@@ -140,20 +141,56 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         overlaySources.add("sec-edgar");
       }
       if (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) overlaySources.add("finra");
+      // Bar-based technical read (TradingView push or in-house computed). Feeds momentumScore.
+      if (sig.technical) overlaySources.add(sig.technical.source);
       const overlaid: MarketQuote = {
         ...quote,
         senateTrades,
         insiderSentiment,
+        technicalScore: sig.technical?.score ?? quote.technicalScore,
+        technicalDirection: sig.technical?.direction ?? quote.technicalDirection,
+        technicalSignals: sig.technical?.signals ?? quote.technicalSignals,
         evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins,
         sources
       };
-      // Recompute the score: the positioning factor depends on senateTrades/insiderSentiment
-      // the overlay just filled, so a freshly-disclosed smart-money name now ranks up.
+      // Recompute the score: positioning depends on senateTrades/insiderSentiment and momentum
+      // now blends technicalScore — both filled by the overlay — so a freshly-disclosed
+      // smart-money name or a strong technical signal ranks up deterministically.
       const factorBreakdown = scoreFactors(overlaid, weights);
       return { ...overlaid, factorBreakdown, score: factorBreakdown.weightedTotal };
     });
-    // Re-sort so the positioning lift actually reorders the displayed candidates.
+    // Re-sort so the positioning/technical lift actually reorders the displayed candidates.
     topCandidates = topCandidates.sort((a, b) => b.score - a.score);
+
+    // Cross-sectional sector relative strength: each name's intraday move vs the average
+    // move of its sector among the candidates. Lets the agent (and UI) see who is leading
+    // or lagging its own sector today, not just the tape overall. Computed in-house.
+    const sectorAgg = new Map<string, { sum: number; count: number }>();
+    for (const quote of topCandidates) {
+      if (!quote.sector || !Number.isFinite(quote.intradayChangePct)) continue;
+      const agg = sectorAgg.get(quote.sector) ?? { sum: 0, count: 0 };
+      agg.sum += quote.intradayChangePct;
+      agg.count += 1;
+      sectorAgg.set(quote.sector, agg);
+    }
+    topCandidates = topCandidates.map((quote) => {
+      const agg = quote.sector ? sectorAgg.get(quote.sector) : undefined;
+      // Need at least one peer in the sector for a relative read to be meaningful.
+      if (!agg || agg.count < 2 || !Number.isFinite(quote.intradayChangePct)) return quote;
+      const sectorAvg = agg.sum / agg.count;
+      return { ...quote, sectorRelStrength: Math.round((quote.intradayChangePct - sectorAvg) * 100) / 100 };
+    });
+
+    // Record the candidate set as the technical watchlist so the in-house "computed"
+    // producer (TECHNICAL_SOURCE=computed) knows which names to pull OHLC for next refresh.
+    // Cheap local write; a no-op consumer in TradingView push mode.
+    if (topCandidates.length > 0) {
+      try {
+        setTechnicalWatchlist(topCandidates.map((quote) => quote.symbol));
+      } catch {
+        /* watchlist persistence is best-effort; never block a scan on it */
+      }
+    }
 
     // Fold enriched candidates back into the full set so quotesBySymbol carries sentiment/PE.
     const enrichedBySymbol = new Map(topCandidates.map((quote) => [quote.symbol, quote]));
@@ -418,7 +455,14 @@ function momentumScore(quote: MarketQuote): number {
   // Blend in the 52-week price position when available: near the high reflects
   // sustained strength/breakout; near the low reflects weakness (or mean-reversion).
   const pos = pricePosition52w(quote);
-  return typeof pos === "number" ? clamp(intraday * 0.6 + pos * 0.4) : clamp(intraday);
+  const base = typeof pos === "number" ? intraday * 0.6 + pos * 0.4 : intraday;
+  // Blend in the bar-based technical read when present (RSI/MACD/MA crossovers from a
+  // real price-history series — the one momentum input the snapshot screener lacks).
+  // Weighted to half so it informs but doesn't dominate the intraday/52w signal.
+  if (typeof quote.technicalScore === "number") {
+    return clamp(base * 0.5 + quote.technicalScore * 0.5);
+  }
+  return clamp(base);
 }
 
 function volatilityScore(quote: MarketQuote): number {

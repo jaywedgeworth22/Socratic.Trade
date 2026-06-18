@@ -10,7 +10,8 @@ import type {
   StrategyProfile,
   StrategyRunRow,
   TradingPolicy,
-  TradeProposal
+  TradeProposal,
+  ConnectedAccount
 } from "@/lib/types";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
@@ -36,6 +37,7 @@ export interface DashboardSnapshot {
   policy: TradingPolicy;
   strategyPrompt: string;
   accounts: BrokerageAccount[];
+  connectedAccounts: ConnectedAccount[];
   portfolio?: Portfolio;
   positions: EquityPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;

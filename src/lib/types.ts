@@ -1,3 +1,5 @@
+import type { DerivedMetrics } from "./derived-metrics";
+
 export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
@@ -9,6 +11,8 @@ export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
 export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch";
 export type NotificationStatus = "sent" | "failed" | "skipped";
+/** Direction of a bar-based technical read (TradingView push or in-house computed). */
+export type TechnicalDirection = "bullish" | "bearish" | "neutral";
 
 export interface ScoringWeights {
   liquidity: number;
@@ -58,6 +62,20 @@ export interface RiskRules {
 export interface NotificationSettings {
   webhookUrl?: string;
   enabledEvents: NotificationEventType[];
+}
+
+export interface ConnectedAccount {
+  id: string;
+  userId: string;
+  broker: "alpaca" | "robinhood";
+  environment: "paper" | "live";
+  accountNumber?: string;
+  label: string;
+  apiKey?: string;
+  apiSecret?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BrokerageAccount {
@@ -115,6 +133,7 @@ export interface TradingPolicy {
   paperStartingCash: number;
   killSwitch: boolean;
   accountNumber?: string;
+  connectedAccountId?: string;
   universe: AllowlistUniverse;
   strategyAuthority: StrategyAuthority;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
@@ -128,6 +147,7 @@ export interface TradingPolicy {
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
+  evaluatorCadenceHours?: number;
   runDuringExtendedHours: boolean;
   scoringWeights: ScoringWeights;
   sectorCaps: Record<string, number>;
@@ -136,6 +156,7 @@ export interface TradingPolicy {
   taxSettings?: TaxSettings;
   tuning?: TuningSettings;
   activeProfileId?: string;
+  activeBroker?: "alpaca" | "robinhood";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally
@@ -218,6 +239,15 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Cross-sectional: this name's intraday % move minus the average move of its sector among
+   *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
+  sectorRelStrength?: number;
+  /** Bar-based technical strength, 0–100 (50 = neutral). From the technical web source
+   *  (TradingView push or in-house computed). Lifts/dings `momentumScore`. */
+  technicalScore?: number;
+  technicalDirection?: TechnicalDirection;
+  /** Named technical conditions that fired, e.g. ["sma50_200_golden_cross","rsi_reclaim_oversold"]. */
+  technicalSignals?: string[];
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
 }
@@ -242,6 +272,46 @@ export type MarketFactor = keyof ScoringWeights;
 export type MarketFactorBreakdown = Record<MarketFactor, number> & {
   weightedTotal: number;
 };
+
+/**
+ * Compact per-candidate evidence digest persisted in the per-run `signal_snapshot`
+ * audit for the FULL scored set — chosen AND skipped — so future learning can
+ * correlate the deterministic evidence that preceded a decision with its realized
+ * outcome (signal efficacy), run counterfactuals on names that were passed over
+ * (forward return from `refPrice`), and attribute outcomes to the dominant factor
+ * (`factorBreakdown`). Raw provider rows stay out; only this digest is stored.
+ */
+export interface CandidateEvidence {
+  symbol: string;
+  /** true = the agent acted on it this run; false = top-ranked but skipped. */
+  chosen: boolean;
+  side?: OrderSide; // present when chosen
+  status?: string; // proposal status when chosen (placed/paper/proposed/blocked)
+  thesisTag?: string; // present when chosen
+  /** Run market regime — the same deterministic regime for every candidate this run. */
+  regime: string;
+  score?: number;
+  /** Decision-time price; the anchor for counterfactual forward-return tracking. */
+  refPrice?: number;
+  sector?: string;
+  factorBreakdown?: MarketFactorBreakdown;
+  congressNet?: number; // senateTrades (distinct buy members minus sell members)
+  insiderSentiment?: number;
+  shortPercentOfFloat?: number;
+  beta?: number;
+  intradayChangePct?: number;
+  sectorRelStrength?: number; // intraday move vs sector average at decision time
+  technicalScore?: number; // bar-based technical strength 0–100 at decision time
+  technicalDirection?: TechnicalDirection;
+  technicalSignals?: string[]; // named technical conditions that fired
+  asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
+  provider?: string; // primary provider
+  sources?: EnrichmentSources; // per-field provenance (source attribution)
+  bulletins?: string[]; // up to 3 web-source evidence bulletins
+  /** Backend-derived ratios at decision time (PEG, earnings yield, ROE, payout, $ volume, spread).
+   *  Persisted so the learning loop can correlate, e.g., low-PEG entries with realized outcomes. */
+  derived?: DerivedMetrics;
+}
 
 export interface MarketQuoteSummary {
   symbol: string;
@@ -305,6 +375,31 @@ export interface ExecutedOrder {
   filledQuantity?: number;
   averagePrice?: number;
   raw: unknown;
+}
+
+export interface EquityOrderInput {
+  accountNumber: string;
+  symbol: string;
+  side: OrderSide;
+  type: OrderType;
+  quantity?: number;
+  dollarAmount?: number;
+  limitPrice?: number;
+  stopPrice?: number;
+  timeInForce: TimeInForce;
+  marketHours: MarketHours;
+}
+
+export interface BrokerGateway {
+  getAccounts(): Promise<BrokerageAccount[]>;
+  getPortfolio(accountNumber: string): Promise<Portfolio>;
+  getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;
+  getEquityOrders(accountNumber: string): Promise<EquityOrder[]>;
+  getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>>;
+  getEquityTradability(accountNumber: string, symbols: string[]): Promise<Record<string, { tradable: boolean; fractional: boolean; reason?: string }>>;
+  reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder>;
+  placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder>;
+  cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder>;
 }
 
 export interface StrategyRun {
@@ -384,7 +479,7 @@ export interface StrategyTuningPatch {
       | "maxSymbolExposurePct"
       | "maxDailyOrders"
       | "maxProposalsPerRun"
-      | "runCadenceMinutes"
+      | "runCadenceMinutes" | "evaluatorCadenceHours"
       | "universe"
       | "strategyAuthority"
       | "runDuringExtendedHours"

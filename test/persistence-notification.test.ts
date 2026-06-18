@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
+vi.mock("../src/lib/vector-db", () => ({
+  findRelevantExperiences: async () => [],
+  upsertExperiences: async () => {}
+}));
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-test-${randomUUID()}.db`)}`;
 });
@@ -87,13 +91,24 @@ describe("persistence and notifications", () => {
     });
 
     try {
-      const { listAudit, setPolicy } = await import("../src/lib/db");
+      const { listAudit, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
+      
+      const mockAccountId = randomUUID();
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "robinhood",
+        environment: "paper",
+        accountNumber: "RH-MOCK-AGENT",
+        label: "Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+
       setPolicy({
         ...DEFAULT_POLICY,
         enabled: true,
-        paperMode: true,
-        accountNumber: "RH-MOCK-AGENT",
         allowlist: ["AAPL"],
         strategyAuthority: "decide"
       });

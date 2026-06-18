@@ -455,14 +455,17 @@ export function getSignalEfficacy(
   const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
   if (closedLots.length === 0) return [];
 
-  // runId|symbol -> entry signals, from the signal_snapshot audit trail.
+  // runId|symbol -> entry signals, from the signal_snapshot audit trail. The snapshot
+  // now records the full scored set (chosen + skipped); only CHOSEN entries can have a
+  // matching closed lot, so skip the rest (older snapshots predate the flag → undefined,
+  // which we keep, preserving the chosen-only behavior they had).
   const signalByKey = new Map<string, { congressNet?: number; insiderSentiment?: number }>();
   for (const event of listAudit(500)) {
     if (event.kind !== "signal_snapshot") continue;
-    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; congressNet?: number; insiderSentiment?: number }> };
+    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; congressNet?: number; insiderSentiment?: number }> };
     if (!payload?.runId || !Array.isArray(payload.signals)) continue;
     for (const s of payload.signals) {
-      if (!s.symbol) continue;
+      if (!s.symbol || s.chosen === false) continue;
       signalByKey.set(`${payload.runId}|${normalizeSymbol(s.symbol)}`, { congressNet: s.congressNet, insiderSentiment: s.insiderSentiment });
     }
   }

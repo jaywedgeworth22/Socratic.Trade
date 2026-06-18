@@ -1,0 +1,50 @@
+import { NextResponse } from "next/server";
+import { fetchDailyOHLC, toBusinessDay } from "@/lib/history";
+
+export const dynamic = "force-dynamic";
+
+// Daily OHLC price history for the symbol-drilldown price chart. Read-only; reuses the
+// shared free OHLC fetch (Yahoo → Stooq) and returns chart-ready candles (deduped,
+// ascending, 'YYYY-MM-DD' business days). No bars → empty array, never fabricated.
+
+interface ChartBar {
+  time: string; // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+export async function GET(req: Request) {
+  const raw = new URL(req.url).searchParams.get("symbol") ?? "";
+  const symbol = raw.trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(symbol)) {
+    return NextResponse.json({ error: "invalid or missing symbol" }, { status: 400 });
+  }
+
+  try {
+    const bars = await fetchDailyOHLC(symbol);
+    if (!bars || bars.length === 0) {
+      return NextResponse.json({ symbol, bars: [], note: "no price history available" });
+    }
+
+    // Map to chart-ready candles: require a full OHLC quad, normalize the date, dedup, sort.
+    const byDay = new Map<string, ChartBar>();
+    for (const b of bars) {
+      const time = toBusinessDay(b.time);
+      if (!time) continue;
+      const { open, high, low, close } = b;
+      if (![open, high, low, close].every((v) => typeof v === "number" && Number.isFinite(v))) continue;
+      byDay.set(time, { time, open: open as number, high: high as number, low: low as number, close, volume: numOrUndef(b.volume) });
+    }
+    const chartBars = [...byDay.values()].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+    return NextResponse.json({ symbol, bars: chartBars });
+  } catch {
+    return NextResponse.json({ symbol, bars: [], note: "price history fetch failed" });
+  }
+}
+
+function numOrUndef(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}

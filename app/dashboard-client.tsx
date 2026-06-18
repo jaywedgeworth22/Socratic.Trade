@@ -13,10 +13,12 @@ import {
   Info,
   Landmark,
   LayoutDashboard,
-  LineChart as LineChartIcon,
+  LineChartIcon,
+  Network,
   Pause,
   Percent,
   Play,
+  Plus,
   RefreshCw,
   RotateCcw,
   Settings as SettingsIcon,
@@ -32,6 +34,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import { TableVirtuoso } from "react-virtuoso";
 import { toast } from "sonner";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
+import { deriveMetrics } from "@/lib/derived-metrics";
 import {
   cellTitle,
   companyTitle,
@@ -63,6 +66,8 @@ const AllocationDonut = dynamic(() => import("./ui/charts").then((m) => m.Alloca
 const EquityCurve = dynamic(() => import("./ui/charts").then((m) => m.EquityCurve), { ssr: false });
 const ScorecardBars = dynamic(() => import("./ui/charts").then((m) => m.ScorecardBars), { ssr: false });
 import { CommandPalette, type Command } from "./ui/command-palette";
+import { StrategyFlow } from "./ui/strategy-flow";
+import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import {
   Button,
@@ -94,8 +99,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [feedOpen, setFeedOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
+  const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [killConfirm, setKillConfirm] = useState(false);
+  const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
 
   const [newProfileName, setNewProfileName] = useState("");
   const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
@@ -117,6 +124,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     setIsMac(/Mac|iPhone|iPad|iPod/i.test(platform));
   }, []);
   const shortcutLabel = isMac ? "⌘K" : "Ctrl+K";
+  const shortcutIcon = isMac ? <><CommandIcon size={13} /> K</> : <span className="font-semibold text-xs rounded border border-line bg-surface px-1 py-0.5">Ctrl K</span>;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -320,6 +328,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     { id: "tax", label: "Go to Tax", icon: <Landmark size={15} />, run: () => setWorkspaceTab("tax") },
     { id: "strategy", label: "Go to Strategy", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("strategy") },
     { id: "studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
+    { id: "flow", label: "Open Strategy Flow (Node Editor)", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
     { id: "activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
     { id: "settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
     { id: "mode", label: `Switch to ${policy.paperMode ? "Live" : "Paper"} mode`, icon: <Wallet size={15} />, run: () => void updatePolicy({ paperMode: !policy.paperMode }) },
@@ -359,7 +368,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
 
         <div className="ml-auto flex items-center gap-2">
           <div
-            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 md:flex"
+            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1 md:flex"
             title={policy.killSwitch ? "Kill switch is active — deactivate it to enable autonomy" : "Turn autonomous trading on or off"}
           >
             <span className="text-xs font-medium text-muted">Autonomy</span>
@@ -369,27 +378,36 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               label="Autonomy"
             />
           </div>
-          <Segmented
-            value={mode}
-            onChange={(v) => updatePolicy({ paperMode: v === "paper" })}
-            options={[
-              { value: "paper", label: "Paper" },
-              { value: "live", label: "Live", tone: "down" }
-            ]}
-          />
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 text-sm font-medium text-fg outline-none focus:border-accent"
+              value={policy.connectedAccountId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (id === "new") setSettingsOpen(true);
+                else void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+              }}
+            >
+              <option value="" disabled>Select Account...</option>
+              {snapshot.connectedAccounts?.map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.label} ({acc.environment})</option>
+              ))}
+              <option value="new">+ Manage Accounts</option>
+            </select>
+          </div>
           <button
             onClick={() => setPaletteOpen(true)}
             title="Open command palette"
-            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-fg md:flex"
+            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-fg md:flex"
           >
-            {isMac ? <><CommandIcon size={13} /> K</> : <span className="font-medium">Ctrl K</span>}
+            {shortcutIcon}
           </button>
           <IconButton label="Refresh" onClick={() => load()} disabled={busy}>
             <RefreshCw size={15} className={cn(busy && "animate-spin")} />
           </IconButton>
           <button
             onClick={() => setFeedOpen(true)}
-            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-fg transition-colors hover:bg-surface-2"
+            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 text-sm font-medium text-fg transition-colors hover:bg-surface-2/50 backdrop-blur-lg"
           >
             <ActivityIcon size={15} /> Activity
             {pendingCount > 0 && (
@@ -398,6 +416,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               </span>
             )}
           </button>
+          <Button variant="ghost" size="sm" className="h-9" onClick={() => setNodeEditorOpen(true)}>
+            <Network size={15} /> Flow
+          </Button>
           <Button variant="ghost" size="sm" className="h-9" onClick={() => setStudioOpen(true)}>
             <BrainCircuit size={15} /> Strategy
           </Button>
@@ -457,7 +478,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
-                <MarketScanView snapshot={snapshot} />
+                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} />
                 <SmartMoneyView snapshot={snapshot} />
               </div>
             )}
@@ -511,6 +532,16 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         </div>
       </SlideOver>
 
+      <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
+        {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} />}
+      </SlideOver>
+
+      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
+        <div className="h-full w-full">
+          <StrategyFlow />
+        </div>
+      </Modal>
+
       <Modal open={studioOpen} onClose={() => setStudioOpen(false)} title="Strategy Studio" subtitle="Prompt, sliders, scoring weights & LLM review" icon={<BrainCircuit size={18} />} size="xl">
         <StrategyStudio
           snapshot={snapshot}
@@ -538,6 +569,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           remainingNotional={remainingNotional}
           remainingOrders={remainingOrders}
           updatePolicy={updatePolicy}
+          load={load}
         />
       </Modal>
 
@@ -567,7 +599,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
 
 function StatusPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="flex flex-col rounded-lg border border-line bg-surface px-3 py-1" title={title}>
+    <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={title}>
       <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">{label}</span>
       <span className="tnum text-[13px] leading-tight text-fg">{value}</span>
     </div>
@@ -578,11 +610,11 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
   const tone = pct >= 90 ? "down" : pct >= 60 ? "warn" : "accent";
   const bar = tone === "down" ? "bg-down" : tone === "warn" ? "bg-warn" : "bg-accent";
   return (
-    <div className="flex flex-col rounded-lg border border-line bg-surface px-3 py-1" title={`${money(used)} of ${money(cap)} daily notional used`}>
+    <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={`${money(used)} of ${money(cap)} daily notional used`}>
       <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">Daily risk</span>
       <div className="flex items-center gap-1.5">
         <span className="tnum text-[13px] leading-tight text-fg">{pct}%</span>
-        <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-3">
+        <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-3/50 backdrop-blur-md">
           <span className={cn("block h-full rounded-full", bar)} style={{ width: `${Math.min(100, pct)}%` }} />
         </span>
       </div>
@@ -632,7 +664,7 @@ function PortfolioRail({
           <EmptyState icon={<Wallet size={18} />} title="No open positions" hint="Run the strategy to start building a position set." />
         ) : (
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-surface">
+            <thead className="sticky top-0 bg-surface/50 backdrop-blur-xl">
               <tr className="text-[11px] uppercase text-faint">
                 <th className="px-2 py-1.5 text-left font-semibold">Symbol</th>
                 <th className="px-2 py-1.5 text-right font-semibold">Value</th>
@@ -641,7 +673,7 @@ function PortfolioRail({
             </thead>
             <tbody>
               {enriched.map((p) => (
-                <tr key={p.symbol} className="border-t border-line/60 hover:bg-surface-2">
+                <tr key={p.symbol} className="border-t border-line/60 hover:bg-surface-2/50 backdrop-blur-lg">
                   <td className="px-2 py-1.5">
                     <div className="font-semibold text-fg" title={companyTitle(p.symbol, symbolMetaBySymbol)}>{p.symbol}</div>
                     <div className="tnum text-[11px] text-faint">{formatShareQuantity(p.quantity, p.symbol)} sh · {p.allocPct.toFixed(1)}%</div>
@@ -685,7 +717,7 @@ function DecisionView({
           <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
             {pending.map((p) => (
-              <div key={p.id} className="rounded-xl border border-line bg-surface-2 p-3">
+              <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
                 <div className="flex items-center gap-2">
                   <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
                   <span className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}>{p.proposal.symbol}</span>
@@ -720,7 +752,7 @@ function DecisionView({
               {decision.summary}
             </div>
             {decision.proposals.map((item, i) => (
-              <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2 p-3">
+              <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
                   <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
@@ -729,7 +761,7 @@ function DecisionView({
                   {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
                 </div>
                 <p className="mt-2 text-[13px] leading-snug text-muted">{item.proposal.rationale}</p>
-                {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3 px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
+                {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
               </div>
             ))}
           </div>
@@ -749,11 +781,20 @@ type ScanColumn = {
   title: string; // rich header tooltip: acronym expansion + methodology + source
   align?: "right";
   defaultHidden?: boolean;
-  sortKey: keyof MarketQuote;
+  /** Sort by a raw quote field… */
+  sortKey?: keyof MarketQuote;
+  /** …or by a computed value (for backend-derived columns not stored on the quote). */
+  sortValue?: (q: MarketQuote) => number | string | undefined;
   render: (q: MarketQuote) => React.ReactNode;
   cellClass?: (q: MarketQuote) => string;
   cellTitle?: (q: MarketQuote) => string | undefined;
 };
+
+/** Resolve the value a column sorts on — its computed value if any, else the raw quote field. */
+function scanSortValue(col: ScanColumn, q: MarketQuote): unknown {
+  if (col.sortValue) return col.sortValue(q);
+  return col.sortKey ? q[col.sortKey] : undefined;
+}
 
 const SCAN_COLUMNS: ScanColumn[] = [
   { id: "symbol", label: "Symbol", title: "Ticker symbol. Hover a row for the company name.", sortKey: "symbol",
@@ -776,6 +817,33 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => cellTitle("EPS growth (YoY)", q.sources?.epsGrowth) },
   { id: "dividendYield", label: "Div", title: "Annual dividend yield = trailing dividends per share ÷ price. Source: Yahoo / Finnhub.", align: "right", sortKey: "dividendYield",
     render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH) },
+  // ── Backend-derived ratios (computed by us, not returned by any API). See src/lib/derived-metrics.ts. ──
+  { id: "peg", label: "PEG", title: "PEG ratio (derived) = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive. Blank when unprofitable or no growth. Computed in-house.", align: "right", sortValue: (q) => deriveMetrics(q).peg,
+    render: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? <span className="tnum">{v.toFixed(2)}</span> : DASH; },
+    cellClass: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? (v < 1 ? "text-up" : v > 2.5 ? "text-down" : "") : ""; } },
+  { id: "roe", label: "ROE", title: "Return on equity (derived) = EPS ÷ book value per share, where BVPS = price ÷ P/B. Higher = more efficient use of capital; negative = losing money on equity. Computed in-house.", align: "right", sortValue: (q) => deriveMetrics(q).roe,
+    render: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? <span className="tnum">{v.toFixed(1)}%</span> : DASH; },
+    cellClass: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+  { id: "earnYld", label: "Earn Yld", title: "Earnings yield (derived) = EPS ÷ price (the inverse of P/E). Usable when P/E is n/a; negative = the company is losing money. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).earnYld,
+    render: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}%</span> : DASH; },
+    cellClass: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+  { id: "payout", label: "Payout", title: "Dividend payout ratio (derived) = dividends per share ÷ EPS. >100% means the dividend exceeds earnings and may be unsustainable. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).payout,
+    render: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(0)}%</span> : DASH; },
+    cellClass: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" && v > 100 ? "text-down" : ""; } },
+  { id: "dollarVolM", label: "$ Vol", title: "Daily dollar volume (derived) = price × volume — liquidity gauge for position sizing and slippage. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).dollarVolM,
+    render: (q) => { const v = deriveMetrics(q).dollarVolM; return typeof v === "number" ? <span className="tnum text-muted">{compactMoney(v * 1e6)}</span> : DASH; } },
+  { id: "spreadBps", label: "Spread", title: "Bid-ask spread in basis points (derived) = (ask − bid) ÷ mid × 10000 — execution cost; wide spreads favor limit orders. Computed in-house when both quotes are present.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).spreadBps,
+    render: (q) => { const v = deriveMetrics(q).spreadBps; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}</span> : DASH; } },
+  { id: "sectorRelStrength", label: "Sec RS", title: "Sector relative strength (derived) = this name's intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today. Computed in-house.", align: "right", defaultHidden: true, sortKey: "sectorRelStrength",
+    render: (q) => (typeof q.sectorRelStrength === "number" ? <span className="tnum">{q.sectorRelStrength >= 0 ? "+" : ""}{q.sectorRelStrength.toFixed(2)}%</span> : DASH),
+    cellClass: (q) => (typeof q.sectorRelStrength === "number" ? (q.sectorRelStrength >= 0 ? "text-up" : "text-down") : "") },
+  { id: "marginOfSafety", label: "MoS", title: "Margin of safety (derived) = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share). Positive = trading below intrinsic value. Computed in-house for profitable names.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).marginOfSafety,
+    render: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? <span className="tnum">{v >= 0 ? "+" : ""}{v.toFixed(0)}%</span> : DASH; },
+    cellClass: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+  { id: "pctFromHigh", label: "% off Hi", title: "% from the 52-week high (derived) = (price − 52w high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).pctFromHigh,
+    render: (q) => { const v = deriveMetrics(q).pctFromHigh; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}%</span> : DASH; } },
+  { id: "rr52w", label: "R:R", title: "Reward:risk to the 52-week band (derived) = (52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low. Computed in-house.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).rr52w,
+    render: (q) => { const v = deriveMetrics(q).rr52w; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}</span> : DASH; } },
   { id: "shortPercentOfFloat", label: "Short %", title: "Percent of the tradable float sold short. High (>15–20%) raises short-squeeze potential but also signals bearish positioning. Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "shortPercentOfFloat",
     render: (q) => (typeof q.shortPercentOfFloat === "number" ? <span className="tnum text-muted">{q.shortPercentOfFloat.toFixed(1)}%</span> : DASH) },
   { id: "beta", label: "Beta", title: "Beta — sensitivity to the broad market (1.0 = moves with the market; >1 amplifies moves, <1 dampens them). Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "beta",
@@ -799,8 +867,8 @@ const SCAN_COLUMNS: ScanColumn[] = [
 const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
 const SCAN_COLS_KEY = "scan-visible-cols";
 
-function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const [sort, setSort] = useState<{ col: keyof MarketQuote; dir: SortDir }>({ col: "score", dir: "desc" });
+function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot, onDrilldown: (q: MarketQuote) => void }) {
+  const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
   const [visible, setVisible] = useState<string[]>(DEFAULT_SCAN_COLS);
   const [colsOpen, setColsOpen] = useState(false);
   const [liveScan, setLiveScan] = useState<MarketScan | null>(null);
@@ -869,7 +937,10 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
   // The quote `asOf` is a display string, not a timestamp; the scan's ISO generatedAt
   // is the real "received" time for every value in this table.
   const dataReceived = receivedLabel(scan.generatedAt);
-  const sorted = [...scan.topCandidates].sort((a, b) => compare(a[sort.col], b[sort.col], sort.dir));
+  const sortCol = SCAN_COLUMNS.find((c) => c.id === sort.col);
+  const sorted = sortCol
+    ? [...scan.topCandidates].sort((a, b) => compare(scanSortValue(sortCol, a), scanSortValue(sortCol, b), sort.dir))
+    : [...scan.topCandidates];
   return (
     <Card className="overflow-hidden">
       <PanelHeader
@@ -889,10 +960,10 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
               {colsOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setColsOpen(false)} />
-                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-48 overflow-auto rounded-lg border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
+                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-48 overflow-auto rounded-lg border border-line bg-surface/50 backdrop-blur-xl p-1.5 shadow-[var(--shadow-lg)]">
                     <p className="px-2 py-1 text-[11px] font-semibold uppercase text-faint">Show columns</p>
                     {SCAN_COLUMNS.map((c) => (
-                      <label key={c.id} className={cn("flex items-center gap-2 rounded px-2 py-1 text-[13px] text-muted", c.id === "symbol" ? "opacity-50" : "cursor-pointer hover:bg-surface-2")} title={c.title}>
+                      <label key={c.id} className={cn("flex items-center gap-2 rounded px-2 py-1 text-[13px] text-muted", c.id === "symbol" ? "opacity-50" : "cursor-pointer hover:bg-surface-2/50 backdrop-blur-lg")} title={c.title}>
                         <input type="checkbox" checked={visible.includes(c.id)} onChange={() => toggleCol(c.id)} disabled={c.id === "symbol"} className="accent-[var(--accent)]" />
                         {c.label}
                       </label>
@@ -909,20 +980,20 @@ function MarketScanView({ snapshot }: { snapshot: DashboardSnapshot }) {
           data={sorted}
           components={{
             Table: (props) => <table {...props} className="w-full text-[13px]" />,
-            TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface" />),
-            TableRow: (props) => <tr {...props} className="border-b border-line/50 hover:bg-surface-2" />,
+            TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
+            TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="border-b border-line/50 hover:bg-surface-2/50 backdrop-blur-lg cursor-pointer transition-colors" />,
           }}
           fixedHeaderContent={() => (
-            <tr className="border-b border-line text-[11px] uppercase text-faint bg-surface shadow-sm">
+            <tr className="border-b border-line text-[11px] uppercase text-faint bg-surface/50 backdrop-blur-xl shadow-sm">
               {cols.map((c) => (
                 <th
                   key={c.id}
                   title={c.title}
-                  onClick={() => setSort((s) => ({ col: c.sortKey, dir: s.col === c.sortKey && s.dir === "desc" ? "asc" : "desc" }))}
+                  onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
                   className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
                 >
                   {c.label}
-                  <span className="ml-0.5 text-faint">{sort.col === c.sortKey ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
+                  <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                 </th>
               ))}
             </tr>
@@ -1198,7 +1269,7 @@ function TaxView({
                     <td className="px-2 py-1.5 text-right tnum text-muted">{lot.daysHeld}</td>
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-2">
-                        <span className="h-1.5 w-32 overflow-hidden rounded-full bg-surface-3">
+                        <span className="h-1.5 w-32 overflow-hidden rounded-full bg-surface-3/50 backdrop-blur-md">
                           <span className={cn("block h-full rounded-full", lot.isLongTerm ? "bg-up" : "bg-info")} style={{ width: `${Math.min(100, (lot.daysHeld / 365) * 100)}%` }} />
                         </span>
                         <span className="tnum text-[11px] text-faint">{lot.isLongTerm ? "—" : `${lot.daysToLongTerm}d left`}</span>
@@ -1320,7 +1391,7 @@ function StrategyView({
 
 function KeyVal({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-line bg-surface-2 px-3 py-2">
+    <div className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2">
       <div className="text-[11px] uppercase text-faint">{label}</div>
       <div className="tnum text-sm text-fg">{value}</div>
     </div>
@@ -1348,7 +1419,7 @@ function EditableParam({
     else setDraft(String(value));
   }
   return (
-    <label className="rounded-lg border border-line bg-surface-2 px-3 py-2 focus-within:border-accent">
+    <label className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 focus-within:border-accent">
       <div className="text-[11px] uppercase text-faint">{label}</div>
       <div className="flex items-baseline gap-0.5">
         {prefix && <span className="text-sm text-faint">{prefix}</span>}
@@ -1383,7 +1454,7 @@ function TuningCard({ proposal, onApply }: { proposal: StrategyTuningProposal; o
       <p className="text-sm font-medium text-fg">{proposal.summary}</p>
       <p className="text-[13px] text-muted">{proposal.rationale}</p>
       {items.length > 0 ? (
-        <ul className="space-y-1 rounded-lg border border-line bg-surface-2 p-3 text-[13px] text-muted">
+        <ul className="space-y-1 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg p-3 text-[13px] text-muted">
           {items.map((i) => (
             <li key={i} className="flex gap-2"><ChevronRight size={14} className="mt-0.5 shrink-0 text-accent" />{i}</li>
           ))}
@@ -1433,7 +1504,7 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                 <div className="mt-0.5 text-[13px] text-muted">{group.detail}</div>
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {group.tags.map((t) => (
-                    <span key={t} className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-faint">{t}</span>
+                    <span key={t} className="rounded bg-surface-3/50 backdrop-blur-md px-1.5 py-0.5 text-[10px] font-semibold uppercase text-faint">{t}</span>
                   ))}
                 </div>
               </div>
@@ -1620,7 +1691,8 @@ function SettingsContent({
   enableBlockedReason,
   remainingNotional,
   remainingOrders,
-  updatePolicy
+  updatePolicy,
+  load
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -1629,8 +1701,9 @@ function SettingsContent({
   remainingNotional: number;
   remainingOrders: number;
   updatePolicy: (patch: PolicyPatch) => void;
+  load: () => Promise<void>;
 }) {
-  type Section = "operate" | "risk" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "integrations" | "risk" | "tax" | "tuning" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [sectorCaps, setSectorCaps] = useState(formatSectorCaps(policy.sectorCaps));
   const [draft, setDraft] = useState("");
@@ -1650,6 +1723,7 @@ function SettingsContent({
         onChange={setSection}
         tabs={[
           { id: "operate", label: "Operate" },
+          { id: "integrations", label: "Integrations" },
           { id: "risk", label: "Risk & Limits" },
           { id: "tax", label: "Tax" },
           { id: "tuning", label: "Tuning" },
@@ -1659,14 +1733,6 @@ function SettingsContent({
 
       {section === "operate" && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Account">
-            <select className={inputClass} value={policy.accountNumber ?? ""} onChange={(e) => updatePolicy({ accountNumber: e.target.value })}>
-              <option value="">Select account</option>
-              {snapshot.accounts.map((a) => (
-                <option key={a.accountNumber} value={a.accountNumber}>{a.label} {a.agenticAllowed ? "" : "(not agentic)"}</option>
-              ))}
-            </select>
-          </Field>
           <Field label="Allowed universe">
             <select className={inputClass} value={policy.universe} onChange={(e) => updatePolicy({ universe: e.target.value as TradingPolicy["universe"] })}>
               <option value="custom">Custom allowlist</option>
@@ -1691,7 +1757,7 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-bg/60 p-2">
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {(policy.universe === "sp500" ? [] : policy.allowlist).map((s) => (
-                  <button key={s} onClick={() => updatePolicy({ allowlist: policy.allowlist.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3 px-2 py-0.5 text-xs text-fg">
+                  <button key={s} onClick={() => updatePolicy({ allowlist: policy.allowlist.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
                     {s} <X size={11} />
                   </button>
                 ))}
@@ -1731,6 +1797,10 @@ function SettingsContent({
         </div>
       )}
 
+      {section === "integrations" && (
+        <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
+      )}
+
       {section === "risk" && (
         <div className="grid gap-3 sm:grid-cols-2">
           <NumberField label="Max order ($)" value={policy.maxOrderNotional} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
@@ -1741,7 +1811,6 @@ function SettingsContent({
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
           <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
           <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
-          <NumberField label="Paper start ($)" value={policy.paperStartingCash} onCommit={(v) => updatePolicy({ paperStartingCash: Math.max(0, Math.round(v)) })} />
           <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
             <input className={inputClass} value={sectorCaps} onChange={(e) => setSectorCaps(e.target.value)} onBlur={() => updatePolicy({ sectorCaps: parseSectorCaps(sectorCaps) })} />
           </Field>
@@ -1749,7 +1818,7 @@ function SettingsContent({
             <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
             Run during extended hours
           </label>
-          <p className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13px] text-muted sm:col-span-2">
+          <p className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-[13px] text-muted sm:col-span-2">
             Remaining today: <span className="tnum text-fg">{money(remainingNotional)}</span> notional and <span className="tnum text-fg">{remainingOrders}</span> orders.
           </p>
         </div>
@@ -1760,7 +1829,7 @@ function SettingsContent({
           <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[13px] text-muted">
             Estimates only — not tax advice. These settings tune the after-tax signals the agent sees and the wash-sale guardrail.
           </p>
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2.5">
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Wash-sale guard</span>
               <span className="block text-xs text-faint">Block rebuying a symbol sold at a loss within 30 days (IRC §1091).</span>
@@ -1772,7 +1841,7 @@ function SettingsContent({
             <NumberField label="Long-term rate (%)" value={taxSettings.longTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, longTermRatePct: v } })} />
           </div>
           <p className="text-xs text-faint">Rates are used only for the rough liability estimate on the Tax tab. Defaults: 24% short-term (ordinary), 15% long-term.</p>
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2.5">
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Subtract estimated tax from results</span>
               <span className="block text-xs text-faint">Show realized P&amp;L on the Performance tab net of the estimated tax burden.</span>
@@ -1830,7 +1899,7 @@ function SettingsContent({
               {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
-                  <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm capitalize text-fg">
+                  <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
                     <input
                       type="checkbox"
                       checked={enabled}
@@ -1880,7 +1949,7 @@ function RangeField({ label, value, min, max, step, onCommit }: { label: string;
   useEffect(() => setDraft(value), [value]);
   const safe = Math.max(min, Math.min(max, draft));
   return (
-    <div className="rounded-lg border border-line bg-surface-2 p-2.5">
+    <div className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg p-2.5">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase text-faint">{label}</span>
         <span className="tnum text-[13px] text-fg">{Number.isInteger(safe) ? safe : safe.toFixed(1)}</span>
@@ -2022,5 +2091,123 @@ function renderActionTitle(title: string) {
       <span className={cls}>{action.toUpperCase()}</span>
       {rest}
     </span>
+  );
+}
+
+function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapshot["connectedAccounts"], onSaved: () => Promise<void> }) {
+  const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!editing?.broker || !editing?.environment) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/connected-accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(editing)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast.success("Account saved.");
+      setEditing(null);
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAccount(id: string) {
+    if (!confirm("Remove this connected account?")) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/connected-accounts/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      toast.success("Account removed.");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
+        <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : "Add Account"}</h4>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Broker">
+            <select className={inputClass} value={editing.broker || "alpaca"} onChange={e => setEditing({ ...editing, broker: e.target.value as any })}>
+              <option value="alpaca">Alpaca</option>
+              <option value="robinhood">Robinhood</option>
+            </select>
+          </Field>
+          <Field label="Environment">
+            <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
+              <option value="paper">Paper (Simulation)</option>
+              <option value="live">Live (Real Money)</option>
+            </select>
+          </Field>
+          <Field label="Label (Optional)">
+            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder="e.g. My Alpaca IRA" />
+          </Field>
+          <Field label="Account Number (Optional)">
+            <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
+          </Field>
+          <Field label="API Key">
+            <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required for some brokers" />
+          </Field>
+          <Field label="API Secret">
+            <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for some brokers" />
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || !editing.broker}>Save Account</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted">Connect your brokerage accounts for agentic trading.</p>
+        <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+          <Plus size={14} className="mr-1" /> Add Account
+        </Button>
+      </div>
+
+      {!accounts?.length ? (
+        <div className="rounded-lg border border-line border-dashed p-6 text-center text-sm text-faint">
+          No accounts connected. Add an Alpaca or Robinhood account to start trading.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {accounts.map(acc => (
+            <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-fg">{acc.label || acc.broker}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${acc.environment === "live" ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"}`}>
+                    {acc.environment}
+                  </span>
+                  {acc.isActive && <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Active</span>}
+                </div>
+                <div className="mt-1 text-xs text-faint capitalize">
+                  {acc.broker} &middot; {acc.accountNumber || "No account number"}
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
+                <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
