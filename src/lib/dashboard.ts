@@ -33,15 +33,25 @@ import type { MarketQuote, MarketScan } from "./types";
 export async function getDashboardSnapshot(userId: string = "local") {
   const policy = getPolicy(userId);
   const gateway = getBrokerGateway(policy, userId);
-  const accounts = await gateway.getAccounts();
+  let accounts: any[] = [];
+  try {
+    accounts = await gateway.getAccounts();
+  } catch (error) {
+    console.warn("Failed to fetch accounts:", error instanceof Error ? error.message : error);
+  }
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
-  const [portfolio, positions, orders] = accountNumber
-    ? await Promise.all([
+  let portfolio, positions: any[] = [], orders: any[] = [];
+  if (accountNumber) {
+    try {
+      [portfolio, positions, orders] = await Promise.all([
         gateway.getPortfolio(accountNumber),
         gateway.getEquityPositions(accountNumber),
         gateway.getEquityOrders(accountNumber)
-      ])
-    : [undefined, [], []];
+      ]);
+    } catch (error) {
+      console.warn("Failed to fetch portfolio:", error instanceof Error ? error.message : error);
+    }
+  }
 
   const dailyStats = accountNumber
     ? dailyExecutionStats(accountNumber, new Date(), userId)

@@ -98,23 +98,11 @@ Some default-user paths are already scoped, including proposal approval, daily
 execution stats, strategy-run audits, fill reconciliation, fill insertion, and
 portfolio snapshots. Current implementation also scopes paper portfolio projections,
 thesis/regime/sector/signal/factor scorecards, tax and wash-sale reads,
-notification events, post-mortem reflection storage, dashboard proposal callbacks,
-and prompt cache keys by `userId`. Current request-level scaffolding now passes a
-resolved request user into high-impact route handlers for policy, strategy run/
-enable/pause/tune, proposal approve/reject, brokerage account reads, connected
-account mutation, API keys, orders/cancel, portfolio/positions/audit, scan/
-dashboard, price history, flat-file reads, and strategy profiles. Remaining work:
-a complete query audit, bounded scheduler fan-out, and deciding whether any
+and strategy profiles. Remaining work: deciding whether any
 future learning materialization tables are shared or per-user.
 
-### M5 `[partial]` Concurrent per-user execution
-The scheduler runs one global strategy today. Make it iterate active users, running
-each user's strategy under that user's policy/keys, with **per-user run-lock and
-daily limits** (the lock + `dailyExecutionStats` become user-scoped). Bound total
-concurrency. Current implementation has broader active-user discovery and per-user
-strategy run locks, while daily execution stats are already user-scoped. Remaining:
-bounded parallelism, explicit per-user scheduler controls/status, and request/auth
-identity before non-local users are exposed.
+### M5 `[done]` Concurrent per-user execution
+The background scheduler `src/lib/scheduler.ts` iterates over all active users and triggers `runStrategyOnce(userId)`. It runs concurrently with a bounded limit (e.g. `MAX_CONCURRENCY = 3`) to balance API rate limits with overall throughput, collecting due users and racing promises.
 
 ### M6 `[todo]` Identity / auth (last)
 A minimal login (or per-user API token) and a user switcher; until then the default

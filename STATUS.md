@@ -53,6 +53,17 @@ steps materially change.
   verification passed: `npx tsc --noEmit`, `npm test` (226 tests), and
   `npm run build`. See
   `docs/rollouts/2026-06-19-data-source-failure-hardening.md`.
+- 2026-06-19: **UI UX Polish and Consistency Fixes**. Addressed bugs causing a blank market scan due to unhandled undefined Universe arrays. Improved UX by ensuring all Congressional/Insider symbols are clickable via `SymbolButton` utilizing synthetic quotes. Improved styling consistency of numeric parameters and simplified redundant top header metrics. Lightened the global dark mode theme and Command Palette backdrop for better readability. Fixed `onBlur` race conditions in Settings inputs and added a new UI to manage the symbol `blocklist`.
+- 2026-06-19: **UI Polish & Policy Schema Refactoring**. Addressed the user's request to consolidate duplicate Strategy settings out of the Settings Modal and into the Strategy Tab. Implemented the composite Universe schema (`includedIndices` + `additionalSymbols`) and updated the "Universe" selection UX with an `EditableParam` $ / % toggle. Fixed resulting TypeScript errors in `dashboard-client.tsx`, `settings.tsx`, and `views.tsx`. `npm run build` is passing successfully.
+- 2026-06-19: **Ops/observability/security foundation selected by user**. Added
+  Infisical command wrappers, Gitleaks local + CI scans, Sentry Next.js runtime
+  hooks, Langfuse LLM tracing with redacted summary capture by default, Dependabot
+  config, Litestream SQLite backup/restore wrappers, and Playwright dashboard smoke
+  tests. These are opt-in unless their env vars/host CLIs are configured. See
+  `docs/ops-observability-security.md` and
+  `docs/rollouts/2026-06-19-ops-observability-security.md`.
+- 2026-06-19: **Broker Connection UI Split**. Split the unified "Add Account" UI in the dashboard into distinct buttons for each broker (Alpaca vs Robinhood) and customized the editing form to only require API Keys/Secrets for Alpaca. This prevents user confusion since Robinhood uses an OAuth flow via the MCP server and Alpaca requires static keys. Full verification passed.
+- 2026-06-19: **Composite Universe & System State Migration**. Replaced `universe`, `allowlist`, `enabled`, and `killSwitch` in `TradingPolicy` with a robust composite universe (`includedIndices`, `additionalSymbols`, `blocklist`) and a unified `systemState` (`active`, `halted`, `liquidating`, `close_only`). The policy engine, strategy runner, scheduler, tuning, and UI components were completely migrated. A new NAV-based sizing rule (`maxOrderPctOfNav`) was also introduced in the `DEFAULT_POLICY`. Full verification passed: `npx tsc --noEmit`, `npm test` (223 tests), and `npm run build`.
 - 2026-06-19: **Price chart timeframe controls and history expansion**. Added
   standard Yahoo Finance-style timeframe buttons (1D, 5D, 1M, 6M, YTD, 1Y, 5Y, All) 
   to the Symbol Drilldown price chart. Expanded the backend `fetchDailyOHLC`
@@ -68,6 +79,8 @@ steps materially change.
   deferred until the Sentry build wrapper is revalidated. See
   `docs/ops-observability-security.md` and
   `docs/rollouts/2026-06-19-ops-observability-security.md`.
+- 2026-06-19: **Broker Connection UI Split**. Split the unified "Add Account" UI in the dashboard into distinct buttons for each broker (Alpaca vs Robinhood) and customized the editing form to only require API Keys/Secrets for Alpaca. This prevents user confusion since Robinhood uses an OAuth flow via the MCP server and Alpaca requires static keys. Full verification passed.
+- 2026-06-19: **Composite Universe & System State Migration**. Replaced `universe`, `allowlist`, `enabled`, and `killSwitch` in `TradingPolicy` with a robust composite universe (`includedIndices`, `additionalSymbols`, `blocklist`) and a unified `systemState` (`active`, `halted`, `liquidating`, `close_only`). The policy engine, strategy runner, scheduler, tuning, and UI components were completely migrated. A new NAV-based sizing rule (`maxOrderPctOfNav`) was also introduced in the `DEFAULT_POLICY`. Full verification passed: `npx tsc --noEmit`, `npm test` (223 tests), and `npm run build`.
 - 2026-06-19: **Live-safety/risk-controls slice (Phase 10 E4/E5)**. Red Team
   review threshold is now a policy tuning knob (`redTeamConvictionThreshold`,
   default behavior 80), and `crisisMaxOpeningExposurePct` optionally caps new

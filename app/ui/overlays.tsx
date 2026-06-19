@@ -88,7 +88,7 @@ export function Modal({
             if (e.target === e.currentTarget) onClose();
           }}
         >
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
           <motion.div
             ref={ref}
             role="dialog"
@@ -100,7 +100,7 @@ export function Modal({
             exit={{ opacity: 0, scale: 0.98, y: 6 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]",
+              "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)]",
               sizeClass[size]
             )}
           >

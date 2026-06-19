@@ -192,8 +192,8 @@ describe("persistence and notifications", () => {
 
       setPolicy({
         ...DEFAULT_POLICY,
-        enabled: true,
-        allowlist: ["AAPL"],
+        systemState: "active",
+        additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
       });
       const before = listAudit(200).filter((event) => event.kind === "strategy_run").length;
@@ -260,7 +260,7 @@ describe("persistence and notifications", () => {
         isActive: true
       });
       setActiveConnectedAccount(mockAccountId);
-      setPolicy({ ...DEFAULT_POLICY, enabled: true, allowlist: ["AAPL"], strategyAuthority: "decide" });
+      setPolicy({ ...DEFAULT_POLICY, systemState: "active", additionalSymbols: ["AAPL"], strategyAuthority: "decide" });
 
       await runStrategyOnce();
 

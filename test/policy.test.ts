@@ -16,11 +16,12 @@ const positions: EquityPosition[] = [{ symbol: "AAPL", quantity: 5, averageCost:
 
 const enabledPolicy: TradingPolicy = {
   ...DEFAULT_POLICY,
-  enabled: true,
+  systemState: "active",
   paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "A1",
-  allowlist: ["AAPL", "VOO"]
+  includedIndices: [],
+  additionalSymbols: ["AAPL", "VOO"]
 };
 
 const proposal: TradeProposal = {
@@ -84,7 +85,7 @@ describe("evaluateTradeProposal", () => {
   it("allows S&P 500 symbols when the S&P universe is selected", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, {
       ...context(),
-      policy: { ...enabledPolicy, universe: "sp500", allowlist: [] },
+      policy: { ...enabledPolicy, includedIndices: ["sp500"], additionalSymbols: [] },
       estimatedNotional: 10
     });
     expect(decision.approved).toBe(true);
@@ -178,6 +179,7 @@ describe("evaluateTradeProposal", () => {
         policy: {
           ...enabledPolicy,
           maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
           maxDailyNotional: 5000,
           maxSymbolExposurePct: 50
         }
@@ -194,6 +196,7 @@ describe("evaluateTradeProposal", () => {
         policy: {
           ...enabledPolicy,
           maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
           maxDailyNotional: 5000,
           maxSymbolExposurePct: 50,
           tuning: { crisisMaxOpeningExposurePct: 5 }
@@ -212,6 +215,7 @@ describe("evaluateTradeProposal", () => {
         policy: {
           ...enabledPolicy,
           maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
           maxDailyNotional: 5000,
           maxSymbolExposurePct: 50,
           tuning: { crisisMaxOpeningExposurePct: 5 }
@@ -229,6 +233,7 @@ describe("evaluateTradeProposal", () => {
         policy: {
           ...enabledPolicy,
           maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
           maxDailyNotional: 5000,
           maxSymbolExposurePct: 50,
           tuning: { crisisMaxOpeningExposurePct: 5 }
@@ -241,9 +246,10 @@ describe("evaluateTradeProposal", () => {
         ...context(1200),
         policy: {
           ...enabledPolicy,
-          allowlist: ["AAPL", "VOO", "TSLA"],
+          additionalSymbols: ["AAPL", "VOO", "TSLA"],
           shortSellingEnabled: true,
           maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
           maxDailyNotional: 5000,
           maxSymbolExposurePct: 50,
           tuning: { crisisMaxOpeningExposurePct: 5 }
@@ -258,13 +264,13 @@ describe("evaluateTradeProposal", () => {
     expect(cover.approved).toBe(true);
   });
 
-  it("blocks when kill switch is active", () => {
+  it("blocks when system state is halted", () => {
     const decision = evaluateTradeProposal(proposal, {
       ...context(),
-      policy: { ...enabledPolicy, killSwitch: true }
+      policy: { ...enabledPolicy, systemState: "halted" }
     });
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("Kill switch");
+    expect(decision.reasons.join(" ")).toContain("halted");
   });
 
   it("rejects short proposals", () => {

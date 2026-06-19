@@ -37,12 +37,14 @@ type LlmTuningPayload = {
   scoringWeights: NullableScoringWeights;
   policy: {
     maxOrderNotional: number | null;
+    maxOrderPctOfNav: number | null;
     maxDailyNotional: number | null;
     maxSymbolExposurePct: number | null;
+    maxGrossExposurePct: number | null;
+    maxNetExposurePct: number | null;
     maxDailyOrders: number | null;
     maxProposalsPerRun: number | null;
     runCadenceMinutes: number | null;
-    universe: TradingPolicy["universe"] | null;
     strategyAuthority: TradingPolicy["strategyAuthority"] | null;
     runDuringExtendedHours: boolean | null;
   };
@@ -131,11 +133,10 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
 
 function compactPolicy(policy: TradingPolicy) {
   return {
-    enabled: policy.enabled,
+    systemState: policy.systemState,
     paperMode: policy.paperMode,
-    killSwitch: policy.killSwitch,
-    universe: policy.universe,
-    allowedCount: policy.universe === "custom" ? policy.allowlist.length : "sp500",
+    includedIndices: policy.includedIndices,
+    allowedCount: policy.includedIndices.length > 0 ? "index_based" : policy.additionalSymbols.length,
     strategyAuthority: policy.strategyAuthority,
     maxOrderNotional: policy.maxOrderNotional,
     maxDailyNotional: policy.maxDailyNotional,
@@ -416,7 +417,7 @@ function prunePolicy(value: LlmTuningPayload["policy"]): NonNullable<StrategyTun
   ] as const) {
     if (typeof value[key] === "number" && Number.isFinite(value[key])) patch[key] = value[key];
   }
-  if (value.universe) patch.universe = value.universe;
+
   if (value.strategyAuthority) patch.strategyAuthority = value.strategyAuthority;
   if (typeof value.runDuringExtendedHours === "boolean") patch.runDuringExtendedHours = value.runDuringExtendedHours;
   return patch;
@@ -441,7 +442,7 @@ function localRulesProposal(input: {
     : `${input.prompt.trim()}\n\nLEARNING LOOP\nBefore proposing trades, review recent fills, blocked proposals, and the latest market scan. If the recent sample is small, prefer smaller exploratory orders. If average return is negative, tighten risk and demand a clearer signal from price momentum, volume, valuation, and news sentiment before adding exposure.`;
 
   const riskMultiplier = weakPerformance ? 0.8 : 1;
-  const maxOrderNotional = Math.max(1, Math.round(input.policy.maxOrderNotional * riskMultiplier));
+  const maxOrderNotional = Math.max(1, Math.round((input.policy.maxOrderNotional ?? 100) * riskMultiplier));
   // Only adjust factor weights once the realized sample is large enough to trust;
   // below the gate we still improve the prompt and risk sizing, just not the weights.
   const scoringWeights: Partial<ScoringWeights> = !enoughLotsForWeights
