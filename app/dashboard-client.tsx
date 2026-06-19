@@ -406,7 +406,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           <StatusPill label="Portfolio" value={money(snapshot.portfolio?.totalMarketValue)} title={`Total ${mode} account value (cash + positions marked to current prices).`} />
           <StatusPill label="Buying power" value={money(snapshot.portfolio?.buyingPower)} title="Cash currently available to open new positions." />
           <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional} />
-          <StatusPill label="Universe" value={policy.universe === "sp500" ? "S&P 500" : `${allowedCount} tickers`} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
+          <StatusPill label="Universe" value={policy.universe === "sp500" ? "S&P 500" : allowedCount === 0 ? "TBD" : `${allowedCount} tickers`} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
         </div>
 
         <div className="ml-auto flex items-center gap-2">
