@@ -31,8 +31,9 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
      (ticker / date / amount / Purchase|Sale) rather than fixed column index, so
      it survives column reordering. Paper (PDF) filings are skipped.
   2. **Capitol Trades** (`bff.capitoltrades.com`) — public JSON back-end (House +
-     Senate). Best-effort + configurable (`WEB_SOURCE_CAPITOLTRADES_URL`); their
-     CloudFront has been flaky (503s observed), so it's a secondary.
+     Senate). Best-effort + configurable (`WEB_SOURCE_CAPITOLTRADES_URL`, or set
+     it to `off` to disable); their CDN/security layer has returned 503/429 from
+     server-side fetches, so it's a secondary.
 - **`sec.ts`** — SEC EDGAR insider (Form 4) ingestion. Reads the market-wide
   "current Form 4" atom feed, resolves each filing's `index.json` → ownership XML,
   and counts **only open-market discretionary** transactions: `P` (purchase) and
@@ -77,7 +78,7 @@ Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
 | `WEB_SOURCE_CONGRESS_WINDOW_DAYS` | 60 | how long a trade counts toward the signal |
 | `WEB_SOURCE_CONGRESS_LOOKBACK_DAYS` | 45 | how far back to pull new filings |
 | `WEB_SOURCE_CONGRESS_MAX_FILINGS` | 80 | PTR pages fetched per refresh |
-| `WEB_SOURCE_CAPITOLTRADES_URL` | bff default | override/disable Capitol Trades |
+| `WEB_SOURCE_CAPITOLTRADES_URL` | bff default | override Capitol Trades; set `off`/`disabled` to skip the flaky secondary adapter |
 | `WEB_SOURCE_INSIDER` | `on` | `off` disables the SEC insider connector |
 | `WEB_SOURCE_INSIDER_TTL_MS` | 24h | refresh cadence |
 | `WEB_SOURCE_INSIDER_WINDOW_DAYS` | 30 | rolling window kept |

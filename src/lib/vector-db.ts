@@ -6,7 +6,11 @@ import { resolveApiKey } from "./db";
 const VOYAGE_MODEL = "voyage-finance-2";
 const EMBEDDING_DIMENSION = 1024; // voyage-finance-2 dimension
 const DEFAULT_INDEX_NAME = "robinhood-agentic";
-const MAX_EMBED_BATCH = 96; // Voyage supports up to 128 inputs; leave headroom for long filings.
+const DEFAULT_EMBED_BATCH_SIZE = 8;
+const DEFAULT_EMBED_BATCH_DELAY_MS = 21_000; // unpaid Voyage limit is 3 RPM; paid accounts can set this to 0.
+const DEFAULT_CONTEXT_MAX_CHARS = 2400;
+const DEFAULT_EMBED_RETRY_ATTEMPTS = 2;
+const DEFAULT_EMBED_RETRY_DELAY_MS = 20_000;
 
 export interface ContextDocument {
   text: string;
@@ -22,6 +26,32 @@ function indexName(): string {
 function indexReadyWaitMs(): number {
   const parsed = Number(process.env.PINECONE_INDEX_READY_WAIT_MS ?? 5000);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5000;
+}
+
+function numericEnv(name: string, fallback: number, min = 0, max = Number.POSITIVE_INFINITY): number {
+  const parsed = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function embedBatchSize(): number {
+  return Math.floor(numericEnv("VECTOR_EMBED_BATCH_SIZE", DEFAULT_EMBED_BATCH_SIZE, 1, 128));
+}
+
+function embedBatchDelayMs(): number {
+  return numericEnv("VECTOR_EMBED_BATCH_DELAY_MS", DEFAULT_EMBED_BATCH_DELAY_MS, 0);
+}
+
+function contextMaxChars(): number {
+  return Math.floor(numericEnv("VECTOR_CONTEXT_MAX_CHARS", DEFAULT_CONTEXT_MAX_CHARS, 256));
+}
+
+function embedRetryAttempts(): number {
+  return Math.floor(numericEnv("VECTOR_EMBED_RETRY_ATTEMPTS", DEFAULT_EMBED_RETRY_ATTEMPTS, 0, 5));
+}
+
+function embedRetryDelayMs(): number {
+  return numericEnv("VECTOR_EMBED_RETRY_DELAY_MS", DEFAULT_EMBED_RETRY_DELAY_MS, 0);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -103,6 +133,55 @@ function chunks<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+function trimContextText(text: string): string {
+  const trimmed = text.trim();
+  const maxChars = contextMaxChars();
+  if (trimmed.length <= maxChars) return trimmed;
+  return `${trimmed.slice(0, maxChars).trimEnd()}\n[truncated for vector memory]`;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const maybeStatus = (error as { status?: unknown; statusCode?: unknown }) ?? {};
+  if (maybeStatus.status === 429 || maybeStatus.statusCode === 429) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b429\b|rate limit|too many requests|RPM|TPM/i.test(message);
+}
+
+function retryAfterMs(error: unknown, attempt: number): number {
+  const headers =
+    (error as { headers?: { get?: (name: string) => string | null } })?.headers ??
+    (error as { response?: { headers?: { get?: (name: string) => string | null } } })?.response?.headers;
+  const retryAfter = headers?.get?.("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const dateDelay = Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(dateDelay) && dateDelay > 0) return dateDelay;
+  }
+  return Math.max(embedBatchDelayMs(), Math.min(60_000, embedRetryDelayMs() * (attempt + 1)));
+}
+
+async function embedDocumentsWithRetry(
+  voyage: VoyageAIClient,
+  input: string[]
+): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
+  const attempts = embedRetryAttempts();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await voyage.embed({
+        model: VOYAGE_MODEL,
+        input,
+        inputType: "document"
+      });
+    } catch (error) {
+      if (!isRateLimitError(error) || attempt >= attempts) throw error;
+      const delay = retryAfterMs(error, attempt);
+      console.warn(`[vector-db] Voyage rate limited; retrying batch in ${Math.round(delay / 1000)}s.`);
+      await sleep(delay);
+    }
+  }
+}
+
 /**
  * Store a document context into Pinecone.
  */
@@ -119,7 +198,9 @@ export async function storeContext(
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
 export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<void> {
-  const validDocuments = documents.filter((doc) => doc.text.trim().length > 0);
+  const validDocuments = documents
+    .map((doc) => ({ ...doc, text: trimContextText(doc.text) }))
+    .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return;
 
   const { pc, voyage, initCacheKey } = getClients(userId);
@@ -131,13 +212,13 @@ export async function storeContexts(documents: ContextDocument[], userId: string
   try {
     await ensureIndex(pc, initCacheKey);
     const index = pc.Index(indexName());
+    const batches = chunks(validDocuments, embedBatchSize());
 
-    for (const batch of chunks(validDocuments, MAX_EMBED_BATCH)) {
-      const response = await voyage.embed({
-        model: VOYAGE_MODEL,
-        input: batch.map((doc) => doc.text),
-        inputType: "document"
-      });
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      if (!batch) continue;
+      if (batchIndex > 0) await sleep(embedBatchDelayMs());
+      const response = await embedDocumentsWithRetry(voyage, batch.map((doc) => doc.text));
 
       const records: PineconeRecord<RecordMetadata>[] = [];
       response.data?.forEach((item, indexInBatch) => {

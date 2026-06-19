@@ -19,6 +19,7 @@ const CIK_KEY = "webSource:sec:cikMap";
 const DEFAULT_TTL_MS = 24 * 60 * 60_000; // daily
 const CIK_TTL_MS = 7 * 24 * 60 * 60_000; // ticker↔CIK map changes slowly
 const DEFAULT_WINDOW_DAYS = 4; // an 8-K is only a "fresh" catalyst for a few days
+const DEFAULT_RAG_LIMIT = 16;
 const SEC_BASE = "https://www.sec.gov";
 
 export interface EightKEvent {
@@ -41,6 +42,10 @@ export function eightKTtlMs(): number {
 function windowDays(): number {
   const v = Number(process.env.WEB_SOURCE_SEC8K_WINDOW_DAYS ?? DEFAULT_WINDOW_DAYS);
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_WINDOW_DAYS;
+}
+export function eightKRagLimit(): number {
+  const v = Number(process.env.WEB_SOURCE_SEC8K_RAG_LIMIT ?? DEFAULT_RAG_LIMIT);
+  return Number.isFinite(v) && v >= 0 ? Math.floor(v) : DEFAULT_RAG_LIMIT;
 }
 export function getEightKDataset(): EightKDataset | undefined {
   return getInternalSetting<EightKDataset>(DATASET_KEY);
@@ -246,9 +251,10 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
   // Store new filings into vector DB for RAG. This is best-effort and batched so refresh
   // durability does not depend on Pinecone/Voyage availability.
   if (fresh.length > 0) {
+    const ragEvents = fresh.slice(0, eightKRagLimit());
     import("../vector-db")
       .then(({ storeContexts }) =>
-        storeContexts(fresh.map((event) => ({
+        storeContexts(ragEvents.map((event) => ({
           text: buildEightKContext(event),
           metadata: {
             symbol: event.symbol,
@@ -260,7 +266,7 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
           }
         })))
       )
-      .catch(console.error);
+      .catch((error) => console.warn("[sec8k] vector store failed", error));
   }
 
   return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };

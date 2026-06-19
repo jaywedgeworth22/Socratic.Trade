@@ -5,9 +5,8 @@
  * a much broader read than the ~30-candidate sample in `marketInternals`. Two consecutive
  * trading days give each name's real day-over-day change. Failure-tolerant; never fabricated.
  *
- * (Massive also exposes S3 "flat files" at files.massive.com with the same key as the SECRET —
- * note MASSIVE_SECRET_ACCESS_KEY in .env had a one-char typo; the API key is the real secret.
- * We use the REST API here, so no S3 signing is needed.)
+ * (Massive also exposes S3 "flat files" at files.massive.com with separate flat-file access
+ * key credentials. We use the REST API here, so no S3 signing is needed.)
  */
 
 import { resolveApiKey } from "../db";
@@ -28,6 +27,35 @@ interface GroupedBar { T?: string; o?: number; h?: number; l?: number; c?: numbe
 interface GroupedResponse { status?: string; results?: GroupedBar[] }
 
 const numOrUndef = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const DEFAULT_REST_MAX_CALLS_PER_MINUTE = 5;
+const DEFAULT_NEWS_TTL_MS = 30 * 60_000;
+const restCallTimestamps: number[] = [];
+
+function numericEnv(name: string, fallback: number, min = 0): number {
+  const parsed = Number(process.env[name] ?? fallback);
+  return Number.isFinite(parsed) ? Math.max(min, parsed) : fallback;
+}
+
+export function massiveApiBase(): string {
+  return process.env.MASSIVE_API_BASE ?? "https://api.massive.com";
+}
+
+export function reserveMassiveRestCall(now: number = Date.now()): boolean {
+  const maxCalls = Math.floor(numericEnv("MASSIVE_REST_MAX_CALLS_PER_MINUTE", DEFAULT_REST_MAX_CALLS_PER_MINUTE));
+  if (maxCalls <= 0) return false;
+  const windowMs = 60_000;
+  while (restCallTimestamps.length > 0 && now - restCallTimestamps[0]! >= windowMs) restCallTimestamps.shift();
+  if (restCallTimestamps.length >= maxCalls) return false;
+  restCallTimestamps.push(now);
+  return true;
+}
+
+export function clearMassiveRestBudgetForTests(): void {
+  restCallTimestamps.length = 0;
+  breadthCache.expiresAt = 0;
+  breadthCache.data = undefined;
+  newsCache.clear();
+}
 
 export interface GroupedDailyBar { ticker: string; open?: number; high?: number; low?: number; close: number; volume?: number }
 
@@ -39,10 +67,11 @@ export interface GroupedDailyBar { ticker: string; open?: number; high?: number;
 export async function fetchGroupedBarsRest(date: string, userId?: string): Promise<GroupedDailyBar[] | null> {
   const key = resolveApiKey("massive", userId);
   if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  if (!reserveMassiveRestCall()) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const url = `${apiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
+    const url = `${massiveApiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
     const res = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } });
     clearTimeout(timeout);
     if (!res.ok) return null;
@@ -59,10 +88,6 @@ export async function fetchGroupedBarsRest(date: string, userId?: string): Promi
     clearTimeout(timeout);
     return null;
   }
-}
-
-function apiBase(): string {
-  return process.env.MASSIVE_API_BASE ?? "https://api.massive.com";
 }
 
 export interface MarketNewsItem {
@@ -84,13 +109,20 @@ interface MassiveNewsResponse {
 }
 
 /** Recent market-wide news headlines (Massive /v2/reference/news, Polygon-compatible). */
+const newsCache = new Map<string, { expiresAt: number; data: MarketNewsItem[] }>();
+
 export async function fetchMassiveNews(limit = 8, userId?: string): Promise<MarketNewsItem[]> {
   const key = resolveApiKey("massive", userId);
   if (!key) return [];
+  const now = Date.now();
+  const cacheKey = `${userId ?? "local"}:${limit}`;
+  const cached = newsCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.data;
+  if (!reserveMassiveRestCall(now)) return cached?.data ?? [];
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const res = await fetch(`${apiBase()}/v2/reference/news?order=desc&limit=${limit}`, {
+    const res = await fetch(`${massiveApiBase()}/v2/reference/news?order=desc&limit=${limit}`, {
       cache: "no-store",
       signal: controller.signal,
       headers: { Authorization: `Bearer ${key}` }
@@ -98,7 +130,7 @@ export async function fetchMassiveNews(limit = 8, userId?: string): Promise<Mark
     clearTimeout(timeout);
     if (!res.ok) return [];
     const json = (await res.json()) as MassiveNewsResponse;
-    return (json?.results ?? [])
+    const data = (json?.results ?? [])
       .filter((r) => typeof r.title === "string" && r.title.length > 0)
       .map((r) => ({
         title: r.title as string,
@@ -107,9 +139,11 @@ export async function fetchMassiveNews(limit = 8, userId?: string): Promise<Mark
         publishedAt: r.published_utc,
         tickers: Array.isArray(r.tickers) ? r.tickers.slice(0, 4) : undefined
       }));
+    newsCache.set(cacheKey, { expiresAt: now + numericEnv("MASSIVE_NEWS_TTL_MS", DEFAULT_NEWS_TTL_MS), data });
+    return data;
   } catch {
     clearTimeout(timeout);
-    return [];
+    return cached?.data ?? [];
   }
 }
 
@@ -123,10 +157,11 @@ function recentDates(n: number, now: number): string[] {
 }
 
 async function fetchGrouped(date: string, key: string): Promise<Map<string, { close: number; vol: number }> | null> {
+  if (!reserveMassiveRestCall()) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const url = `${apiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
+    const url = `${massiveApiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
     const res = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } });
     clearTimeout(timeout);
     if (!res.ok) return null;
@@ -160,12 +195,13 @@ export async function fetchFullMarketBreadth(now: number = Date.now(), userId?: 
 
   // Collect the two most recent trading days that have data.
   const days: Array<{ date: string; map: Map<string, { close: number; vol: number }> }> = [];
-  for (const date of recentDates(6, now)) {
+  const maxDateProbes = Math.floor(numericEnv("MASSIVE_BREADTH_MAX_DATE_PROBES", 5, 1));
+  for (const date of recentDates(maxDateProbes, now)) {
     const map = await fetchGrouped(date, key);
     if (map && map.size > 100) days.push({ date, map });
     if (days.length === 2) break;
   }
-  if (days.length < 2) return undefined;
+  if (days.length < 2) return breadthCache.data;
 
   const [today, prev] = days; // newest first
   let advancers = 0;

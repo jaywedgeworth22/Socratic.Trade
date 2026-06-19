@@ -23,6 +23,22 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19: **Data-source failure hardening** for Capitol Trades, Voyage/Pinecone
+  vector memory, and Massive S3 flat files. Capitol Trades' public BFF currently
+  returns HTTP 503 HTML from this environment and the interactive site returns HTTP
+  429 to local non-browser fetches; Senate eFD still works, and the secondary
+  Capitol Trades adapter can now be disabled with `WEB_SOURCE_CAPITOLTRADES_URL=off`.
+  SEC 8-K vector ingestion is capped and paced (`WEB_SOURCE_SEC8K_RAG_LIMIT`,
+  `VECTOR_EMBED_*`) with 429 retry handling; after billing was added, a live
+  `voyage-finance-2` probe succeeded with a 1024-dimension embedding, so the caps are
+  now cost controls rather than emergency rate-limit workarounds. Massive S3 now
+  prefers the dedicated S3 secret before the REST key, but live probes still return
+  403 `NOT_AUTHORIZED`; Massive REST grouped bars remain healthy (12,299 rows for
+  2026-06-18) and now share a `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` local budget for
+  Basic/free-plan safety. Full
+  verification passed: `npx tsc --noEmit`, `npm test` (226 tests), and
+  `npm run build`. See
+  `docs/rollouts/2026-06-19-data-source-failure-hardening.md`.
 - 2026-06-19: **Price chart timeframe controls and history expansion**. Added
   standard Yahoo Finance-style timeframe buttons (1D, 5D, 1M, 6M, YTD, 1Y, 5Y, All) 
   to the Symbol Drilldown price chart. Expanded the backend `fetchDailyOHLC`

@@ -131,7 +131,12 @@ Codex: "make prompt compaction adaptive."
   now stores/retrieves filing context for the Bull prompt path. The vector layer is
   tracked, initializes Pinecone once per key/index, supports batched `storeContexts`,
   embeds documents/queries with the right input type, and stores SEC 8-K item labels
-  + filing links. Retrieved snippets are sent in the dynamic user payload as
+  + filing links. 2026-06-19 hardening caps SEC 8-K RAG ingestion per refresh
+  (`WEB_SOURCE_SEC8K_RAG_LIMIT`, default 16), trims individual context documents,
+  and paces/retries Voyage embedding batches (`VECTOR_EMBED_*`) so low-tier Voyage
+  limits do not make the whole refresh fail; after billing is configured, the live
+  key embeds `voyage-finance-2` successfully, while the cap keeps token usage
+  near-free. Retrieved snippets are sent in the dynamic user payload as
   `retrievedFinancialContext`, not in the stable system prompt. Still open: full
   filing-text/news digests, stale-data flags, and timeout budgets for a
   production-grade document memory.

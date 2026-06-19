@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
+import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
 
 beforeEach(() => {
   clearHistoryCache();
+  clearMassiveRestBudgetForTests();
   // Keep the cascade on the (mocked) free sources — keyed providers are skipped without keys.
+  delete process.env.MASSIVE_API_KEY;
+  delete process.env.MASSIVE_REST_MAX_CALLS_PER_MINUTE;
+  delete process.env.MASSIVE_HISTORY_ENABLED;
   delete process.env.TRADIER_API_KEY;
   delete process.env.MARKETSTACK_API_KEY;
 });
@@ -92,6 +97,21 @@ describe("fetchDailyOHLC", () => {
       expect.stringContaining("api.tradier.com"),
       expect.stringContaining("api.marketstack.com")
     ]);
+  });
+
+  it("skips Massive when the local REST budget is exhausted and falls through to free history", async () => {
+    process.env.MASSIVE_API_KEY = "massive-test-key";
+    process.env.MASSIVE_REST_MAX_CALLS_PER_MINUTE = "0";
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes("query1.finance.yahoo.com") ? new Response(yahooBody(60), { status: 200 }) : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL", Date.UTC(2026, 5, 18));
+
+    expect(bars).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("query1.finance.yahoo.com");
   });
 
   it("fetches Yahoo OHLC and caches the result (one network call across two reads)", async () => {

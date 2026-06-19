@@ -6,8 +6,8 @@ import { resolveApiKey } from "../db";
  * Massive S3 "flat files" (files.massive.com, Polygon-style bucket) — bulk historical market
  * data: one gzipped CSV per day holding EVERY ticker's OHLCV. This is the data-lake / backfill
  * foundation (efficient for backtesting and multi-symbol history — one download = a full day of
- * the market, vs N REST calls). Access is S3 SigV4; the signing SECRET is the MASSIVE_API_KEY
- * (the MASSIVE_SECRET_ACCESS_KEY env var historically had a typo). Server-side only.
+ * the market, vs N REST calls). Access is S3 SigV4 with Massive flat-file Access Key ID
+ * and Secret Access Key credentials. Server-side only.
  *
  * Layout (verified): {asset}/day_aggs_v1/{YYYY}/{MM}/{YYYY-MM-DD}.csv.gz
  *   assets: us_stocks_sip, us_options_opra, us_indices, us_futures_*, global_crypto, global_forex
@@ -30,8 +30,7 @@ export interface FlatFileBar {
 
 function cfg(userId?: string) {
   const accessKey = resolveApiKey("massive_access_key_id", userId) ?? "";
-  // The S3 secret is the API key (the dedicated secret env var had a one-char typo upstream).
-  const secret = resolveApiKey("massive", userId) ?? resolveApiKey("massive_secret_access_key", userId) ?? "";
+  const secret = resolveApiKey("massive_secret_access_key", userId) ?? resolveApiKey("massive", userId) ?? "";
   const host = (resolveApiKey("massive_s3_endpoint", userId) ?? "https://files.massive.com").replace(/^https?:\/\//, "");
   const bucket = resolveApiKey("massive_bucket", userId) ?? "flatfiles";
   const region = process.env.MASSIVE_S3_REGION ?? "us-east-1";

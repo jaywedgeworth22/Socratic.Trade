@@ -11,6 +11,7 @@
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { resolveApiKey } from "./db";
+import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
 
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
@@ -80,7 +81,9 @@ interface MassiveAggResponse { results?: MassiveAggBar[] }
 async function fetchMassive(symbol: string, startDate: string, userId?: string): Promise<OHLCBar[] | null> {
   const key = resolveApiKey("massive", userId);
   if (!key) return null;
-  const base = process.env.MASSIVE_API_BASE ?? "https://api.massive.com";
+  if ((process.env.MASSIVE_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
+  if (!reserveMassiveRestCall()) return null;
+  const base = massiveApiBase();
   const to = new Date().toISOString().slice(0, 10);
   try {
     const url = `${base}/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/day/${startDate}/${to}?adjusted=true&sort=asc&limit=50000`;

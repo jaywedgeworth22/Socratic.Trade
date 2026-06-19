@@ -33,6 +33,7 @@ const DEFAULT_WINDOW_DAYS = 60; // how far back a trade still counts toward the 
 const DEFAULT_LOOKBACK_DAYS = 45; // how far back to pull new filings each refresh
 const DEFAULT_MAX_FILINGS = 80; // cap PTR pages fetched per refresh (politeness)
 const EFD_BASE = "https://efdsearch.senate.gov";
+const DEFAULT_CAPITOL_TRADES_URL = "https://bff.capitoltrades.com/trades?per_page=100&page=1&sortBy=-txDate";
 
 export interface CongressDataset {
   trades: CongressTrade[];
@@ -364,7 +365,9 @@ export async function scrapeSenateEfd(now: number = Date.now()): Promise<Congres
 
 /** Fetch Capitol Trades' public JSON back-end (best-effort; host can be configured/disabled). */
 export async function fetchCapitolTrades(): Promise<CongressTrade[]> {
-  const base = process.env.WEB_SOURCE_CAPITOLTRADES_URL ?? "https://bff.capitoltrades.com/trades?per_page=100&page=1&sortBy=-txDate";
+  const configured = process.env.WEB_SOURCE_CAPITOLTRADES_URL?.trim();
+  if (configured && /^(off|false|disabled|none)$/i.test(configured)) return [];
+  const base = configured || DEFAULT_CAPITOL_TRADES_URL;
   const res = await politeFetch(base, {
     headers: {
       "user-agent": BROWSER_UA,
