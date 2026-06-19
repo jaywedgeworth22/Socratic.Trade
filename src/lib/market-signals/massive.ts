@@ -23,7 +23,7 @@ export interface FullMarketBreadth {
   universe: number;
 }
 
-interface GroupedBar { T?: string; o?: number; h?: number; l?: number; c?: number; v?: number }
+interface GroupedBar { T?: string; o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number }
 interface GroupedResponse { status?: string; results?: GroupedBar[] }
 
 const numOrUndef = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -57,7 +57,7 @@ export function clearMassiveRestBudgetForTests(): void {
   newsCache.clear();
 }
 
-export interface GroupedDailyBar { ticker: string; open?: number; high?: number; low?: number; close: number; volume?: number }
+export interface GroupedDailyBar { ticker: string; open?: number; high?: number; low?: number; close: number; volume?: number; vwap?: number }
 
 /**
  * Bulk daily OHLCV for the whole US stock market via the REST grouped-daily endpoint (~12k
@@ -80,7 +80,7 @@ export async function fetchGroupedBarsRest(date: string, userId?: string): Promi
     const bars: GroupedDailyBar[] = [];
     for (const r of rows) {
       if (typeof r.T === "string" && typeof r.c === "number" && Number.isFinite(r.c)) {
-        bars.push({ ticker: r.T, open: numOrUndef(r.o), high: numOrUndef(r.h), low: numOrUndef(r.l), close: r.c, volume: numOrUndef(r.v) });
+        bars.push({ ticker: r.T, open: numOrUndef(r.o), high: numOrUndef(r.h), low: numOrUndef(r.l), close: r.c, volume: numOrUndef(r.v), vwap: numOrUndef(r.vw) });
       }
     }
     return bars.length > 0 ? bars : null;

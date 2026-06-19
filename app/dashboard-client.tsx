@@ -148,11 +148,28 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Fallback poll — now a safety net (2 min) behind the SSE live-push below, not the primary
+  // refresh path. Covers missed events, SSE-unsupported browsers, and dropped streams.
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") void load({ quiet: true });
-    }, 30_000);
+    }, 120_000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Live push: refresh immediately when the server emits a dashboard event (strategy run
+  // complete, order placed, etc.) via Server-Sent Events — replacing the old 30s blind poll.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+    const es = new EventSource("/api/events/stream");
+    const refresh = () => {
+      if (document.visibilityState === "visible") void load({ quiet: true });
+    };
+    for (const type of ["run-complete", "order", "proposal", "dirty"]) es.addEventListener(type, refresh);
+    es.onerror = () => {
+      // The browser auto-reconnects EventSource; the fallback poll covers any gap.
+    };
+    return () => es.close();
   }, []);
 
   // Command K is temporarily disabled per user request

@@ -41,6 +41,7 @@ import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
+import { emitDashboardEvent } from "./events";
 import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting } from "./db";
 import { withLlmGeneration } from "./observability";
 import { debateProposal } from "./red-team";
@@ -380,6 +381,9 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
   audit("strategy_run", result, userId);
+  // Push a dashboard event so open clients refresh immediately instead of waiting for their
+  // next poll (the SSE bus is in-process; no-op when nothing is subscribed).
+  emitDashboardEvent({ type: "run-complete", userId, at: new Date().toISOString(), detail: { runId } });
   return result;
 }
 

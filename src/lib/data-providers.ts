@@ -331,6 +331,16 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         sources.analystRating = Object.keys(analystBySource).length > 1 ? "blended" : Object.keys(analystBySource)[0];
       }
 
+      // Prefer a REAL model sentiment (Alpha Vantage NEWS_SENTIMENT) over the keyword-proxy
+      // sentiment that Finnhub/Alpaca synthesize via scoreHeadlines. The first-wins takeScalar
+      // above lets the proxy win because Finnhub runs earlier; override here when AV returned a
+      // numeric model score for this symbol (falls back to the proxy when AV has none).
+      const avSentiment = results.find((res) => res.name === "alpha-vantage")?.data[symbol]?.sentiment;
+      if (typeof avSentiment === "number") {
+        base.sentiment = avSentiment;
+        sources.sentiment = "alpha-vantage";
+      }
+
       base.sources = sources;
       merged[symbol] = base;
     }

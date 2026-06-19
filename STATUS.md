@@ -23,6 +23,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19 (`agent/claude`): **Push-vs-poll + compute-offload pass.** Added
+  `docs/data-architecture-push-vs-poll.md` (durable principles + opportunity inventory +
+  scoping). Shipped: (1) **VWAP capture** — we were dropping Massive's `vw`; now in
+  `GroupedDailyBar`/`OHLCBar.vwap`. (2) **Sentiment offload** — cascade prefers Alpha Vantage's
+  real `NEWS_SENTIMENT` over the `scoreHeadlines` keyword proxy. (3) **SSE dashboard push** —
+  new in-process event bus (`src/lib/events.ts`, globalThis-pinned), `app/api/events/stream`
+  endpoint, `run-complete` emit in `runStrategyOnce`, client `EventSource`; 30s blind poll
+  demoted to 120s fallback. Live-verified push delivery (`subscribers:1`, `event: dirty`
+  received). tsc clean, 233 tests, build green. See
+  `docs/rollouts/2026-06-19-push-vs-poll-vwap-sentiment-sse.md`.
 - 2026-06-19 (`agent/claude`, committed): **Pinecone RAG fixed + backfilled (0→83
   vectors) and Robinhood MCP market data wired.** Root cause of the empty index was a
   swallowed Voyage 429 (billing) stacked on a latent **Pinecone v8 upsert bug** —

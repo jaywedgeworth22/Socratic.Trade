@@ -96,7 +96,7 @@ function shareUserKeyedHistory(): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
-interface MassiveAggBar { t?: number; o?: number; h?: number; l?: number; c?: number; v?: number }
+interface MassiveAggBar { t?: number; o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number }
 interface MassiveAggResponse { results?: MassiveAggBar[] }
 
 /** Massive daily aggregates (Polygon-compatible REST). Generous limits — the preferred primary. */
@@ -113,7 +113,7 @@ async function fetchMassive(symbol: string, startDate: string, key?: string): Pr
     const bars: OHLCBar[] = [];
     for (const r of rows) {
       if (typeof r.c !== "number" || !Number.isFinite(r.c) || typeof r.t !== "number") continue;
-      bars.push({ time: r.t, open: numOrUndef(r.o), high: numOrUndef(r.h), low: numOrUndef(r.l), close: r.c, volume: numOrUndef(r.v) });
+      bars.push({ time: r.t, open: numOrUndef(r.o), high: numOrUndef(r.h), low: numOrUndef(r.l), close: r.c, volume: numOrUndef(r.v), vwap: numOrUndef(r.vw) });
     }
     return bars.length >= 2 ? bars : null;
   } catch {

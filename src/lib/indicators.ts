@@ -22,6 +22,8 @@ export interface OHLCBar {
   low?: number;
   close: number;
   volume?: number;
+  /** Volume-weighted average price for the bar, when the source supplies it (e.g. Massive `vw`). */
+  vwap?: number;
 }
 
 export interface TechnicalRead {
