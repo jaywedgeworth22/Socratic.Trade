@@ -100,7 +100,7 @@ export function Modal({
             exit={{ opacity: 0, scale: 0.98, y: 6 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]",
+              "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)]",
               sizeClass[size]
             )}
           >

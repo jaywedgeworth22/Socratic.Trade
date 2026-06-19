@@ -315,8 +315,13 @@ export function parseMcpResponseBody(body: string, contentType: string | null): 
   const trimmed = body.trim();
   if (!trimmed) return {};
   if (isSseResponse(trimmed, contentType)) return parseSseMcpResponse(trimmed);
-  const parsed = JSON.parse(trimmed);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Robinhood MCP returned a non-object JSON payload.");
+  let parsed: any;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (e) {
+    return { error: { message: trimmed } };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: { message: "Robinhood MCP returned a non-object JSON payload." } };
   return parsed as { result?: unknown; error?: unknown };
 }
 
