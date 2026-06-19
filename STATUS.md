@@ -23,6 +23,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19: **Live-safety/risk-controls slice (Phase 10 E4/E5)**. Red Team
+  review threshold is now a policy tuning knob (`redTeamConvictionThreshold`,
+  default behavior 80), and `crisisMaxOpeningExposurePct` optionally caps new
+  buy/short notional as a % of portfolio value when deterministic
+  `entryMarketRegime` is crisis or inverted-curve. The cap is off when unset or
+  <=0, and it does not block risk-reducing sells/covers. Focused tests cover the
+  default/custom threshold and crisis-cap open-vs-exit behavior. Full verification
+  is being run before handoff.
 - 2026-06-19: **Clickable tickers everywhere + symbol drawer reorder** (UI).
   Every standalone ticker (Decision proposals, Portfolio rail, Tax tables +
   red wash-sale lockout chips, Smart Money congress/insider) now opens the
@@ -34,6 +42,10 @@ steps materially change.
   full-width at the bottom. Feature code already landed in `8d5de0f`; verified
   `tsc` + `npm test` (210) + `npm run build`. See
   `docs/rollouts/2026-06-19-clickable-tickers-and-drawer-reorder.md`.
+- 2026-06-19: Production-ops hardening added GitHub Actions CI for the required
+  verification sequence (`npx tsc --noEmit`, `npm test`, `npm run build`) on
+  pushes/PRs to `main`, using `npm ci` and Node 24. See
+  `docs/rollouts/2026-06-19-ci-verification.md`.
 - 2026-06-18: Active dev is on branch **`phase-10`**, executing
   `docs/phase-10-signals-learning-ui-v2.md` (status markers in that doc are the
   source of truth for what's next). `phase-10`, `main`, and `origin/main` are
@@ -89,6 +101,14 @@ steps materially change.
   portfolio/positions prompt omission was removed. Full combined-tree verification
   passed: `npx tsc --noEmit`, `npm test` (210 tests), and `npm run build`. See
   `docs/rollouts/2026-06-19-phase-10-11-learning-isolation.md`.
+- 2026-06-19: Phase 11 request-level user resolution scaffolding added
+  `resolveRequestUserId(request, body?)`, reading `x-user-id`, then `userId`
+  query/body hints, then falling back to `local`. High-impact API routes now pass
+  the resolved user into existing user-aware policy, strategy, proposal,
+  account, key, order, dashboard/scan, history/flat-file, audit, and profile
+  paths. This preserves current no-auth dashboard behavior and does **not** mark
+  authentication complete. See
+  `docs/rollouts/2026-06-19-request-user-resolution.md`.
 - 2026-06-19: Added an opt-in, read-only `webull-unofficial` enrichment provider
   that shells out to `scripts/webull_unofficial_quote.py` only when
   `WEBULL_UNOFFICIAL_ENABLED` is explicitly enabled. It can source quote fields
@@ -111,13 +131,17 @@ steps materially change.
   (UX + architecture/strategy/LLM) → `docs/reviews/2026-06-18-*.md` (verify/synth
   truncated by a session limit; reports reconstructed from the reviewers' findings).
   See `docs/rollouts/2026-06-18-massive-full-util-accounts-modal-review.md`.
-- 2026-06-18: Added a **standalone hosted preview** — pm2 app `trading-preview` on
-  **port 4100**, running `next start` from its own worktree `~/apps/trading-preview`
-  (detached on `main`), fully decoupled from the agent-edited worktree and from any
-  agent's session/`.next`. Refresh it with `scripts/refresh-preview.sh [ref]`. This
-  replaces relying on session-bound dev servers for browser checks; see the rewritten
-  "Hosting & dev servers" section in `AGENTS.md`. Key rule for all agents: a running
-  dev/preview port is NOT a work lock — coordinate via git + STATUS.md only.
+- 2026-06-19: **Per-agent live-preview worktrees.** Each AI agent now works in its own
+  git worktree on its own branch with its own PM2-hosted live `next dev` (HMR) on its own
+  port — fully isolated `node_modules`/`.next`/`data`/`.env.local`, so one agent's edits or
+  `npm run build` never touch another's preview or production: Claude →
+  `~/apps/trading-claude` (`agent/claude`) :4100; Codex → `~/apps/trading-codex`
+  (`agent/codex`) :4101; Antigravity → `~/apps/trading-antigravity` (`agent/antigravity`)
+  :4102. `~/Documents/Robinhood Agentic Trading` (`main`) is the integration/merge worktree
+  (no agent dev server). Production unchanged: pm2 `trading`, `next start` :4000. Bootstrap/
+  repair with `scripts/setup-agent-previews.sh`; see the rewritten "Hosting & dev servers"
+  section in `AGENTS.md`. Key rule: a running port is NOT a work lock — coordinate via git +
+  STATUS.md only. (Supersedes the earlier single committed `trading-preview` :4100 idea.)
 - **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
 - **Regime Detection**: The current market regime is deterministically evaluated using VIX and Fed rates, shifting the responsibility entirely from the LLM.
 - **UI UX Polish**: The cockpit features interactive charting (Recharts Brush for panning/zooming), Sonner toasts for real-time action feedback, and dynamic lazy-loading for heavy bundle dependencies.

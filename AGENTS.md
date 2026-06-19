@@ -68,42 +68,47 @@ that file directly.
 ## Hosting & dev servers (multi-agent coordination)
 
 This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini).
-There are **three separate git worktrees of the same repo**, each with its OWN
-`node_modules`, `.next`, `data/app.db`, and `.env.local` — never assume any of
-those are shared, and never point one worktree's process at another's files:
+**Each agent works in its OWN git worktree, on its OWN branch, with its OWN PM2-hosted
+live `next dev` preview on its OWN port.** Every worktree has its own `node_modules`,
+`.next`, `data/app.db`, and `.env.local` — never assume any are shared, and never point
+one worktree's process at another's files.
 
-| Worktree | Port | Process | Purpose |
-|----------|------|---------|---------|
-| the edit worktree(s) you work in (e.g. `~/Documents/Robinhood Agentic Trading`) | 3000/3001/3002 *(ephemeral, optional)* | `next dev` | where agents edit + run `tsc`/`test` |
-| `~/apps/trading-preview` | **4100** | pm2 `trading-preview` → `next start` | shared **hosted preview** of committed `main` |
-| `~/apps/trading-live` | **4000** | pm2 `trading` → `next start` | **production** (`trading.jays.services` via Cloudflare tunnel) |
+| Worktree | Branch | Port | Process | Owner |
+|----------|--------|------|---------|-------|
+| `~/Documents/Robinhood Agentic Trading` | `main` | — (no dev server) | — | **integration / review / merges** |
+| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | Claude Code |
+| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | Codex |
+| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | Antigravity/Gemini |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | **production** (`trading.jays.services`) |
 
-### Prefer the hosted preview over your own dev server
-- For "does it work in a browser" checks, use the **:4100 preview** instead of
-  spinning up a session-bound dev server. After you commit to `main`, refresh it:
-  `scripts/refresh-preview.sh` (defaults to `origin/main`; pass a ref to override).
-  It runs from `~/apps/trading-preview` under pm2, so it is **never** disturbed by
-  anyone's `npm run build` and does not collide with the edit worktree's `.next`.
-- The preview and production are pm2 apps. `pm2 restart trading-preview` / `pm2 list`
-  are fine; do **not** `pm2 delete`/rename them, and run `pm2 save` after intentional
-  changes. Never run `npm run build` or `next dev` *inside* `~/apps/trading-preview`
-  or `~/apps/trading-live` to "see your edits" — that builds mid-serve and 500s the
-  hosted instance; use the refresh script (preview) or the deploy steps (production).
+Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-previews.sh`.
 
-### A running dev port is NOT a work lock
-A dev/preview server listening on a port does **not** mean another agent is mid-task.
-Do not infer "someone is working" from an open 3000/3001/3002/4100/4000. Coordinate
-ONLY via `git status` / `git log` and `STATUS.md`. If you still want live HMR of your
-own *uncommitted* edits, you may run an ephemeral dev server on your lane and treat it
-as disposable and yours:
-- **Claude Code → 3000** (its preview tool defaults here).
-- **Codex → 3001** (`npm run dev:codex`; must not take 3000).
-- **Antigravity/Gemini → 3002** (`next dev -p 3002`; must not take 3000).
-- Keep the shared `npm run dev` script **unpinned** (defaults to 3000); override the
-  port via flag/env — never hardcode a port into `dev`. Don't kill another lane's port.
+### How each agent works
+- **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
+  `~/apps/trading-codex`, Antigravity → `~/apps/trading-antigravity`). Edit only there, on
+  your `agent/<name>` branch. Your **live in-progress edits** appear at your port via HMR —
+  open it in a browser; no refresh/rebuild needed.
+- **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
+- **Land work via git:** commit on your `agent/<name>` branch, then merge to `main` (in the
+  integration worktree; ff or PR). `git merge origin/main` into your branch to stay current.
+- **`npm run build` only affects YOUR worktree.** Verify with `npx tsc --noEmit` + `npm test`;
+  if a build wipes your `.next` and your live preview starts erroring (`ENOENT .next/...`),
+  just `pm2 restart trading-<you>`. It never affects another agent or production.
+- **PM2:** `pm2 restart trading-<you>` / `pm2 list` are fine; do **not** `pm2 delete`/rename
+  another agent's app or `trading`; run `pm2 save` after intentional changes. Never run a
+  build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
+  via its release steps only.
 
-Host-local deployment details (tunnel, pm2 ecosystem) live in `~/apps/README.md` on
-the deployment machine.
+### A running port is NOT a work lock
+A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
+infer "someone is working" from an open 4100/4101/4102/4000 (or a stray 3000/3001/3002).
+Coordinate ONLY via `git status` / `git log` / the branch list and `STATUS.md` — never by
+inspecting ports. The legacy per-agent ephemeral dev lanes (Claude 3000 / Codex 3001 via
+`npm run dev:codex` / Antigravity 3002) are superseded by the PM2 worktree previews above;
+use them only as a one-off and treat them as disposable.
+
+Host-local deployment details (tunnel, pm2 ecosystem) live in `~/apps/README.md` on the
+deployment machine.
 
 ## Cross-file consistency traps (cheap to check, expensive to miss)
 
