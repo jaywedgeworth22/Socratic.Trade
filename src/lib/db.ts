@@ -1370,7 +1370,8 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   pinecone: "PINECONE_API_KEY",
   voyage: "VOYAGE_API_KEY",
   alpaca_paper_api_key: "ALPACA_PAPER_API_KEY",
-  alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY"
+  alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
+  apify: "APIFY_API_TOKEN"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -1388,7 +1389,8 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   pinecone_api_key: "pinecone",
   voyage_api_key: "voyage",
   alpaca_paper_api_key: "alpaca_paper_api_key",
-  alpaca_paper_secret_key: "alpaca_paper_secret_key"
+  alpaca_paper_secret_key: "alpaca_paper_secret_key",
+  apify_api_token: "apify"
 };
 
 function keyRowToApiKey(row: {

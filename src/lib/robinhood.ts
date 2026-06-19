@@ -13,6 +13,7 @@ import type {
   BrokerGateway,
   EquityOrderInput
 } from "./types";
+import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 
@@ -536,6 +537,113 @@ function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
     time_in_force: input.timeInForce,
     market_hours: input.marketHours
   };
+}
+
+// ── Robinhood MCP market-DATA helpers (historicals + fundamentals) ────────────
+// These reuse the authenticated MCP transport but are pure read-only DATA calls,
+// independent of the BrokerGateway interface. They are INERT unless ROBINHOOD_ADAPTER=mcp
+// and a token is present — every path returns null/{} otherwise, so the OHLC cascade and
+// enrichment cascade degrade exactly as before when Robinhood is not connected.
+
+export function robinhoodMcpDataEnabled(): boolean {
+  return process.env.ROBINHOOD_ADAPTER === "mcp";
+}
+
+/**
+ * Fetch daily OHLC history for a symbol via Robinhood MCP `get_equity_historicals`.
+ * Returns null when Robinhood isn't connected, the call fails, or <2 bars come back —
+ * so it slots into the keyed-first OHLC cascade as just another tier.
+ */
+export async function fetchRobinhoodHistoricals(
+  symbol: string,
+  opts: { interval?: string; span?: string } = {}
+): Promise<OHLCBar[] | null> {
+  if (!robinhoodMcpDataEnabled()) return null;
+  const sym = normalizeSymbol(symbol);
+  if (!sym) return null;
+  try {
+    const raw = await callRobinhoodMcpTool("get_equity_historicals", {
+      symbols: [sym],
+      symbol: sym,
+      interval: opts.interval ?? "day",
+      span: opts.span ?? "5year",
+      bounds: "regular"
+    });
+    const bars = parseRobinhoodHistoricals(raw, sym);
+    return bars.length >= 2 ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Defensive parser for Robinhood historicals — tolerates several envelope shapes. */
+export function parseRobinhoodHistoricals(raw: unknown, symbol: string): OHLCBar[] {
+  const root = raw as Record<string, unknown> | undefined;
+  let rows: unknown[] = [];
+  if (root && Array.isArray(root.historicals)) {
+    rows = root.historicals as unknown[];
+  } else if (root && Array.isArray(root.results)) {
+    const results = root.results as Array<Record<string, unknown>>;
+    const match = results.find((r) => normalizeSymbol(String(r.symbol ?? "")) === symbol);
+    if (match && Array.isArray(match.historicals)) rows = match.historicals as unknown[];
+    else if (results.length > 0 && Array.isArray(results[0]?.historicals)) rows = results[0]!.historicals as unknown[];
+    else rows = results;
+  } else if (Array.isArray(raw)) {
+    rows = raw as unknown[];
+  }
+
+  const bars: OHLCBar[] = [];
+  for (const row of rows) {
+    const r = row as Record<string, unknown>;
+    const close = firstNum(r, ["close_price", "close", "c"]);
+    if (close === undefined) continue;
+    const bar: OHLCBar = { close };
+    const time = optionalString(r.begins_at ?? r.timestamp ?? r.date ?? r.t);
+    if (time !== undefined) bar.time = time;
+    const open = firstNum(r, ["open_price", "open", "o"]);
+    if (open !== undefined) bar.open = open;
+    const high = firstNum(r, ["high_price", "high", "h"]);
+    if (high !== undefined) bar.high = high;
+    const low = firstNum(r, ["low_price", "low", "l"]);
+    if (low !== undefined) bar.low = low;
+    const volume = firstNum(r, ["volume", "v"]);
+    if (volume !== undefined) bar.volume = volume;
+    bars.push(bar);
+  }
+  return bars;
+}
+
+/**
+ * Raw `get_equity_fundamentals` output, normalized to a per-symbol map. Returns {} when
+ * Robinhood isn't connected. The exact field set is broker-defined; callers map defensively.
+ */
+export async function fetchRobinhoodFundamentals(symbols: string[]): Promise<Record<string, Record<string, unknown>>> {
+  if (!robinhoodMcpDataEnabled()) return {};
+  const wanted = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+  if (wanted.length === 0) return {};
+  try {
+    const raw = await callRobinhoodMcpTool("get_equity_fundamentals", { symbols: wanted });
+    const root = raw as Record<string, unknown> | undefined;
+    const rows = Array.isArray(root?.results) ? root!.results : Array.isArray(root?.fundamentals) ? root!.fundamentals : Array.isArray(raw) ? (raw as unknown[]) : [];
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const row of rows as Array<Record<string, unknown>>) {
+      const sym = normalizeSymbol(String(row.symbol ?? row.ticker ?? ""));
+      if (sym) out[sym] = row;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function firstNum(row: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = typeof value === "number" ? value : Number(String(value).replace(/[$,%\s]/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function number(value: unknown): number {

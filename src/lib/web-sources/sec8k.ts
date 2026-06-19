@@ -209,6 +209,38 @@ export function buildEightKContext(event: EightKEvent): string {
   ].filter(Boolean).join("\n");
 }
 
+/**
+ * Re-embed the *persisted* 8-K dataset into vector memory. Unlike a normal refresh (which only
+ * embeds newly-`fresh` filings), this backfills everything already stored — the path used to
+ * recover after the Voyage-billing 429 left the Pinecone index empty. Returns the embed/upsert
+ * outcome so a caller (e.g. the reindex route) can confirm `indexed > 0`.
+ */
+export async function reindexEightKDataset(
+  userId: string = "local",
+  limit: number = Number.POSITIVE_INFINITY
+): Promise<{ attempted: number; indexed: number; error?: string; skipped?: boolean }> {
+  const dataset = getEightKDataset();
+  const events = dataset?.events ?? [];
+  if (events.length === 0) return { attempted: 0, indexed: 0 };
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : events.length;
+  const slice = events.slice(0, cap);
+  const { storeContexts } = await import("../vector-db");
+  return storeContexts(
+    slice.map((event) => ({
+      text: buildEightKContext(event),
+      metadata: {
+        symbol: event.symbol,
+        source: "sec-8k",
+        timestamp: event.filedAt,
+        accession: event.accession,
+        filingUrl: event.filingUrl,
+        items: event.items ?? []
+      }
+    })),
+    userId
+  );
+}
+
 export async function refreshEightK(now: number = Date.now(), force = false): Promise<import("./types").WebSourceRefreshResult> {
   if (!force && !isEightKRefreshDue(now)) {
     const ds = getEightKDataset();

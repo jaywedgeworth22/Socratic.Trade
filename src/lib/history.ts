@@ -12,6 +12,7 @@ import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { resolveApiKey } from "./db";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
+import { fetchRobinhoodHistoricals } from "./robinhood";
 import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
 
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
@@ -60,6 +61,8 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     () => fetchMassive(symbol, startDate, userId),
     () => fetchTradier(symbol, startDate, userId),
     () => fetchMarketstack(symbol, userId),
+    // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
+    () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year" }),
     () => fetchYahoo(symbol),
     () => fetchStooq(symbol)
   ];

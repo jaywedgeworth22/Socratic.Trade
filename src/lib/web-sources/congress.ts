@@ -4,16 +4,19 @@
 // lands, copycat retail flow often follows — so surfacing fresh disclosures to the
 // agent lets it act on the same names before the copycats pile in.
 //
-// There is no reliable FREE key-based API for this, so we read it from public
-// sources, in priority order:
+// Sources, in priority order:
 //   1. Senate eFD  (efdsearch.senate.gov) — authoritative, free, no key. Validated
 //      live: CSRF -> accept terms -> POST report search -> parse each PTR's table.
-//   2. Capitol Trades BFF (bff.capitoltrades.com) — public JSON back-end covering
-//      House + Senate. Configurable + best-effort (their CloudFront is flaky).
+//      SENATE ONLY (structurally cannot see the House).
+//   2. Apify `johnvc` actor — HOUSE coverage (the eFD gap). Keyed (APIFY_API_TOKEN),
+//      pay-per-result (~$0.00001/row). Runs the actor synchronously and parses the
+//      normalized House Clerk disclosures. House-only by default so it complements eFD.
+//   3. Capitol Trades BFF (bff.capitoltrades.com) — public JSON back-end (House+Senate);
+//      currently CDN-blocked server-side, kept best-effort/configurable.
 //
 // All adapters degrade to nothing on failure — we never invent a trade.
 
-import { audit, getInternalSetting, setInternalSetting } from "../db";
+import { audit, getInternalSetting, resolveApiKey, setInternalSetting } from "../db";
 import { normalizeSymbol } from "../money";
 import type { CongressSignal, CongressTrade } from "./types";
 import {
@@ -203,6 +206,102 @@ export function parseCapitolTradesBff(json: unknown): CongressTrade[] {
     });
   }
   return trades;
+}
+
+// ── Apify congress actor (House coverage) ────────────────────────────────────
+
+const APIFY_CONGRESS_ACTOR = "johnvc~us-congress-financial-disclosures-and-stock-trading-data";
+const DEFAULT_APIFY_MAX_RESULTS = 300;
+
+const OWNER_LABELS: Record<string, string> = { sp: "Spouse", se: "Self", jt: "Joint", jo: "Joint", dc: "Child", ch: "Child" };
+
+/** Validate an ISO date and reject data-quality garbage (e.g. a "2036" future date). */
+function saneIsoDate(value: string, now: number): string | undefined {
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return undefined;
+  const iso = `${m[1]}-${m[2]}-${m[3]}`;
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return undefined;
+  if (ts > now + 3 * 24 * 60 * 60_000) return undefined; // absurd future (allow small skew)
+  if (ts < Date.parse("2000-01-01")) return undefined; // absurd past
+  return iso;
+}
+
+/** Parse the Apify `johnvc` actor's dataset items into CongressTrade rows (pure). */
+export function parseApifyCongress(items: unknown, now: number = Date.now()): CongressTrade[] {
+  if (!Array.isArray(items)) return [];
+  const out: CongressTrade[] = [];
+  for (const raw of items) {
+    const row = raw as Record<string, any>;
+    const tickerRaw = typeof row.Ticker === "string" ? row.Ticker.trim() : "";
+    if (!tickerRaw) continue;
+    const sym = normalizeSymbol(tickerRaw.split(":")[0]);
+    if (!TICKER_RE.test(sym)) continue;
+
+    const tx = String(row.Transaction_Type ?? "").trim().toLowerCase();
+    let side: "buy" | "sell";
+    if (/^p/.test(tx)) side = "buy"; // P / Purchase / "P (partial)"
+    else if (/^s/.test(tx)) side = "sell"; // S / Sale / "S (partial)" / "Sale (Partial)"
+    else continue; // exchanges / other are non-directional
+
+    const chamber: "senate" | "house" = /senate/i.test(String(row.House ?? "")) ? "senate" : "house";
+    const member =
+      [row.First_Name, row.Last_Name].map((v) => String(v ?? "").trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || "Unknown";
+    const tradedAt = saneIsoDate(String(row.Date ?? ""), now);
+    const disclosedAt = saneIsoDate(String(row.Notification_Date ?? ""), now);
+    if (!tradedAt && !disclosedAt) continue;
+    const ownerCode = String(row.Owner ?? "").trim().toLowerCase();
+
+    out.push({
+      symbol: sym,
+      member,
+      chamber,
+      side,
+      ...parseAmountRange(String(row.Amount_Range ?? "")),
+      ...(OWNER_LABELS[ownerCode] ? { owner: OWNER_LABELS[ownerCode] } : {}),
+      tradedAt: tradedAt ?? disclosedAt!,
+      disclosedAt,
+      source: "apify-congress"
+    });
+  }
+  return out;
+}
+
+/**
+ * Run the Apify `johnvc` congress actor synchronously and return parsed trades.
+ * Keyed by APIFY_API_TOKEN. House-only by default (eFD is authoritative for the Senate);
+ * set WEB_SOURCE_APIFY_CONGRESS_CHAMBERS=all to include Senate too. Returns [] when no token.
+ */
+export async function fetchApifyCongress(now: number = Date.now()): Promise<CongressTrade[]> {
+  const token = resolveApiKey("apify") || process.env.APIFY_API_TOKEN;
+  if (!token) return [];
+  const actor = (process.env.WEB_SOURCE_APIFY_CONGRESS_ACTOR || APIFY_CONGRESS_ACTOR).trim();
+  if (/^(off|false|disabled|none)$/i.test(actor)) return [];
+
+  const maxRaw = Number(process.env.WEB_SOURCE_APIFY_CONGRESS_MAX ?? DEFAULT_APIFY_MAX_RESULTS);
+  const maxResults = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.floor(maxRaw) : DEFAULT_APIFY_MAX_RESULTS;
+  const lookbackRaw = Number(process.env.WEB_SOURCE_CONGRESS_WINDOW_DAYS ?? DEFAULT_WINDOW_DAYS);
+  const lookback = Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? lookbackRaw : DEFAULT_WINDOW_DAYS;
+  const startDate = new Date(now - lookback * 24 * 60 * 60_000).toISOString().slice(0, 10);
+
+  const url = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.WEB_SOURCE_APIFY_TIMEOUT_MS ?? 180_000);
+  const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ Start_Date: startDate, Max_Results: maxResults }),
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`Apify congress HTTP ${res.status}`);
+    const trades = parseApifyCongress(await res.json(), now);
+    const chambers = String(process.env.WEB_SOURCE_APIFY_CONGRESS_CHAMBERS ?? "house").toLowerCase();
+    return chambers === "all" || chambers === "both" ? trades : trades.filter((t) => t.chamber === "house");
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ── Aggregation (pure) ───────────────────────────────────────────────────────
@@ -431,6 +530,7 @@ export async function refreshCongress(now: number = Date.now(), force = false): 
 
   for (const adapter of [
     { id: "senate-efd", run: () => scrapeSenateEfd(now) },
+    { id: "apify-congress", run: () => fetchApifyCongress(now) },
     { id: "capitol-trades", run: fetchCapitolTrades }
   ]) {
     try {

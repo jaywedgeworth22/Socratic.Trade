@@ -23,6 +23,20 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19 (`agent/claude`, uncommitted): **Pinecone RAG fixed + backfilled (0→83
+  vectors) and Robinhood MCP market data wired.** Root cause of the empty index was a
+  swallowed Voyage 429 (billing) stacked on a latent **Pinecone v8 upsert bug** —
+  `index.upsert(records)` must be `index.upsert({ records })` for
+  `@pinecone-database/pinecone@8` (never fired before because Voyage 429'd first).
+  `storeContexts` now audits its outcome; added `reindexEightKDataset` +
+  `getVectorStoreStats` + dev-gated `POST /api/admin/reindex-8k`. Robinhood
+  `get_equity_historicals` → OHLC cascade and `get_equity_fundamentals` → enrichment,
+  inert until `ROBINHOOD_ADAPTER=mcp` + OAuth (adapter currently `mock`); verify shapes
+  via `GET /api/admin/robinhood-probe`. **Also added: Alpaca free Benzinga news**
+  (`AlpacaNewsEnrichmentProvider`, live in `MarketScan.source`) and **closed the HOUSE-congress
+  gap** via an Apify `johnvc` actor adapter in `web-sources/congress.ts` (forced refresh =
+  125 House + 61 Senate; House was 0). Verified: tsc clean, 228 tests, build green, live
+  backfill + congress refresh confirmed. See `docs/rollouts/2026-06-19-pinecone-fix-and-robinhood-data-wiring.md`.
 - 2026-06-19: **Data-source failure hardening** for Capitol Trades, Voyage/Pinecone
   vector memory, and Massive S3 flat files. Capitol Trades' public BFF currently
   returns HTTP 503 HTML from this environment and the interactive site returns HTTP

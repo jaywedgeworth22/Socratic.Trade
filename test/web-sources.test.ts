@@ -5,6 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import {
   aggregateCongressSignals,
   parseAmountRange,
+  parseApifyCongress,
   parseCapitolTradesBff,
   parseEfdReportRows,
   parsePtrTransactions,
@@ -92,6 +93,39 @@ describe("congress pure parsers", () => {
     expect(trades).toHaveLength(2);
     expect(trades[0]).toMatchObject({ symbol: "TSLA", side: "buy", chamber: "house" });
     expect(trades[1]).toMatchObject({ symbol: "MSFT", side: "sell", chamber: "senate" });
+  });
+});
+
+describe("parseApifyCongress", () => {
+  const now = Date.parse("2026-06-19T00:00:00Z");
+  // Real shape from the johnvc actor, incl. a partial-sale variant, a Senate row,
+  // a garbage future date (2036), and a non-stock/no-ticker row.
+  const items = [
+    { Ticker: "TFC", Transaction_Type: "S", Date: "2026-04-17", Notification_Date: "2026-04-23", Amount_Range: "$1,001 - $15,000", First_Name: "Lloyd K.", Last_Name: "Smucker", House: "House", Owner: "SP", Asset_Type_Code: "ST" },
+    { Ticker: "MMM", Transaction_Type: "P", Date: "2026-05-17", Notification_Date: "2026-05-20", Amount_Range: "$1,001 - $15,000", First_Name: "Julia", Last_Name: "Letlow", House: "House", Owner: "SE", Asset_Type_Code: "ST" },
+    { Ticker: "FULT", Transaction_Type: "S (partial)", Date: "2026-04-17", Notification_Date: "2026-04-20", Amount_Range: "$100,001 - $250,000", First_Name: "Lloyd K.", Last_Name: "Smucker", House: "House", Asset_Type_Code: "ST" },
+    { Ticker: "NVDA", Transaction_Type: "P", Date: "2026-06-10", Notification_Date: "2026-06-12", Amount_Range: "$1,001 - $15,000", First_Name: "Jane", Last_Name: "Doe", House: "Senate", Asset_Type_Code: "ST" },
+    { Ticker: "BADYR", Transaction_Type: "P", Date: "2036-04-22", Notification_Date: "2036-04-25", Amount_Range: "$1,001 - $15,000", First_Name: "Future", Last_Name: "Person", House: "House", Asset_Type_Code: "ST" },
+    { Ticker: "", Transaction_Type: "P", Date: "2026-05-01", Notification_Date: "2026-05-03", Amount_Range: "$1 - $2", First_Name: "No", Last_Name: "Ticker", House: "House", Asset_Type_Code: "OP" },
+    { Ticker: "AAPL", Transaction_Type: "E", Date: "2026-05-02", Notification_Date: "2026-05-04", Amount_Range: "$1,001 - $15,000", First_Name: "Ex", Last_Name: "Change", House: "House", Asset_Type_Code: "ST" }
+  ];
+
+  it("parses House+Senate rows, maps P/S (incl. partial), and drops garbage", () => {
+    const trades = parseApifyCongress(items, now);
+    // TFC(sell), MMM(buy), FULT(sell partial), NVDA(senate buy) — 4 valid;
+    // 2036 future date, empty ticker, and exchange ("E") are all dropped.
+    expect(trades).toHaveLength(4);
+    expect(trades[0]).toMatchObject({ symbol: "TFC", side: "sell", chamber: "house", member: "Lloyd K. Smucker", owner: "Spouse", source: "apify-congress", tradedAt: "2026-04-17", disclosedAt: "2026-04-23" });
+    expect(trades[1]).toMatchObject({ symbol: "MMM", side: "buy", amountLow: 1001, amountHigh: 15000 });
+    expect(trades[2]).toMatchObject({ symbol: "FULT", side: "sell" });
+    expect(trades[3]).toMatchObject({ symbol: "NVDA", side: "buy", chamber: "senate" });
+    expect(trades.some((t) => t.symbol === "BADYR")).toBe(false);
+    expect(trades.some((t) => t.symbol === "AAPL")).toBe(false);
+  });
+
+  it("returns [] for non-array input", () => {
+    expect(parseApifyCongress(null)).toEqual([]);
+    expect(parseApifyCongress({ data: [] })).toEqual([]);
   });
 });
 

@@ -1,6 +1,28 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
 import { VoyageAIClient } from "voyageai";
-import { resolveApiKey } from "./db";
+import { audit, resolveApiKey, setInternalSetting } from "./db";
+
+const LAST_INGEST_KEY = "vectorStore:lastIngest";
+
+export interface StoreContextsResult {
+  /** Documents handed in (after trimming/empty-filter). */
+  attempted: number;
+  /** Records actually upserted into Pinecone. */
+  indexed: number;
+  /** Set when the embed/upsert flow threw (e.g. Voyage 429) — the failure is no longer silent. */
+  error?: string;
+  /** True when Pinecone/Voyage keys were missing, so nothing could be stored. */
+  skipped?: boolean;
+}
+
+export interface VectorStoreStats {
+  configured: boolean;
+  indexName: string;
+  exists?: boolean;
+  totalVectorCount?: number;
+  dimension?: number;
+  error?: string;
+}
 
 // Using "voyage-finance-2" for high fidelity financial embeddings
 const VOYAGE_MODEL = "voyage-finance-2";
@@ -197,18 +219,20 @@ export async function storeContext(
  * Store multiple context documents in one embedding/upsert flow. This keeps Pinecone index
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
-export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<void> {
+export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<StoreContextsResult> {
   const validDocuments = documents
     .map((doc) => ({ ...doc, text: trimContextText(doc.text) }))
     .filter((doc) => doc.text.length > 0);
-  if (validDocuments.length === 0) return;
+  if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
 
   const { pc, voyage, initCacheKey } = getClients(userId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    return;
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
+    return { attempted: validDocuments.length, indexed: 0, skipped: true };
   }
 
+  let indexed = 0;
   try {
     await ensureIndex(pc, initCacheKey);
     const index = pc.Index(indexName());
@@ -232,12 +256,52 @@ export async function storeContexts(documents: ContextDocument[], userId: string
         });
       });
 
-      if (records.length > 0) await index.upsert(records as any);
+      if (records.length > 0) {
+        // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
+        await index.upsert({ records } as any);
+        indexed += records.length;
+      }
     }
 
-    console.log(`[vector-db] Indexed ${validDocuments.length} context document(s).`);
+    console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).`);
+    // Persist the outcome so RAG ingestion health is visible in the audit log / dashboard
+    // instead of being swallowed to console (the original cause of the silent empty index).
+    setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed });
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, userId);
+    return { attempted: validDocuments.length, indexed };
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
+    setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, userId);
+    return { attempted: validDocuments.length, indexed, error };
+  }
+}
+
+/**
+ * Live Pinecone index stats — used by the reindex/diagnostic route so the operator can
+ * confirm `totalVectorCount > 0` after a backfill instead of guessing.
+ */
+export async function getVectorStoreStats(userId: string = "local"): Promise<VectorStoreStats> {
+  const name = indexName();
+  const { pc } = getClients(userId);
+  if (!pc) return { configured: false, indexName: name };
+  try {
+    if (!(await indexExists(pc))) return { configured: true, indexName: name, exists: false };
+    const stats = (await pc.Index(name).describeIndexStats()) as {
+      totalRecordCount?: number;
+      totalVectorCount?: number;
+      dimension?: number;
+    };
+    return {
+      configured: true,
+      indexName: name,
+      exists: true,
+      totalVectorCount: stats.totalRecordCount ?? stats.totalVectorCount ?? 0,
+      dimension: stats.dimension
+    };
+  } catch (err) {
+    return { configured: true, indexName: name, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

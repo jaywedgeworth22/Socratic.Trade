@@ -208,8 +208,17 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const finnhubKey = resolveApiKey("finnhub", userId);
   const alphaVantageKey = resolveApiKey("alphavantage", userId);
   const fmpKey = resolveApiKey("fmp", userId);
+  const alpacaNewsKey = resolveApiKey("alpaca_paper_api_key", userId);
+  const alpacaNewsSecret = resolveApiKey("alpaca_paper_secret_key", userId);
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
+  // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
+  // AND ROBINHOOD_ENRICHMENT_ENABLED, because the broker field set/units should be verified
+  // against /api/admin/robinhood-probe before trusting them next to other real numbers.
+  if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider());
   if (finnhubKey) providers.push(new FinnhubEnrichmentProvider(finnhubKey));
+  // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
+  // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
+  if (alpacaNewsKey && alpacaNewsSecret) providers.push(new AlpacaNewsEnrichmentProvider(alpacaNewsKey, alpacaNewsSecret));
   if (alphaVantageKey) providers.push(new AlphaVantageEnrichmentProvider(alphaVantageKey));
   if (fmpKey) providers.push(new FmpEnrichmentProvider(fmpKey));
   providers.push(new YahooFinanceEnrichmentProvider());
@@ -490,6 +499,131 @@ function runWebullUnofficialScript(
       }
     );
   });
+}
+
+// ── Robinhood first-party fundamentals (opt-in) ──────────────────────────────
+// Sources fundamentals from the authenticated Robinhood MCP `get_equity_fundamentals`
+// tool. Only high-confidence fields are mapped (P/E, sector/industry, 52-week range,
+// average volume) to avoid unit-ambiguity surprises; verify the raw shape via
+// /api/admin/robinhood-probe before relying on it. Inert unless explicitly enabled.
+
+export function robinhoodEnrichmentEnabled(): boolean {
+  if (process.env.ROBINHOOD_ADAPTER !== "mcp") return false;
+  return ["1", "true", "on", "yes"].includes(String(process.env.ROBINHOOD_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
+}
+
+export function parseRobinhoodFundamentals(row: Record<string, unknown>): SymbolEnrichment {
+  const peRatio = firstNumber(row, ["pe_ratio", "peRatio"]);
+  const fiftyTwoWeekHigh = firstNumber(row, ["high_52_weeks", "fiftyTwoWeekHigh", "high52Weeks"]);
+  const fiftyTwoWeekLow = firstNumber(row, ["low_52_weeks", "fiftyTwoWeekLow", "low52Weeks"]);
+  const volume = firstNumber(row, ["average_volume", "average_volume_2_weeks", "volume"]);
+  const sector = firstString(row, ["sector"]);
+  const industry = firstString(row, ["industry"]);
+  return {
+    ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+    ...(fiftyTwoWeekHigh !== undefined && fiftyTwoWeekHigh > 0 && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && fiftyTwoWeekLow > 0 && { fiftyTwoWeekLow }),
+    ...(volume !== undefined && volume > 0 && { volume }),
+    ...(sector !== undefined && { sector }),
+    ...(industry !== undefined && { industry })
+  };
+}
+
+export class RobinhoodEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "robinhood-fundamentals";
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    const result: Record<string, SymbolEnrichment> = {};
+    try {
+      const { fetchRobinhoodFundamentals } = await import("./robinhood");
+      const raw = await fetchRobinhoodFundamentals(normalized);
+      for (const symbol of normalized) {
+        const row = raw[symbol];
+        result[symbol] = row ? parseRobinhoodFundamentals(row) : {};
+      }
+    } catch {
+      for (const symbol of normalized) result[symbol] = {};
+    }
+    return result;
+  }
+}
+
+// ── Alpaca news provider (free Benzinga feed) ────────────────────────────────
+// Keyed by Alpaca paper API key+secret (no IP-reputation issues, reliable from servers).
+// One batched call returns recent articles tagged with their symbols; we group headlines
+// per symbol and derive a sentiment proxy via scoreHeadlines. Supplies headlines + sentiment.
+
+export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "alpaca-news";
+  readonly configured = true;
+  private readonly base = "https://data.alpaca.markets/v1beta1/news";
+
+  constructor(private readonly apiKey: string, private readonly apiSecret: string) {}
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`alpaca-news:${symbol}`);
+      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    try {
+      // Single batched request: Alpaca tags every article with the symbols it mentions.
+      const url = `${this.base}?symbols=${encodeURIComponent(misses.join(","))}&limit=50&sort=desc`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      let articles: Array<{ headline?: string; symbols?: string[] }> = [];
+      try {
+        const response = await fetchWithRetry(url, {
+          headers: {
+            "APCA-API-KEY-ID": this.apiKey,
+            "APCA-API-SECRET-KEY": this.apiSecret,
+            accept: "application/json"
+          },
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = (await response.json()) as { news?: Array<{ headline?: string; symbols?: string[] }> };
+        articles = Array.isArray(json.news) ? json.news : [];
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      const headlinesBySymbol = new Map<string, string[]>();
+      for (const article of articles) {
+        const headline = typeof article.headline === "string" ? article.headline.trim() : "";
+        if (!headline) continue;
+        for (const raw of article.symbols ?? []) {
+          const symbol = normalizeSymbol(raw);
+          if (!symbol || !misses.includes(symbol)) continue;
+          const list = headlinesBySymbol.get(symbol) ?? [];
+          if (list.length < 5 && !list.includes(headline)) list.push(headline);
+          headlinesBySymbol.set(symbol, list);
+        }
+      }
+
+      for (const symbol of misses) {
+        const headlines = headlinesBySymbol.get(symbol) ?? [];
+        const data: SymbolEnrichment = headlines.length > 0 ? { headlines, sentiment: scoreHeadlines(headlines) } : {};
+        cache.set(`alpaca-news:${symbol}`, { expiresAt: now + ttlMs(), data });
+        result[symbol] = data;
+      }
+    } catch {
+      for (const symbol of misses) result[symbol] = {};
+    }
+    return result;
+  }
 }
 
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
