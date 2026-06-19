@@ -7,6 +7,7 @@
 import { getPolicy, listUsers } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { runStrategyOnce } from "./strategy";
+import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { refreshDueWebSources } from "./web-sources";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
@@ -59,6 +60,13 @@ async function tick(): Promise<void> {
       const policy = getPolicy(userId);
 
       if (policy.systemState !== "active" || !policy.accountNumber) {
+        schedule.nextRunAt = null;
+        continue;
+      }
+
+      // Event-only mode: the trigger engine drives runs; skip the fixed-interval cadence.
+      // (Default — engine off or mode interval/both — leaves the interval lane unchanged.)
+      if (triggerEngineEnabled() && triggerMode() === "event") {
         schedule.nextRunAt = null;
         continue;
       }

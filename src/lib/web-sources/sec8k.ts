@@ -198,6 +198,19 @@ async function enrichEightKEvents(events: EightKEvent[]): Promise<EightKEvent[]>
   return [...enriched, ...events.slice(maxDetails)];
 }
 
+// 8-K item codes that are genuinely tradeable-material (expert panel). Most 8-Ks (5.07 votes,
+// 9.01 exhibits, 5.03 bylaws, routine 8.01 PR) are noise and intentionally excluded.
+const MATERIAL_8K_ITEMS = new Set(["1.01", "1.02", "1.03", "2.01", "2.02", "4.01", "4.02", "5.02"]);
+
+export function eightKHasMaterialItem(event: EightKEvent): boolean {
+  const items = event.items ?? [];
+  for (const item of items) {
+    const code = item.match(/(\d+\.\d{2})/)?.[1];
+    if (code && MATERIAL_8K_ITEMS.has(code)) return true;
+  }
+  return false;
+}
+
 export function buildEightKContext(event: EightKEvent): string {
   return [
     `SEC 8-K filing for ${event.symbol}.`,
@@ -279,6 +292,21 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
   setInternalSetting(DATASET_KEY, dataset);
   const ok = fresh.length > 0;
   audit("web_source_refresh", { id: "sec8k", ok, recordCount: merged.length, fresh: fresh.length, warning });
+
+  // Event-driven trigger (Phase 2): a fresh 8-K with a MATERIAL item code is a catalyst worth a
+  // strategy run. No-op unless TRIGGER_ENGINE is on (dynamic import breaks the strategy↔web-sources
+  // import cycle). Item allowlist per the expert panel — most 8-Ks (5.07/9.01/5.03/routine 8.01)
+  // are non-tradeable and must not trigger.
+  const materialFresh = fresh.filter(eightKHasMaterialItem);
+  if (materialFresh.length > 0) {
+    import("../triggers")
+      .then(({ broadcastMaterialEvent }) => {
+        for (const ev of materialFresh) {
+          broadcastMaterialEvent({ type: "sec8k", symbol: ev.symbol, sourceId: ev.accession, reason: `8-K ${ev.items?.[0] ?? ""}`.trim() });
+        }
+      })
+      .catch(() => { /* triggers unavailable — refresh durability is unaffected */ });
+  }
 
   // Store new filings into vector DB for RAG. This is best-effort and batched so refresh
   // durability does not depend on Pinecone/Voyage availability.

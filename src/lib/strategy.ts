@@ -596,6 +596,9 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     },
     { policy, userId }
   );
+  // Push so other open dashboards refresh immediately (the approving client refreshes via its
+  // own response).
+  emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
   return { status: "placed", orderId: execution.orderId };
 }
 
@@ -608,6 +611,7 @@ export function rejectProposal(proposalId: string, userId: string = "local"): vo
     side: proposal?.proposal.side,
     action: "rejection"
   }, userId);
+  emitDashboardEvent({ type: "proposal", userId, at: new Date().toISOString(), detail: { proposalId, status: "rejected" } });
 }
 
 /**

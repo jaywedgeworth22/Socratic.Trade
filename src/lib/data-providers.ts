@@ -11,6 +11,7 @@
 
 import { normalizeSymbol } from "./money";
 import { resolveApiKey } from "./db";
+import { getStreamedHeadlines } from "./streams/news-store";
 
 // Per-source analyst breakdown so the Rating column can blend across providers and
 // the tooltip can show each provider's individual read.
@@ -582,8 +583,20 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
     const misses: string[] = [];
     for (const symbol of normalized) {
       const cached = cache.get(`alpaca-news:${symbol}`);
-      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
-      else misses.push(symbol);
+      if (cached && cached.expiresAt > now) {
+        result[symbol] = cached.data;
+        continue;
+      }
+      // Push-first: if the WebSocket worker has fresh streamed headlines for this symbol, use
+      // them and skip the REST call. Falls back to REST when the stream is off/has nothing.
+      const streamed = getStreamedHeadlines(symbol, ttlMs());
+      if (streamed && streamed.length > 0) {
+        const data: SymbolEnrichment = { headlines: streamed, sentiment: scoreHeadlines(streamed) };
+        cache.set(`alpaca-news:${symbol}`, { expiresAt: now + ttlMs(), data });
+        result[symbol] = data;
+        continue;
+      }
+      misses.push(symbol);
     }
     if (misses.length === 0) return result;
 

@@ -23,6 +23,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19 (`agent/claude`): **Streaming + event-trigger pass.** (1) **VWAP surfaced** —
+  dashed overlay + "% vs VWAP" on the price chart. (2) **order/proposal SSE emits**
+  (`executeProposal`/`rejectProposal`/cancel route). (3) **Alpaca news WebSocket worker** —
+  first outbound stream (`src/lib/streams/`), opt-in `STREAMS_ALPACA_NEWS_ENABLED`, push-feeds a
+  news store the enrichment provider reads first (REST fallback); live-verified `authenticated +
+  subscribed`. (4) **Event-driven LLM trigger engine** (`src/lib/triggers.ts`, Phase 0/2, DEFAULT
+  OFF) — mode switch, debounce/coalesce, `admitRun` gate (cooldowns + hourly/daily caps), dedup,
+  8-K material-item producer; policy from a 4-expert panel (see
+  `docs/event-driven-llm-triggering.md`). tsc clean, 239 tests, build green. See
+  `docs/rollouts/2026-06-19-vwap-emits-ws-worker-trigger-engine.md`.
 - 2026-06-19 (`agent/claude`): **Push-vs-poll + compute-offload pass.** Added
   `docs/data-architecture-push-vs-poll.md` (durable principles + opportunity inventory +
   scoping). Shipped: (1) **VWAP capture** — we were dropping Massive's `vw`; now in

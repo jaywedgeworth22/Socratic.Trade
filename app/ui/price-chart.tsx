@@ -14,6 +14,7 @@ interface ChartBar {
   low: number;
   close: number;
   volume?: number;
+  vwap?: number;
 }
 
 /** Resolve a theme CSS variable to a concrete color for the canvas (with a fallback). */
@@ -48,6 +49,8 @@ export function PriceChart({ symbol }: { symbol: string }) {
   const barsRef = useRef<ChartBar[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [meta, setMeta] = useState<{ change?: number; label?: string } | null>(null);
+  // Latest close vs the latest bar's VWAP (volume-weighted avg price) — a standard strength tell.
+  const [vwapMeta, setVwapMeta] = useState<{ vwap: number; vsPct: number } | null>(null);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("1Y");
 
   const updateTimeframe = (tf: Timeframe, chartToUse?: IChartApi, barsToUse?: ChartBar[]) => {
@@ -151,6 +154,24 @@ export function PriceChart({ symbol }: { symbol: string }) {
           c.addSeries(lc.LineSeries, { color: info, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(sma200);
         }
 
+        // VWAP overlay (per-bar volume-weighted avg price) — only when the source supplies it
+        // (e.g. Massive `vw`). Dashed amber line + a "price vs VWAP" readout in the legend.
+        const warn = cssVar("--warn", "#f59e0b");
+        const vwapPoints = bars
+          .filter((b) => typeof b.vwap === "number" && Number.isFinite(b.vwap))
+          .map((b) => ({ time: b.time, value: b.vwap as number }));
+        if (vwapPoints.length > 0) {
+          c.addSeries(lc.LineSeries, {
+            color: warn, lineWidth: 1, lineStyle: lc.LineStyle.Dashed,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          }).setData(vwapPoints);
+          const lastVwap = vwapPoints[vwapPoints.length - 1].value;
+          const lastClose = bars[bars.length - 1].close;
+          if (lastVwap > 0) setVwapMeta({ vwap: lastVwap, vsPct: ((lastClose - lastVwap) / lastVwap) * 100 });
+        } else {
+          setVwapMeta(null);
+        }
+
         // Volume as a thin histogram pinned to the bottom of the pane.
         const vol = c.addSeries(lc.HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol" });
         c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
@@ -203,6 +224,14 @@ export function PriceChart({ symbol }: { symbol: string }) {
       <div className="mb-3 flex items-center gap-3 text-[11px] text-faint">
         <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-[var(--accent)]" /> SMA50</span>
         <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-info" /> SMA200</span>
+        {vwapMeta && (
+          <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-[var(--warn)]" /> VWAP</span>
+        )}
+        {vwapMeta && (
+          <span className={vwapMeta.vsPct >= 0 ? "text-up" : "text-down"} title="Latest close vs latest bar VWAP">
+            {vwapMeta.vsPct >= 0 ? "+" : ""}{vwapMeta.vsPct.toFixed(2)}% vs VWAP
+          </span>
+        )}
         {meta?.change !== undefined && (
           <span className={meta.change >= 0 ? "text-up" : "text-down"}>
             {meta.change >= 0 ? "+" : ""}{meta.change.toFixed(1)}% {meta.label}

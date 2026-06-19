@@ -15,6 +15,7 @@ interface ChartBar {
   low: number;
   close: number;
   volume?: number;
+  vwap?: number; // only present when the source supplies it (e.g. Massive `vw`)
 }
 
 export async function GET(req: Request) {
@@ -37,7 +38,7 @@ export async function GET(req: Request) {
       if (!time) continue;
       const { open, high, low, close } = b;
       if (![open, high, low, close].every((v) => typeof v === "number" && Number.isFinite(v))) continue;
-      byDay.set(time, { time, open: open as number, high: high as number, low: low as number, close, volume: numOrUndef(b.volume) });
+      byDay.set(time, { time, open: open as number, high: high as number, low: low as number, close, volume: numOrUndef(b.volume), vwap: numOrUndef(b.vwap) });
     }
     const chartBars = [...byDay.values()].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
     return NextResponse.json({ symbol, bars: chartBars });

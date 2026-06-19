@@ -1,5 +1,6 @@
 import { audit, getPolicy } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
+import { emitDashboardEvent } from "@/lib/events";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 
@@ -13,5 +14,6 @@ export async function POST(request: Request) {
   if (!orderId) return new NextResponse("orderId is required.", { status: 400 });
   const result = await getBrokerGateway(policy, userId).cancelEquityOrder(policy.accountNumber, String(orderId));
   audit("order_cancel", { accountNumber: policy.accountNumber, orderId, result }, userId);
+  emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { orderId: String(orderId), action: "cancel" } });
   return NextResponse.json(result);
 }

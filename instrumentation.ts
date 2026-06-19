@@ -28,4 +28,8 @@ export async function register() {
 
   const { startScheduler } = await import("./src/lib/scheduler");
   startScheduler();
+
+  // Outbound streaming workers (opt-in; no-op unless enabled + keyed).
+  const { startStreams } = await import("./src/lib/streams");
+  startStreams();
 }
