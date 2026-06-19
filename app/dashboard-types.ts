@@ -1,25 +1,24 @@
-import type {
-  BrokerageAccount,
-  EquityOrder,
-  EquityPosition,
-  MarketScan,
-  NotificationEvent,
-  PendingProposal,
-  PerformanceSummary,
-  Portfolio,
-  StrategyProfile,
-  StrategyRunRow,
-  TradingPolicy,
-  TradeProposal,
-  ConnectedAccount
-} from "@/lib/types";
-import type { RegimeStat, ThesisStat } from "@/lib/performance";
-import type { TaxSummary } from "@/lib/tax";
+import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
-import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
+import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { TaxSummary } from "@/lib/tax";
+import type {
+    BrokerageAccount,
+    ConnectedAccount,
+    EquityOrder,
+    EquityPosition,
+    MarketScan,
+    NotificationEvent,
+    PendingProposal,
+    PerformanceSummary,
+    Portfolio,
+    StrategyProfile,
+    StrategyRunRow,
+    TradeProposal,
+    TradingPolicy, MarketQuote } from "@/lib/types";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
 export interface AuditEvent {
@@ -93,3 +92,45 @@ export interface DashboardSnapshot {
     enabledEvents: string[];
   };
 }
+
+export type SortDir = "asc" | "desc";
+export type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
+export type RobinhoodMcpHealth = {
+      adapter?: "mock" | "mcp";
+      ok: boolean;
+      configured: boolean;
+      authenticated: boolean;
+      url?: string;
+      protocolVersion?: string;
+      transport?: string;
+      tools: string[];
+      checkedAt: string;
+      error?: string;
+      warning?: string;
+    };
+export type ScanColumn = {
+      id: string;
+      label: string;
+      title: string; // rich header tooltip: acronym expansion + methodology + source
+      align?: "right";
+      defaultHidden?: boolean;
+      /** Sort by a raw quote field… */
+      sortKey?: keyof MarketQuote;
+      /** …or by a computed value (for backend-derived columns not stored on the quote). */
+      sortValue?: (q: MarketQuote) => number | string | undefined;
+      render: (q: MarketQuote) => React.ReactNode;
+      cellClass?: (q: MarketQuote) => string;
+      cellTitle?: (q: MarketQuote) => string | undefined;
+    };
+export type ApiKeyStatus = {
+      service: string;
+      label: string;
+      category: string;
+      required: boolean;
+      unlocks: string;
+      docsUrl?: string;
+      envVar?: string;
+      configured: boolean;
+      source: "user" | "env" | "none";
+      updatedAt?: string;
+    };
