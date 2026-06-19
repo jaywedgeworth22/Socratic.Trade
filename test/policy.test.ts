@@ -170,6 +170,94 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
+  it("preserves crisis-regime opening buys when no crisis exposure cap is configured", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, entryMarketRegime: "Crisis (Extreme Volatility)", dollarAmount: 1200 },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          maxOrderNotional: 2000,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50
+        }
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks opening exposure over the configured cap in crisis or inverted regimes", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, entryMarketRegime: "Cautious (Inverted Curve)", dollarAmount: 1200 },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          maxOrderNotional: 2000,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50,
+          tuning: { crisisMaxOpeningExposurePct: 5 }
+        }
+      }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("crisis/inverted-regime cap 5%");
+  });
+
+  it("does not apply the crisis exposure cap in normal regimes", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, entryMarketRegime: "Neutral (Normal Volatility)", dollarAmount: 1200 },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          maxOrderNotional: 2000,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50,
+          tuning: { crisisMaxOpeningExposurePct: 5 }
+        }
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
+
+  it("does not block risk-reducing sells or covers with the crisis exposure cap", () => {
+    const sell = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, limitPrice: 1200, entryMarketRegime: "Crisis (Extreme Volatility)" },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          maxOrderNotional: 2000,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50,
+          tuning: { crisisMaxOpeningExposurePct: 5 }
+        }
+      }
+    );
+    const cover = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, limitPrice: 1200, entryMarketRegime: "Cautious (Inverted Curve)" },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          allowlist: ["AAPL", "VOO", "TSLA"],
+          shortSellingEnabled: true,
+          maxOrderNotional: 2000,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50,
+          tuning: { crisisMaxOpeningExposurePct: 5 }
+        },
+        positions: [
+          ...positions,
+          { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }
+        ]
+      }
+    );
+    expect(sell.approved).toBe(true);
+    expect(cover.approved).toBe(true);
+  });
+
   it("blocks when kill switch is active", () => {
     const decision = evaluateTradeProposal(proposal, {
       ...context(),

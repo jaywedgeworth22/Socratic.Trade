@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiKeyEnvVarForService, listUserApiKeys, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { resolveRequestUserId } from "@/lib/request-user";
 
 export const dynamic = "force-dynamic";
 
@@ -7,14 +8,14 @@ export const dynamic = "force-dynamic";
  * Multi-user API Key Management
  *
  * Scaffolding for per-user API key storage. Currently uses a simple
- * userId query param (no auth). In production, this should be gated
- * behind proper authentication middleware.
+ * request user hint (x-user-id header, userId query/body, then local fallback).
+ * This is not authentication; production identity should be gated separately.
  *
  * Supported services are defined in API_KEY_CATALOG below.
  *
- * GET  /api/keys?userId=<id>           → list all keys for user
- * GET  /api/keys?userId=<id>&service=<s> → resolve key (user → env fallback)
- * POST /api/keys  { userId, service, apiKey, label? }  → upsert key
+ * GET  /api/keys?userId=<id>              → list all keys for user
+ * GET  /api/keys?userId=<id>&service=<s>  → resolve key (user → env fallback)
+ * POST /api/keys  { userId?, service, apiKey, label? }  → upsert key
  * DELETE /api/keys?userId=<id>&service=<s>  → delete key
  */
 
@@ -97,10 +98,7 @@ const VALID_SERVICES: ReadonlySet<string> = new Set(API_KEY_CATALOG.map((item) =
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId") ?? "local";
-
-  if (!userId) return NextResponse.json({ error: "userId query parameter is required" }, { status: 400 });
-
+  const userId = resolveRequestUserId(request);
   const service = searchParams.get("service");
 
   // If a specific service is requested, resolve the key (user DB → env fallback)
@@ -142,11 +140,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { userId?: string; service?: string; apiKey?: string; label?: string };
-    const { userId, service, apiKey, label } = body;
+    const { service, apiKey, label } = body;
+    const userId = resolveRequestUserId(request, body);
 
-    if (!userId || typeof userId !== "string") {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
-    }
     const canonical = service ? normalizeApiKeyService(service) : "";
     if (!canonical || !VALID_SERVICES.has(canonical)) {
       return NextResponse.json({ error: `service is required and must be one of: ${[...VALID_SERVICES].join(", ")}` }, { status: 400 });
@@ -173,11 +169,11 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId");
+  const userId = resolveRequestUserId(request);
   const service = searchParams.get("service");
 
-  if (!userId || !service) {
-    return NextResponse.json({ error: "userId and service query parameters are required" }, { status: 400 });
+  if (!service) {
+    return NextResponse.json({ error: "service query parameter is required" }, { status: 400 });
   }
 
   const canonical = normalizeApiKeyService(service);

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { reconcilePendingFills, generateProactiveRiskProposals } from "../src/lib/strategy";
+import { reconcilePendingFills, generateProactiveRiskProposals, redTeamConvictionThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
 import { insertFillEvent, listFillEvents } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
@@ -170,5 +170,32 @@ describe("generateProactiveRiskProposals", () => {
 
     const proposals = generateProactiveRiskProposals(positions, currentPrices, policy);
     expect(proposals).toHaveLength(0);
+  });
+});
+
+describe("red-team conviction threshold", () => {
+  const baseProposal = {
+    symbol: "AAPL",
+    side: "buy" as const,
+    type: "market" as const,
+    dollarAmount: 10,
+    timeInForce: "gfd" as const,
+    marketHours: "regular_hours" as const,
+    rationale: "test",
+    tradeThesisTag: "test",
+    entryMarketRegime: "Neutral (Normal Volatility)"
+  };
+
+  it("defaults to the existing 80 confidence threshold", () => {
+    expect(redTeamConvictionThresholdForPolicy(DEFAULT_POLICY)).toBe(80);
+    expect(shouldRunRedTeamDebate({ ...baseProposal, confidenceScore: 79 }, DEFAULT_POLICY)).toBe(false);
+    expect(shouldRunRedTeamDebate({ ...baseProposal, confidenceScore: 80 }, DEFAULT_POLICY)).toBe(true);
+  });
+
+  it("uses policy tuning when a custom threshold is configured", () => {
+    const policy = { ...DEFAULT_POLICY, tuning: { redTeamConvictionThreshold: 65 } };
+    expect(redTeamConvictionThresholdForPolicy(policy)).toBe(65);
+    expect(shouldRunRedTeamDebate({ ...baseProposal, confidenceScore: 64 }, policy)).toBe(false);
+    expect(shouldRunRedTeamDebate({ ...baseProposal, confidenceScore: 65 }, policy)).toBe(true);
   });
 });

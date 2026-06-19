@@ -20,6 +20,7 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
+import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import {
@@ -51,6 +52,7 @@ import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy,
  * is for learning only (never sent to the LLM), so size affects storage, not tokens.
  */
 const MAX_SKIPPED_EVIDENCE = 25;
+const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
 
 export interface StrategyResult {
   runId: string;
@@ -138,7 +140,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
     const debatedProposals: TradeProposal[] = [];
     for (const proposal of sizedProposals) {
-      if ((proposal.confidenceScore ?? 0) >= 80) { // High conviction threshold
+      if (shouldRunRedTeamDebate(proposal, policy)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
         const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
@@ -318,6 +320,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       asOf: new Date().toISOString(),
       signals: [...chosenEvidence, ...skippedEvidence]
     }, userId);
+    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25 })
+      .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
     const paperCount = results.filter((r) => r.status === "paper").length;
@@ -375,6 +379,16 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
   audit("strategy_run", result, userId);
   return result;
+}
+
+export function shouldRunRedTeamDebate(proposal: TradeProposal, policy: TradingPolicy): boolean {
+  return (proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy);
+}
+
+export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): number {
+  const threshold = policy.tuning?.redTeamConvictionThreshold;
+  if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_CONVICTION_THRESHOLD;
+  return Math.max(0, Math.min(100, threshold));
 }
 
 function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, userId: string = "local"): TradeProposal {
@@ -919,7 +933,7 @@ async function proposeTrades(input: {
   const payload = await response.json();
   const text = payload.choices?.[0]?.message?.content ??
                payload.output_text ??
-               payload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
+                   payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
 
   if (!text) {
     throw new Error("Empty response returned from LLM API.");
@@ -1053,7 +1067,7 @@ async function proposeTrades(input: {
   const bearPayload = await bearResponse.json();
   const bearText = bearPayload.choices?.[0]?.message?.content ??
                    bearPayload.output_text ??
-                   bearPayload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
+                   bearPayload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
 
   if (!bearText) {
     return bullProposals;

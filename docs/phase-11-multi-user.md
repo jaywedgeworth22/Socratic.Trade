@@ -26,6 +26,11 @@ auth. A real login/identity layer is the last milestone.
   `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
+- Request-level user resolution now has a central helper,
+  `resolveRequestUserId(request, body?)`, that reads the `x-user-id` header, then
+  `userId` query/body hints, and falls back to `local`. This is scaffolding only:
+  it preserves current no-auth behavior and does not represent completed
+  authentication or authorization.
 
 ## Milestones
 
@@ -65,10 +70,12 @@ Current partial implementation: Alpaca uses the active connected account first.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
-User-Agent, and Pinecone/Voyage. Remaining work is mostly architectural: make
-every future keyed connector accept `userId`, continue removing legacy direct
-env reads when new sources land, and verify source attribution when a saved user
-key overrides env.
+User-Agent, and Pinecone/Voyage. Current API-key routes resolve their request
+user through the central request helper and still default to `local` when no
+user hint is present. Remaining work is mostly architectural: make every future
+keyed connector accept `userId`, continue removing legacy direct env reads when
+new sources land, and verify source attribution when a saved user key overrides
+env.
 
 ### M3 `[todo]` Per-user preferences & policy
 Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope them
@@ -86,9 +93,13 @@ execution stats, strategy-run audits, fill reconciliation, fill insertion, and
 portfolio snapshots. Current implementation also scopes paper portfolio projections,
 thesis/regime/sector/signal/factor scorecards, tax and wash-sale reads,
 notification events, post-mortem reflection storage, dashboard proposal callbacks,
-and prompt cache keys by `userId`. Remaining work: request-level user resolution
-for API routes, a complete query audit, and deciding whether any future learning
-materialization tables are shared or per-user.
+and prompt cache keys by `userId`. Current request-level scaffolding now passes a
+resolved request user into high-impact route handlers for policy, strategy run/
+enable/pause/tune, proposal approve/reject, brokerage account reads, connected
+account mutation, API keys, orders/cancel, portfolio/positions/audit, scan/
+dashboard, price history, flat-file reads, and strategy profiles. Remaining work:
+a complete query audit, bounded scheduler fan-out, and deciding whether any
+future learning materialization tables are shared or per-user.
 
 ### M5 `[partial]` Concurrent per-user execution
 The scheduler runs one global strategy today. Make it iterate active users, running

@@ -64,40 +64,40 @@ class AlpacaBrokerGateway implements BrokerGateway {
     if (account.account_number !== accountNumber) throw new Error("Account mismatch");
     return {
       accountNumber,
-      totalMarketValue: Number(account.portfolio_value),
-      buyingPower: Number(account.buying_power),
-      equityMarketValue: Number(account.equity) - Number(account.cash),
+      totalMarketValue: number(account.portfolio_value),
+      buyingPower: number(account.buying_power),
+      equityMarketValue: number(account.equity) - number(account.cash),
       optionMarketValue: 0,
-      cash: Number(account.cash)
+      cash: number(account.cash)
     };
   }
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
     const positions = await this.alpaca.getPositions();
-    return positions.map((p: any) => ({
-      symbol: normalizeSymbol(p.symbol),
-      quantity: Number(p.qty),
-      averageCost: Number(p.avg_entry_price),
-      marketValue: Number(p.market_value),
+    return positions.map((p: Record<string, unknown>) => ({
+      symbol: normalizeSymbol(String(p.symbol)),
+      quantity: number(p.qty),
+      averageCost: number(p.avg_entry_price),
+      marketValue: number(p.market_value),
       sector: undefined,
       industry: undefined
     }));
   }
 
   async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
-    const orders = await this.alpaca.getOrders({ status: "all" } as any);
-    return orders.map((o: any) => ({
+    const orders = await this.alpaca.getOrders({ status: "all" } as Parameters<typeof this.alpaca.getOrders>[0]);
+    return orders.map((o: Record<string, unknown>) => ({
       id: String(o.id),
-      symbol: normalizeSymbol(o.symbol),
+      symbol: normalizeSymbol(String(o.symbol)),
       side: o.side as OrderSide,
       type: o.type as OrderType,
       state: String(o.status),
-      quantity: o.qty ? Number(o.qty) : undefined,
-      dollarAmount: o.notional ? Number(o.notional) : undefined,
-      filledQuantity: o.filled_qty ? Number(o.filled_qty) : undefined,
-      averagePrice: o.filled_avg_price ? Number(o.filled_avg_price) : undefined,
+      quantity: optionalNumber(o.qty),
+      dollarAmount: optionalNumber(o.notional),
+      filledQuantity: optionalNumber(o.filled_qty),
+      averagePrice: optionalNumber(o.filled_avg_price),
       createdAt: String(o.created_at),
-      updatedAt: String(o.updated_at),
+      updatedAt: o.updated_at ? String(o.updated_at) : undefined,
       placedAgent: "alpaca"
     }));
   }
@@ -109,13 +109,15 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const quotes: Record<string, BrokerQuote> = {};
       
       for (const [symbol, q] of Object.entries(response)) {
-        const anyQ = q as any;
+        const anyQ = q as Record<string, number | string>;
+        const bid = optionalNumber(anyQ.bp);
+        const ask = optionalNumber(anyQ.ap);
         quotes[symbol] = {
           symbol,
-          price: anyQ.ap || anyQ.bp || 0, // Ask price or bid price fallback
-          bid: anyQ.bp,
-          ask: anyQ.ap,
-          asOf: new Date(anyQ.t).toISOString(),
+          price: ask ?? bid ?? 0, // Ask price or bid price fallback
+          bid,
+          ask,
+          asOf: optionalIso(anyQ.t),
           provider: "alpaca"
         };
       }
@@ -138,7 +140,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
     try {
-      const orderOptions: any = {
+      const orderOptions: Record<string, unknown> = {
         symbol: input.symbol,
         side: input.side,
         type: input.type,
@@ -161,12 +163,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
         orderId: raw.id,
         refId: input.refId,
         state: raw.status,
-        filledQuantity: raw.filled_qty ? Number(raw.filled_qty) : undefined,
-        averagePrice: raw.filled_avg_price ? Number(raw.filled_avg_price) : undefined,
+        filledQuantity: optionalNumber(raw.filled_qty),
+        averagePrice: optionalNumber(raw.filled_avg_price),
         raw
       };
-    } catch (error: any) {
-      throw new Error(`Alpaca order failed: ${error.message}`);
+    } catch (error: unknown) {
+      throw new Error(`Alpaca order failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -174,4 +176,20 @@ class AlpacaBrokerGateway implements BrokerGateway {
     await this.alpaca.cancelOrder(orderId);
     return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { mock: false } };
   }
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function number(value: unknown): number {
+  return optionalNumber(value) ?? 0;
+}
+
+function optionalIso(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const time = Date.parse(String(value));
+  return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
 }

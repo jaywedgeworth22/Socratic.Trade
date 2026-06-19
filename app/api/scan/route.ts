@@ -3,6 +3,7 @@ import { getPolicy } from "@/lib/db";
 import { mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
 import { getBrokerGateway } from "@/lib/broker";
+import { resolveRequestUserId } from "@/lib/request-user";
 import type { EquityPosition } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -11,9 +12,9 @@ export const dynamic = "force-dynamic";
 // current enriched market (fundamentals + congressional/insider overlay) instead of
 // the scan captured at the last strategy run. Cheap on repeat calls: scanMarket caches
 // the screener (~5 min) and per-symbol enrichment (~6 h). Read-only; places nothing.
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const userId = "local";
+    const userId = resolveRequestUserId(request);
     const policy = getPolicy(userId);
     const symbols = allowedSymbolsForPolicy(policy);
     const gateway = getBrokerGateway(policy, userId);

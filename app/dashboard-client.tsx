@@ -2021,10 +2021,24 @@ function SettingsContent({
               value={tuning.sizingCeilingPct ?? 100}
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, sizingCeilingPct: v } })}
             />
+            <NumberField
+              label="Red-team threshold"
+              value={tuning.redTeamConvictionThreshold ?? 80}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, redTeamConvictionThreshold: v } })}
+            />
+            <NumberField
+              label="Crisis open cap (% NAV)"
+              value={tuning.crisisMaxOpeningExposurePct ?? 0}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, crisisMaxOpeningExposurePct: v } })}
+            />
           </div>
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Shrinkage prior</span> pulls thin-sample win/return stats toward neutral (higher = more skeptical of small samples; default 5).{" "}
             <span className="font-medium text-muted">Min lots for weight shift</span> is how many closed trades must accumulate before the auto-tuner may change factor weights (default 20).
+          </p>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">Red-team threshold</span> sends proposals at or above that confidence score to the adversarial review (default 80).{" "}
+            <span className="font-medium text-muted">Crisis open cap</span> blocks new buy/short notional above that portfolio percentage when the deterministic regime is crisis or inverted curve; 0 leaves it off.
           </p>
           <p className="text-xs text-faint">
             Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.

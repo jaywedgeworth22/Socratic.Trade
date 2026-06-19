@@ -1,4 +1,4 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listPortfolioSnapshots } from "./db";
+import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots } from "./db";
 import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
@@ -591,7 +591,29 @@ export function getSkippedCandidateReturns(
   const maxAgeDays = options.maxAgeDays ?? 14;
   const now = Date.now();
   const seen = new Set<string>();
-  const returns: SkippedCandidateReturn[] = [];
+  const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3)
+    .map((row): SkippedCandidateReturn | undefined => {
+      if (!row.exitPrice || row.returnPct === undefined) return undefined;
+      const asOfTime = new Date(row.snapshotAt).getTime();
+      const ageDays = Number.isFinite(asOfTime) ? (now - asOfTime) / 86_400_000 : undefined;
+      if (typeof ageDays === "number" && ageDays > maxAgeDays) return undefined;
+      seen.add(row.symbol);
+      return {
+        runId: row.runId,
+        symbol: row.symbol,
+        asOf: row.snapshotAt,
+        ...(typeof ageDays === "number" ? { ageDays: Number(ageDays.toFixed(1)) } : {}),
+        refPrice: row.refPrice,
+        currentPrice: row.exitPrice,
+        returnPct: row.returnPct,
+        score: row.score,
+        sector: row.sector,
+        regime: row.regime,
+        dominantFactor: row.dominantFactor as MarketFactor | undefined,
+        bulletins: row.bulletins
+      };
+    })
+    .filter((row): row is SkippedCandidateReturn => Boolean(row));
 
   for (const event of listAudit(500, userId)) {
     if (event.kind !== "signal_snapshot") continue;

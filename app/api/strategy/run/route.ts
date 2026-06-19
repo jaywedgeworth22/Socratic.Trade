@@ -1,10 +1,12 @@
 import { runStrategyOnce } from "@/lib/strategy";
+import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
-  const result = await runStrategyOnce();
+export async function POST(request: Request) {
+  const userId = resolveRequestUserId(request);
+  const result = await runStrategyOnce(userId);
   // audit("strategy_run", ...) is now written inside runStrategyOnce() so the
   // scheduler path also records it — no need to write it here.
   return NextResponse.json(result, { status: result.status === "failed" ? 400 : 200 });

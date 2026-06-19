@@ -1,4 +1,5 @@
 import { upsertConnectedAccount } from "@/lib/db";
+import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const userId = resolveRequestUserId(req, body);
     const broker = body.broker === "alpaca" || body.broker === "robinhood" ? body.broker : undefined;
     const environment = body.environment === "paper" || body.environment === "live" ? body.environment : undefined;
     if (!broker || !environment) {
@@ -15,7 +17,7 @@ export async function POST(req: Request) {
     const defaultLabel = `${broker === "alpaca" ? "Alpaca" : "Robinhood"} ${environment === "paper" ? "Paper" : "Live"}`;
     upsertConnectedAccount({
       id: body.id || crypto.randomUUID(),
-      userId: "local",
+      userId,
       broker,
       environment,
       accountNumber: typeof body.accountNumber === "string" ? body.accountNumber.trim() || undefined : undefined,

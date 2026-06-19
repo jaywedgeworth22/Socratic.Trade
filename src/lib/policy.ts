@@ -69,6 +69,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
   }
 
+  const crisisOpeningExposureReason = deRiskInCrisisReason(proposal, context, estimatedNotional);
+  if (crisisOpeningExposureReason) reasons.push(crisisOpeningExposureReason);
+
   // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
   // the last 30 days, which would disallow the loss. Configurable via taxSettings.
   if (
@@ -138,6 +141,30 @@ function coverQuantityExceedsShorts(proposal: TradeProposal, positions: EquityPo
   const currentQty = position?.quantity ?? 0;
   if (currentQty >= 0) return true; // Cannot cover if flat or long
   return Math.abs(currentQty) < proposal.quantity;
+}
+
+function deRiskInCrisisReason(
+  proposal: TradeProposal,
+  context: PolicyContext,
+  estimatedNotional: number
+): string | undefined {
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  if (!isOpening) return undefined;
+
+  const cap = context.policy.tuning?.crisisMaxOpeningExposurePct;
+  if (cap === undefined || cap <= 0 || !Number.isFinite(cap)) return undefined;
+  if (!isCrisisOrInvertedRegime(proposal.entryMarketRegime)) return undefined;
+  if (context.portfolio.totalMarketValue <= 0) return undefined;
+
+  const openingExposurePct = (estimatedNotional / context.portfolio.totalMarketValue) * 100;
+  if (openingExposurePct <= cap) return undefined;
+
+  return `Opening ${normalizeSymbol(proposal.symbol)} exposure ${openingExposurePct.toFixed(2)}% exceeds crisis/inverted-regime cap ${cap}%.`;
+}
+
+function isCrisisOrInvertedRegime(regime?: string): boolean {
+  const normalized = regime?.toLowerCase() ?? "";
+  return normalized.includes("crisis") || normalized.includes("inverted");
 }
 
 function projectedExposurePct(

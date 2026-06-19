@@ -104,7 +104,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     const payload = await response.json();
     const text = payload.choices?.[0]?.message?.content ??
                  payload.output_text ??
-                 payload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
+                 payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
 
     if (text) {
       setUserSetting(userId, "reflection_summary", text);

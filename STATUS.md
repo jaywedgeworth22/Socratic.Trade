@@ -30,7 +30,16 @@ steps materially change.
   `entryMarketRegime` is crisis or inverted-curve. The cap is off when unset or
   <=0, and it does not block risk-reducing sells/covers. Focused tests cover the
   default/custom threshold and crisis-cap open-vs-exit behavior. Full verification
-  is being run before handoff.
+  passed: `npx tsc --noEmit`, `npm test` (223 tests), and `npm run build`.
+- 2026-06-19: **Durable skipped-candidate counterfactuals (Phase 10 B3)**.
+  Skipped `signal_snapshot` evidence now materializes into
+  `skipped_candidate_counterfactuals` with user-scoped watermarks, target dates,
+  OHLC-derived exit prices, returns, dominant factors, sectors/regimes, and
+  bulletins. Strategy runs trigger a bounded background refresh after writing the
+  signal snapshot; matured rows feed `skippedCounterfactuals` before the
+  current-scan fallback. Focused tests cover idempotency and user isolation. Full
+  verification passed: `npx tsc --noEmit`, `npm test` (223 tests), and
+  `npm run build`.
 - 2026-06-19: **Clickable tickers everywhere + symbol drawer reorder** (UI).
   Every standalone ticker (Decision proposals, Portfolio rail, Tax tables +
   red wash-sale lockout chips, Smart Money congress/insider) now opens the
@@ -42,10 +51,18 @@ steps materially change.
   full-width at the bottom. Feature code already landed in `8d5de0f`; verified
   `tsc` + `npm test` (210) + `npm run build`. See
   `docs/rollouts/2026-06-19-clickable-tickers-and-drawer-reorder.md`.
-- 2026-06-19: Production-ops hardening added GitHub Actions CI for the required
-  verification sequence (`npx tsc --noEmit`, `npm test`, `npm run build`) on
-  pushes/PRs to `main`, using `npm ci` and Node 24. See
+- 2026-06-19: Production-ops hardening attempted to add GitHub Actions CI for
+  the required verification sequence, but GitHub rejected the push because the
+  current OAuth credentials lack `workflow` scope. The workflow file is deferred
+  until credentials are updated; local required verification still passed. See
   `docs/rollouts/2026-06-19-ci-verification.md`.
+- 2026-06-19: Broker/provider boundary cleanup tightened Alpaca, Robinhood, and
+  enrichment-provider parsing with safer optional numeric/string handling, so
+  missing upstream fields remain absent instead of leaking `NaN`, empty strings,
+  or `"undefined"` into downstream data. `.air/` editor settings are now ignored.
+  Full verification passed: `npx tsc --noEmit`, `npm test` (223 tests), and
+  `npm run build`. See
+  `docs/rollouts/2026-06-19-broker-provider-type-cleanup.md`.
 - 2026-06-18: Active dev is on branch **`phase-10`**, executing
   `docs/phase-10-signals-learning-ui-v2.md` (status markers in that doc are the
   source of truth for what's next). `phase-10`, `main`, and `origin/main` are

@@ -48,6 +48,10 @@ export interface TuningSettings {
   sizingFloorPct?: number;
   /** Maximum % of max order notional the deterministic sizer will ever allocate. Default 100. */
   sizingCeilingPct?: number;
+  /** Minimum proposal confidenceScore that triggers Red Team review. Default 80. */
+  redTeamConvictionThreshold?: number;
+  /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
+  crisisMaxOpeningExposurePct?: number;
 }
 
 export interface RiskRules {
@@ -452,8 +456,8 @@ export interface StrategyOutcome {
   sector?: string;
   tradeThesisTag?: string; // e.g., Mean Reversion, Breakout, Value
   riskExit?: "stop_loss" | "take_profit" | "trailing_stop";
-  entryMarketRegime?: any; // Snapshot of SPY, QQQ, VIX at entry
-  exitMarketRegime?: any; // Snapshot of SPY, QQQ, VIX at exit
+  entryMarketRegime?: string; // Snapshot of SPY, QQQ, VIX at entry
+  exitMarketRegime?: string; // Snapshot of SPY, QQQ, VIX at exit
   mae?: number; // Maximum Adverse Excursion during holding
   mfe?: number; // Maximum Favorable Excursion during holding
 }

@@ -577,7 +577,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
-      const r = json?.quoteSummary?.result?.[0] as Record<string, any> | undefined;
+      const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
       if (!r) return {};
 
       const sd = (r.summaryDetail ?? {}) as Record<string, { raw?: number }>;
@@ -698,14 +698,14 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
             // Quote → volume
             let volume: number | undefined;
             if (quoteRaw.status === "fulfilled") {
-              const q = quoteRaw.value as any;
+              const q = quoteRaw.value as Record<string, unknown>;
               if (typeof q?.v === "number" && q.v > 0) volume = q.v;
             }
 
             // Analyst recommendations → 0–100 score + label + counts (blended by the cascade)
             let analystBySource: Record<string, AnalystRatingDetail> | undefined;
-            if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as any[]).length > 0) {
-              const latest = (recRaw.value as any[])[0];
+            if (recRaw.status === "fulfilled" && Array.isArray(recRaw.value) && (recRaw.value as Record<string, unknown>[]).length > 0) {
+              const latest = (recRaw.value as Record<string, unknown>[])[0];
               const counts = {
                 strongBuy: num(latest.strongBuy),
                 buy: num(latest.buy),
@@ -724,9 +724,9 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
             let industry: string | undefined;
             let companyName: string | undefined;
             if (profileRaw.status === "fulfilled") {
-              const profile = profileRaw.value as any;
-              if (profile?.finnhubIndustry) { sector = profile.finnhubIndustry; industry = profile.finnhubIndustry; }
-              if (profile?.sector) sector = profile.sector;
+              const profile = profileRaw.value as Record<string, unknown>;
+              if (profile?.finnhubIndustry) { sector = String(profile.finnhubIndustry); industry = String(profile.finnhubIndustry); }
+              if (profile?.sector) sector = String(profile.sector);
               if (typeof profile?.name === "string" && profile.name.trim()) companyName = profile.name.trim();
             }
 
@@ -736,7 +736,7 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
             let eps: number | undefined;
             let volumeFromMetric: number | undefined;
             if (metricRaw.status === "fulfilled") {
-              const metric = (metricRaw.value as any)?.metric ?? {};
+              const metric = (metricRaw.value as { metric?: Record<string, unknown> })?.metric ?? {};
               const pe = metric.peBasicExclExtraTTM ?? metric.peTTM;
               if (typeof pe === "number" && pe > 0) peRatio = pe;
               const dy = metric.dividendYieldIndicatedAnnual ?? metric.dividendYieldAnnual;
@@ -824,7 +824,7 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           let peRatio: number | undefined;
           if (peRaw.status === "fulfilled" && Array.isArray(peRaw.value)) {
-            const pe = Number((peRaw.value as any[])[0]?.priceToEarningsRatioTTM);
+            const pe = Number((peRaw.value as Array<Record<string, unknown>>)[0]?.priceToEarningsRatioTTM);
             if (Number.isFinite(pe) && pe > 0) peRatio = pe;
           }
 
@@ -832,7 +832,7 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // FMP does not provide news, so it contributes no sentiment.
           let analystBySource: Record<string, AnalystRatingDetail> | undefined;
           if (consensusRaw.status === "fulfilled" && Array.isArray(consensusRaw.value)) {
-            const row = (consensusRaw.value as any[])[0];
+            const row = (consensusRaw.value as Array<Record<string, unknown>>)[0];
             if (row) {
               const counts = {
                 strongBuy: num(row.strongBuy),
@@ -850,7 +850,7 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           let insiderSentiment: number | undefined;
           if (insiderRaw.status === "fulfilled" && Array.isArray(insiderRaw.value)) {
-            const trades = insiderRaw.value as any[];
+            const trades = insiderRaw.value as Array<Record<string, unknown>>;
             let buys = 0;
             let sells = 0;
             for (const trade of trades.slice(0, 100)) {
@@ -867,7 +867,7 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           let senateTrades: number | undefined;
           if (senateRaw.status === "fulfilled" && Array.isArray(senateRaw.value)) {
-            const trades = senateRaw.value as any[];
+            const trades = senateRaw.value as Array<Record<string, unknown>>;
             let net = 0;
             for (const trade of trades.slice(0, 100)) {
               const type = String(trade.type || "").toLowerCase();
@@ -935,7 +935,7 @@ class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
             const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${this.apiKey}`;
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 6000);
-            let payload: any;
+            let payload: Record<string, unknown>;
             try {
               const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -948,10 +948,13 @@ class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
             let headlines: string[] = [];
 
             if (payload && Array.isArray(payload.feed)) {
-              const feed = payload.feed as any[];
+              const feed = payload.feed as Array<Record<string, unknown>>;
               
               // Extract headlines
-              headlines = feed.slice(0, 5).map(item => item.title).filter(Boolean);
+              headlines = feed
+                .slice(0, 5)
+                .map(item => typeof item.title === "string" ? item.title.trim() : "")
+                .filter(Boolean);
 
               // Calculate average sentiment score from ticker_sentiment
               let scoreSum = 0;
@@ -959,7 +962,7 @@ class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
               
               for (const item of feed.slice(0, 20)) { // look at top 20 news items
                 const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
-                const targetTicker = tickerArr.find((t: any) => t.ticker === symbol);
+                const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
                 if (targetTicker && typeof targetTicker.ticker_sentiment_score === "string") {
                   const score = Number(targetTicker.ticker_sentiment_score);
                   if (Number.isFinite(score)) {

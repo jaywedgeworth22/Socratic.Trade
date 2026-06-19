@@ -2,23 +2,25 @@ import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
 import { normalizeSymbol } from "@/lib/money";
 import { getBrokerGateway } from "@/lib/broker";
+import { resolveRequestUserId } from "@/lib/request-user";
 import type { NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return NextResponse.json(getPolicy());
+export async function GET(request: Request) {
+  return NextResponse.json(getPolicy(resolveRequestUserId(request)));
 }
 
 export async function PUT(request: Request) {
   const body = await request.json();
-  if (typeof body.strategyPrompt === "string") setStrategyPrompt(body.strategyPrompt);
-  const current = getPolicy();
+  const userId = resolveRequestUserId(request, body);
+  if (typeof body.strategyPrompt === "string") setStrategyPrompt(body.strategyPrompt, userId);
+  const current = getPolicy(userId);
   const policy: TradingPolicy = {
     ...DEFAULT_POLICY,
     ...current,
-    ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strategyPrompt")),
+    ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strategyPrompt" && key !== "userId")),
     allowlist: Array.isArray(body.allowlist)
       ? Array.from(new Set(body.allowlist.map(String).map(normalizeSymbol).filter(Boolean)))
       : current.allowlist,
@@ -54,13 +56,13 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
-  const validationError = await validatePolicy(policy);
+  const validationError = await validatePolicy(policy, userId);
   if (validationError) return new NextResponse(validationError, { status: 400 });
-  setPolicy(policy);
+  setPolicy(policy, userId);
   return NextResponse.json(policy);
 }
 
-async function validatePolicy(policy: TradingPolicy): Promise<string | undefined> {
+async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
   if (!["custom", "sp500"].includes(policy.universe)) return "universe must be custom or sp500.";
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
@@ -78,12 +80,14 @@ async function validatePolicy(policy: TradingPolicy): Promise<string | undefined
     if (!Number.isFinite(longTermRatePct) || longTermRatePct < 0 || longTermRatePct > 100) return "longTermRatePct must be between 0 and 100.";
   }
   if (policy.tuning) {
-    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct } = policy.tuning;
+    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, redTeamConvictionThreshold, crisisMaxOpeningExposurePct } = policy.tuning;
     if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
     if (minClosedLotsForWeightShift !== undefined && (!Number.isFinite(minClosedLotsForWeightShift) || minClosedLotsForWeightShift < 1 || minClosedLotsForWeightShift > 1000)) return "tuning.minClosedLotsForWeightShift must be between 1 and 1000.";
     if (sizingFloorPct !== undefined && (!Number.isFinite(sizingFloorPct) || sizingFloorPct < 0 || sizingFloorPct > 100)) return "tuning.sizingFloorPct must be between 0 and 100.";
     if (sizingCeilingPct !== undefined && (!Number.isFinite(sizingCeilingPct) || sizingCeilingPct < 1 || sizingCeilingPct > 100)) return "tuning.sizingCeilingPct must be between 1 and 100.";
     if (sizingFloorPct !== undefined && sizingCeilingPct !== undefined && sizingFloorPct > sizingCeilingPct) return "tuning.sizingFloorPct must not exceed sizingCeilingPct.";
+    if (redTeamConvictionThreshold !== undefined && (!Number.isFinite(redTeamConvictionThreshold) || redTeamConvictionThreshold < 0 || redTeamConvictionThreshold > 100)) return "tuning.redTeamConvictionThreshold must be between 0 and 100.";
+    if (crisisMaxOpeningExposurePct !== undefined && (!Number.isFinite(crisisMaxOpeningExposurePct) || crisisMaxOpeningExposurePct < 0 || crisisMaxOpeningExposurePct > 100)) return "tuning.crisisMaxOpeningExposurePct must be between 0 and 100.";
   }
   if (policy.notificationSettings.webhookUrl?.trim()) {
     try {
@@ -95,7 +99,7 @@ async function validatePolicy(policy: TradingPolicy): Promise<string | undefined
   if (policy.enabled && !policy.accountNumber) return "Select an account before enabling autonomy.";
   if (policy.enabled && policy.universe === "custom" && policy.allowlist.length === 0) return "Configure an allowlist before enabling autonomy.";
   if (policy.enabled && policy.accountNumber) {
-    const account = (await getBrokerGateway(policy).getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
+    const account = (await getBrokerGateway(policy, userId).getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
     if (!account) return "Selected account is not available.";
     if (!account.agenticAllowed) return "Selected account is not agentic_allowed.";
   }

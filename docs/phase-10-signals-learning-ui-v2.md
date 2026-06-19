@@ -76,11 +76,15 @@ learning … counterfactual return."
   (counterfactual forward return from `refPrice`) and B4 (factor-bucket learning).
   `tsc` + 139 tests + build green. See
   `docs/rollouts/2026-06-17-phase-10-b2-evidence-digest.md`.
-- **B3 `[partial]` Counterfactual learning from skipped names.** The agent now derives
+- **B3 `[partial]` Counterfactual learning from skipped names.** The agent derives
   current-scan `skippedCounterfactuals` from recent user-scoped `signal_snapshot`
-  skipped evidence (`refPrice` → current scan price) and feeds high-return misses
-  into the Bull prompt. Still open: persisted/mature-horizon materialization with
-  OHLC bars, watermarks, and post-mortem/tuning summaries. Risk: L.
+  skipped evidence (`refPrice` → current scan price), and now also materializes
+  skipped-name forward returns into `skipped_candidate_counterfactuals` once the
+  configured OHLC horizon matures. The materializer is user-scoped, idempotent,
+  watermark-backed, and runs as a bounded background refresh after strategy
+  snapshots are written; matured rows feed the Bull prompt before the current-scan
+  fallback. Still open: post-mortem/tuning summaries and a learning-matrix UI for
+  the materialized misses. Risk: L.
 - **B4 `[partial]` Factor-bucket learning.** `getFactorScorecard()` joins closed
   lots to chosen `signal_snapshot` entries by `runId|symbol`, buckets realized
   outcomes by dominant factor, and feeds capped `factorOutcomes` to the Bull prompt.
@@ -149,10 +153,14 @@ Codex: "symbol drilldown drawer … learning matrix."
   a holding-horizon chip near the strategy status, extend received-time tooltips to
   the Decision/Tax chips and portfolio rail, and a styleable touch-friendly tooltip
   component to replace native `title`.
-- **E4 `[todo]` Expose scoring thresholds as settings** (FCF/D-E/EPS buckets, regime
-  VIX cutoffs, red-team conviction trigger, edge-factor tiers) — currently code-level.
-- **E5 `[todo]` De-risk-in-Crisis guardrail** (deterministic exposure cap when
-  VIX>30 / inverted curve) — regime is context-only today.
+- **E4 `[partial]` Expose scoring thresholds as settings.** Settings -> Tuning now
+  exposes `policy.tuning.redTeamConvictionThreshold` (default behavior remains 80)
+  so the Red Team review trigger is no longer hard-coded. Still open: FCF/D-E/EPS
+  buckets, regime VIX cutoffs, and edge-factor tiers.
+- **E5 `[done]` De-risk-in-Crisis guardrail.** `policy.tuning.crisisMaxOpeningExposurePct`
+  optionally caps new buy/short order notional as a % of portfolio value when the
+  deterministic `entryMarketRegime` is crisis or inverted-curve. Undefined or <=0
+  preserves prior behavior; risk-reducing sells/covers are not blocked by this cap.
 
 ## Phase F — Housekeeping (mostly non-code / user actions)
 - **F1 `[todo]` Re-run the adversarial review** workflow on the UI batch (it hit the
@@ -169,8 +177,8 @@ Codex: "symbol drilldown drawer … learning matrix."
 2. **B3 + B4** (counterfactual skipped-name returns + factor-bucket learning).
 3. **E1/E2 completion** (true contribution math, raw evidence links, learning matrix).
 4. **C5 + C6** (analyst/earnings revisions and SEC XBRL facts).
-5. **D3/D4 + E3–E5** (production-grade digests/RAG, cross-source disagreement,
-   UI polish/settings/guardrails) as capacity allows.
+5. **D3/D4 + E3/E4** (production-grade digests/RAG, cross-source disagreement,
+   UI polish and remaining scoring-threshold settings) as capacity allows.
 
 ## Cross-cutting acceptance (every phase)
 `npx tsc --noEmit` clean · `npm test` green (with fixtures per new signal/source) ·
