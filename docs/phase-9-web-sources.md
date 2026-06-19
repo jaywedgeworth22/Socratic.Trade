@@ -30,10 +30,18 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
      parse the transactions table. Parsing classifies each cell by *content*
      (ticker / date / amount / Purchase|Sale) rather than fixed column index, so
      it survives column reordering. Paper (PDF) filings are skipped.
-  2. **Capitol Trades** (`bff.capitoltrades.com`) — public JSON back-end (House +
+  2. **Apify `johnvc` actor** (`us-congress-financial-disclosures-and-stock-trading-data`)
+     — **HOUSE coverage** (the eFD gap). Keyed (`APIFY_API_TOKEN`), pay-per-result
+     (~$0.00001/row ≈ $0.09/mo daily). Runs the actor synchronously
+     (`run-sync-get-dataset-items`) with `Start_Date`=window + `Max_Results`, parses
+     normalized House Clerk disclosures (`parseApifyCongress`), and is **House-only by
+     default** so it complements eFD's Senate (`WEB_SOURCE_APIFY_CONGRESS_CHAMBERS=all`
+     to include Senate). Date sanity-guards drop garbage future dates. Returns `[]` when
+     no token. Live-verified: a forced refresh returned 125 House + 61 Senate trades.
+  3. **Capitol Trades** (`bff.capitoltrades.com`) — public JSON back-end (House +
      Senate). Best-effort + configurable (`WEB_SOURCE_CAPITOLTRADES_URL`, or set
      it to `off` to disable); their CDN/security layer has returned 503/429 from
-     server-side fetches, so it's a secondary.
+     server-side fetches, so it's a tertiary fallback now that Apify covers the House.
 - **`sec.ts`** — SEC EDGAR insider (Form 4) ingestion. Reads the market-wide
   "current Form 4" atom feed, resolves each filing's `index.json` → ownership XML,
   and counts **only open-market discretionary** transactions: `P` (purchase) and
@@ -78,7 +86,12 @@ Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
 | `WEB_SOURCE_CONGRESS_WINDOW_DAYS` | 60 | how long a trade counts toward the signal |
 | `WEB_SOURCE_CONGRESS_LOOKBACK_DAYS` | 45 | how far back to pull new filings |
 | `WEB_SOURCE_CONGRESS_MAX_FILINGS` | 80 | PTR pages fetched per refresh |
-| `WEB_SOURCE_CAPITOLTRADES_URL` | bff default | override Capitol Trades; set `off`/`disabled` to skip the flaky secondary adapter |
+| `WEB_SOURCE_CAPITOLTRADES_URL` | bff default | override Capitol Trades; set `off`/`disabled` to skip the flaky fallback adapter |
+| `APIFY_API_TOKEN` | — | enables the Apify House-congress adapter (no token → adapter skipped) |
+| `WEB_SOURCE_APIFY_CONGRESS_CHAMBERS` | `house` | `all`/`both` to also keep the actor's Senate rows |
+| `WEB_SOURCE_APIFY_CONGRESS_MAX` | 300 | `Max_Results` requested from the actor per refresh |
+| `WEB_SOURCE_APIFY_CONGRESS_ACTOR` | johnvc actor | override actor id; `off` to disable |
+| `WEB_SOURCE_APIFY_TIMEOUT_MS` | 180000 | actor run-sync timeout |
 | `WEB_SOURCE_INSIDER` | `on` | `off` disables the SEC insider connector |
 | `WEB_SOURCE_INSIDER_TTL_MS` | 24h | refresh cadence |
 | `WEB_SOURCE_INSIDER_WINDOW_DAYS` | 30 | rolling window kept |

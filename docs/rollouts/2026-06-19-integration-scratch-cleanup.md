@@ -41,6 +41,11 @@ assets the app needs.
 - `curl -sS -I --max-time 30 http://127.0.0.1:4101/` - returned `HTTP/1.1 200 OK`.
 - `curl -sS -I --max-time 30 http://127.0.0.1:4101/api/health` - returned
   `HTTP/1.1 200 OK`.
+- After merging current `origin/main` into `agent/codex`, resolved the `STATUS.md`
+  Active Focus conflict by preserving both agents' entries.
+- Post-merge `npx tsc --noEmit` - passed.
+- Post-merge `npm test` - passed, 233 tests across 30 files.
+- Post-merge `pm2 stop trading-codex && rm -rf .next && npm run build` - passed.
 
 ## Follow-ups
 

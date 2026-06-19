@@ -32,7 +32,9 @@ vi.mock("voyageai", () => ({
 }));
 
 vi.mock("../src/lib/db", () => ({
-  resolveApiKey: mocks.resolveApiKey
+  resolveApiKey: mocks.resolveApiKey,
+  audit: vi.fn(),
+  setInternalSetting: vi.fn()
 }));
 
 beforeEach(() => {
@@ -73,7 +75,8 @@ describe("vector-db", () => {
       input: ["AAPL 8-K Item 2.02 details", "MSFT 8-K Item 5.02 details"],
       inputType: "document"
     }));
-    const records = mocks.upsert.mock.calls[0][0];
+    // Pinecone SDK v8 takes an options object: index.upsert({ records }).
+    const records = mocks.upsert.mock.calls[0][0].records;
     expect(records).toHaveLength(2);
     expect(records[0].metadata).toMatchObject({ symbol: "AAPL", source: "sec-8k", text: "AAPL 8-K Item 2.02 details", userId: "local" });
   });
