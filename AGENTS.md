@@ -65,6 +65,27 @@ a `mockFetcher`/`URL | RequestInfo` type mismatch — that's pre-existing and
 unrelated to most changes; don't spend time chasing it unless you're touching
 that file directly.
 
+## Local dev ports (multi-agent coordination)
+
+Several AI tools work this repo and their dev servers otherwise collide on one
+port. To keep them from stomping each other, each agent owns its own port (and
+ideally its own git worktree so `.next`/file edits don't conflict):
+
+- **Claude Code → port 3000.** Its preview tool defaults here and reclaims 3000,
+  so leave 3000 to it.
+- **Codex → port 3001.** Start with `npm run dev:codex`; it frees only port
+  3001, restarts if Next initially falls off that port, and must not take 3000.
+- **Antigravity/Gemini → port 3002.** Start with `next dev -p 3002` or
+  `PORT=3002 npm run dev`; do not take 3000.
+- Don't kill another agent's dev-server port. Keep the shared `npm run dev`
+  script **unpinned** (it defaults to 3000) so each agent overrides the port via
+  flag/env — never hardcode a port into the `dev` script.
+
+Production is independent of all of this: the public site (`trading.jays.services`)
+runs the *built* app via pm2 on **port 4000** behind a Cloudflare tunnel, so a
+coding tool's dev server never affects it. Host-local deployment details live in
+`~/apps/README.md` on the deployment machine.
+
 ## Cross-file consistency traps (cheap to check, expensive to miss)
 
 - **`TradeProposal`** (`src/lib/types.ts`) requires `tradeThesisTag` and
