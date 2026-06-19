@@ -63,6 +63,29 @@ steps materially change.
   Bull/Bear scan payload drops neutral empty fields. Verified with `npx tsc
   --noEmit`, `npm test` (201 tests), and `npm run build`. See
   `docs/rollouts/2026-06-19-api-key-routing-and-prompt-compaction.md`.
+- 2026-06-19: Accounts modal now surfaces Robinhood MCP connection state from
+  `GET /api/broker/mcp/health`, including adapter mode, endpoint/protocol,
+  available tool names, refresh, and OAuth-connect action. Remaining mutable API
+  routes touched by Accounts/API-key/order/policy flows are now explicitly
+  dynamic so `next build` does not try to collect static page data for them. See
+  `docs/rollouts/2026-06-19-robinhood-mcp-status-card.md`.
+- 2026-06-19: Phase 10/11 backend continuation added per-user strategy run locks,
+  broader active-user discovery, user-scoped paper projections, scorecards,
+  signal-efficacy joins, tax/wash-sale reads, notification audits, dashboard
+  proposal/scheduler callbacks, and post-mortem reflection storage. Phase 10 now
+  feeds `factorOutcomes` and high-return `skippedCounterfactuals` into the Bull
+  prompt from existing `signal_snapshot` evidence, and the unsafe stateless
+  portfolio/positions prompt omission was removed. Full combined-tree verification
+  passed: `npx tsc --noEmit`, `npm test` (210 tests), and `npm run build`. See
+  `docs/rollouts/2026-06-19-phase-10-11-learning-isolation.md`.
+- 2026-06-19: Added an opt-in, read-only `webull-unofficial` enrichment provider
+  that shells out to `scripts/webull_unofficial_quote.py` only when
+  `WEBULL_UNOFFICIAL_ENABLED` is explicitly enabled. It can source quote fields
+  (`price`, bid/ask, intraday move, volume, 52-week range, name) with attribution,
+  but does not log in, place orders, or produce learning-grade fills. The runtime
+  subprocess path avoids static `child_process` imports so Next dev/instrumentation
+  still compiles. See
+  `docs/rollouts/2026-06-19-webull-unofficial-market-data.md`.
 - 2026-06-18: Fully utilized Massive (REST history primary in the OHLC cascade,
   full-market breadth, market news on the Macro tab, a bulk daily-bars route
   `GET /api/market/flatfile`, and a SigV4 S3 flat-file connector — signature
@@ -73,6 +96,13 @@ steps materially change.
   (UX + architecture/strategy/LLM) → `docs/reviews/2026-06-18-*.md` (verify/synth
   truncated by a session limit; reports reconstructed from the reviewers' findings).
   See `docs/rollouts/2026-06-18-massive-full-util-accounts-modal-review.md`.
+- 2026-06-18: Added a **standalone hosted preview** — pm2 app `trading-preview` on
+  **port 4100**, running `next start` from its own worktree `~/apps/trading-preview`
+  (detached on `main`), fully decoupled from the agent-edited worktree and from any
+  agent's session/`.next`. Refresh it with `scripts/refresh-preview.sh [ref]`. This
+  replaces relying on session-bound dev servers for browser checks; see the rewritten
+  "Hosting & dev servers" section in `AGENTS.md`. Key rule for all agents: a running
+  dev/preview port is NOT a work lock — coordinate via git + STATUS.md only.
 - **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
 - **Regime Detection**: The current market regime is deterministically evaluated using VIX and Fed rates, shifting the responsibility entirely from the LLM.
 - **UI UX Polish**: The cockpit features interactive charting (Recharts Brush for panning/zooming), Sonner toasts for real-time action feedback, and dynamic lazy-loading for heavy bundle dependencies.

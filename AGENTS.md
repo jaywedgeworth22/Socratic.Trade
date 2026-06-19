@@ -65,26 +65,45 @@ a `mockFetcher`/`URL | RequestInfo` type mismatch — that's pre-existing and
 unrelated to most changes; don't spend time chasing it unless you're touching
 that file directly.
 
-## Local dev ports (multi-agent coordination)
+## Hosting & dev servers (multi-agent coordination)
 
-Several AI tools work this repo and their dev servers otherwise collide on one
-port. To keep them from stomping each other, each agent owns its own port (and
-ideally its own git worktree so `.next`/file edits don't conflict):
+This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini).
+There are **three separate git worktrees of the same repo**, each with its OWN
+`node_modules`, `.next`, `data/app.db`, and `.env.local` — never assume any of
+those are shared, and never point one worktree's process at another's files:
 
-- **Claude Code → port 3000.** Its preview tool defaults here and reclaims 3000,
-  so leave 3000 to it.
-- **Codex → port 3001.** Start with `npm run dev:codex`; it frees only port
-  3001, restarts if Next initially falls off that port, and must not take 3000.
-- **Antigravity/Gemini → port 3002.** Start with `next dev -p 3002` or
-  `PORT=3002 npm run dev`; do not take 3000.
-- Don't kill another agent's dev-server port. Keep the shared `npm run dev`
-  script **unpinned** (it defaults to 3000) so each agent overrides the port via
-  flag/env — never hardcode a port into the `dev` script.
+| Worktree | Port | Process | Purpose |
+|----------|------|---------|---------|
+| the edit worktree(s) you work in (e.g. `~/Documents/Robinhood Agentic Trading`) | 3000/3001/3002 *(ephemeral, optional)* | `next dev` | where agents edit + run `tsc`/`test` |
+| `~/apps/trading-preview` | **4100** | pm2 `trading-preview` → `next start` | shared **hosted preview** of committed `main` |
+| `~/apps/trading-live` | **4000** | pm2 `trading` → `next start` | **production** (`trading.jays.services` via Cloudflare tunnel) |
 
-Production is independent of all of this: the public site (`trading.jays.services`)
-runs the *built* app via pm2 on **port 4000** behind a Cloudflare tunnel, so a
-coding tool's dev server never affects it. Host-local deployment details live in
-`~/apps/README.md` on the deployment machine.
+### Prefer the hosted preview over your own dev server
+- For "does it work in a browser" checks, use the **:4100 preview** instead of
+  spinning up a session-bound dev server. After you commit to `main`, refresh it:
+  `scripts/refresh-preview.sh` (defaults to `origin/main`; pass a ref to override).
+  It runs from `~/apps/trading-preview` under pm2, so it is **never** disturbed by
+  anyone's `npm run build` and does not collide with the edit worktree's `.next`.
+- The preview and production are pm2 apps. `pm2 restart trading-preview` / `pm2 list`
+  are fine; do **not** `pm2 delete`/rename them, and run `pm2 save` after intentional
+  changes. Never run `npm run build` or `next dev` *inside* `~/apps/trading-preview`
+  or `~/apps/trading-live` to "see your edits" — that builds mid-serve and 500s the
+  hosted instance; use the refresh script (preview) or the deploy steps (production).
+
+### A running dev port is NOT a work lock
+A dev/preview server listening on a port does **not** mean another agent is mid-task.
+Do not infer "someone is working" from an open 3000/3001/3002/4100/4000. Coordinate
+ONLY via `git status` / `git log` and `STATUS.md`. If you still want live HMR of your
+own *uncommitted* edits, you may run an ephemeral dev server on your lane and treat it
+as disposable and yours:
+- **Claude Code → 3000** (its preview tool defaults here).
+- **Codex → 3001** (`npm run dev:codex`; must not take 3000).
+- **Antigravity/Gemini → 3002** (`next dev -p 3002`; must not take 3000).
+- Keep the shared `npm run dev` script **unpinned** (defaults to 3000); override the
+  port via flag/env — never hardcode a port into `dev`. Don't kill another lane's port.
+
+Host-local deployment details (tunnel, pm2 ecosystem) live in `~/apps/README.md` on
+the deployment machine.
 
 ## Cross-file consistency traps (cheap to check, expensive to miss)
 
