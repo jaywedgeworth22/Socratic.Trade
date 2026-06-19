@@ -37,6 +37,12 @@ steps materially change.
   gap** via an Apify `johnvc` actor adapter in `web-sources/congress.ts` (forced refresh =
   125 House + 61 Senate; House was 0). Verified: tsc clean, 233 tests (post-merge), build green, live
   backfill + congress refresh confirmed. See `docs/rollouts/2026-06-19-pinecone-fix-and-robinhood-data-wiring.md`.
+- 2026-06-19: **Integration worktree scratch cleanup**. Added root-only ignore
+  rules for manual screenshot captures, one-off UI probe scripts, and accidental
+  SQL-named shell output files so the `main` integration checkout stays usable
+  for review/fast-forward merges. Existing untracked scratch files in
+  `~/Documents/Robinhood Agentic Trading` were classified as disposable local
+  artifacts. See `docs/rollouts/2026-06-19-integration-scratch-cleanup.md`.
 - 2026-06-19: **Market-data sharing/isolation guardrails**. Made the first
   broker/keyed market-data sharing decision explicit in code and docs: env-key/free
   OHLC history remains globally cached, saved user-key OHLC history is private by
