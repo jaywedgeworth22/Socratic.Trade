@@ -23,6 +23,17 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19: **Clickable tickers everywhere + symbol drawer reorder** (UI).
+  Every standalone ticker (Decision proposals, Portfolio rail, Tax tables +
+  red wash-sale lockout chips, Smart Money congress/insider) now opens the
+  Symbol Intelligence drilldown — not just Market Scan rows. New `SymbolButton`
+  (faint underline at rest, link-blue on hover; `chip` variant keeps red/box and
+  goes bold-italic). Clicks resolve symbols against a live `/api/scan`
+  (`tickerScan`) because `latestStrategyRun.marketScan` isn't rehydrated after a
+  restart. Drawer reorder: Evidence Bulletins moved up, Source Provenance now
+  full-width at the bottom. Feature code already landed in `8d5de0f`; verified
+  `tsc` + `npm test` (210) + `npm run build`. See
+  `docs/rollouts/2026-06-19-clickable-tickers-and-drawer-reorder.md`.
 - 2026-06-18: Active dev is on branch **`phase-10`**, executing
   `docs/phase-10-signals-learning-ui-v2.md` (status markers in that doc are the
   source of truth for what's next). `phase-10`, `main`, and `origin/main` are
