@@ -94,13 +94,15 @@ ENCRYPTION_KEY=...               # optional 64-char hex key; used for stored API
 MARKET_SCAN_LIMIT=30
 MARKET_SCAN_CACHE_TTL_MS=300000
 MARKET_SCAN_EVENT_RESERVE=8
+HISTORY_TTL_MS=1800000
+MARKET_DATA_SHARE_USER_KEYED_HISTORY=off # env-key/free OHLC is shared; user-keyed OHLC stays private unless set on
 
 # Optional: fundamentals + analyst enrichment (Finnhub).
 # Provides P/E, EPS, dividend yield, analyst ratings, sector/industry, and news
 # sentiment per symbol. Yahoo Finance (no key required) is always the final
 # enrichment tier, so every scanned symbol has real data even with no keys set.
 # The scan's `source` field lists every provider that actually supplied data for
-# that run (e.g. "nasdaq-delayed-screener+finnhub+yahoo-finance+robinhood-quotes");
+# that run (e.g. "nasdaq-delayed-screener+finnhub+yahoo-finance+alpaca-quotes");
 # each table cell's tooltip names the single provider that value came from.
 FINNHUB_API_KEY=...
 

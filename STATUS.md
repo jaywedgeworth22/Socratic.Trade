@@ -23,7 +23,7 @@ steps materially change.
 
 ## Active Focus
 
-- 2026-06-19 (`agent/claude`, uncommitted): **Pinecone RAG fixed + backfilled (0→83
+- 2026-06-19 (`agent/claude`, committed): **Pinecone RAG fixed + backfilled (0→83
   vectors) and Robinhood MCP market data wired.** Root cause of the empty index was a
   swallowed Voyage 429 (billing) stacked on a latent **Pinecone v8 upsert bug** —
   `index.upsert(records)` must be `index.upsert({ records })` for
@@ -35,8 +35,18 @@ steps materially change.
   via `GET /api/admin/robinhood-probe`. **Also added: Alpaca free Benzinga news**
   (`AlpacaNewsEnrichmentProvider`, live in `MarketScan.source`) and **closed the HOUSE-congress
   gap** via an Apify `johnvc` actor adapter in `web-sources/congress.ts` (forced refresh =
-  125 House + 61 Senate; House was 0). Verified: tsc clean, 228 tests, build green, live
+  125 House + 61 Senate; House was 0). Verified: tsc clean, 233 tests (post-merge), build green, live
   backfill + congress refresh confirmed. See `docs/rollouts/2026-06-19-pinecone-fix-and-robinhood-data-wiring.md`.
+- 2026-06-19: **Market-data sharing/isolation guardrails**. Made the first
+  broker/keyed market-data sharing decision explicit in code and docs: env-key/free
+  OHLC history remains globally cached, saved user-key OHLC history is private by
+  default, and `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is required before user-keyed
+  non-personal bars can enter the shared cache. Fixed broker quote source attribution
+  so `mergeQuoteData` reports actual providers such as `alpaca-quotes` instead of
+  always appending `robinhood-quotes`. Full verification passed:
+  `npx tsc --noEmit`, `npm test` (231 tests), and a clean `npm run build`; the
+  warmed Codex PM2 preview returned 200 for `/` and `/api/health`. See
+  `docs/rollouts/2026-06-19-market-data-sharing-guardrails.md`.
 - 2026-06-19: **Data-source failure hardening** for Capitol Trades, Voyage/Pinecone
   vector memory, and Massive S3 flat files. Capitol Trades' public BFF currently
   returns HTTP 503 HTML from this environment and the interactive site returns HTTP
