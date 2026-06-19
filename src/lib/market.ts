@@ -300,10 +300,40 @@ export function mergeQuoteData(
   }
   return {
     ...scan,
-    source: Object.keys(quoteData).length > 0 ? `${scan.source}+robinhood-quotes` : scan.source,
+    source: brokerQuoteSource(scan.source, quoteData),
     topCandidates,
     quotesBySymbol: quoteMap
   };
+}
+
+function brokerQuoteSource(
+  baseSource: string,
+  quoteData: Record<string, { provider?: string }>
+): string {
+  const providerSources = Array.from(
+    new Set(
+      Object.values(quoteData)
+        .map((quote) => quote.provider?.trim().toLowerCase())
+        .filter((provider): provider is string => Boolean(provider))
+        .map((provider) => (provider.endsWith("-quotes") ? provider : `${provider}-quotes`))
+    )
+  ).sort();
+  const additions = providerSources.length === 0 && Object.keys(quoteData).length > 0 ? ["broker-quotes"] : providerSources;
+  return appendUniqueSources(baseSource, additions);
+}
+
+function appendUniqueSources(baseSource: string, additions: string[]): string {
+  const parts = baseSource
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const seen = new Set(parts.map((part) => part.toLowerCase()));
+  for (const addition of additions) {
+    if (seen.has(addition)) continue;
+    parts.push(addition);
+    seen.add(addition);
+  }
+  return parts.join("+");
 }
 
 export function clearMarketCache(): void {

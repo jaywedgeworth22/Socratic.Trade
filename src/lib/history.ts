@@ -2,20 +2,21 @@
 //
 // Two consumers share this: the technical connector (`web-sources/technical.ts`, which
 // only reads closes) and the symbol-drilldown price chart (`/api/history`, which needs
-// full candles). Sources cascade keyed-first then free: Tradier → Marketstack → Yahoo →
-// Stooq. Keyed providers are reliable from datacenter IPs; the free endpoints (Yahoo/Stooq)
-// are frequently rate-limited (HTTP 429) or bot-challenged server-side, so a keyed provider
-// is strongly recommended. Server-side only; cached briefly. Never fabricates — no bars →
-// returns null, callers degrade to "—".
+// full candles). Sources cascade keyed-first then free: Massive → Tradier → Marketstack →
+// Yahoo → Stooq. Keyed providers are reliable from datacenter IPs; the free endpoints
+// (Yahoo/Stooq) are frequently rate-limited (HTTP 429) or bot-challenged server-side, so a
+// keyed provider is strongly recommended. Server-side only; cached briefly. Never fabricates
+// — no bars → returns null, callers degrade to "—".
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
-import { resolveApiKey } from "./db";
+import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
 
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
+const KEYED_HISTORY_SERVICES = ["massive", "tradier", "marketstack"] as const;
 
 interface YahooChartResponse {
   chart?: {
@@ -40,26 +41,34 @@ function historyTtlMs(): number {
 }
 
 /**
- * Fetch ~1y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
+ * Fetch ~5y of daily OHLC bars for a symbol, cached briefly. Cascades keyed providers
  * first (reliable, generous limits): Massive (Polygon-compatible) → Tradier → Marketstack,
- * then the free fallbacks Yahoo → Stooq. Keyed sources are skipped when their env key is unset. Returns the first source
- * that yields ≥2 bars, or null (never fabricated). Free endpoints (Yahoo/Stooq) are
- * frequently rate-limited or bot-challenged from datacenter IPs, so a keyed provider is
- * strongly recommended for reliable charts + the in-house technical "computed" producer.
+ * then the free fallbacks Yahoo → Stooq. Keyed sources are skipped when no user/env key is
+ * available. Returns the first source that yields ≥2 bars, or null (never fabricated). Free
+ * endpoints (Yahoo/Stooq) are frequently rate-limited or bot-challenged from datacenter IPs,
+ * so a keyed provider is strongly recommended for reliable charts + the in-house technical
+ * "computed" producer.
  */
 export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now(), userId?: string): Promise<OHLCBar[] | null> {
   const symbol = normalizeSymbol(rawSymbol);
   if (!symbol) return null;
-  const hit = cache.get(symbol);
+
+  const keySources: Record<(typeof KEYED_HISTORY_SERVICES)[number], { key?: string; source: ApiKeySource }> = {
+    massive: resolveApiKeyWithSource("massive", userId),
+    tradier: resolveApiKeyWithSource("tradier", userId),
+    marketstack: resolveApiKeyWithSource("marketstack", userId)
+  };
+  const cacheKey = historyCacheKey(symbol, userId, Object.values(keySources).some((source) => source.source === "user"));
+  const hit = cache.get(cacheKey);
   if (hit && hit.expiresAt > now) return hit.bars;
 
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<() => Promise<OHLCBar[] | null>> = [
-    () => fetchMassive(symbol, startDate, userId),
-    () => fetchTradier(symbol, startDate, userId),
-    () => fetchMarketstack(symbol, userId),
+    () => fetchMassive(symbol, startDate, keySources.massive.key),
+    () => fetchTradier(symbol, startDate, keySources.tradier.key),
+    () => fetchMarketstack(symbol, keySources.marketstack.key),
     () => fetchYahoo(symbol),
     () => fetchStooq(symbol)
   ];
@@ -67,19 +76,28 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   for (const fetchFrom of sources) {
     const bars = await fetchFrom();
     if (bars && bars.length >= 2) {
-      cache.set(symbol, { expiresAt: now + historyTtlMs(), bars });
+      cache.set(cacheKey, { expiresAt: now + historyTtlMs(), bars });
       return bars;
     }
   }
   return null;
 }
 
+function historyCacheKey(symbol: string, userId: string | undefined, hasUserKey: boolean): string {
+  if (hasUserKey && !shareUserKeyedHistory()) return `user:${userId ?? "local"}:${symbol}`;
+  return `shared:${symbol}`;
+}
+
+function shareUserKeyedHistory(): boolean {
+  const value = (process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY ?? "off").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 interface MassiveAggBar { t?: number; o?: number; h?: number; l?: number; c?: number; v?: number }
 interface MassiveAggResponse { results?: MassiveAggBar[] }
 
 /** Massive daily aggregates (Polygon-compatible REST). Generous limits — the preferred primary. */
-async function fetchMassive(symbol: string, startDate: string, userId?: string): Promise<OHLCBar[] | null> {
-  const key = resolveApiKey("massive", userId);
+async function fetchMassive(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   if ((process.env.MASSIVE_HISTORY_ENABLED ?? "on").toLowerCase() === "off") return null;
   if (!reserveMassiveRestCall()) return null;
@@ -113,8 +131,7 @@ interface TradierHistoryResponse {
 }
 
 /** Tradier daily history — brokerage-grade, generous rate limits. Best primary source. */
-async function fetchTradier(symbol: string, startDate: string, userId?: string): Promise<OHLCBar[] | null> {
-  const key = resolveApiKey("tradier", userId);
+async function fetchTradier(symbol: string, startDate: string, key?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   const base = process.env.TRADIER_BASE_URL ?? "https://api.tradier.com";
   try {
@@ -146,8 +163,7 @@ interface MarketstackEodResponse {
 }
 
 /** Marketstack EOD — keyed fallback (free tier is monthly-capped, so secondary to Tradier). */
-async function fetchMarketstack(symbol: string, userId?: string): Promise<OHLCBar[] | null> {
-  const key = resolveApiKey("marketstack", userId);
+async function fetchMarketstack(symbol: string, key?: string): Promise<OHLCBar[] | null> {
   if (!key) return null;
   try {
     const url = `https://api.marketstack.com/v1/eod?access_key=${key}&symbols=${encodeURIComponent(symbol)}&limit=1500&sort=ASC`;

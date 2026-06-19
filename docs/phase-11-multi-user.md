@@ -37,6 +37,11 @@ auth. A real login/identity layer is the last milestone.
   Dependabot, Litestream SQLite backup scripts, and a Playwright dashboard smoke
   test. GitHub CI/e2e/security workflows are deferred until push credentials
   include `workflow` scope. See `docs/ops-observability-security.md`.
+- Market-data sharing is now explicit for the first keyed OHLC path: free/env-key
+  history is cached as shared market data, while history fetched through a saved
+  user key is private unless `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is set.
+  Broker quote attribution also derives the actual provider (`alpaca-quotes`,
+  `robinhood-quotes`, etc.) instead of hardcoding one broker in `MarketScan.source`.
 
 ## Milestones
 
@@ -100,6 +105,17 @@ portfolio snapshots. Current implementation also scopes paper portfolio projecti
 thesis/regime/sector/signal/factor scorecards, tax and wash-sale reads,
 and strategy profiles. Remaining work: deciding whether any
 future learning materialization tables are shared or per-user.
+
+Current market-data rule:
+- **Shared by default:** public/free sources, env-key/system-key market data, web-source
+  datasets, and generic quote/OHLC facts that do not reveal a user's account,
+  positions, strategy, or watchlist intent.
+- **Private by default:** user-saved keyed provider fetches, raw broker/MCP account
+  responses, balances, positions, orders, fills, proposals, prompts, tuning choices,
+  tax lots, and learning scorecards.
+- **Opt-in shared:** user-keyed non-personal OHLC facts may enter the shared cache only
+  with `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on`, after the operator has confirmed
+  entitlement/data-sharing policy for that deployment.
 
 ### M5 `[done]` Concurrent per-user execution
 The background scheduler `src/lib/scheduler.ts` iterates over all active users and triggers `runStrategyOnce(userId)`. It runs concurrently with a bounded limit (e.g. `MAX_CONCURRENCY = 3`) to balance API rate limits with overall throughput, collecting due users and racing promises.

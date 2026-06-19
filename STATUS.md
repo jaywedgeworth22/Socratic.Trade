@@ -23,6 +23,15 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19: **Market-data sharing/isolation guardrails**. Made the first
+  broker/keyed market-data sharing decision explicit in code and docs: env-key/free
+  OHLC history remains globally cached, saved user-key OHLC history is private by
+  default, and `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is required before user-keyed
+  non-personal bars can enter the shared cache. Fixed broker quote source attribution
+  so `mergeQuoteData` reports actual providers such as `alpaca-quotes` instead of
+  always appending `robinhood-quotes`. Full verification passed:
+  `npx tsc --noEmit`, `npm test` (231 tests), and `npm run build`. See
+  `docs/rollouts/2026-06-19-market-data-sharing-guardrails.md`.
 - 2026-06-19: **Data-source failure hardening** for Capitol Trades, Voyage/Pinecone
   vector memory, and Massive S3 flat files. Capitol Trades' public BFF currently
   returns HTTP 503 HTML from this environment and the interactive site returns HTTP

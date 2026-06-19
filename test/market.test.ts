@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyEnrichment, hasNotableWebSignal, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, hasNotableWebSignal, mergeQuoteData, rankMarketQuotes, scoreFactors } from "../src/lib/market";
 import type { SymbolEnrichment } from "../src/lib/data-providers";
-import type { MarketQuote } from "../src/lib/types";
+import type { MarketQuote, MarketScan } from "../src/lib/types";
 
 describe("rankMarketQuotes", () => {
   it("prioritizes liquid positive movers without existing exposure", () => {
@@ -97,6 +97,51 @@ describe("applyEnrichment", () => {
     const enriched = applyEnrichment(quote({ symbol: "AAPL", senateTrades: 2 }), { peRatio: 30 });
     expect(enriched.senateTrades).toBe(2); // not clobbered by undefined
     expect(enriched.peRatio).toBe(30);
+  });
+});
+
+describe("mergeQuoteData", () => {
+  it("derives scan source attribution from the quote providers instead of hardcoding Robinhood", () => {
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [quote({ symbol: "AAPL" })],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: quote({ symbol: "AAPL" }) },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 101, bid: 100.9, ask: 101.1, provider: "alpaca", asOf: "2026-06-19T14:00:00.000Z" }
+    });
+
+    expect(merged.source).toBe("nasdaq-delayed-screener+alpaca-quotes");
+    expect(merged.topCandidates[0]).toMatchObject({ price: 101, provider: "alpaca" });
+  });
+
+  it("does not duplicate quote provider sources when quote data is merged again", () => {
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener+alpaca-quotes",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [quote({ symbol: "AAPL", provider: "alpaca" })],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: quote({ symbol: "AAPL", provider: "alpaca" }) },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 101, bid: 100.9, ask: 101.1, provider: "alpaca", asOf: "2026-06-19T14:00:00.000Z" }
+    });
+
+    expect(merged.source).toBe("nasdaq-delayed-screener+alpaca-quotes");
   });
 });
 

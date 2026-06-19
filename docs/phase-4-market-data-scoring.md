@@ -56,6 +56,13 @@ into the existing Momentum score rather than adding a separate technical weight.
 attributed as `webull-unofficial`, and must not be used for broker execution,
 account state, paper fills, or learning-grade fills.
 
+**Quote/OHLC sharing guardrails (2026-06-19):** broker quote merges now append the
+actual provider to `MarketScan.source` (`alpaca-quotes`, `robinhood-quotes`, or
+`broker-quotes` when unspecified) and dedupe repeated merges. OHLC history caches
+public/free and env-key/system-key market data globally, while history fetched
+through a saved user key is private by default unless
+`MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is set after entitlement review.
+
 ## Acceptance
 
 - Scan results include `factorBreakdown` for each candidate.
@@ -63,4 +70,5 @@ account state, paper fills, or learning-grade fills.
 - Nasdaq delayed data is still available as fallback.
 - Robinhood quote enrichment adds bid/ask where available and does not fail the run when unsupported.
 - Optional unofficial quote enrichment is clearly attributed and disabled by default.
+- Broker quote source attribution reflects the actual provider and does not duplicate repeated merges.
 - The strategy prompt asks for ask-relative limit prices only when ask data exists.

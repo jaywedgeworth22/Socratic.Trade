@@ -22,6 +22,8 @@ const SOURCE_LABELS: Record<string, string> = {
   fmp: "FMP",
   "yahoo-finance": "Yahoo Finance",
   "nasdaq-delayed-screener": "Nasdaq",
+  "alpaca-quotes": "Alpaca",
+  "broker-quotes": "Broker quotes",
   robinhood: "Robinhood",
   "robinhood-quotes": "Robinhood",
   blended: "blended (multiple sources)"

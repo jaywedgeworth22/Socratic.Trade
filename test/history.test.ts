@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "path";
+import { randomUUID } from "crypto";
+import { tmpdir } from "os";
 import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
+import { upsertUserApiKey } from "../src/lib/db";
+
+const historyTestDb = `file:${join(tmpdir(), `agentic-history-cache-test-${randomUUID()}.db`)}`;
 
 beforeEach(() => {
+  process.env.DATABASE_URL = historyTestDb;
   clearHistoryCache();
   clearMassiveRestBudgetForTests();
   // Keep the cascade on the (mocked) free sources — keyed providers are skipped without keys.
@@ -11,6 +18,7 @@ beforeEach(() => {
   delete process.env.MASSIVE_HISTORY_ENABLED;
   delete process.env.TRADIER_API_KEY;
   delete process.env.MARKETSTACK_API_KEY;
+  delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -129,6 +137,69 @@ describe("fetchDailyOHLC", () => {
     const second = await fetchDailyOHLC("AAPL", now + 1000); // within TTL → cache hit
     expect(second).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares env-keyed history cache entries across users", async () => {
+    process.env.TRADIER_API_KEY = "env-tradier-key";
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const now = Date.UTC(2026, 5, 18);
+
+    const first = await fetchDailyOHLC("AAPL", now, `user-a-${randomUUID()}`);
+    const second = await fetchDailyOHLC("AAPL", now + 1000, `user-b-${randomUUID()}`);
+
+    expect(second).toBe(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer env-tradier-key" });
+  });
+
+  it("keeps user-keyed history cache entries private by default", async () => {
+    const userA = `history-user-a-${randomUUID()}`;
+    const userB = `history-user-b-${randomUUID()}`;
+    upsertUserApiKey(userA, "tradier", "user-a-tradier-key");
+    upsertUserApiKey(userB, "tradier", "user-b-tradier-key");
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const now = Date.UTC(2026, 5, 18);
+
+    await fetchDailyOHLC("AAPL", now, userA);
+    await fetchDailyOHLC("AAPL", now + 1000, userB);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map((call) => call[1]?.headers)).toEqual([
+      expect.objectContaining({ Authorization: "Bearer user-a-tradier-key" }),
+      expect.objectContaining({ Authorization: "Bearer user-b-tradier-key" })
+    ]);
+  });
+
+  it("shares user-keyed history only when explicitly opted in", async () => {
+    process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY = "on";
+    const userA = `history-shared-a-${randomUUID()}`;
+    const userB = `history-shared-b-${randomUUID()}`;
+    upsertUserApiKey(userA, "tradier", "user-a-tradier-key");
+    upsertUserApiKey(userB, "tradier", "user-b-tradier-key");
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const now = Date.UTC(2026, 5, 18);
+
+    const first = await fetchDailyOHLC("AAPL", now, userA);
+    const second = await fetchDailyOHLC("AAPL", now + 1000, userB);
+
+    expect(second).toBe(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer user-a-tradier-key" });
   });
 
   it("falls back to Stooq when Yahoo yields nothing", async () => {
