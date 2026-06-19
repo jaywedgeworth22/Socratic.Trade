@@ -39,12 +39,21 @@ misattributed Alpaca quote merges as Robinhood quote data.
 
 ## Verification
 
-- `npx vitest run test/history.test.ts test/market.test.ts` - passed, 22 tests across 2 files.
+- `npm test -- test/history.test.ts test/market.test.ts` - passed, 22 tests across 2 files.
+- `git diff --check` - passed.
+- `pm2 stop trading-codex` - stopped the Codex dev preview before build checks.
 - `npx tsc --noEmit` - passed.
 - `npm test` - passed, 231 tests across 30 files.
-- `npm run build` - passed.
-- `pm2 restart trading-codex` - passed; Codex preview process returned online after
-  the build regenerated `.next`.
+- `npm run build` - initially failed during trace collection with `ENOENT
+  .next/server/instrumentation.js.nft.json`.
+- `rm -rf .next && npm run build` - passed from a clean generated artifact tree.
+- `pm2 restart trading-codex` - restarted the Codex dev preview.
+- `curl -s -o /dev/null -w '%{http_code}' --max-time 30 http://127.0.0.1:4101/`
+  - initially hit cold-start/hung dev compilation, then passed with `200` after
+  the preview warmed.
+- `curl -s -o /dev/null -w '%{http_code}' --max-time 30 http://127.0.0.1:4101/api/health`
+  - initially hit cold-start/hung dev compilation, then passed with `200` after
+  the preview warmed.
 
 ## Follow-ups
 

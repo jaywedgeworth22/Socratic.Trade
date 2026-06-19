@@ -30,7 +30,8 @@ steps materially change.
   non-personal bars can enter the shared cache. Fixed broker quote source attribution
   so `mergeQuoteData` reports actual providers such as `alpaca-quotes` instead of
   always appending `robinhood-quotes`. Full verification passed:
-  `npx tsc --noEmit`, `npm test` (231 tests), and `npm run build`. See
+  `npx tsc --noEmit`, `npm test` (231 tests), and a clean `npm run build`; the
+  warmed Codex PM2 preview returned 200 for `/` and `/api/health`. See
   `docs/rollouts/2026-06-19-market-data-sharing-guardrails.md`.
 - 2026-06-19: **Data-source failure hardening** for Capitol Trades, Voyage/Pinecone
   vector memory, and Massive S3 flat files. Capitol Trades' public BFF currently
