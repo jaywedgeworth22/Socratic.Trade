@@ -16,15 +16,19 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@pinecone-database/pinecone", () => ({
-  Pinecone: vi.fn(() => ({
+  Pinecone: vi.fn(function Pinecone() {
+    return {
     listIndexes: mocks.listIndexes,
     createIndex: mocks.createIndex,
     Index: mocks.index
-  }))
+    };
+  })
 }));
 
 vi.mock("voyageai", () => ({
-  VoyageAIClient: vi.fn(() => ({ embed: mocks.embed }))
+  VoyageAIClient: vi.fn(function VoyageAIClient() {
+    return { embed: mocks.embed };
+  })
 }));
 
 vi.mock("../src/lib/db", () => ({

@@ -1,4 +1,6 @@
 import { getPolicy, getStrategyPrompt, resolveApiKey } from "./db";
+import { withLlmGeneration } from "./observability";
+import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
 
 export interface RedTeamDebateResult {
@@ -69,32 +71,67 @@ Respond with a JSON object containing:
       };
 
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${openaiKey}`
+    const traced = await withLlmGeneration(
+      {
+        name: "trading.red-team.debate",
+        model,
+        userId,
+        input: summarizeOpenAiRequest(body),
+        metadata: {
+          endpoint: url,
+          transport: isChatCompletions ? "chat-completions" : "responses",
+          symbol: proposal.symbol,
+          side: proposal.side,
+          isBullish
+        },
+        tags: ["red-team", "proposal-review"],
+        output: (result) => ({
+          ...summarizeOpenAiResponseText(result.text),
+          rejected: result.debate.rejected,
+          reasonChars: result.debate.reason.length
+        })
       },
-      body: JSON.stringify(body)
-    });
+      async () => {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${openaiKey}`
+          },
+          body: JSON.stringify(body)
+        });
 
-    if (!response.ok) {
-      console.warn("Red Team LLM call failed", await response.text());
-      return { rejected: false, reason: "Red Team debate failed to execute." };
-    }
+        if (!response.ok) {
+          console.warn("Red Team LLM call failed", await response.text());
+          return {
+            text: undefined,
+            debate: { rejected: false, reason: "Red Team debate failed to execute." }
+          };
+        }
 
-    const payload = await response.json();
-    const text = payload.choices?.[0]?.message?.content ??
-                 payload.output_text ??
-                 payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
+        const payload = await response.json();
+        const text = payload.choices?.[0]?.message?.content ??
+                     payload.output_text ??
+                     payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
 
-    if (text) {
-      const parsed = JSON.parse(text) as RedTeamDebateResult;
-      return {
-        rejected: !!parsed.rejected,
-        reason: parsed.reason || "No reason provided."
-      };
-    }
+        if (text) {
+          const parsed = JSON.parse(text) as RedTeamDebateResult;
+          return {
+            text,
+            debate: {
+              rejected: !!parsed.rejected,
+              reason: parsed.reason || "No reason provided."
+            }
+          };
+        }
+
+        return {
+          text: undefined,
+          debate: { rejected: false, reason: "Red Team evaluation returned no response." }
+        };
+      }
+    );
+    return traced.debate;
   } catch (error) {
     console.error("Failed to debate proposal:", error);
   }

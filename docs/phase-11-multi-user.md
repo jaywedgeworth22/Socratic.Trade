@@ -31,6 +31,12 @@ auth. A real login/identity layer is the last milestone.
   `userId` query/body hints, and falls back to `local`. This is scaffolding only:
   it preserves current no-auth behavior and does not represent completed
   authentication or authorization.
+- Ops foundation is now scaffolded for hosted/multi-user readiness: Infisical CLI
+  wrappers for secret injection, local Gitleaks scanning, Sentry runtime error
+  capture, Langfuse LLM traces with redacted summary capture by default, npm
+  Dependabot, Litestream SQLite backup scripts, and a Playwright dashboard smoke
+  test. GitHub CI/e2e/security workflows are deferred until push credentials
+  include `workflow` scope. See `docs/ops-observability-security.md`.
 
 ## Milestones
 
@@ -119,6 +125,11 @@ M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the r
 architectural lift (userId scoping across the DB + scheduler) and should land
 together behind the existing single-user default so nothing breaks during testing.
 M6 (auth) is deliberately last.
+
+Ops hardening should remain additive while Phase 11 is incomplete: Sentry and
+Langfuse stay disabled until DSNs/keys are configured, Infisical wraps existing
+commands instead of changing local `.env.local` behavior, and Litestream restore
+commands must not overwrite an existing DB without a separate manual decision.
 
 ## Acceptance
 Single-user behavior is byte-for-byte unchanged with the default user; adding a key

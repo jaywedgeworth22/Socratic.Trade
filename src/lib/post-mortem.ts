@@ -1,6 +1,8 @@
 import { getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
 import { getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getExcursionsByThesis } from "./learning-loop";
+import { withLlmGeneration } from "./observability";
+import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
   const db = getDb();
@@ -87,30 +89,50 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       };
 
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${openaiKey}`
+    const traced = await withLlmGeneration(
+      {
+        name: "trading.post-mortem.reflection",
+        model,
+        userId,
+        input: summarizeOpenAiRequest(body),
+        metadata: {
+          endpoint: url,
+          transport: isChatCompletions ? "chat-completions" : "responses",
+          tradeCount: tradeData.length,
+          source
+        },
+        tags: ["post-mortem", "reflection"],
+        output: (result) => summarizeOpenAiResponseText(result.text)
       },
-      body: JSON.stringify(body)
-    });
+      async () => {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${openaiKey}`
+          },
+          body: JSON.stringify(body)
+        });
 
-    if (!response.ok) {
-      console.warn("Post-mortem LLM call failed", await response.text());
-      return;
-    }
+        if (!response.ok) {
+          console.warn("Post-mortem LLM call failed", await response.text());
+          return { text: undefined };
+        }
 
-    const payload = await response.json();
-    const text = payload.choices?.[0]?.message?.content ??
-                 payload.output_text ??
-                 payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
+        const payload = await response.json();
+        const text = payload.choices?.[0]?.message?.content ??
+                     payload.output_text ??
+                     payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
 
-    if (text) {
-      setUserSetting(userId, "reflection_summary", text);
+        return { text: typeof text === "string" ? text : undefined };
+      }
+    );
+
+    if (traced.text) {
+      setUserSetting(userId, "reflection_summary", traced.text);
       setInternalSetting(signatureKey, signature);
       audit("post_mortem_reflection", {
-        summary: text,
+        summary: traced.text,
         tradeCount: tradeData.length,
         outcomesByThesis,
         outcomesByRegime,

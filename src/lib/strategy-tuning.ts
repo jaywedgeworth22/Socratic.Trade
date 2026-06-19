@@ -7,7 +7,9 @@ import {
   resolveApiKey
 } from "./db";
 import { fetchMacroData } from "./macro";
+import { withLlmGeneration } from "./observability";
 import { getClosedLotCount, getPerformanceSummary, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
+import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type {
   FillEvent,
   MarketScan,
@@ -105,7 +107,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount });
   }
 
-  const payload = await requestLlmTuning(context, openaiKey);
+  const payload = await requestLlmTuning(context, openaiKey, userId);
   const proposedPatch = toPatch(payload, prompt);
   const cautions = [...payload.cautions];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
@@ -198,7 +200,7 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown, openaiKey: string): Promise<LlmTuningPayload> {
+async function requestLlmTuning(context: unknown, openaiKey: string, userId: string): Promise<LlmTuningPayload> {
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const isChatCompletions = url.includes("/chat/completions");
@@ -243,24 +245,48 @@ async function requestLlmTuning(context: unknown, openaiKey: string): Promise<Ll
         }
       };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${openaiKey}`
+  const traced = await withLlmGeneration(
+    {
+      name: "trading.strategy.tuning",
+      model,
+      userId,
+      input: summarizeOpenAiRequest(body),
+      metadata: {
+        endpoint: url,
+        transport: isChatCompletions ? "chat-completions" : "responses"
+      },
+      tags: ["strategy-tuning"],
+      output: (result) => ({
+        ...summarizeOpenAiResponseText(result.text),
+        confidenceScore: result.payload.confidenceScore,
+        cautionCount: result.payload.cautions.length,
+        proposedPromptChars: result.payload.proposedPrompt.length,
+        summaryChars: result.payload.summary.length
+      })
     },
-    body: JSON.stringify(body)
-  });
+    async () => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${openaiKey}`
+        },
+        body: JSON.stringify(body)
+      });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Strategy tuning request failed with ${response.status}: ${detail.slice(0, 500)}`);
-  }
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Strategy tuning request failed with ${response.status}: ${detail.slice(0, 500)}`);
+      }
 
-  const payload = await response.json();
-  const text = extractResponseText(payload);
-  if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
-  return JSON.parse(text) as LlmTuningPayload;
+      const payload = await response.json();
+      const text = extractResponseText(payload);
+      if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
+      return { text, payload: JSON.parse(text) as LlmTuningPayload };
+    }
+  );
+
+  return traced.payload;
 }
 
 function tuningSchema() {
