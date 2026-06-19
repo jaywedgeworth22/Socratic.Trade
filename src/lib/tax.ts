@@ -62,10 +62,10 @@ function holdingDays(entryAt: string | undefined, exitAt: string | undefined): n
  * window) would create a wash sale and disallow that loss (IRC §1091). Used by the
  * policy guardrail to block new buys.
  */
-export function getWashSaleLockedSymbols(accountNumber: string, source: FillSource, now = new Date()): Set<string> {
+export function getWashSaleLockedSymbols(accountNumber: string, source: FillSource, now = new Date(), userId: string = "local"): Set<string> {
   const locked = new Set<string>();
   const cutoff = now.getTime() - WASH_WINDOW_DAYS * MS_PER_DAY;
-  for (const lot of getClosedLotsDetailed(accountNumber, source)) {
+  for (const lot of getClosedLotsDetailed(accountNumber, source, userId)) {
     if (lot.pnl >= 0 || lot.side !== "long" || !lot.exitAt || !lot.symbol) continue;
     const exitT = new Date(lot.exitAt).getTime();
     if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) locked.add(normalizeSymbol(lot.symbol));
@@ -110,13 +110,14 @@ export function getTaxSummary(
   source: FillSource,
   currentPrices: Record<string, number> = {},
   settings?: TaxSettings,
-  now = new Date()
+  now = new Date(),
+  userId: string = "local"
 ): TaxSummary {
   const tax = resolveTaxSettings(settings);
   const taxYear = now.getFullYear();
-  const fills = listFillEvents(accountNumber, source);
-  const closedLots = getClosedLotsDetailed(accountNumber, source);
-  const openLotsRaw = getOpenLots(accountNumber, source);
+  const fills = listFillEvents(accountNumber, source, 500, userId);
+  const closedLots = getClosedLotsDetailed(accountNumber, source, userId);
+  const openLotsRaw = getOpenLots(accountNumber, source, userId);
 
   const washSales = detectWashSales(fills, closedLots, taxYear);
   const disallowedKeys = new Set(washSales.map((w) => `${w.symbol}:${w.soldAt}`));
@@ -177,7 +178,7 @@ export function getTaxSummary(
     estimatedLongTermTax: Number(estimatedLongTermTax.toFixed(2)),
     estimatedTaxLiability: Number((estimatedShortTermTax + estimatedLongTermTax).toFixed(2)),
     washSales,
-    lockedSymbols: Array.from(getWashSaleLockedSymbols(accountNumber, source, now)),
+    lockedSymbols: Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId)),
     openLots,
     harvestCandidates,
     settings: tax

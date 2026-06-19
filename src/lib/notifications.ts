@@ -9,18 +9,19 @@ export async function sendNotification(
     title: string;
     payload: unknown;
   },
-  options: { policy?: TradingPolicy; fetcher?: Fetcher; timeoutMs?: number } = {}
+  options: { policy?: TradingPolicy; fetcher?: Fetcher; timeoutMs?: number; userId?: string } = {}
 ): Promise<NotificationEvent> {
-  const policy = options.policy ?? getPolicy();
+  const userId = options.userId ?? "local";
+  const policy = options.policy ?? getPolicy(userId);
   const settings = policy.notificationSettings;
   const webhookUrl = settings.webhookUrl?.trim();
 
   if (!settings.enabledEvents.includes(input.type)) {
-    return record(input, "skipped", webhookUrl, "Notification type is disabled.");
+    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId);
   }
 
   if (!webhookUrl) {
-    return record(input, "skipped", undefined, "Notifications Webhook Not Configured");
+    return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId);
   }
 
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
@@ -46,12 +47,12 @@ export async function sendNotification(
     });
     clearTimeout(timeout);
     if (!response.ok) {
-      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`);
+      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`, userId);
     }
-    return record(input, "sent", webhookUrl);
+    return record(input, "sent", webhookUrl, undefined, userId);
   } catch (error) {
     clearTimeout(timeout);
-    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.");
+    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId);
   }
 }
 
@@ -163,9 +164,11 @@ function record(
   input: { type: NotificationEventType; title: string; payload: unknown },
   status: NotificationEvent["status"],
   webhookUrl?: string,
-  error?: string
+  error?: string,
+  userId: string = "local"
 ): NotificationEvent {
   const event = insertNotificationEvent({
+    userId,
     type: input.type,
     title: input.title,
     status,
@@ -173,7 +176,7 @@ function record(
     payload: input.payload,
     error
   });
-  audit("notification", event);
+  audit("notification", event, userId);
   return event;
 }
 

@@ -86,11 +86,11 @@ type ExcursionFetcher = typeof calculateExcursions;
 export async function getExcursionsByThesis(
   accountNumber: string,
   source: FillSource,
-  options: { maxLots?: number; compute?: ExcursionFetcher } = {}
+  options: { maxLots?: number; compute?: ExcursionFetcher; userId?: string } = {}
 ): Promise<ExcursionStat[]> {
   const maxLots = options.maxLots ?? 16;
   const compute = options.compute ?? calculateExcursions;
-  const lots = getClosedLotsDetailed(accountNumber, source)
+  const lots = getClosedLotsDetailed(accountNumber, source, options.userId ?? "local")
     .filter(
       (lot) =>
         !!lot.symbol &&

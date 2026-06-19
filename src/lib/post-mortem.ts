@@ -1,4 +1,4 @@
-import { getDb, setSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
+import { getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
 import { getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getExcursionsByThesis } from "./learning-loop";
 
@@ -33,7 +33,8 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // LLM call on the common run where nothing filled, and keeps the Bull agent's
   // system prompt stable run-to-run so the provider's prompt cache can hit.
   const signature = `${rows.length}:${rows[0]?.filled_at ?? ""}`;
-  if (getInternalSetting<string>("reflection_signature") === signature) return;
+  const signatureKey = `reflection_signature:${userId}`;
+  if (getInternalSetting<string>(signatureKey) === signature) return;
 
   const tradeData = rows.map((r) => ({
     symbol: r.symbol,
@@ -52,9 +53,9 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
   const source = getPolicy(userId).paperMode ? "paper" : "live";
-  const outcomesByThesis = getThesisScorecard(accountNumber, source);
-  const outcomesByRegime = getRegimeScorecard(accountNumber, source);
-  const timingByThesis = await getExcursionsByThesis(accountNumber, source).catch(() => []);
+  const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
+  const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);
+  const timingByThesis = await getExcursionsByThesis(accountNumber, source, { userId }).catch(() => []);
 
   const systemPrompt = `You are the Post-Mortem Reflection Engine.
 Review the recent trades together with:
@@ -106,8 +107,8 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
                  payload.output?.flatMap((item: any) => item.content ?? []).find((item: any) => item.text)?.text;
 
     if (text) {
-      setSetting("reflection_summary", text);
-      setInternalSetting("reflection_signature", signature);
+      setUserSetting(userId, "reflection_summary", text);
+      setInternalSetting(signatureKey, signature);
       audit("post_mortem_reflection", {
         summary: text,
         tradeCount: tradeData.length,

@@ -49,10 +49,18 @@ after overlay so those signals can move deterministic ranking. Bar-based
 technicals from TradingView webhook or in-house Yahoo/Stooq computation blend
 into the existing Momentum score rather than adding a separate technical weight.
 
+**Unofficial Webull quote bridge (2026-06-19):** an opt-in
+`webull-unofficial` enrichment provider can shell out to
+`scripts/webull_unofficial_quote.py` for read-only quote fields when
+`WEBULL_UNOFFICIAL_ENABLED` is explicitly enabled. It is disabled by default,
+attributed as `webull-unofficial`, and must not be used for broker execution,
+account state, paper fills, or learning-grade fills.
+
 ## Acceptance
 
 - Scan results include `factorBreakdown` for each candidate.
 - `MarketScan.sectorBySymbol` and `quotesBySymbol` cover all returned quotes.
 - Nasdaq delayed data is still available as fallback.
 - Robinhood quote enrichment adds bid/ask where available and does not fail the run when unsupported.
+- Optional unofficial quote enrichment is clearly attributed and disabled by default.
 - The strategy prompt asks for ask-relative limit prices only when ask data exists.

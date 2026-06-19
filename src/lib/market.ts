@@ -374,6 +374,11 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
 export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): MarketQuote {
   return {
     ...quote,
+    price: extra.price && extra.price > 0 ? extra.price : quote.price,
+    bid: extra.bid && extra.bid > 0 ? extra.bid : quote.bid,
+    ask: extra.ask && extra.ask > 0 ? extra.ask : quote.ask,
+    intradayChangePct: typeof extra.intradayChangePct === "number" ? extra.intradayChangePct : quote.intradayChangePct,
+    asOf: extra.asOf ?? quote.asOf,
     companyName: extra.companyName ?? quote.companyName,
     sentiment: extra.sentiment ?? quote.sentiment,
     peRatio: extra.peRatio ?? quote.peRatio,

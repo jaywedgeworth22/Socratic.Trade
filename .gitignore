@@ -16,6 +16,7 @@ yarn-error.log*
 pnpm-debug.log*
 scratch/
 .git_diff.txt
+did.bin
 
 # macOS / iCloud Drive conflict copies — this repo lives under ~/Documents, which
 # is iCloud-synced; sync conflicts spawn duplicate files named "<name> 2.<ext>"

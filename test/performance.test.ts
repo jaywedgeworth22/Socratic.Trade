@@ -7,10 +7,12 @@ import {
   calculatePnl,
   getClosedLotCount,
   getConfidenceCalibration,
+  getFactorScorecard,
   getPaperPortfolioProjection,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
+  getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
   recordFillFromProposal
@@ -54,6 +56,26 @@ describe("calculatePnl", () => {
     // Marked to the supplied live price (250), not entry price (200).
     expect(aapl?.marketValue).toBeCloseTo(250);
     expect(projection.portfolio.totalMarketValue).toBeCloseTo(10050);
+  });
+
+  it("keeps Paper projections isolated by user for the same account number", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "PAPER_USERS";
+    const userA = `paper-a-${randomUUID()}`;
+    const userB = `paper-b-${randomUUID()}`;
+
+    insertFillEvent(fill({ id: "pu-a", userId: userA, accountNumber: account, symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100 }));
+    insertFillEvent(fill({ id: "pu-b", userId: userB, accountNumber: account, symbol: "MSFT", side: "buy", quantity: 1, price: 200, notional: 200 }));
+
+    const projection = getPaperPortfolioProjection({
+      accountNumber: account,
+      startingCash: 1000,
+      currentPrices: { AAPL: 110, MSFT: 220 },
+      userId: userA
+    });
+
+    expect(projection.positions.map((position) => position.symbol)).toEqual(["AAPL"]);
+    expect(projection.portfolio.cash).toBeCloseTo(900);
   });
 
   it("returns the full starting balance and no positions before any Paper fills", () => {
@@ -244,6 +266,74 @@ describe("getThesisScorecard", () => {
     expect(eff.find((e) => e.signal.includes("Insider"))?.trades).toBe(1);
   });
 
+  it("keeps signal efficacy audit joins isolated by user", async () => {
+    const { insertFillEvent, audit } = await import("../src/lib/db");
+    const account = "SIGEFF_USERS";
+    const userA = `sig-a-${randomUUID()}`;
+    const userB = `sig-b-${randomUUID()}`;
+    const runId = "run-sigeff-users";
+
+    insertFillEvent(fill({ id: "seu-b1", userId: userA, side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "AAPL", runId, filledAt: "2026-06-15T00:00:01.000Z" }));
+    insertFillEvent(fill({ id: "seu-s1", userId: userA, side: "sell", quantity: 1, price: 110, notional: 110, accountNumber: account, symbol: "AAPL", filledAt: "2026-06-15T00:00:02.000Z" }));
+    audit("signal_snapshot", { runId, signals: [{ symbol: "AAPL", chosen: true, congressNet: 2 }] }, userB);
+
+    const eff = getSignalEfficacy(account, "paper", {}, userA);
+    expect(eff.find((e) => e.signal.includes("baseline"))?.trades).toBe(1);
+    expect(eff.find((e) => e.signal.includes("Congressional"))).toBeUndefined();
+  });
+
+  it("buckets realized outcomes by the dominant entry factor", async () => {
+    const { insertFillEvent, audit } = await import("../src/lib/db");
+    const account = "FACTOR1";
+    const userId = `factor-user-${randomUUID()}`;
+    const runId = "run-factor-1";
+
+    insertFillEvent(fill({ id: "fb-b1", userId, side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: account, symbol: "AAPL", runId, filledAt: "2026-06-15T00:00:01.000Z" }));
+    insertFillEvent(fill({ id: "fb-s1", userId, side: "sell", quantity: 1, price: 125, notional: 125, accountNumber: account, symbol: "AAPL", filledAt: "2026-06-15T00:00:02.000Z" }));
+    audit("signal_snapshot", {
+      runId,
+      signals: [
+        {
+          symbol: "AAPL",
+          chosen: true,
+          factorBreakdown: { liquidity: 10, momentum: 90, value: 30, quality: 20, volatility: 15, sentiment: 25, positioning: 40, diversification: 5, weightedTotal: 70 }
+        },
+        {
+          symbol: "MSFT",
+          chosen: false,
+          factorBreakdown: { liquidity: 10, momentum: 5, value: 95, quality: 20, volatility: 15, sentiment: 25, positioning: 40, diversification: 5, weightedTotal: 70 }
+        }
+      ]
+    }, userId);
+
+    const factors = getFactorScorecard(account, "paper", {}, userId);
+    expect(factors).toHaveLength(1);
+    expect(factors[0].factor).toBe("momentum");
+    expect(factors[0].totalPnl).toBeCloseTo(25);
+  });
+
+  it("summarizes skipped candidate counterfactual returns from user-scoped snapshots", async () => {
+    const { audit } = await import("../src/lib/db");
+    const userA = `skip-a-${randomUUID()}`;
+    const userB = `skip-b-${randomUUID()}`;
+    const asOf = new Date().toISOString();
+
+    audit("signal_snapshot", {
+      runId: "run-skip-a",
+      asOf,
+      signals: [{ symbol: "AAPL", chosen: false, refPrice: 100, score: 80, regime: "Risk-On", factorBreakdown: { liquidity: 10, momentum: 90, value: 30, quality: 20, volatility: 15, sentiment: 25, positioning: 40, diversification: 5, weightedTotal: 70 } }]
+    }, userA);
+    audit("signal_snapshot", {
+      runId: "run-skip-b",
+      asOf,
+      signals: [{ symbol: "AAPL", chosen: false, refPrice: 50, score: 80, regime: "Risk-On" }]
+    }, userB);
+
+    const rows = getSkippedCandidateReturns({ AAPL: 110 }, userA);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ runId: "run-skip-a", symbol: "AAPL", returnPct: 10, dominantFactor: "momentum" });
+  });
+
   it("groups realized outcomes by the sector each position was opened in", async () => {
     const { insertFillEvent } = await import("../src/lib/db");
     const account = "SECT1";
@@ -281,7 +371,7 @@ describe("getThesisScorecard", () => {
   });
 });
 
-function fill(input: Partial<FillEvent> & { id: string; side: "buy" | "sell"; quantity: number; price: number; notional: number }): FillEvent {
+function fill(input: Partial<FillEvent> & { id: string; side: "buy" | "sell"; quantity: number; price: number; notional: number; userId?: string }): FillEvent {
   return {
     proposalId: "p1",
     runId: "r1",

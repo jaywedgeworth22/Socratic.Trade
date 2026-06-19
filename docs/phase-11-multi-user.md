@@ -49,8 +49,11 @@ Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set 
 Using env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
 Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
 secret values. Settings → Accounts continues to own brokerage-account credentials.
-Robinhood MCP can be diagnosed via `GET /api/broker/mcp/health`; an in-app
-Robinhood MCP status card remains optional UI polish.
+Settings → Accounts also shows a Robinhood MCP status card backed by
+`GET /api/broker/mcp/health`, with refresh and OAuth-connect actions. Mutable
+account/key/order/policy route handlers touched by this flow are marked
+`dynamic = "force-dynamic"` so production builds do not attempt static page-data
+collection for request-bound operations.
 
 ### M2 `[partial]` Route providers through `resolveApiKey(service, userId)`
 Replace direct `process.env.X` reads in `data-providers.ts`, `macro.ts`, the LLM
@@ -72,7 +75,7 @@ Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope 
 by `userId`: each user has their own policy/profiles/horizon/risk/tuning/tax/scoring
 weights. The default user keeps the current global config (migrate it in).
 
-### M4 `[todo]` Per-user data isolation
+### M4 `[partial]` Per-user data isolation
 `fill_events`, `portfolio_snapshots`, `trade_proposals`, scorecards, and the
 `web-sources` *datasets* — decide what's shared vs per-user. Market data + scraped
 signals (congress/insider/FINRA) are **shared** (same for everyone, cached once);
@@ -80,14 +83,21 @@ signals (congress/insider/FINRA) are **shared** (same for everyone, cached once)
 `user_id` column (default `local`) to the per-user tables and scope all queries.
 Some default-user paths are already scoped, including proposal approval, daily
 execution stats, strategy-run audits, fill reconciliation, fill insertion, and
-portfolio snapshots; scorecard and scheduler-wide isolation still need a dedicated
-pass.
+portfolio snapshots. Current implementation also scopes paper portfolio projections,
+thesis/regime/sector/signal/factor scorecards, tax and wash-sale reads,
+notification events, post-mortem reflection storage, dashboard proposal callbacks,
+and prompt cache keys by `userId`. Remaining work: request-level user resolution
+for API routes, a complete query audit, and deciding whether any future learning
+materialization tables are shared or per-user.
 
-### M5 `[todo]` Concurrent per-user execution
+### M5 `[partial]` Concurrent per-user execution
 The scheduler runs one global strategy today. Make it iterate active users, running
 each user's strategy under that user's policy/keys, with **per-user run-lock and
 daily limits** (the lock + `dailyExecutionStats` become user-scoped). Bound total
-concurrency.
+concurrency. Current implementation has broader active-user discovery and per-user
+strategy run locks, while daily execution stats are already user-scoped. Remaining:
+bounded parallelism, explicit per-user scheduler controls/status, and request/auth
+identity before non-local users are exposed.
 
 ### M6 `[todo]` Identity / auth (last)
 A minimal login (or per-user API token) and a user switcher; until then the default

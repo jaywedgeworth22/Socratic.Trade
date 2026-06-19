@@ -52,7 +52,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
   let currentPrices: Record<string, number> = {};
   let paperProjection: ReturnType<typeof getPaperPortfolioProjection> | undefined;
   if (accountNumber && portfolio) {
-    const paperPre = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash });
+    const paperPre = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, userId });
     const priceSymbols = Array.from(
       new Set([...positions.map((p) => normalizeSymbol(p.symbol)), ...paperPre.positions.map((p) => normalizeSymbol(p.symbol))])
     );
@@ -67,7 +67,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
       const symbol = normalizeSymbol(position.symbol);
       if (!(symbol in currentPrices) && position.quantity > 0) currentPrices[symbol] = position.marketValue / position.quantity;
     }
-    paperProjection = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, currentPrices });
+    paperProjection = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId });
   }
   const displayPortfolio = policy.paperMode ? paperProjection?.portfolio ?? portfolio : portfolio;
   const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
@@ -75,9 +75,9 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
   const scorecardSource = policy.paperMode ? "paper" : "live";
-  const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices) : [];
-  const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices) : [];
-  const tax = accountNumber ? getTaxSummary(accountNumber, scorecardSource, currentPrices, policy.taxSettings) : undefined;
+  const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
+  const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
+  const tax = accountNumber ? getTaxSummary(accountNumber, scorecardSource, currentPrices, policy.taxSettings, new Date(), userId) : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
   const notifications = listNotificationEvents(userId, 50);
@@ -95,7 +95,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
     audit,
     symbolMetaBySymbol,
     getProposalById: (proposalId) => {
-      const proposal = getProposal(proposalId);
+      const proposal = getProposal(proposalId, userId);
       return proposal ? { proposal: proposal.proposal } : undefined;
     }
   });
@@ -125,7 +125,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
     orders,
     symbolMetaBySymbol,
     getProposalById: (proposalId) => {
-      const proposal = getProposal(proposalId);
+      const proposal = getProposal(proposalId, userId);
       return proposal ? { proposal: proposal.proposal } : undefined;
     }
   });
@@ -161,7 +161,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
       configured: Boolean(policy.notificationSettings.webhookUrl?.trim()),
       enabledEvents: policy.notificationSettings.enabledEvents
     },
-    scheduler: getSchedulerState(),
+    scheduler: getSchedulerState(userId),
     webSources: getWebSourcesStatus(),
     smartMoney: {
       congress: [...(getCongressDataset()?.trades ?? [])]

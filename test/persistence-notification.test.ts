@@ -53,6 +53,19 @@ describe("persistence and notifications", () => {
     releaseStrategyLock();
   });
 
+  it("keeps strategy run locks isolated per user", async () => {
+    const { acquireStrategyLock, releaseStrategyLock } = await import("../src/lib/db");
+    const userA = `lock-a-${randomUUID()}`;
+    const userB = `lock-b-${randomUUID()}`;
+
+    expect(acquireStrategyLock(userA)).toBe(true);
+    expect(acquireStrategyLock(userB)).toBe(true);
+    expect(acquireStrategyLock(userA)).toBe(false);
+
+    releaseStrategyLock(userA);
+    releaseStrategyLock(userB);
+  });
+
   it("maps legacy dryRun policy storage to paperMode without leaking dryRun", async () => {
     const { getPolicy, setSetting } = await import("../src/lib/db");
     setSetting("policy", { ...DEFAULT_POLICY, dryRun: true, paperMode: undefined });
@@ -268,6 +281,21 @@ describe("persistence and notifications", () => {
     const event = await sendNotification({ type: "fill", title: "Fill", payload: { id: "1" } }, { policy: DEFAULT_POLICY });
     expect(event.status).toBe("skipped");
     expect(event.error).toContain("Notifications Webhook");
+  });
+
+  it("records notification events under the requested user", async () => {
+    const { listNotificationEvents } = await import("../src/lib/db");
+    const { sendNotification } = await import("../src/lib/notifications");
+    const userId = `notify-user-${randomUUID()}`;
+
+    const event = await sendNotification(
+      { type: "fill", title: "User Fill", payload: { id: "n1" } },
+      { policy: DEFAULT_POLICY, userId }
+    );
+
+    const events = listNotificationEvents(userId);
+    expect(events[0]?.id).toBe(event.id);
+    expect(listNotificationEvents("local").some((item) => item.id === event.id)).toBe(false);
   });
 
   it("records successful webhook delivery when configured", async () => {

@@ -22,13 +22,25 @@ import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } fro
 import { buildCandidateEvidence } from "./evidence";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
-import { getConfidenceCalibration, getPaperPortfolioProjection, getRegimeScorecard, getSectorScorecard, getSignalEfficacy, getThesisRegimeScorecard, getThesisScorecard, recordFillFromProposal, recordPortfolioSnapshot } from "./performance";
+import {
+  getConfidenceCalibration,
+  getFactorScorecard,
+  getPaperPortfolioProjection,
+  getRegimeScorecard,
+  getSectorScorecard,
+  getSignalEfficacy,
+  getSkippedCandidateReturns,
+  getThesisRegimeScorecard,
+  getThesisScorecard,
+  recordFillFromProposal,
+  recordPortfolioSnapshot
+} from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
 import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
-import { getSetting, getInternalSetting, resolveApiKey, setInternalSetting } from "./db";
+import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting } from "./db";
 import { debateProposal } from "./red-team";
 import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
@@ -50,7 +62,7 @@ export interface StrategyResult {
 
 export async function runStrategyOnce(userId: string = "local"): Promise<StrategyResult> {
   // Run lock: prevent overlapping runs from double-counting daily limits.
-  if (!acquireStrategyLock()) {
+  if (!acquireStrategyLock(userId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
@@ -80,13 +92,13 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live");
+    const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live", new Date(), userId);
 
     // In Paper mode, decisions run against the standalone paper account (starting cash +
     // prior paper fills, marked to live prices) so the simulation evolves like Live.
     const currentPrices = currentPricesFromScan(marketScan);
     const account = policy.paperMode
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices })
+      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
       : { portfolio, positions };
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
@@ -122,7 +134,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       ragContext
     });
 
-    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy));
+    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, userId));
 
     const debatedProposals: TradeProposal[] = [];
     for (const proposal of sizedProposals) {
@@ -160,7 +172,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
             title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
             payload: { runId, proposalId, decision, proposal: normalizedProposal }
           },
-          { policy }
+          { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
@@ -188,7 +200,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
             title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
             payload: { runId, proposalId, decision, review, proposal: normalizedProposal }
           },
-          { policy }
+          { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
@@ -199,7 +211,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
-          { policy }
+          { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
         continue;
@@ -225,7 +237,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
             title: `${normalizedProposal.symbol} Paper ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
             payload: { runId, proposalId, fill }
           },
-          { policy }
+          { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "paper", reasons: [] });
         continue;
@@ -260,7 +272,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       });
       await sendNotification(
         { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
-        { policy }
+        { policy, userId }
       );
       results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: execution.orderId });
     }
@@ -329,7 +341,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       const paperProjection = getPaperPortfolioProjection({
         accountNumber: policy.accountNumber,
         startingCash: policy.paperStartingCash,
-        currentPrices
+        currentPrices,
+        userId
       });
       recordPortfolioSnapshot({
         userId,
@@ -351,12 +364,12 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     result = { runId, status: "failed", summary, proposals: [] };
     const policy = getPolicy(userId);
     if (summary === "Kill switch is active.") {
-      await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy });
+      await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
     } else {
-      await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy });
+      await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
-    releaseStrategyLock();
+    releaseStrategyLock(userId);
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
@@ -364,15 +377,15 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   return result;
 }
 
-function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy): TradeProposal {
+function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, userId: string = "local"): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") return proposal; // Preserve exits
   
   const source = policy.paperMode ? "paper" : "live";
   const account = policy.accountNumber;
   if (!account) return proposal;
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source);
-  const thesisScorecard = getThesisScorecard(account, source);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
   
   const comboStat = regimeScorecard.find(s => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
   const thesisStat = thesisScorecard.find(s => s.thesisTag === proposal.tradeThesisTag);
@@ -435,7 +448,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   // In Paper mode, evaluate the approval against the standalone paper account.
   const currentPrices = currentPricesFromScan(approvalScan);
   const account = policy.paperMode
-    ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices })
+    ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
     : { portfolio, positions };
 
   const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
@@ -449,7 +462,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
         title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
         payload: { proposalId, reason, proposal }
       },
-      { policy }
+      { policy, userId }
     );
     return { status: "blocked", reasons: [reason] };
   }
@@ -464,7 +477,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     dailyOrderCount: daily.orderCount,
     estimatedNotional: review.estimatedNotional,
     marketScan: approvalScan,
-    washSaleLockedSymbols: getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live")
+    washSaleLockedSymbols: getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live", new Date(), userId)
   });
 
   if (!decision.approved) {
@@ -483,7 +496,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
         title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
         payload: { proposalId, decision, review, proposal }
       },
-      { policy }
+      { policy, userId }
     );
     return { status: "blocked", reasons: decision.reasons };
   }
@@ -504,7 +517,8 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     const paperProjection = getPaperPortfolioProjection({
       accountNumber: row.accountNumber,
       startingCash: policy.paperStartingCash,
-      currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) }
+      currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) },
+      userId
     });
     recordPortfolioSnapshot({
       userId,
@@ -521,7 +535,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
         title: `${proposal.symbol} Paper ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
         payload: { proposalId, fill }
       },
-      { policy }
+      { policy, userId }
     );
     return { status: "paper" };
   }
@@ -555,7 +569,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
       payload: { proposalId, fill }
     },
-    { policy }
+    { policy, userId }
   );
   return { status: "placed", orderId: execution.orderId };
 }
@@ -652,29 +666,37 @@ async function proposeTrades(input: {
         )
       : undefined;
 
-  const reflection = getSetting("reflection_summary", "");
+  const currentPrices = currentPricesFromScan(input.marketScan);
+  const reflection = getUserSetting(input.userId, "reflection_summary", "");
   const source = input.policy.paperMode ? "paper" : "live";
-  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source) : [];
-  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source) : [];
+  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
+  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=2 closed lots (thin
   // buckets are noise; shrunk rates temper the rest). Top movers by |total P&L|.
-  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source) : [])
+  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
     .filter((bucket) => bucket.trades >= 2)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
-  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source) : [];
+  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId) : [];
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
-  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source) : [];
+  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId) : [];
   // Sector learning: realized outcomes grouped by the sector each position was opened in.
-  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source) : [])
+  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
     .filter((bucket) => bucket.trades >= 2 && bucket.sector !== "Unknown")
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
+  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+    .filter((bucket) => bucket.trades >= 2)
+    .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
+    .slice(0, 8);
+  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14 })
+    .filter((row) => row.returnPct >= 3)
+    .slice(0, 8);
   const taxSummary = input.policy.accountNumber
-    ? getTaxSummary(input.policy.accountNumber, source, currentPricesFromScan(input.marketScan), input.policy.taxSettings)
+    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId)
     : null;
   const taxContext = taxSummary
     ? {
@@ -704,6 +726,8 @@ async function proposeTrades(input: {
     "- `marketBreadth.advancingPct`: share of the broad market advancing today. >60 = broad risk-on (favor adding exposure/momentum); <40 = broad risk-off (tighten, prefer defensive/quality, wary of longs); ~50 = mixed.",
     "- `comboOutcomes`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
     "- `sectorOutcomes`: realized win/return grouped by the SECTOR each position was opened in. Lean toward sectors where your shrunk record is positive; demand more conviction in sectors that have repeatedly lost for you.",
+    "- `factorOutcomes`: realized outcomes grouped by the dominant deterministic factor at entry. Use this to calibrate which scoring dimensions have actually paid off for this account.",
+    "- `skippedCounterfactuals`: high-scoring skipped candidates that subsequently rose from their decision-time `refPrice` to the current scan price. Use these as missed-opportunity evidence, not as automatic buys.",
     ...(taxContext
       ? [
           "",
@@ -740,9 +764,10 @@ async function proposeTrades(input: {
   // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
   // (plus regime-critical) fields and note the rest as unchanged to save tokens.
   const macro = await fetchMacroData(input.userId);
-  const previousMacro = getInternalSetting<MacroData>("last_macro_sent");
+  const macroCacheKey = `last_macro_sent:${input.userId}`;
+  const previousMacro = getInternalSetting<MacroData>(macroCacheKey);
   const { macro: macroForPrompt, omitted: macroOmitted } = pruneMacro(macro, previousMacro);
-  setInternalSetting("last_macro_sent", macro);
+  setInternalSetting(macroCacheKey, macro);
   const macroeconomicData =
     macroOmitted.length > 0
       ? { ...macroForPrompt, unchangedSinceLastRun: macroOmitted }
@@ -767,17 +792,11 @@ async function proposeTrades(input: {
     note: "All proposals must strictly be selected from `marketScan.topCandidates`. Do not propose symbols outside this list. You may SELL/TRIM any current position."
   };
 
-  const currentPortfolioStateStr = JSON.stringify({ portfolio: input.portfolio, positions: input.positions });
-  const previousPortfolioStateStr = getInternalSetting<string>("last_portfolio_state_str");
-  const portfolioUnchanged = currentPortfolioStateStr === previousPortfolioStateStr;
-  setInternalSetting("last_portfolio_state_str", currentPortfolioStateStr);
-
   const userContent = {
     currentDate: new Date().toISOString(),
     currentMarketRegime,
-    ...(portfolioUnchanged 
-      ? { portfolioAndPositions: { unchangedSinceLastRun: true } }
-      : { portfolio: input.portfolio, positions: input.positions }),
+    portfolio: input.portfolio,
+    positions: input.positions,
     recentOrders: input.recentOrders,
     allowedSymbols: allowedSymbolsForPrompt,
     marketScan: compactMarketScanForPrompt(input.marketScan),
@@ -797,6 +816,8 @@ async function proposeTrades(input: {
     ...(signalEfficacy.length > 1 ? { signalEfficacy } : {}),
     ...(confidenceCalibration.length > 1 ? { confidenceCalibration } : {}),
     ...(sectorScorecard.length > 0 ? { sectorOutcomes: sectorScorecard } : {}),
+    ...(factorScorecard.length > 0 ? { factorOutcomes: factorScorecard } : {}),
+    ...(skippedCounterfactuals.length > 0 ? { skippedCounterfactuals } : {}),
     ...(taxContext ? { taxContext } : {}),
     ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {})
   };
@@ -974,9 +995,8 @@ async function proposeTrades(input: {
     currentMarketRegime: userContent.currentMarketRegime,
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
-    ...(portfolioUnchanged 
-      ? { portfolioAndPositions: { unchangedSinceLastRun: true } }
-      : { portfolio: input.portfolio, positions: input.positions }),
+    portfolio: input.portfolio,
+    positions: input.positions,
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),

@@ -5,6 +5,8 @@ import { getBrokerGateway } from "@/lib/broker";
 import type { NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   return NextResponse.json(getPolicy());
 }

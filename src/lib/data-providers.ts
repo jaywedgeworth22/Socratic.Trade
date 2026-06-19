@@ -22,6 +22,11 @@ export interface AnalystRatingDetail {
 }
 
 export interface SymbolEnrichment {
+  price?: number;
+  bid?: number;
+  ask?: number;
+  intradayChangePct?: number;
+  asOf?: string;
   sentiment?: number;    // 0–100 news tone (50 = neutral). News-derived only.
   peRatio?: number;
   headlines?: string[];
@@ -50,6 +55,11 @@ export interface SymbolEnrichment {
 }
 
 export type EnrichmentSourcedField =
+  | "price"
+  | "bid"
+  | "ask"
+  | "intradayChangePct"
+  | "asOf"
   | "sentiment"
   | "peRatio"
   | "analystRating"
@@ -198,6 +208,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const finnhubKey = resolveApiKey("finnhub", userId);
   const alphaVantageKey = resolveApiKey("alphavantage", userId);
   const fmpKey = resolveApiKey("fmp", userId);
+  if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   if (finnhubKey) providers.push(new FinnhubEnrichmentProvider(finnhubKey));
   if (alphaVantageKey) providers.push(new AlphaVantageEnrichmentProvider(alphaVantageKey));
   if (fmpKey) providers.push(new FmpEnrichmentProvider(fmpKey));
@@ -273,6 +284,11 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       for (const { name, data } of results) {
         const r = data[symbol];
         if (!r) continue;
+        takeScalar("price", name, r.price);
+        takeScalar("bid", name, r.bid);
+        takeScalar("ask", name, r.ask);
+        takeScalar("intradayChangePct", name, r.intradayChangePct);
+        takeScalar("asOf", name, r.asOf);
         takeScalar("sentiment", name, r.sentiment);
         takeScalar("peRatio", name, r.peRatio);
         takeScalar("sector", name, r.sector);
@@ -315,6 +331,11 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
 
 // Marker set so takeScalar only stamps fields that are actually sourced (not headlines/analyst).
 const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
+  price: true,
+  bid: true,
+  ask: true,
+  intradayChangePct: true,
+  asOf: true,
   sentiment: true,
   peRatio: true,
   analystRating: true,
@@ -335,6 +356,141 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   epsGrowth: true,
   senateTrades: true
 };
+
+// ── Webull unofficial quote bridge (opt-in, market-data only) ────────────────
+// This shells out to scripts/webull_unofficial_quote.py, which uses the community
+// tedchou12/webull package without logging in. It is disabled by default and never
+// implements broker orders or learning fills.
+
+const WEBULL_UNOFFICIAL_SOURCE = "webull-unofficial";
+const DEFAULT_WEBULL_UNOFFICIAL_MAX = 20;
+
+export function webullUnofficialEnabled(): boolean {
+  return ["1", "true", "on", "yes"].includes(String(process.env.WEBULL_UNOFFICIAL_ENABLED ?? "").trim().toLowerCase());
+}
+
+function webullUnofficialMaxSymbols(): number {
+  const value = Number(process.env.WEBULL_UNOFFICIAL_MAX_SYMBOLS ?? DEFAULT_WEBULL_UNOFFICIAL_MAX);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_WEBULL_UNOFFICIAL_MAX;
+  return Math.min(value, MAX_SYMBOLS_CAP);
+}
+
+function webullUnofficialTimeoutMs(): number {
+  const value = Number(process.env.WEBULL_UNOFFICIAL_TIMEOUT_MS ?? 8000);
+  return Number.isFinite(value) && value >= 1000 ? value : 8000;
+}
+
+export function parseWebullUnofficialQuote(payload: unknown): SymbolEnrichment {
+  if (!payload || typeof payload !== "object" || "_error" in payload) return {};
+  const row = payload as Record<string, unknown>;
+  const price = firstNumber(row, ["pPrice", "close", "price", "lastPrice", "latestPrice", "last"]);
+  const bid = firstNumber(row, ["bid", "bidPrice", "bid_price"]);
+  const ask = firstNumber(row, ["ask", "askPrice", "ask_price"]);
+  const prevClose = firstNumber(row, ["preClose", "prevClose", "previousClose", "priorClose"]);
+  const rawChangePct = firstNumber(row, ["changeRatio", "changePercent", "pctChange", "changePct"]);
+  const volume = firstNumber(row, ["volume", "vol", "tradeVolume"]);
+  const peRatio = firstNumber(row, ["peTtm", "pe", "peRatio"]);
+  const eps = firstNumber(row, ["epsTtm", "eps"]);
+  const pbRatio = firstNumber(row, ["pb", "pbRatio", "priceToBook"]);
+  const rawDividendYield = firstNumber(row, ["yield", "dividendYield"]);
+  const fiftyTwoWeekHigh = firstNumber(row, ["fiftyTwoWkHigh", "high52w", "high52wk", "week52High", "fiftyTwoWeekHigh"]);
+  const fiftyTwoWeekLow = firstNumber(row, ["fiftyTwoWkLow", "low52w", "low52wk", "week52Low", "fiftyTwoWeekLow"]);
+  const companyName = firstString(row, ["name", "companyName", "disSymbolName"]);
+  const asOf = firstString(row, ["timestamp", "tradeTime", "time", "updateTime"]);
+  const dividendYield =
+    rawDividendYield !== undefined && rawDividendYield >= 0
+      ? Math.round((rawDividendYield <= 1 ? rawDividendYield * 100 : rawDividendYield) * 100) / 100
+      : undefined;
+  const intradayChangePct =
+    rawChangePct !== undefined
+      ? normalizePercent(rawChangePct)
+      : price !== undefined && prevClose !== undefined && prevClose > 0
+        ? Math.round(((price - prevClose) / prevClose) * 10000) / 100
+        : undefined;
+
+  return {
+    ...(price !== undefined && { price }),
+    ...(bid !== undefined && { bid }),
+    ...(ask !== undefined && { ask }),
+    ...(intradayChangePct !== undefined && { intradayChangePct }),
+    ...(volume !== undefined && volume > 0 && { volume }),
+    ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+    ...(eps !== undefined && { eps }),
+    ...(pbRatio !== undefined && pbRatio > 0 && { pbRatio }),
+    ...(dividendYield !== undefined && { dividendYield }),
+    ...(fiftyTwoWeekHigh !== undefined && fiftyTwoWeekHigh > 0 && { fiftyTwoWeekHigh }),
+    ...(fiftyTwoWeekLow !== undefined && fiftyTwoWeekLow > 0 && { fiftyTwoWeekLow }),
+    ...(companyName !== undefined && { companyName }),
+    ...(asOf !== undefined && { asOf })
+  };
+}
+
+export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = WEBULL_UNOFFICIAL_SOURCE;
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, webullUnofficialMaxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`${this.name}:${symbol}`);
+      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    const python = process.env.WEBULL_UNOFFICIAL_PYTHON || "python3";
+    const script = process.env.WEBULL_UNOFFICIAL_SCRIPT || `${process.cwd()}/scripts/webull_unofficial_quote.py`;
+    try {
+      const stdout = await runWebullUnofficialScript(python, script, misses, webullUnofficialTimeoutMs());
+      const payload = JSON.parse(stdout || "{}") as Record<string, unknown>;
+      for (const symbol of misses) {
+        const data = parseWebullUnofficialQuote(payload[symbol]);
+        cache.set(`${this.name}:${symbol}`, { expiresAt: now + ttlMs(), data });
+        result[symbol] = data;
+      }
+    } catch {
+      for (const symbol of misses) result[symbol] = {};
+    }
+    return result;
+  }
+}
+
+function runWebullUnofficialScript(
+  python: string,
+  script: string,
+  symbols: string[],
+  timeout: number
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const requireFn = eval("require") as (id: string) => unknown;
+    const childProcess = requireFn("child_process") as {
+      execFile: (
+        file: string,
+        args: string[],
+        options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv },
+        callback: (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => void
+      ) => void;
+    };
+    childProcess.execFile(
+      python,
+      [script, ...symbols],
+      {
+        timeout,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, PYTHONUNBUFFERED: "1" }
+      },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(String(stdout ?? ""));
+      }
+    );
+  });
+}
 
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────
 // Uses Yahoo Finance session-crumb auth to call v10/finance/quoteSummary.
@@ -842,6 +998,30 @@ class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
 function num(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function firstNumber(row: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = typeof value === "number" ? value : Number(String(value).replace(/[$,%\s,]/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function firstString(row: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
+}
+
+function normalizePercent(value: number): number {
+  const pct = Math.abs(value) <= 1 ? value * 100 : value;
+  return Math.round(pct * 100) / 100;
 }
 
 // Lightweight headline sentiment proxy: counts positive vs negative finance keywords.

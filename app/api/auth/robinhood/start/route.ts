@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { buildMcpAuthorizationUrl } from "@/lib/mcp-oauth";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     return NextResponse.redirect(await buildMcpAuthorizationUrl());

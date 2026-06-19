@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { fetchGroupedBarsRest } from "@/lib/market-signals/massive";
 import { fetchGroupedDailyBars } from "@/lib/market-signals/massive-s3";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Bulk daily OHLCV for the whole market — the data-lake / backfill endpoint. For US stocks it
  * uses the working Massive REST grouped-daily endpoint; for other assets (or as a fallback) it

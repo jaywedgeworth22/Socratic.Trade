@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { completeMcpOAuthCallback } from "@/lib/mcp-oauth";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const error = url.searchParams.get("error");

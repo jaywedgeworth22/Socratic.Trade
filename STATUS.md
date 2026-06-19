@@ -86,6 +86,10 @@ steps materially change.
   subprocess path avoids static `child_process` imports so Next dev/instrumentation
   still compiles. See
   `docs/rollouts/2026-06-19-webull-unofficial-market-data.md`.
+- 2026-06-19: Added a Codex-owned dev launcher, `npm run dev:codex`, that pins
+  Next dev to `127.0.0.1:3001` and frees only that port before starting. This
+  keeps Codex browser checks isolated from Claude/local port-3000 sessions. See
+  `docs/rollouts/2026-06-19-codex-dev-port.md`.
 - 2026-06-18: Fully utilized Massive (REST history primary in the OHLC cascade,
   full-market breadth, market news on the Macro tab, a bulk daily-bars route
   `GET /api/market/flatfile`, and a SigV4 S3 flat-file connector — signature

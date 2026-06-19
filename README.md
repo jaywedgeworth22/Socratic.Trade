@@ -67,11 +67,20 @@ npm run dev
 
 Open `http://127.0.0.1:3000`.
 
+For Codex sessions, use the pinned launcher instead:
+
+```bash
+npm run dev:codex
+```
+
+Open `http://127.0.0.1:3001`. The Codex launcher frees only port `3001` and
+retries there if Next initially falls back to another port.
+
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
-`.next` assets after a build. Stop old `node` listeners on ports `3000` / `3001`
-and restart `npm run dev`. If you intentionally want the old force-clean behavior,
-use `npm run dev:clean`; the default `dev` script does not kill unrelated port-3000
-processes.
+`.next` assets after a build. Stop the old listener only on the port your agent
+owns, then restart the matching dev command. If you intentionally want the old
+force-clean behavior for the default Claude/local port, use `npm run dev:clean`;
+the default `dev` script does not kill unrelated port-3000 processes.
 
 ## Environment
 

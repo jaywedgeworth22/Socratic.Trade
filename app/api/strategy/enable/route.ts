@@ -2,6 +2,8 @@ import { getPolicy, setPolicy } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function POST() {
   const policy = getPolicy();
   if (!policy.accountNumber) return new NextResponse("Select an account before enabling autonomy.", { status: 400 });

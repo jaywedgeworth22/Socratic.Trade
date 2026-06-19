@@ -5,6 +5,8 @@ import type {
   ExecutedOrder,
   FillEvent,
   FillSource,
+  MarketFactor,
+  MarketFactorBreakdown,
   MarketScan,
   PerformanceSummary,
   Portfolio,
@@ -183,8 +185,9 @@ export function getPaperPortfolioProjection(input: {
   accountNumber: string;
   startingCash: number;
   currentPrices?: Record<string, number>;
+  userId?: string;
 }): { portfolio: Portfolio; positions: EquityPosition[] } {
-  const paperFills = listFillEvents(input.accountNumber, "paper").filter(isAccountingFill);
+  const paperFills = listFillEvents(input.accountNumber, "paper", 500, input.userId ?? "local").filter(isAccountingFill);
   const prices = input.currentPrices ?? {};
   const positions = new Map<string, EquityPosition>();
   let cash = input.startingCash;
@@ -351,22 +354,28 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
 export function getThesisScorecard(
   accountNumber: string,
   source?: FillSource,
-  currentPrices: Record<string, number> = {}
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
 ): ThesisStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
-  return aggregateClosedLots(closedLots, (lot) =>
-    lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  return aggregateClosedLots(
+    closedLots,
+    (lot) => (lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"),
+    userId
   ).map(({ key, ...rest }) => ({ thesisTag: key, ...rest }));
 }
 
 export function getRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
-  currentPrices: Record<string, number> = {}
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
 ): RegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
-  return aggregateClosedLots(closedLots, (lot) =>
-    lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  return aggregateClosedLots(
+    closedLots,
+    (lot) => (lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"),
+    userId
   ).map(({ key, ...rest }) => ({ regime: key, ...rest }));
 }
 
@@ -384,16 +393,20 @@ export interface SectorStat {
 export function getSectorScorecard(
   accountNumber: string,
   source?: FillSource,
-  currentPrices: Record<string, number> = {}
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
 ): SectorStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
-  return aggregateClosedLots(closedLots, (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"))
-    .map(({ key, ...rest }) => ({ sector: key, ...rest }));
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  return aggregateClosedLots(
+    closedLots,
+    (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"),
+    userId
+  ).map(({ key, ...rest }) => ({ sector: key, ...rest }));
 }
 
 /** Closed lots with entry/exit context, oldest-first, for excursion (MAE/MFE) analysis. */
-export function getClosedLotsDetailed(accountNumber: string, source?: FillSource): ClosedLot[] {
-  return calculatePnl(listFillEvents(accountNumber, source)).closedLots;
+export function getClosedLotsDetailed(accountNumber: string, source?: FillSource, userId: string = "local"): ClosedLot[] {
+  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots;
 }
 
 /**
@@ -419,22 +432,23 @@ const THESIS_REGIME_SEP = " @ ";
 export function getThesisRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
-  currentPrices: Record<string, number> = {}
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
 ): ThesisRegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
   return aggregateClosedLots(closedLots, (lot) => {
     const thesis = lot.thesisTag?.trim() || "Untagged";
     const regime = lot.regime?.trim() || "Unspecified";
     return `${thesis}${THESIS_REGIME_SEP}${regime}`;
-  }).map(({ key, ...rest }) => {
+  }, userId).map(({ key, ...rest }) => {
     const sep = key.indexOf(THESIS_REGIME_SEP);
     return { thesisTag: key.slice(0, sep), regime: key.slice(sep + THESIS_REGIME_SEP.length), ...rest };
   });
 }
 
 /** Number of closed (realized) lots — the sample size that gates learned weight shifts. */
-export function getClosedLotCount(accountNumber: string, source?: FillSource): number {
-  return calculatePnl(listFillEvents(accountNumber, source)).closedLots.length;
+export function getClosedLotCount(accountNumber: string, source?: FillSource, userId: string = "local"): number {
+  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots.length;
 }
 
 /**
@@ -454,9 +468,10 @@ export interface SignalEfficacyStat {
 export function getSignalEfficacy(
   accountNumber: string,
   source?: FillSource,
-  currentPrices: Record<string, number> = {}
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
 ): SignalEfficacyStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
   if (closedLots.length === 0) return [];
 
   // runId|symbol -> entry signals, from the signal_snapshot audit trail. The snapshot
@@ -464,7 +479,7 @@ export function getSignalEfficacy(
   // matching closed lot, so skip the rest (older snapshots predate the flag → undefined,
   // which we keep, preserving the chosen-only behavior they had).
   const signalByKey = new Map<string, { congressNet?: number; insiderSentiment?: number }>();
-  for (const event of listAudit(500)) {
+  for (const event of listAudit(500, userId)) {
     if (event.kind !== "signal_snapshot") continue;
     const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; congressNet?: number; insiderSentiment?: number }> };
     if (!payload?.runId || !Array.isArray(payload.signals)) continue;
@@ -492,7 +507,7 @@ export function getSignalEfficacy(
     if (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) bump("Insider buying tailwind", lot);
   }
 
-  const prior = resolveShrinkPrior();
+  const prior = resolveShrinkPrior(userId);
   return Array.from(buckets.entries())
     .map(([signal, b]) => ({
       signal,
@@ -502,6 +517,130 @@ export function getSignalEfficacy(
       avgReturnPct: Number((b.returnSum / b.trades).toFixed(2))
     }))
     .sort((a, b) => b.trades - a.trades);
+}
+
+/** Realized-outcome stats grouped by the dominant deterministic factor at entry. */
+export interface FactorScorecardStat {
+  factor: MarketFactor;
+  trades: number;
+  winRate: number;
+  avgReturnPct: number;
+  totalPnl: number;
+  shrunkWinRate: number;
+  shrunkAvgReturnPct: number;
+}
+
+export function getFactorScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
+): FactorScorecardStat[] {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  if (closedLots.length === 0) return [];
+
+  const factorByKey = new Map<string, MarketFactor>();
+  for (const event of listAudit(500, userId)) {
+    if (event.kind !== "signal_snapshot") continue;
+    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; factorBreakdown?: MarketFactorBreakdown }> };
+    if (!payload?.runId || !Array.isArray(payload.signals)) continue;
+    for (const signal of payload.signals) {
+      if (!signal.symbol || signal.chosen === false) continue;
+      const factor = dominantFactor(signal.factorBreakdown);
+      if (factor) factorByKey.set(`${payload.runId}|${normalizeSymbol(signal.symbol)}`, factor);
+    }
+  }
+
+  const factorKey = (lot: ClosedLot) =>
+    lot.entryRunId && lot.symbol ? `${lot.entryRunId}|${normalizeSymbol(lot.symbol)}` : undefined;
+
+  return aggregateClosedLots(
+    closedLots.filter((lot) => {
+      const key = factorKey(lot);
+      return Boolean(key && factorByKey.has(key));
+    }),
+    (lot) => {
+      const key = factorKey(lot);
+      return key ? factorByKey.get(key) ?? "momentum" : "momentum";
+    },
+    userId
+  ).map(({ key, ...rest }) => ({ factor: key as MarketFactor, ...rest }));
+}
+
+export interface SkippedCandidateReturn {
+  runId: string;
+  symbol: string;
+  asOf?: string;
+  ageDays?: number;
+  refPrice: number;
+  currentPrice: number;
+  returnPct: number;
+  score?: number;
+  sector?: string;
+  regime?: string;
+  dominantFactor?: MarketFactor;
+  bulletins?: string[];
+}
+
+export function getSkippedCandidateReturns(
+  currentPrices: Record<string, number>,
+  userId: string = "local",
+  options: { limit?: number; maxAgeDays?: number } = {}
+): SkippedCandidateReturn[] {
+  const limit = options.limit ?? 12;
+  const maxAgeDays = options.maxAgeDays ?? 14;
+  const now = Date.now();
+  const seen = new Set<string>();
+  const returns: SkippedCandidateReturn[] = [];
+
+  for (const event of listAudit(500, userId)) {
+    if (event.kind !== "signal_snapshot") continue;
+    const payload = event.payload as {
+      runId?: string;
+      asOf?: string;
+      signals?: Array<{
+        symbol?: string;
+        chosen?: boolean;
+        refPrice?: number;
+        score?: number;
+        sector?: string;
+        regime?: string;
+        factorBreakdown?: MarketFactorBreakdown;
+        bulletins?: string[];
+      }>;
+    };
+    if (!payload?.runId || !Array.isArray(payload.signals)) continue;
+    const asOf = payload.asOf ?? event.createdAt;
+    const asOfTime = new Date(asOf).getTime();
+    const ageDays = Number.isFinite(asOfTime) ? (now - asOfTime) / 86_400_000 : undefined;
+    if (typeof ageDays === "number" && ageDays > maxAgeDays) continue;
+
+    for (const signal of payload.signals) {
+      if (signal.chosen !== false || !signal.symbol || !positiveNumber(signal.refPrice)) continue;
+      const symbol = normalizeSymbol(signal.symbol);
+      if (seen.has(symbol)) continue;
+      const currentPrice = positiveNumber(currentPrices[symbol]);
+      if (!currentPrice) continue;
+      seen.add(symbol);
+      const refPrice = signal.refPrice as number;
+      returns.push({
+        runId: payload.runId,
+        symbol,
+        asOf,
+        ...(typeof ageDays === "number" ? { ageDays: Number(ageDays.toFixed(1)) } : {}),
+        refPrice,
+        currentPrice,
+        returnPct: Number((((currentPrice - refPrice) / refPrice) * 100).toFixed(2)),
+        score: signal.score,
+        sector: signal.sector,
+        regime: signal.regime,
+        dominantFactor: dominantFactor(signal.factorBreakdown),
+        bulletins: signal.bulletins
+      });
+    }
+  }
+
+  return returns.sort((a, b) => b.returnPct - a.returnPct).slice(0, limit);
 }
 
 /**
@@ -528,21 +667,23 @@ export interface ConfidenceCalibrationStat {
 export function getConfidenceCalibration(
   accountNumber: string,
   source?: FillSource,
-  currentPrices: Record<string, number> = {}
+  currentPrices: Record<string, number> = {},
+  userId: string = "local"
 ): ConfidenceCalibrationStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source), currentPrices);
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
   const bandOf = (c: number): string => (c >= 85 ? "85-100 (high)" : c >= 70 ? "70-84" : c >= 50 ? "50-69" : "1-49 (low)");
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
-    (lot) => bandOf(lot.confidence as number)
+    (lot) => bandOf(lot.confidence as number),
+    userId
   )
     .map(({ key, trades, winRate, shrunkWinRate, avgReturnPct }) => ({ band: key, trades, winRate, shrunkWinRate, avgReturnPct }))
     .sort((a, b) => b.band.localeCompare(a.band));
 }
 
 /** Open (unclosed) lots with entry dates, for holding-period and tax analysis. */
-export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot[] {
-  return calculatePnl(listFillEvents(accountNumber, source)).openLots;
+export function getOpenLots(accountNumber: string, source?: FillSource, userId: string = "local"): OpenLot[] {
+  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).openLots;
 }
 
 /**
@@ -554,9 +695,9 @@ export function getOpenLots(accountNumber: string, source?: FillSource): OpenLot
 const SHRINK_PRIOR = 5;
 
 /** Shrinkage prior, overridable via policy.tuning.shrinkPrior (0 = no shrinkage); else the default. */
-function resolveShrinkPrior(): number {
+function resolveShrinkPrior(userId: string = "local"): number {
   try {
-    const v = getPolicy().tuning?.shrinkPrior;
+    const v = getPolicy(userId).tuning?.shrinkPrior;
     return typeof v === "number" && v >= 0 ? v : SHRINK_PRIOR;
   } catch {
     return SHRINK_PRIOR;
@@ -565,7 +706,8 @@ function resolveShrinkPrior(): number {
 
 function aggregateClosedLots(
   closedLots: ClosedLot[],
-  keyFn: (lot: ClosedLot) => string
+  keyFn: (lot: ClosedLot) => string,
+  userId: string = "local"
 ): Array<{
   key: string;
   trades: number;
@@ -575,7 +717,7 @@ function aggregateClosedLots(
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
 }> {
-  const prior = resolveShrinkPrior();
+  const prior = resolveShrinkPrior(userId);
   const byKey = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
@@ -598,6 +740,18 @@ function aggregateClosedLots(
       shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2))
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
+function dominantFactor(breakdown?: MarketFactorBreakdown): MarketFactor | undefined {
+  if (!breakdown) return undefined;
+  let best: { factor: MarketFactor; value: number } | undefined;
+  for (const [key, value] of Object.entries(breakdown)) {
+    if (key === "weightedTotal") continue;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) continue;
+    if (!best || numeric > best.value) best = { factor: key as MarketFactor, value: numeric };
+  }
+  return best?.factor;
 }
 
 function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string } {

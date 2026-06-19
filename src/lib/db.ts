@@ -463,12 +463,13 @@ export function dailyExecutionStats(accountNumber: string, now = new Date(), use
 // Uses a direct prepared statement (not setSetting) to avoid noisy policy_change
 // audit events.
 
-export function acquireStrategyLock(staleMs = 5 * 60_000, now = new Date()): boolean {
+export function acquireStrategyLock(userId: string = "local", staleMs = 5 * 60_000, now = new Date()): boolean {
   const database = getDb();
+  const key = `strategy_run_lock:${userId}`;
   const acquire = database.transaction(() => {
     const row = database
-      .prepare("SELECT value FROM settings WHERE key = 'strategy_run_lock'")
-      .get() as { value: string } | undefined;
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
 
     if (row) {
       try {
@@ -483,17 +484,17 @@ export function acquireStrategyLock(staleMs = 5 * 60_000, now = new Date()): boo
     const value = JSON.stringify({ lockedAt: now.toISOString() });
     database
       .prepare(
-        "INSERT INTO settings (key, value, updated_at) VALUES ('strategy_run_lock', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
       )
-      .run(value, now.toISOString());
+      .run(key, value, now.toISOString());
     return true;
   });
 
   return acquire() as boolean;
 }
 
-export function releaseStrategyLock(): void {
-  getDb().prepare("DELETE FROM settings WHERE key = 'strategy_run_lock'").run();
+export function releaseStrategyLock(userId: string = "local"): void {
+  getDb().prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${userId}`);
 }
 
 export function insertStrategyRun(id: string, userId: string = "local"): void {
@@ -1271,7 +1272,17 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
 }
 
 export function listUsers(): string[] {
-  const rows = getDb().prepare("SELECT DISTINCT user_id FROM user_settings").all() as Array<{ user_id: string }>;
-  if (rows.length === 0) return ["local"];
-  return rows.map(r => r.user_id);
+  const rows = getDb()
+    .prepare(
+      `SELECT user_id FROM user_settings
+       UNION
+       SELECT user_id FROM strategy_profiles
+       UNION
+       SELECT user_id FROM user_api_keys
+       UNION
+       SELECT user_id FROM connected_accounts`
+    )
+    .all() as Array<{ user_id: string }>;
+  const users = rows.map((r) => r.user_id).filter(Boolean);
+  return users.length > 0 ? Array.from(new Set(users)) : ["local"];
 }

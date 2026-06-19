@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiKeyEnvVarForService, listUserApiKeys, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Multi-user API Key Management
  *

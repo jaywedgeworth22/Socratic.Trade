@@ -76,11 +76,16 @@ learning … counterfactual return."
   (counterfactual forward return from `refPrice`) and B4 (factor-bucket learning).
   `tsc` + 139 tests + build green. See
   `docs/rollouts/2026-06-17-phase-10-b2-evidence-digest.md`.
-- **B3 `[todo]` Counterfactual learning from skipped names.** Periodically mark the
-  forward return of logged-but-skipped candidates and feed "names you passed that
-  then ran" into the reflection. Needs lightweight price tracking. Risk: L.
-- **B4 `[todo]` Factor-bucket learning.** Once A1 exists, bucket outcomes by dominant
-  factor so the tuner can learn which factors pay. Depends on A1. Risk: M.
+- **B3 `[partial]` Counterfactual learning from skipped names.** The agent now derives
+  current-scan `skippedCounterfactuals` from recent user-scoped `signal_snapshot`
+  skipped evidence (`refPrice` → current scan price) and feeds high-return misses
+  into the Bull prompt. Still open: persisted/mature-horizon materialization with
+  OHLC bars, watermarks, and post-mortem/tuning summaries. Risk: L.
+- **B4 `[partial]` Factor-bucket learning.** `getFactorScorecard()` joins closed
+  lots to chosen `signal_snapshot` entries by `runId|symbol`, buckets realized
+  outcomes by dominant factor, and feeds capped `factorOutcomes` to the Bull prompt.
+  Still open: UI learning matrix, tuner context/weight-change rules, and true
+  weighted contribution math. Risk: M.
 
 ## Phase C — New free data sources (each a `web-sources` connector)
 Codex: "major planned sources remain unimplemented." Default to free/official first.

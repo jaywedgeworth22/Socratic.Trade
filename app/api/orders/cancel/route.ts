@@ -2,6 +2,8 @@ import { audit, getPolicy } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: Request) {
   const { orderId } = await request.json();
   const policy = getPolicy();

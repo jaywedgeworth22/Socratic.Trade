@@ -6,16 +6,21 @@ import {
   labelFromAnalystScore,
   mockEnrichmentProvider,
   noopProvider,
+  parseWebullUnofficialQuote,
   scoreHeadlines
 } from "../src/lib/data-providers";
 
 describe("market enrichment provider", () => {
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
   const originalFmpKey = process.env.FMP_API_KEY;
+  const originalAlphaVantageKey = process.env.ALPHAVANTAGE_API_KEY;
+  const originalWebullEnabled = process.env.WEBULL_UNOFFICIAL_ENABLED;
 
   beforeEach(() => {
     delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
+    delete process.env.WEBULL_UNOFFICIAL_ENABLED;
   });
 
   afterEach(() => {
@@ -23,6 +28,10 @@ describe("market enrichment provider", () => {
     else delete process.env.FINNHUB_API_KEY;
     if (originalFmpKey) process.env.FMP_API_KEY = originalFmpKey;
     else delete process.env.FMP_API_KEY;
+    if (originalAlphaVantageKey) process.env.ALPHAVANTAGE_API_KEY = originalAlphaVantageKey;
+    else delete process.env.ALPHAVANTAGE_API_KEY;
+    if (originalWebullEnabled) process.env.WEBULL_UNOFFICIAL_ENABLED = originalWebullEnabled;
+    else delete process.env.WEBULL_UNOFFICIAL_ENABLED;
   });
 
   it("uses Yahoo Finance provider when no API key is configured", async () => {
@@ -30,6 +39,51 @@ describe("market enrichment provider", () => {
     // Yahoo Finance is always the final real tier — no API key required.
     expect(provider.configured).toBe(true);
     expect(provider.name).toBe("yahoo-finance");
+  });
+
+  it("keeps the unofficial Webull quote bridge disabled by default", async () => {
+    const provider = getEnrichmentProvider();
+    expect(provider.name).not.toContain("webull-unofficial");
+  });
+
+  it("adds the unofficial Webull quote bridge only when explicitly enabled", async () => {
+    process.env.WEBULL_UNOFFICIAL_ENABLED = "on";
+    const provider = getEnrichmentProvider();
+    expect(provider.name).toContain("webull-unofficial");
+    expect(provider.name).toContain("yahoo-finance");
+  });
+
+  it("parses unofficial Webull quote payloads as market data only", () => {
+    const parsed = parseWebullUnofficialQuote({
+      close: "205.50",
+      bid: "205.40",
+      ask: "205.60",
+      preClose: "203.20",
+      volume: "1500000",
+      peTtm: "36.05",
+      epsTtm: "8.27",
+      pb: "41.05",
+      yield: "0.0036",
+      fiftyTwoWkHigh: "220.10",
+      fiftyTwoWkLow: "145.25",
+      name: "Apple Inc."
+    });
+
+    expect(parsed).toMatchObject({
+      price: 205.5,
+      bid: 205.4,
+      ask: 205.6,
+      intradayChangePct: 1.13,
+      volume: 1500000,
+      peRatio: 36.05,
+      eps: 8.27,
+      pbRatio: 41.05,
+      dividendYield: 0.36,
+      fiftyTwoWeekHigh: 220.1,
+      fiftyTwoWeekLow: 145.25,
+      companyName: "Apple Inc."
+    });
+    expect(parsed).not.toHaveProperty("brokerOrderId");
   });
 
   it("mock provider returns fallback data for unknown tickers", async () => {

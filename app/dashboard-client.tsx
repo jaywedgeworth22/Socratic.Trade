@@ -95,6 +95,19 @@ type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications";
+type RobinhoodMcpHealth = {
+  adapter?: "mock" | "mcp";
+  ok: boolean;
+  configured: boolean;
+  authenticated: boolean;
+  url?: string;
+  protocolVersion?: string;
+  transport?: string;
+  tools: string[];
+  checkedAt: string;
+  error?: string;
+  warning?: string;
+};
 
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
@@ -2371,6 +2384,35 @@ function ApiKeysSection() {
 function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapshot["connectedAccounts"], onSaved: () => Promise<void> }) {
   const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
+
+  const refreshMcpHealth = useCallback(async () => {
+    setMcpBusy(true);
+    try {
+      const res = await fetch("/api/broker/mcp/health", { cache: "no-store" });
+      const health = (await res.json()) as RobinhoodMcpHealth;
+      setMcpHealth(health);
+      if (!res.ok) throw new Error(health.error ?? "Robinhood MCP health check failed.");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Robinhood MCP health check failed.";
+      setMcpHealth({
+        ok: false,
+        configured: false,
+        authenticated: false,
+        tools: [],
+        checkedAt: new Date().toISOString(),
+        error: message
+      });
+      toast.error(message);
+    } finally {
+      setMcpBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshMcpHealth();
+  }, [refreshMcpHealth]);
 
   async function save() {
     if (!editing?.broker || !editing?.environment) return;
@@ -2447,6 +2489,8 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
 
   return (
     <div className="space-y-3">
+      <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted">Connect your brokerage accounts for agentic trading.</p>
         <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
@@ -2480,6 +2524,77 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RobinhoodMcpStatusCard({
+  health,
+  busy,
+  onRefresh
+}: {
+  health: RobinhoodMcpHealth | null;
+  busy: boolean;
+  onRefresh: () => void;
+}) {
+  const tone: "up" | "down" | "warn" | "neutral" = !health
+    ? "neutral"
+    : health.ok && health.authenticated
+      ? "up"
+      : health.adapter === "mock"
+        ? "warn"
+        : "down";
+  const label = !health
+    ? "Checking"
+    : health.ok && health.authenticated
+      ? "Connected"
+      : health.adapter === "mock"
+        ? "Mock mode"
+        : health.authenticated
+          ? "Tool check failed"
+          : "Not connected";
+  const detail = health?.error ?? health?.warning;
+  const visibleTools = health?.tools?.slice(0, 8) ?? [];
+
+  return (
+    <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Wallet size={14} className="text-muted" />
+            <span className="font-semibold text-fg">Robinhood MCP</span>
+            <Chip tone={tone}>{label}</Chip>
+            {health?.transport && <Chip tone="info">{health.transport}</Chip>}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
+            {health?.url && <span className="max-w-full truncate font-mono">{health.url}</span>}
+            {health?.protocolVersion && <span className="font-mono">MCP {health.protocolVersion}</span>}
+            {health?.checkedAt && <span>Checked {new Date(health.checkedAt).toLocaleTimeString()}</span>}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
+            <RefreshCw size={13} className={cn(busy && "animate-spin")} /> Refresh
+          </Button>
+          {health && !health.authenticated && health.adapter !== "mock" && (
+            <Button size="sm" variant="accentSoft" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
+              <ExternalLink size={13} /> Connect OAuth
+            </Button>
+          )}
+        </div>
+      </div>
+      {detail && (
+        <p className={cn("mt-2 text-[13px]", tone === "down" ? "text-down" : "text-muted")}>{detail}</p>
+      )}
+      {visibleTools.length > 0 && (
+        <div className="mt-3 rounded-md border border-line/70 bg-bg/35 px-3 py-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">Available tools</div>
+          <div className="mt-1 text-[12px] text-muted">
+            {visibleTools.join(", ")}
+            {(health?.tools.length ?? 0) > visibleTools.length && `, +${(health?.tools.length ?? 0) - visibleTools.length} more`}
+          </div>
         </div>
       )}
     </div>
