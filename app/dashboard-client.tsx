@@ -7,7 +7,6 @@ import {
   Check,
   CheckCircle,
   ChevronRight,
-  Command as CommandIcon,
   ExternalLink,
   Gauge,
   Hourglass,
@@ -65,11 +64,7 @@ import type {
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
 import { compactMoney, compactNum, formatPct, money, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
-import dynamic from "next/dynamic";
-const AllocationDonut = dynamic(() => import("./ui/charts").then((m) => m.AllocationDonut), { ssr: false });
-const EquityCurve = dynamic(() => import("./ui/charts").then((m) => m.EquityCurve), { ssr: false });
-const ScorecardBars = dynamic(() => import("./ui/charts").then((m) => m.ScorecardBars), { ssr: false });
-import { CommandPalette, type Command } from "./ui/command-palette";
+import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
@@ -109,7 +104,51 @@ type RobinhoodMcpHealth = {
   warning?: string;
 };
 
+function safeJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return {};
+  }
+}
+
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return <DashboardSsrShell snapshot={initialSnapshot} />;
+  return <DashboardApp initialSnapshot={initialSnapshot} />;
+}
+
+function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const mode = snapshot.policy.paperMode ? "Mock/Local Mode" : "Live Mode";
+  const state = snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed";
+  return (
+    <div className="flex min-h-dvh flex-col bg-bg text-fg">
+      <header className="flex min-h-14 items-center justify-between border-b border-line bg-surface/70 px-4">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <Zap size={17} className="fill-current" />
+          </span>
+          <div>
+            <div className="text-sm font-semibold">Agentic Trading</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+              <span>{mode}</span>
+              <span>{labelize(state)}</span>
+            </div>
+          </div>
+        </div>
+        <span className="text-xs text-faint">Loading cockpit...</span>
+      </header>
+      <main className="flex flex-1 items-center justify-center p-6">
+        <div className="rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted">
+          Preparing the local dashboard view.
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("decision");
@@ -165,7 +204,12 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     const refresh = () => {
       if (document.visibilityState === "visible") void load({ quiet: true });
     };
+    const refreshMarketData = (event: MessageEvent) => {
+      window.dispatchEvent(new CustomEvent("market-data-filled", { detail: safeJson(event.data) }));
+      refresh();
+    };
     for (const type of ["run-complete", "order", "proposal", "dirty"]) es.addEventListener(type, refresh);
+    es.addEventListener("market-data", refreshMarketData);
     es.onerror = () => {
       // The browser auto-reconnects EventSource; the fallback poll covers any gap.
     };
@@ -245,7 +289,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           body.status === "placed"
             ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
             : body.status === "paper"
-              ? "Proposal executed in Paper mode."
+              ? "Proposal executed in Mock/Local mode."
               : `Result: ${body.status}`
         );
       }
@@ -355,18 +399,39 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const drilldownScan = tickerScan ?? snapshot.latestStrategyRun?.marketScan ?? null;
   const dailyNotionalPct = (policy.maxDailyNotional ?? 0) > 0 ? Math.round((dailyStats.notional / (policy.maxDailyNotional ?? 1)) * 100) : 0;
   const pendingCount = snapshot.pendingProposals.length;
+  const setupBlocked = Boolean(enableBlockedReason);
   const autonomyStatus = policy.systemState === "halted"
     ? { tone: "down" as const, label: "Halted" }
+    : policy.systemState === "active" && setupBlocked
+      ? { tone: "warn" as const, label: "Setup Needed" }
     : policy.systemState === "active"
       ? { tone: "up" as const, label: "Autonomy On" }
       : { tone: "neutral" as const, label: `Autonomy ${policy.systemState}` };
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
+  function routeSetupBlocker(reason: string) {
+    toast.warning(reason, {
+      description: !policy.accountNumber && !policy.connectedAccountId
+        ? "Open Accounts to connect or select a brokerage account."
+        : "Open Settings to choose a tradable universe."
+    });
+    if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
+    else setSettingsOpen(true);
+  }
+
+  function requestAutonomy(nextActive: boolean) {
+    if (nextActive && enableBlockedReason) {
+      routeSetupBlocker(enableBlockedReason);
+      return;
+    }
+    void updatePolicy({ systemState: nextActive ? "active" : "halted" });
+  }
+
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex min-h-dvh flex-col overflow-x-hidden xl:h-dvh xl:overflow-hidden">
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex h-14 shrink-0 items-center gap-4 border-b border-line bg-surface/70 px-4 backdrop-blur-md">
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md xl:h-14 xl:flex-nowrap xl:px-4 xl:py-0">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
             <Zap size={17} className="fill-current" />
@@ -382,6 +447,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
                 <Dot tone={marketStatus.tone} />
                 {marketStatus.label}
               </div>
+              <div className="flex items-center gap-1.5 whitespace-nowrap">
+                <Dot tone={policy.paperMode ? "info" : "down"} />
+                {policy.paperMode ? "Mock/Local Mode" : "Live Mode"}
+              </div>
             </div>
           </div>
         </div>
@@ -391,21 +460,21 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-0 flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:ml-auto">
           <div
             className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1 md:flex"
-            title={policy.systemState === "halted" ? "System is halted — reactivate it to enable autonomy" : "Turn autonomous trading on or off"}
+            title={enableBlockedReason ?? (policy.systemState === "halted" ? "System is halted — reactivate it to enable autonomy" : "Turn autonomous trading on or off")}
           >
             <span className="text-xs font-medium text-muted">Autonomy</span>
             <Switch
               checked={policy.systemState === "active"}
-              onChange={(on) => updatePolicy({ systemState: on ? "active" : "halted" })}
+              onChange={requestAutonomy}
               label="Autonomy"
             />
           </div>
           <div className="flex items-center gap-2">
             <select
-              className="h-9 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 text-sm font-medium text-fg outline-none focus:border-accent"
+              className="h-9 max-w-[13rem] rounded-lg border border-line bg-surface/50 px-2.5 text-sm font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none"
               value={policy.connectedAccountId ?? ""}
               onChange={(e) => {
                 const id = e.target.value;
@@ -428,7 +497,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           </IconButton>
           <button
             onClick={() => setFeedOpen(true)}
-            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 text-sm font-medium text-fg transition-colors hover:bg-surface-2/50 backdrop-blur-lg"
+            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-3 text-sm font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50"
           >
             <ActivityIcon size={15} /> Activity
             {pendingCount > 0 && (
@@ -447,28 +516,50 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             <SettingsIcon size={15} />
           </IconButton>
           <ThemeToggle />
-          <Button size="sm" className="h-9" onClick={runStrategy} disabled={busy}>
+          <Button
+            variant={enableBlockedReason ? "ghost" : "primary"}
+            size="sm"
+            className="h-9"
+            title={enableBlockedReason}
+            onClick={() => {
+              if (enableBlockedReason) {
+                routeSetupBlocker(enableBlockedReason);
+                return;
+              }
+              void runStrategy();
+            }}
+            disabled={busy}
+          >
             <Zap size={15} /> Run
           </Button>
           <Button
             variant={policy.systemState === "halted" ? "primary" : "danger"}
             size="sm"
             className="h-9"
-            onClick={() => setKillConfirm(true)}
+            onClick={() => {
+              if (policy.systemState === "halted" && enableBlockedReason) {
+                routeSetupBlocker(enableBlockedReason);
+                return;
+              }
+              setKillConfirm(true);
+            }}
           >
-            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} Kill
+            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} {policy.systemState === "halted" ? "Resume" : "Kill"}
           </Button>
         </div>
       </header>
 
       {/* ── Body grid ───────────────────────────────────────────── */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 xl:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid flex-1 grid-cols-1 gap-3 p-3 xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 xl:block">
           <PortfolioRail snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
         </aside>
 
-        <main className="flex min-h-0 flex-col gap-3">
-          <div className="flex items-center justify-between">
+        <main className="flex min-w-0 flex-col gap-3 xl:min-h-0">
+          <div className="xl:hidden">
+            <MobilePortfolioSummary snapshot={snapshot} mode={mode} />
+          </div>
+          <div className="flex min-w-0 items-center justify-between overflow-x-auto">
             <Tabs
               value={workspaceTab}
               onChange={setWorkspaceTab}
@@ -488,7 +579,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-0 flex-1 overflow-visible xl:overflow-auto">
             {workspaceTab === "decision" && (
               <DecisionView
                 snapshot={snapshot}
@@ -502,7 +593,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
-                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} />
+                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} />
                 <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
               </div>
             )}
@@ -594,6 +685,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           remainingNotional={remainingNotional}
           remainingOrders={remainingOrders}
           updatePolicy={updatePolicy}
+          openAccounts={() => setAccountsOpen(true)}
           load={load}
         />
       </Modal>
@@ -609,13 +701,13 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           await updatePolicy({ systemState: policy.systemState === "halted" ? "active" : "halted" });
           setKillConfirm(false);
         }}
-        title={policy.systemState === "halted" ? "Deactivate kill switch?" : "Activate kill switch?"}
+        title={policy.systemState === "halted" ? "Resume automated trading?" : "Activate kill switch?"}
         body={
           policy.systemState === "halted"
-            ? "This resumes automated trading operations."
+            ? "This returns the system to active autonomy. The account and universe checks still apply before any live order can be submitted."
             : "This immediately pauses all automated trading runs and blocks any new order proposals."
         }
-        confirmLabel="Confirm"
+        confirmLabel={policy.systemState === "halted" ? "Resume" : "Activate kill switch"}
         tone={policy.systemState === "halted" ? "primary" : "danger"}
       />
     </div>
@@ -652,6 +744,42 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
 
 /* ───────────────────────── Portfolio rail ───────────────────────── */
 
+function MobilePortfolioSummary({ snapshot, mode }: { snapshot: DashboardSnapshot; mode: "paper" | "live" }) {
+  const portfolio = snapshot.portfolio;
+  const positions = snapshot.positions;
+  const total = portfolio?.totalMarketValue ?? 0;
+  const perf = snapshot.performance;
+  const pnl = mode === "paper"
+    ? (perf?.paperUnrealizedPnl ?? 0) + (perf?.paperRealizedPnl ?? 0)
+    : (perf?.liveUnrealizedPnl ?? 0) + (perf?.liveRealizedPnl ?? 0);
+
+  return (
+    <Card className="px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
+          <p className="text-xs text-faint">{mode === "paper" ? "Mock/Local account" : "Live account"}</p>
+        </div>
+        <Chip tone={mode === "paper" ? "info" : "down"}>{mode === "paper" ? "Mock/Local" : "Live"}</Chip>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">Value</div>
+          <div className="tnum mt-1 text-base text-fg">{money(total)}</div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">P&L</div>
+          <div className={cn("tnum mt-1 text-base", pnl >= 0 ? "text-up" : "text-down")}>{signedMoney(pnl)}</div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">Positions</div>
+          <div className="tnum mt-1 text-base text-fg">{positions.length}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function PortfolioRail({
   snapshot,
   mode,
@@ -682,7 +810,7 @@ function PortfolioRail({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Paper account" : "Live account"} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
@@ -854,7 +982,7 @@ function DecisionView({
           icon={<Sparkles size={16} />}
         />
         {!decision ? (
-          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Hit Run (or open the command palette → Run strategy once) to generate the agent's first decision." />
+          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Choose an account and tradable universe, then use Run to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
             <div className={cn("rounded-xl border px-3 py-2 text-[13px]", decision.status === "failed" ? "border-down/30 bg-down/10 text-down" : "border-info/25 bg-info/10 text-fg")}>
@@ -905,6 +1033,17 @@ function scanSortValue(col: ScanColumn, q: MarketQuote): unknown {
   return col.sortKey ? q[col.sortKey] : undefined;
 }
 
+function vwapDeltaPct(q: MarketQuote): number | undefined {
+  if (typeof q.vwap !== "number" || !Number.isFinite(q.vwap) || q.vwap <= 0) return undefined;
+  return ((q.price - q.vwap) / q.vwap) * 100;
+}
+
+function vwapTitle(q: MarketQuote): string | undefined {
+  const delta = vwapDeltaPct(q);
+  if (typeof delta !== "number") return undefined;
+  return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${cellTitle("VWAP", q.sources?.vwap)}`;
+}
+
 const SCAN_COLUMNS: ScanColumn[] = [
   { id: "symbol", label: "Symbol", title: "Ticker symbol. Hover a row for the company name.", sortKey: "symbol",
     render: (q) => <span className="font-semibold text-fg">{q.symbol}</span>, cellTitle: (q) => q.companyName },
@@ -912,6 +1051,10 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
   { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
     render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down") },
+  { id: "vsVwap", label: "vs VWAP", title: "Last price vs latest daily VWAP. Source: Massive grouped daily bars when available.", align: "right", sortValue: vwapDeltaPct,
+    render: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? <span className="tnum">{formatPct(v)}</span> : DASH; },
+    cellClass: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: vwapTitle },
   { id: "volume", label: "Vol", title: "Shares traded today (falls back to the 10-day average when reported after hours). Source: screener / Finnhub.", align: "right", sortKey: "volume",
     render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH) },
   { id: "marketCap", label: "Mkt Cap", title: "Market capitalization = share price × shares outstanding.", align: "right", sortKey: "marketCap",
@@ -976,12 +1119,21 @@ const SCAN_COLUMNS: ScanColumn[] = [
 const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
 const SCAN_COLS_KEY = "scan-visible-cols";
 
-function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot, onDrilldown: (q: MarketQuote) => void }) {
+function MarketScanView({
+  snapshot,
+  onDrilldown,
+  onConfigureUniverse
+}: {
+  snapshot: DashboardSnapshot;
+  onDrilldown: (q: MarketQuote) => void;
+  onConfigureUniverse: () => void;
+}) {
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
   const [visible, setVisible] = useState<string[]>(DEFAULT_SCAN_COLS);
   const [colsOpen, setColsOpen] = useState(false);
   const [liveScan, setLiveScan] = useState<MarketScan | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
+  const [scanError, setScanError] = useState("");
 
   useEffect(() => {
     try {
@@ -1008,14 +1160,14 @@ function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot
 
   const refreshScan = useCallback(async () => {
     setScanLoading(true);
+    setScanError("");
     try {
       const res = await fetch("/api/scan");
-      if (res.ok) {
-        const data = (await res.json()) as MarketScan;
-        if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
-      }
-    } catch {
-      /* keep the captured scan as fallback */
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as MarketScan;
+      if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : "Market scan failed.");
     } finally {
       setScanLoading(false);
     }
@@ -1031,6 +1183,7 @@ function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot
       <Card>
         <PanelHeader
           title="Market scan"
+          subtitle={scanError || undefined}
           icon={<LineChartIcon size={16} />}
           actions={
             <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
@@ -1038,7 +1191,14 @@ function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot
             </IconButton>
           }
         />
-        <EmptyState icon={<LineChartIcon size={20} />} title={scanLoading ? "Scanning the market…" : "No market scan yet"} hint="Refresh to scan the current market, or run the strategy to capture one." />
+        <EmptyState
+          icon={<LineChartIcon size={20} />}
+          title={scanLoading ? "Scanning the market…" : "No market scan yet"}
+          hint={scanError || "Choose a base index or add symbols, then refresh the scan."}
+        />
+        <div className="flex justify-center px-4 pb-4">
+          <Button variant="ghost" size="sm" onClick={onConfigureUniverse}><SettingsIcon size={14} /> Configure universe</Button>
+        </div>
       </Card>
     );
   }
@@ -1050,11 +1210,14 @@ function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot
   const sorted = sortCol
     ? [...scan.topCandidates].sort((a, b) => compare(scanSortValue(sortCol, a), scanSortValue(sortCol, b), sort.dir))
     : [...scan.topCandidates];
+  const subtitle = scan.returnedQuotes === 0
+    ? `No quotes returned · ${liveScan ? "live" : scan.cached ? "cached" : "latest"}`
+    : `${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`;
   return (
     <Card className="overflow-hidden">
       <PanelHeader
         title="Market scan"
-        subtitle={`${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`}
+        subtitle={subtitle}
         icon={<LineChartIcon size={16} />}
         actions={
           <div className="flex items-center gap-1.5">
@@ -1084,44 +1247,60 @@ function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot
           </div>
         }
       />
-      <div className="p-2 h-[600px]">
-        <TableVirtuoso
-          data={sorted}
-          components={{
-            Table: (props) => <table {...props} className="w-full text-[13px]" />,
-            TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
-            TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="border-b border-line/50 hover:bg-surface-2/50 backdrop-blur-lg cursor-pointer transition-colors" />,
-          }}
-          fixedHeaderContent={() => (
-            <tr className="border-b border-line text-[11px] uppercase text-faint bg-surface/50 backdrop-blur-xl shadow-sm">
-              {cols.map((c) => (
-                <th
-                  key={c.id}
-                  title={c.title}
-                  onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
-                  className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
-                >
-                  {c.label}
-                  <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
-                </th>
-              ))}
-            </tr>
-          )}
-          itemContent={(index, q) => (
-            <>
-              {cols.map((c) => (
-                <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
-                  {c.id === "symbol" ? (
-                    <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} />
-                  ) : (
-                    c.render(q)
-                  )}
-                </td>
-              ))}
-            </>
-          )}
-        />
-      </div>
+      {scanError && (
+        <p className="mx-4 mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">{scanError}</p>
+      )}
+      {sorted.length === 0 ? (
+        <div className="px-4 pb-4">
+          <EmptyState
+            icon={<LineChartIcon size={20} />}
+            title="No scan quotes"
+            hint="The current universe is empty or no provider returned quotes. Choose a base index or add symbols, then refresh the scan."
+          />
+          <div className="flex justify-center">
+            <Button variant="ghost" size="sm" onClick={onConfigureUniverse}><SettingsIcon size={14} /> Configure universe</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="h-[min(600px,65vh)] p-2">
+          <TableVirtuoso
+            data={sorted}
+            components={{
+              Table: (props) => <table {...props} className="w-full text-[13px]" />,
+              TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
+              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
+            }}
+            fixedHeaderContent={() => (
+              <tr className="border-b border-line bg-surface/50 text-[11px] uppercase text-faint shadow-sm backdrop-blur-xl">
+                {cols.map((c) => (
+                  <th
+                    key={c.id}
+                    title={c.title}
+                    onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
+                    className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
+                  >
+                    {c.label}
+                    <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
+                  </th>
+                ))}
+              </tr>
+            )}
+            itemContent={(index, q) => (
+              <>
+                {cols.map((c) => (
+                  <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
+                    {c.id === "symbol" ? (
+                      <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} />
+                    ) : (
+                      c.render(q)
+                    )}
+                  </td>
+                ))}
+              </>
+            )}
+          />
+        </div>
+      )}
     </Card>
   );
 }
@@ -1247,10 +1426,10 @@ function PerformanceView({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
-        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Paper account" : "Live account"} icon={<TrendingUp size={16} />} />
+        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
           <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Paper gain/loss on positions still open, marked to current prices." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Mock/Local gain/loss on positions still open, marked to current prices." />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
         </div>
@@ -1646,6 +1825,30 @@ function TuningCard({ proposal, onApply }: { proposal: StrategyTuningProposal; o
 
 /* ───────────────────────── Feeds (slide-over) ───────────────────────── */
 
+function readableJsonDetail(detail: string): string {
+  const trimmed = detail.trim();
+  if (!trimmed.startsWith("{")) return detail;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (typeof parsed.id === "string") {
+      const source = labelize(parsed.id);
+      const count = typeof parsed.recordCount === "number" ? `${parsed.recordCount.toLocaleString()} records` : undefined;
+      const fresh = typeof parsed.fresh === "number" ? `${parsed.fresh.toLocaleString()} fresh` : undefined;
+      const asOf = typeof parsed.asOf === "string" ? `as of ${parsed.asOf}` : undefined;
+      const warnings = Array.isArray(parsed.warnings) && parsed.warnings.length > 0 ? `${parsed.warnings.length} warning${parsed.warnings.length === 1 ? "" : "s"}` : undefined;
+      return [source, count, fresh, asOf, warnings].filter(Boolean).join(" · ");
+    }
+  } catch {
+    return detail;
+  }
+  return detail;
+}
+
+function readableActivityTag(tag: string): string {
+  if (tag === "notification failed" || tag === "notification disabled") return "webhook off";
+  return tag;
+}
+
 function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
   const feed = snapshot.unifiedFeed ?? [];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -1673,9 +1876,9 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                   {group.companyName && <span>({group.companyName})</span>}
                 </div>
                 <div className="mt-0.5 text-sm">{renderActionTitle(group.title)}</div>
-                <div className="mt-0.5 text-[13px] text-muted">{group.detail}</div>
+                <div className="mt-0.5 text-[13px] text-muted">{readableJsonDetail(group.detail)}</div>
                 <div className="mt-1.5 flex flex-wrap gap-1">
-                  {group.tags.map((t) => (
+                  {Array.from(new Set(group.tags.map(readableActivityTag))).map((t) => (
                     <span key={t} className="rounded bg-surface-3/50 backdrop-blur-md px-1.5 py-0.5 text-[10px] font-semibold uppercase text-faint">{t}</span>
                   ))}
                 </div>
@@ -1696,7 +1899,7 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                     <span className="w-24 shrink-0 text-faint">{new Date(ev.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
                     <div className="flex-1">
                       <div>{renderActionTitle(ev.title)}</div>
-                      <div className="text-[11px] text-faint">{ev.detail}</div>
+                      <div className="text-[11px] text-faint">{readableJsonDetail(ev.detail)}</div>
                     </div>
                   </div>
                 ))}
@@ -1720,7 +1923,7 @@ function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
             <th className="px-2 py-1.5 text-left font-semibold">Time</th>
             <th className="px-2 py-1.5 text-left font-semibold">Status</th>
             <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Paper</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Mock/Local</th>
             <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
             <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
           </tr>
@@ -1852,6 +2055,7 @@ function SettingsContent({
   remainingNotional,
   remainingOrders,
   updatePolicy,
+  openAccounts,
   load
 }: {
   snapshot: DashboardSnapshot;
@@ -1861,36 +2065,67 @@ function SettingsContent({
   remainingNotional: number;
   remainingOrders: number;
   updatePolicy: (patch: PolicyPatch) => void;
+  openAccounts: () => void;
   load: () => Promise<void>;
 }) {
   type Section = "operate" | "keys" | "tax" | "tuning" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [draft, setDraft] = useState("");
+  const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
+  const liveBlockedReason = !policy.accountNumber && !policy.connectedAccountId
+    ? "Connect or select a brokerage account before switching to Live mode."
+    : undefined;
 
   function addAllowlist() {
+    if (draft.trim() === "") return;
     const next = normalizeSymbols([...policy.additionalSymbols, ...draft.split(/[,\s]+/)]);
     setDraft("");
     updatePolicy({ additionalSymbols: next });
   }
 
-  return (
-    <div className="space-y-4">
-      <Tabs
-        value={section}
-        onChange={(v) => setSection(v as Section)}
-        tabs={[
-          { id: "operate", label: "Operate" },
-          { id: "keys", label: "API Keys" },
-          { id: "tax", label: "Tax" },
-          { id: "tuning", label: "Tuning" },
-          { id: "notifications", label: "Notifications" }
-        ]}
-      />
+  function requestModeSwitch() {
+    if (policy.paperMode) {
+      if (liveBlockedReason) {
+        toast.warning(liveBlockedReason, { description: "Live mode should only be enabled from a connected brokerage account." });
+        openAccounts();
+        return;
+      }
+      setLiveConfirmOpen(true);
+      return;
+    }
+    updatePolicy({ paperMode: true });
+  }
 
-      {section === "operate" && (
-        <div className="grid gap-3 sm:grid-cols-2">
+  return (
+    <>
+      <div className="space-y-4">
+        <Tabs
+          value={section}
+          onChange={(v) => setSection(v as Section)}
+          tabs={[
+            { id: "operate", label: "Operate" },
+            { id: "keys", label: "API Keys" },
+            { id: "tax", label: "Tax" },
+            { id: "tuning", label: "Tuning" },
+            { id: "notifications", label: "Notifications" }
+          ]}
+        />
+
+        {section === "operate" && (
+          <div className="grid gap-3 sm:grid-cols-2">
+          <div className={cn("rounded-lg border px-3 py-2 text-[13px] sm:col-span-2", policy.paperMode ? "border-info/25 bg-info/10 text-muted" : "border-down/35 bg-down/10 text-down")}>
+            <div className="mb-1 flex items-center gap-2 font-semibold text-fg">
+              <Shield size={14} />
+              {policy.paperMode ? "Mock/Local mode is active" : "Live mode is active"}
+            </div>
+            <p>
+              {policy.paperMode
+                ? "Mock/Local mode records proposals and simulated fills against local app data without submitting broker orders."
+                : "Live mode can submit real broker orders when an approved or autonomous run executes. Keep account, universe, and risk limits current."}
+            </p>
+          </div>
            <Field label="Base index (optional)">
             <select className={inputClass} value={policy.includedIndices.includes("sp500") ? "sp500" : "none"} onChange={(e) => updatePolicy({ includedIndices: e.target.value === "sp500" ? ["sp500"] : [] })}>
               <option value="none">No index selected</option>
@@ -1944,17 +2179,17 @@ function SettingsContent({
             >
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
-            <Button variant="ghost" onClick={() => updatePolicy({ paperMode: !policy.paperMode })}>
-              {policy.paperMode ? "Switch to Live" : "Switch to Paper"}
+            <Button variant={policy.paperMode ? "danger" : "ghost"} title={liveBlockedReason} onClick={requestModeSwitch}>
+              {policy.paperMode ? "Switch to Live" : "Switch to Mock/Local"}
             </Button>
           </div>
-          {policy.systemState !== "active" && enableBlockedReason && (
-            <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />{enableBlockedReason}</p>
+          {enableBlockedReason && (
+            <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />Setup required: {enableBlockedReason}</p>
           )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {section === "keys" && <ApiKeysSection />}
+        {section === "keys" && <ApiKeysSection />}
 
 
 
@@ -2066,7 +2301,20 @@ function SettingsContent({
           </div>
         </div>
       )}
-    </div>
+      </div>
+      <ConfirmModal
+        open={liveConfirmOpen}
+        onClose={() => setLiveConfirmOpen(false)}
+        onConfirm={() => {
+          setLiveConfirmOpen(false);
+          updatePolicy({ paperMode: false });
+        }}
+        title="Switch to Live mode?"
+        body="Live mode can submit real broker orders when approved proposals or autonomous runs execute. Use Mock/Local mode for local simulation and confirm your account, universe, and risk limits first."
+        confirmLabel="Switch to Live"
+        tone="danger"
+      />
+    </>
   );
 }
 
@@ -2130,7 +2378,7 @@ function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutra
 }
 
 function displayStatus(status: string): string {
-  if (status === "paper") return "PAPER";
+  if (status === "paper") return "MOCK/LOCAL";
   return status.toUpperCase();
 }
 
@@ -2221,6 +2469,8 @@ function formatSources(sourceString: string): string {
           return "FMP";
         case "alpha-vantage":
           return "Alpha Vantage";
+        case "massive-vwap":
+          return "Massive VWAP";
         default:
           return part.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
       }
@@ -2229,7 +2479,7 @@ function formatSources(sourceString: string): string {
 }
 
 function renderActionTitle(title: string) {
-  const match = title.match(/^(Paper\s+)?(buy|sell|bought|sold|buy:|sell:)\b(.*)$/i);
+  const match = title.match(/^((?:Mock\/Local|Paper)\s+)?(buy|sell|bought|sold|buy:|sell:)\b(.*)$/i);
   if (!match) return <span className="font-semibold text-fg">{title}</span>;
   const [, paperPrefix = "", action, rest] = match;
   const cls = /sell|sold/i.test(action) ? "text-down" : "text-up";
@@ -2460,7 +2710,7 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Environment">
             <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-              <option value="paper">Paper (Simulation)</option>
+              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Broker Paper"}</option>
               <option value="live">Live (Real Money)</option>
             </select>
           </Field>

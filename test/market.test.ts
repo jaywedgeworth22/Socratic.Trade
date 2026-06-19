@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEnrichment, hasNotableWebSignal, mergeQuoteData, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, rankMarketQuotes, scoreFactors } from "../src/lib/market";
 import type { SymbolEnrichment } from "../src/lib/data-providers";
 import type { MarketQuote, MarketScan } from "../src/lib/types";
 
@@ -142,6 +142,36 @@ describe("mergeQuoteData", () => {
     });
 
     expect(merged.source).toBe("nasdaq-delayed-screener+alpaca-quotes");
+  });
+});
+
+describe("mergeGroupedBarData", () => {
+  it("adds source-provided VWAP to scan rows and summaries", () => {
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 2,
+      returnedQuotes: 2,
+      topCandidates: [quote({ symbol: "AAPL" }), quote({ symbol: "MSFT" })],
+      sectorBySymbol: {},
+      quotesBySymbol: {
+        AAPL: quote({ symbol: "AAPL" }),
+        MSFT: quote({ symbol: "MSFT" })
+      },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    const merged = mergeGroupedBarData(scan, [
+      { ticker: "AAPL", close: 100, vwap: 98.5 },
+      { ticker: "MSFT", close: 100 }
+    ]);
+
+    expect(merged.source).toBe("nasdaq-delayed-screener+massive-vwap");
+    expect(merged.topCandidates[0]).toMatchObject({ symbol: "AAPL", vwap: 98.5, sources: { vwap: "massive-vwap" } });
+    expect(merged.topCandidates[1].vwap).toBeUndefined();
+    expect(merged.quotesBySymbol.AAPL).toMatchObject({ vwap: 98.5, sources: { vwap: "massive-vwap" } });
   });
 });
 

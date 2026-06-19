@@ -52,6 +52,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
   // Latest close vs the latest bar's VWAP (volume-weighted avg price) — a standard strength tell.
   const [vwapMeta, setVwapMeta] = useState<{ vwap: number; vsPct: number } | null>(null);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("1Y");
+  const [reloadToken, setReloadToken] = useState(0);
 
   const updateTimeframe = (tf: Timeframe, chartToUse?: IChartApi, barsToUse?: ChartBar[]) => {
     setActiveTimeframe(tf);
@@ -99,6 +100,12 @@ export function PriceChart({ symbol }: { symbol: string }) {
       setMeta({ change: first > 0 ? ((last - first) / first) * 100 : undefined, label: "All" });
     }
   };
+
+  useEffect(() => {
+    const onMarketData = () => setReloadToken((token) => token + 1);
+    window.addEventListener("market-data-filled", onMarketData);
+    return () => window.removeEventListener("market-data-filled", onMarketData);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -198,7 +205,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
         }
       }
     };
-  }, [symbol]);
+  }, [symbol, reloadToken]);
 
   return (
     <div className="rounded-xl border border-line p-4">

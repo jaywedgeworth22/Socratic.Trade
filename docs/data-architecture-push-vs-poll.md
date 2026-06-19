@@ -53,6 +53,21 @@ So there are two ways to benefit:
   is usually a ToS/licensing issue (see the market-data sharing guardrails) — relaying *our own
   derived events* (run-complete, a fill) is fine; rebroadcasting raw vendor quotes is not.
 
+### Shared cache fills and pending demand
+
+For public OHLC facts, the app now tracks failed requests in `market_data_demands`.
+If Alice asks for `XYZ` and no shared source can fill it, the miss is recorded for a
+short TTL (`MARKET_DATA_PENDING_TTL_MS`, default 30 min). If Frank later triggers a
+**shared** fill for `XYZ`, the cache now satisfies Alice's old miss on the next
+refresh/retry and emits a `market-data` SSE event so open dashboards retry quickly.
+
+This is deliberately not quota pooling:
+- A shared/env-key/no-key cache fill may satisfy prior pending users.
+- A private user-key fill does **not** satisfy other users unless
+  `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on`.
+- The SSE event does not include the symbol; it tells clients to refresh without
+  leaking another user's watchlist intent.
+
 ### Compute-vs-source principle
 
 Offload a computed metric to a provider **only** when:
@@ -100,7 +115,7 @@ publish), FINRA short-volume (daily file), congress (Apify/eFD scrape), FRED mac
 ### Compute-offload candidates
 | Metric | Verdict | Status |
 |---|---|---|
-| **VWAP** | Source it — already in the Massive payload we fetch, was being dropped | ✅ **Implemented** — captured in `GroupedBar`/`GroupedDailyBar` + per-symbol `OHLCBar.vwap` (`massive.ts`, `history.ts`, `indicators.ts`). Surfacing "price vs VWAP" on the quote/chart is a small follow-up. |
+| **VWAP** | Source it — already in the Massive payload we fetch, was being dropped | ✅ **Implemented** — captured in `GroupedBar`/`GroupedDailyBar` + per-symbol `OHLCBar.vwap` (`massive.ts`, `history.ts`, `indicators.ts`), surfaced on the price chart, and merged into `/api/scan` rows as sortable `vs VWAP` when Massive grouped daily data is available. |
 | **News sentiment** | Prefer real model score over keyword proxy | ✅ **Implemented** — cascade now overrides `scoreHeadlines` with Alpha Vantage's `NEWS_SENTIMENT` model score when present (`data-providers.ts`). |
 | Raw technical indicators (rsi/sma/macd) | Keep ours; add Massive `/v1/indicators/*` as fallback when free-OHLC 429s | Not started (medium). |
 | fcfYield / debtToEquity | In-house primary; FMP/Finnhub `*TTM` as backup when Yahoo inputs missing | Not started (low value). |

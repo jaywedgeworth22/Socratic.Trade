@@ -187,7 +187,7 @@ function executedActionLabel(side?: OrderSide): string {
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
+  return side === "sell" ? "Mock/Local Sell" : side === "buy" ? "Mock/Local Buy" : "Mock/Local Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

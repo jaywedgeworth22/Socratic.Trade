@@ -34,6 +34,17 @@ export function scanSortValue(col: ScanColumn, q: MarketQuote): unknown {
   return col.sortKey ? q[col.sortKey] : undefined;
 }
 
+function vwapDeltaPct(q: MarketQuote): number | undefined {
+  if (typeof q.vwap !== "number" || !Number.isFinite(q.vwap) || q.vwap <= 0) return undefined;
+  return ((q.price - q.vwap) / q.vwap) * 100;
+}
+
+function vwapTitle(q: MarketQuote): string | undefined {
+  const delta = vwapDeltaPct(q);
+  if (typeof delta !== "number") return undefined;
+  return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${cellTitle("VWAP", q.sources?.vwap)}`;
+}
+
 export function freshness(fetchedAt?: string): string {
   if (!fetchedAt) return "never";
   const mins = Math.round((Date.now() - new Date(fetchedAt).getTime()) / 60000);
@@ -64,7 +75,7 @@ export function statusTone(status: string): "up" | "down" | "warn" | "accent" | 
 }
 
 export function displayStatus(status: string): string {
-  if (status === "paper") return "PAPER";
+  if (status === "paper") return "MOCK/LOCAL";
   return status.toUpperCase();
 }
 
@@ -155,6 +166,8 @@ export function formatSources(sourceString: string): string {
           return "FMP";
         case "alpha-vantage":
           return "Alpha Vantage";
+        case "massive-vwap":
+          return "Massive VWAP";
         default:
           return part.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
       }
@@ -163,7 +176,7 @@ export function formatSources(sourceString: string): string {
 }
 
 export function renderActionTitle(title: string) {
-  const match = title.match(/^(Paper\s+)?(buy|sell|bought|sold|buy:|sell:)\b(.*)$/i);
+  const match = title.match(/^((?:Mock\/Local|Paper)\s+)?(buy|sell|bought|sold|buy:|sell:)\b(.*)$/i);
   if (!match) return <span className="font-semibold text-fg">{title}</span>;
   const [, paperPrefix = "", action, rest] = match;
   const cls = /sell|sold/i.test(action) ? "text-down" : "text-up";
@@ -183,6 +196,10 @@ export const SCAN_COLUMNS: ScanColumn[] = [
         render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
       { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
         render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down") },
+      { id: "vsVwap", label: "vs VWAP", title: "Last price vs latest daily VWAP. Source: Massive grouped daily bars when available.", align: "right", sortValue: vwapDeltaPct,
+        render: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? <span className="tnum">{formatPct(v)}</span> : DASH; },
+        cellClass: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+        cellTitle: vwapTitle },
       { id: "volume", label: "Vol", title: "Shares traded today (falls back to the 10-day average when reported after hours). Source: screener / Finnhub.", align: "right", sortKey: "volume",
         render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH) },
       { id: "marketCap", label: "Mkt Cap", title: "Market capitalization = share price × shares outstanding.", align: "right", sortKey: "marketCap",

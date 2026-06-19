@@ -20,6 +20,7 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
+import { llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -99,8 +100,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live", new Date(), userId);
 
-    // In Paper mode, decisions run against the standalone paper account (starting cash +
-    // prior paper fills, marked to live prices) so the simulation evolves like Live.
+    // In Mock/Local mode, decisions run against the standalone local account
+    // (starting cash + prior simulated fills, marked to live prices).
     const currentPrices = currentPricesFromScan(marketScan);
     const account = policy.paperMode
       ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
@@ -239,7 +240,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         await sendNotification(
           {
             type: "fill",
-            title: `${normalizedProposal.symbol} Paper ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
+            title: `${normalizedProposal.symbol} Mock/Local ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
             payload: { runId, proposalId, fill }
           },
           { policy, userId }
@@ -330,19 +331,19 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
     const tradeCount = placed + paperCount + proposed;
-    const tradeNoun = policy.paperMode ? "Paper Trade" : "Trade";
+    const tradeNoun = policy.paperMode ? "Mock/Local Trade" : "Trade";
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
       `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
-      paperCount > 0 ? `Paper: ${paperCount}.` : "",
+      paperCount > 0 ? `Mock/Local: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : ""
     ]
       .filter(Boolean)
       .join(" ");
 
     finishStrategyRun(runId, "completed", summary, userId);
-    // Always snapshot the real account; snapshot the paper account too when in Paper mode.
+    // Always snapshot the real account; snapshot the local simulation too in Mock/Local mode.
     recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
     if (policy.paperMode) {
       const paperProjection = getPaperPortfolioProjection({
@@ -470,7 +471,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
   );
 
-  // In Paper mode, evaluate the approval against the standalone paper account.
+  // In Mock/Local mode, evaluate the approval against the standalone local account.
   const currentPrices = currentPricesFromScan(approvalScan);
   const account = policy.paperMode
     ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
@@ -557,7 +558,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     await sendNotification(
       {
         type: "fill",
-        title: `${proposal.symbol} Paper ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
+        title: `${proposal.symbol} Mock/Local ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
         payload: { proposalId, fill }
       },
       { policy, userId }
@@ -740,8 +741,15 @@ async function proposeTrades(input: {
         harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
       }
     : null;
+  const executionMode = llmExecutionMode(input.policy.paperMode);
+  const executionModeClarification = llmModeClarification(input.policy.paperMode);
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
+    "",
+    "Execution Mode:",
+    `Current executionMode is "${executionMode}".`,
+    executionModeClarification,
+    "Do not call mock/local mode Paper mode. Alpaca Paper is a separate broker-hosted paper account concept.",
     "",
     "Investment Strategy:",
     input.prompt,
@@ -823,6 +831,8 @@ async function proposeTrades(input: {
 
   const userContent = {
     currentDate: new Date().toISOString(),
+    executionMode,
+    executionModeClarification,
     currentMarketRegime,
     portfolio: input.portfolio,
     positions: input.positions,
@@ -942,7 +952,8 @@ async function proposeTrades(input: {
         endpoint: url,
         transport: isChatCompletions ? "chat-completions" : "responses",
         maxProposals,
-        paperMode: input.policy.paperMode,
+        executionMode,
+        internalPaperMode: input.policy.paperMode,
         currentMarketRegime
       },
       tags: ["strategy", "bull-agent"],
@@ -986,6 +997,7 @@ async function proposeTrades(input: {
   const bearSystemPrompt = [
     "You are the Bear Agent (Red Team Risk Manager) for an autonomous trading system.",
     "Your objective is to CRITIQUE the following proposed trades generated by the Bull Agent.",
+    "If executionMode is mock/local, that means the app's local simulator, not Alpaca Paper or any broker-hosted paper trading account.",
     "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
@@ -1044,6 +1056,8 @@ async function proposeTrades(input: {
   );
   const bearUserContent = {
     currentDate: userContent.currentDate,
+    executionMode: userContent.executionMode,
+    executionModeClarification: userContent.executionModeClarification,
     currentMarketRegime: userContent.currentMarketRegime,
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
@@ -1098,7 +1112,8 @@ async function proposeTrades(input: {
         endpoint: url,
         transport: isChatCompletions ? "chat-completions" : "responses",
         reviewedProposalCount: bullProposals.length,
-        paperMode: input.policy.paperMode,
+        executionMode,
+        internalPaperMode: input.policy.paperMode,
         currentMarketRegime
       },
       tags: ["strategy", "bear-agent", "red-team"],

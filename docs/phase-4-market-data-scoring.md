@@ -10,7 +10,7 @@
 ## Provider Shape
 
 - `MarketDataProvider.scan(symbols, positions, options)`: normalized scan output.
-- `MarketQuote` includes provider, freshness, bid, ask, factor breakdown, sector, industry, and score.
+- `MarketQuote` includes provider, freshness, bid, ask, optional source-provided VWAP, factor breakdown, sector, industry, and score.
 - Optional provider data for fundamentals, technicals, and news/sentiment can be added later without changing strategy logic.
 
 ## Scoring Factors
@@ -62,6 +62,17 @@ actual provider to `MarketScan.source` (`alpaca-quotes`, `robinhood-quotes`, or
 public/free and env-key/system-key market data globally, while history fetched
 through a saved user key is private by default unless
 `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is set after entitlement review.
+Failed public OHLC reads now record short-lived `market_data_demands`; if a later
+shared cache fill arrives for the same symbol before `MARKET_DATA_PENDING_TTL_MS`
+expires, prior requesters refresh from cache without spending another user's key.
+Private user-key fills do not fulfill other users' pending misses.
+
+**Massive VWAP surface (2026-06-19):** when Massive grouped daily bars are
+available, `/api/scan` merges source-provided `vw` into scan rows as
+`MarketQuote.vwap` / `MarketQuoteSummary.vwap`, attributes it as
+`massive-vwap`, and the dashboard shows sortable `vs VWAP`. Missing Massive
+keys, weekends/holidays, or plan gaps leave the cell blank instead of
+fabricating a value.
 
 ## Acceptance
 
@@ -71,4 +82,6 @@ through a saved user key is private by default unless
 - Robinhood quote enrichment adds bid/ask where available and does not fail the run when unsupported.
 - Optional unofficial quote enrichment is clearly attributed and disabled by default.
 - Broker quote source attribution reflects the actual provider and does not duplicate repeated merges.
+- Shared OHLC cache fills can satisfy pending public misses without pooling private user keys.
+- Source-provided VWAP is attributed when present and omitted when unavailable.
 - The strategy prompt asks for ask-relative limit prices only when ask data exists.

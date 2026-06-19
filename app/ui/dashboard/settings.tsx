@@ -180,7 +180,7 @@ export function SettingsContent({
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
             <Button variant="ghost" onClick={() => updatePolicy({ paperMode: !policy.paperMode })}>
-              {policy.paperMode ? "Switch to Live" : "Switch to Paper"}
+              {policy.paperMode ? "Switch to Live" : "Switch to Mock/Local"}
             </Button>
           </div>
           {policy.systemState !== "active" && enableBlockedReason && (
@@ -537,7 +537,7 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
           </Field>
           <Field label="Environment">
             <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-              <option value="paper">Paper (Simulation)</option>
+              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Broker Paper"}</option>
               <option value="live">Live (Real Money)</option>
             </select>
           </Field>
@@ -787,4 +787,3 @@ export function StrategyStudio({
     </div>
   );
 }
-

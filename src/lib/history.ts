@@ -10,7 +10,8 @@
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
-import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { fulfillMarketDataDemand, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { emitDashboardEvent } from "./events";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
 import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
@@ -18,6 +19,7 @@ import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
 const KEYED_HISTORY_SERVICES = ["massive", "tradier", "marketstack"] as const;
+type CacheScope = "shared" | "private";
 
 interface YahooChartResponse {
   chart?: {
@@ -59,41 +61,67 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     tradier: resolveApiKeyWithSource("tradier", userId),
     marketstack: resolveApiKeyWithSource("marketstack", userId)
   };
-  const cacheKey = historyCacheKey(symbol, userId, Object.values(keySources).some((source) => source.source === "user"));
-  const hit = cache.get(cacheKey);
-  if (hit && hit.expiresAt > now) return hit.bars;
+  const privateCacheKey = historyCacheKey(symbol, userId, "private");
+  const sharedCacheKey = historyCacheKey(symbol, userId, "shared");
+  const privateHit = cache.get(privateCacheKey);
+  if (privateHit && privateHit.expiresAt > now) return privateHit.bars;
+  const sharedHit = cache.get(sharedCacheKey);
+  if (sharedHit && sharedHit.expiresAt > now) return sharedHit.bars;
 
   const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
-  const sources: Array<() => Promise<OHLCBar[] | null>> = [
-    () => fetchMassive(symbol, startDate, keySources.massive.key),
-    () => fetchTradier(symbol, startDate, keySources.tradier.key),
-    () => fetchMarketstack(symbol, keySources.marketstack.key),
+  const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
+    { scope: cacheScopeForKeySource(keySources.massive.source), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
+    { scope: cacheScopeForKeySource(keySources.tradier.source), fetch: () => fetchTradier(symbol, startDate, keySources.tradier.key) },
+    { scope: cacheScopeForKeySource(keySources.marketstack.source), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
     // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
-    () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year" }),
-    () => fetchYahoo(symbol),
-    () => fetchStooq(symbol)
+    { scope: "private", fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year" }) },
+    { scope: "shared", fetch: () => fetchYahoo(symbol) },
+    { scope: "shared", fetch: () => fetchStooq(symbol) }
   ];
 
-  for (const fetchFrom of sources) {
-    const bars = await fetchFrom();
+  for (const source of sources) {
+    const bars = await source.fetch();
     if (bars && bars.length >= 2) {
-      cache.set(cacheKey, { expiresAt: now + historyTtlMs(), bars });
+      cache.set(source.scope === "private" ? privateCacheKey : sharedCacheKey, { expiresAt: now + historyTtlMs(), bars });
+      if (source.scope === "shared") emitHistoryDemandFilled(symbol, now);
       return bars;
     }
   }
+  recordMarketDataDemand({ kind: "history", symbol, userId, now });
   return null;
 }
 
-function historyCacheKey(symbol: string, userId: string | undefined, hasUserKey: boolean): string {
-  if (hasUserKey && !shareUserKeyedHistory()) return `user:${userId ?? "local"}:${symbol}`;
+function historyCacheKey(symbol: string, userId: string | undefined, scope: CacheScope): string {
+  if (scope === "private") return `user:${userId ?? "local"}:${symbol}`;
   return `shared:${symbol}`;
+}
+
+function cacheScopeForKeySource(source: ApiKeySource): CacheScope {
+  if (source === "user" && !shareUserKeyedHistory()) return "private";
+  return "shared";
 }
 
 function shareUserKeyedHistory(): boolean {
   const value = (process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY ?? "off").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function emitHistoryDemandFilled(symbol: string, now: number): void {
+  const fill = fulfillMarketDataDemand({ kind: "history", symbol, now });
+  if (!fill) return;
+  emitDashboardEvent({
+    type: "market-data",
+    at: new Date(now).toISOString(),
+    detail: {
+      kind: fill.kind,
+      cacheScope: "shared",
+      pendingUserCount: fill.pendingUserCount,
+      oldestRequestedAt: fill.oldestRequestedAt,
+      latestRequestedAt: fill.latestRequestedAt
+    }
+  });
 }
 
 interface MassiveAggBar { t?: number; o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number }

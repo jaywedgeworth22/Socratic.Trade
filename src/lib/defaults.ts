@@ -29,13 +29,13 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 };
 
 export const DEFAULT_POLICY: TradingPolicy = {
-  systemState: "active",
+  systemState: "halted",
   paperMode: true,
   paperStartingCash: 10000,
   includedIndices: [],
   additionalSymbols: [],
   blocklist: [],
-  strategyAuthority: "decide",
+  strategyAuthority: "propose",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,

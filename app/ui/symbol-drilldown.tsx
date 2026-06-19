@@ -18,24 +18,24 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
     const pros = [];
     const cons = [];
     
-    if (q.score > 0.6) pros.push("Strong overall algorithmic conviction.");
-    else if (q.score < -0.3) cons.push("Poor overall algorithmic conviction.");
+    if (q.score >= 70) pros.push("Strong overall composite score.");
+    else if (q.score <= 35) cons.push("Weak overall composite score.");
     
     if (q.peRatio && q.peRatio > 0 && q.peRatio < 15) pros.push("Attractive P/E valuation.");
     if (q.peRatio && q.peRatio > 50) cons.push("Elevated P/E valuation implies high growth expectations.");
     
-    if (q.sentiment && q.sentiment > 0.5) pros.push("Positive news sentiment detected.");
-    else if (q.sentiment && q.sentiment < -0.5) cons.push("Negative news sentiment detected.");
+    if (typeof q.sentiment === "number" && q.sentiment >= 60) pros.push("Positive news sentiment detected.");
+    else if (typeof q.sentiment === "number" && q.sentiment <= 40) cons.push("Negative news sentiment detected.");
     
-    if (q.insiderSentiment && q.insiderSentiment > 0.3) pros.push("Bullish insider transaction activity.");
-    else if (q.insiderSentiment && q.insiderSentiment < -0.3) cons.push("Bearish insider transaction activity.");
+    if (typeof q.insiderSentiment === "number" && q.insiderSentiment >= 60) pros.push("Bullish insider transaction activity.");
+    else if (typeof q.insiderSentiment === "number" && q.insiderSentiment <= 40) cons.push("Bearish insider transaction activity.");
     
     if (q.senateTrades && q.senateTrades > 0) pros.push("Net positive congressional buying.");
     else if (q.senateTrades && q.senateTrades < 0) cons.push("Net negative congressional selling.");
 
-    if (q.factorBreakdown?.momentum && q.factorBreakdown.momentum > 0.1) pros.push("Strong relative momentum.");
-    if (q.factorBreakdown?.quality && q.factorBreakdown.quality > 0.1) pros.push("High quality fundamentals (FCF/Debt/Growth).");
-    if (q.factorBreakdown?.value && q.factorBreakdown.value < -0.1) cons.push("Extended fundamental valuation.");
+    if (typeof q.factorBreakdown?.momentum === "number" && q.factorBreakdown.momentum >= 65) pros.push("Strong relative momentum.");
+    if (typeof q.factorBreakdown?.quality === "number" && q.factorBreakdown.quality >= 65) pros.push("High quality fundamentals (FCF/Debt/Growth).");
+    if (typeof q.factorBreakdown?.value === "number" && q.factorBreakdown.value <= 35) cons.push("Extended fundamental valuation.");
 
     // Backend-derived ratios as plain-language conviction signals.
     const m = deriveMetrics(q);
@@ -122,7 +122,7 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
 
       {/* Why this matters */}
       <div className="rounded-xl border border-line bg-surface/50 p-4 backdrop-blur-md">
-        <h3 className="mb-3 flex items-center gap-2 font-semibold text-fg"><BrainCircuit size={16} className="text-info" /> AI Conviction Summary</h3>
+        <h3 className="mb-3 flex items-center gap-2 font-semibold text-fg"><BrainCircuit size={16} className="text-info" /> Signal Summary</h3>
         {pros.length === 0 && cons.length === 0 ? (
           <p className="text-faint">Insufficient edge signals to form a strong fundamental narrative.</p>
         ) : (

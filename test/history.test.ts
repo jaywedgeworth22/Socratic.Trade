@@ -4,13 +4,15 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { clearHistoryCache, fetchDailyOHLC, parseStooqCsv, toBusinessDay } from "../src/lib/history";
 import { clearMassiveRestBudgetForTests } from "../src/lib/market-signals/massive";
-import { upsertUserApiKey } from "../src/lib/db";
+import { clearMarketDataDemandsForTests, upsertUserApiKey } from "../src/lib/db";
+import { subscribeDashboardEvents, type DashboardEvent } from "../src/lib/events";
 
 const historyTestDb = `file:${join(tmpdir(), `agentic-history-cache-test-${randomUUID()}.db`)}`;
 
 beforeEach(() => {
   process.env.DATABASE_URL = historyTestDb;
   clearHistoryCache();
+  clearMarketDataDemandsForTests();
   clearMassiveRestBudgetForTests();
   // Keep the cascade on the (mocked) free sources — keyed providers are skipped without keys.
   delete process.env.MASSIVE_API_KEY;
@@ -200,6 +202,56 @@ describe("fetchDailyOHLC", () => {
     expect(second).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer user-a-tradier-key" });
+  });
+
+  it("fulfills old shared history misses when a later shared cache fill succeeds", async () => {
+    const events: DashboardEvent[] = [];
+    const unsubscribe = subscribeDashboardEvents((event) => events.push(event));
+    const now = Date.UTC(2026, 5, 18);
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 404 }));
+
+    await expect(fetchDailyOHLC("XYZ", now, `alice-${randomUUID()}`)).resolves.toBeNull();
+
+    process.env.TRADIER_API_KEY = "env-tradier-key";
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const bars = await fetchDailyOHLC("XYZ", now + 120_000, `frank-${randomUUID()}`);
+    unsubscribe();
+
+    expect(bars).not.toBeNull();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "market-data",
+        detail: expect.objectContaining({ kind: "history", cacheScope: "shared", pendingUserCount: 1 })
+      })
+    );
+  });
+
+  it("does not fulfill old shared history misses from private user-key fills", async () => {
+    const events: DashboardEvent[] = [];
+    const unsubscribe = subscribeDashboardEvents((event) => events.push(event));
+    const now = Date.UTC(2026, 5, 18);
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 404 }));
+
+    await expect(fetchDailyOHLC("XYZ", now, `alice-${randomUUID()}`)).resolves.toBeNull();
+
+    const frank = `frank-${randomUUID()}`;
+    upsertUserApiKey(frank, "tradier", "frank-tradier-key");
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const bars = await fetchDailyOHLC("XYZ", now + 120_000, frank);
+    unsubscribe();
+
+    expect(bars).not.toBeNull();
+    expect(events.filter((event) => event.type === "market-data")).toHaveLength(0);
   });
 
   it("falls back to Stooq when Yahoo yields nothing", async () => {

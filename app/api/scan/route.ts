@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getPolicy } from "@/lib/db";
-import { mergeQuoteData, scanMarket } from "@/lib/market";
+import { mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
 import { getBrokerGateway } from "@/lib/broker";
+import { fetchRecentGroupedBarsRest } from "@/lib/market-signals/massive";
 import { resolveRequestUserId } from "@/lib/request-user";
 import type { EquityPosition } from "@/lib/types";
 
@@ -36,6 +37,14 @@ export async function GET(request: Request) {
         scan = mergeQuoteData(base, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
       } catch {
         scan = base;
+      }
+    }
+    if (scan.topCandidates.length > 0) {
+      try {
+        const grouped = await fetchRecentGroupedBarsRest(Date.now(), userId);
+        if (grouped) scan = mergeGroupedBarData(scan, grouped.bars);
+      } catch {
+        // VWAP is additive only; keep the scan available when the grouped feed is absent.
       }
     }
     return NextResponse.json(scan);

@@ -6,9 +6,11 @@
 > bottom drawer are replaced by: a slim command bar, a persistent Portfolio rail
 > + a tabbed workspace (Decision / Market Scan / Performance / Strategy), feeds
 > in a right slide-over, and modal Settings / Strategy Studio, plus a ⌘K command
-> palette and a Recharts learning-loop visualization (P&L by thesis/regime).
+> palette and learning-loop visualizations (P&L by thesis/regime).
 > A 2026-06-18 glassmorphism pass then changed the visual treatment without
-> changing the core information architecture. See
+> changing the core information architecture. A 2026-06-19 stability pass replaced
+> the dashboard's Recharts wrappers with SSR-safe SVG/CSS chart primitives so
+> `next dev` can stream `/` reliably after builds. See
 > `docs/rollouts/2026-06-16-ui-redesign-tailwind.md` and
 > `docs/rollouts/2026-06-18-glassmorphism-ui.md`. The sections below describe
 > the prior panel-based cockpit and current semantics that still matter.
@@ -16,13 +18,16 @@
 
 This phase restructures the dashboard from a long vertical page into a
 single-screen trading cockpit. The goal is to make the app usable during active
-paper/live supervision without requiring page-level scrolling on a desktop
+mock/local vs live supervision without requiring page-level scrolling on a desktop
 screen.
 
 ## Layout Model
 
 - The desktop app shell uses `height: 100dvh` and three fixed rows: command bar,
   main cockpit, and bottom drawer.
+- As of 2026-06-19, the fixed-height cockpit shell is desktop-only (`xl+`).
+  Mobile/tablet use `min-height: 100dvh`, normal page scrolling, wrapping
+  command-bar actions, and a compact portfolio summary above the workspace.
 - The main cockpit has three regions: left rail, center workspace, and right
   inspector.
 - Page-level scrolling is intentionally disabled on desktop. Long content
@@ -66,7 +71,7 @@ review gate is unsafe for an agentic trading tool.
 
 - active policy and prompt
 - recent strategy runs
-- recent fills in the active paper/live mode
+- recent fills in the active mock/local or live mode
 - current performance summary
 - latest market scan and proposal summary when available
 - macro context from `src/lib/macro.ts`
@@ -84,6 +89,8 @@ did not match the real command-bar height and floated over content; bottom-right
 anchoring is stable regardless of how the header grid wraps or the body `zoom`.
 Result/success toasts auto-dismiss after a few seconds; error toasts persist
 until dismissed. Each toast carries an icon and an accessible dismiss button.
+Setup-blocked actions route to the next setup surface instead of failing
+silently: account blockers open Accounts, universe blockers open Settings.
 
 ## Accessibility
 
@@ -99,6 +106,8 @@ until dismissed. Each toast carries an icon and an accessible dismiss button.
   `aria-haspopup`/`aria-expanded` and closes on Escape.
 - A global `:focus-visible` outline makes keyboard focus visible, and
   activity-feed detail rows expand on focus rather than hover-only.
+- Small helper text and table-label contrast must meet normal-text readability
+  because `text-faint` is used for real labels, not only decorative marks.
 
 ## Styling Conventions
 
@@ -114,14 +123,21 @@ across panels, feeds, popovers, or status chips.
   `Negative` with the numeric score.
 - Up/down arrows are avoided for sentiment because they look like price
   direction or a buy/sell signal.
-- Top status values are kept visible in the command bar: mode, portfolio,
-  buying power, autonomy, daily risk, and allowed universe.
+- Top status values are kept visible in the command bar: Mock/Local/Live mode,
+  autonomy/setup state, market session, daily risk, and allowed universe.
+- The dashboard must never show `Autonomy On` when required setup is missing.
+  Render `Setup Needed`, block Run/Resume, and route the user to Accounts or
+  Settings.
+- Switching from Mock/Local to Live requires explicit confirmation and a visible
+  warning that live mode can submit real broker orders.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
   incomplete account list does not strand the user away from Settings.
 - Symbol drilldown factor values are normalized 0-100 **factor scores**, not
   signed contribution deltas. Avoid labeling that panel as a waterfall unless
   the UI is changed to show actual weighted contributions around a baseline.
+- Symbol drilldown summary thresholds must use the same 0-100 scale; avoid
+  calling weak evidence "AI conviction."
 
 ## Verification Expectations
 

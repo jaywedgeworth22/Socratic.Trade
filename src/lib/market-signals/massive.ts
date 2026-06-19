@@ -29,7 +29,9 @@ interface GroupedResponse { status?: string; results?: GroupedBar[] }
 const numOrUndef = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const DEFAULT_REST_MAX_CALLS_PER_MINUTE = 5;
 const DEFAULT_NEWS_TTL_MS = 30 * 60_000;
+const GROUPED_BARS_TTL_MS = 30 * 60_000;
 const restCallTimestamps: number[] = [];
+const groupedBarsCache = new Map<string, { expiresAt: number; data: GroupedDailyBar[] }>();
 
 function numericEnv(name: string, fallback: number, min = 0): number {
   const parsed = Number(process.env[name] ?? fallback);
@@ -52,6 +54,7 @@ export function reserveMassiveRestCall(now: number = Date.now()): boolean {
 
 export function clearMassiveRestBudgetForTests(): void {
   restCallTimestamps.length = 0;
+  groupedBarsCache.clear();
   breadthCache.expiresAt = 0;
   breadthCache.data = undefined;
   newsCache.clear();
@@ -67,6 +70,10 @@ export interface GroupedDailyBar { ticker: string; open?: number; high?: number;
 export async function fetchGroupedBarsRest(date: string, userId?: string): Promise<GroupedDailyBar[] | null> {
   const key = resolveApiKey("massive", userId);
   if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const cacheKey = `${userId ?? "local"}:${date}`;
+  const cached = groupedBarsCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.data;
   if (!reserveMassiveRestCall()) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -83,11 +90,25 @@ export async function fetchGroupedBarsRest(date: string, userId?: string): Promi
         bars.push({ ticker: r.T, open: numOrUndef(r.o), high: numOrUndef(r.h), low: numOrUndef(r.l), close: r.c, volume: numOrUndef(r.v), vwap: numOrUndef(r.vw) });
       }
     }
-    return bars.length > 0 ? bars : null;
+    if (bars.length === 0) return null;
+    groupedBarsCache.set(cacheKey, { expiresAt: now + GROUPED_BARS_TTL_MS, data: bars });
+    return bars;
   } catch {
     clearTimeout(timeout);
     return null;
   }
+}
+
+export async function fetchRecentGroupedBarsRest(
+  now: number = Date.now(),
+  userId?: string,
+  maxDateProbes = Math.floor(numericEnv("MASSIVE_GROUPED_MAX_DATE_PROBES", 5, 1))
+): Promise<{ date: string; bars: GroupedDailyBar[] } | null> {
+  for (const date of recentDates(maxDateProbes, now)) {
+    const bars = await fetchGroupedBarsRest(date, userId);
+    if (bars && bars.length > 0) return { date, bars };
+  }
+  return null;
 }
 
 export interface MarketNewsItem {

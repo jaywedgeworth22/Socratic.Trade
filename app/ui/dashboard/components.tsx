@@ -23,8 +23,9 @@ import {
     StatTile,
     inputClass
 } from "../../ui/primitives";
+import { AllocationDonut, EquityCurve, ScorecardBars } from "../charts";
 import { resolveScanQuote } from "./utils";
-import dynamic from "next/dynamic";
+export { AllocationDonut, EquityCurve, ScorecardBars };
 
 export function StatusPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
@@ -280,7 +281,7 @@ export function PortfolioRail({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Paper account" : "Live account"} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
@@ -322,7 +323,4 @@ export function PortfolioRail({
   );
 }
 
-export const AllocationDonut = dynamic(() => import("../charts").then((m) => m.AllocationDonut), { ssr: false });
-export const EquityCurve = dynamic(() => import("../charts").then((m) => m.EquityCurve), { ssr: false });
-export const ScorecardBars = dynamic(() => import("../charts").then((m) => m.ScorecardBars), { ssr: false });
 export const DASH = <span className="text-faint">—</span>;

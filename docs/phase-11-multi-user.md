@@ -42,6 +42,12 @@ auth. A real login/identity layer is the last milestone.
   user key is private unless `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is set.
   Broker quote attribution also derives the actual provider (`alpaca-quotes`,
   `robinhood-quotes`, etc.) instead of hardcoding one broker in `MarketScan.source`.
+- Public OHLC misses now write durable `market_data_demands` rows. If a later
+  shared cache fill gets the same symbol before `MARKET_DATA_PENDING_TTL_MS`
+  expires, the pending rows are marked fulfilled and open dashboards receive a
+  `market-data` SSE refresh. This back-populates only from shared facts: env-key,
+  no-key/free, or explicitly opted-in user-keyed history. A private user-key fill
+  does not satisfy another user's pending demand.
 
 ## Milestones
 
@@ -116,6 +122,11 @@ Current market-data rule:
 - **Opt-in shared:** user-keyed non-personal OHLC facts may enter the shared cache only
   with `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on`, after the operator has confirmed
   entitlement/data-sharing policy for that deployment.
+- **Pending demand:** a failed public OHLC request records that a user wanted the
+  symbol, but it does not spend another user's key. A later shared cache fill can
+  satisfy the old miss; a private user-key fill cannot. Events intentionally carry
+  only fill metadata/counts, not the symbol, to avoid leaking watchlist intent over
+  the shared SSE stream.
 
 ### M5 `[done]` Concurrent per-user execution
 The background scheduler `src/lib/scheduler.ts` iterates over all active users and triggers `runStrategyOnce(userId)`. It runs concurrently with a bounded limit (e.g. `MAX_CONCURRENCY = 3`) to balance API rate limits with overall throughput, collecting due users and racing promises.

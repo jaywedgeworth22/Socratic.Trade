@@ -6,6 +6,7 @@ import {
   listStrategyRuns,
   resolveApiKey
 } from "./db";
+import { llmExecutionMode, llmFillSource, llmModeClarification } from "./execution-mode";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { getClosedLotCount, getPerformanceSummary, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
@@ -68,9 +69,11 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, policy.paperMode ? "paper" : "live", userId) : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
   const runs = listStrategyRuns(10, userId);
+  const executionMode = llmExecutionMode(policy.paperMode);
   const context = {
     currentDate: new Date().toISOString(),
-    activeMode: policy.paperMode ? "paper" : "live",
+    activeMode: executionMode,
+    activeModeClarification: llmModeClarification(policy.paperMode),
     accountConfigured: Boolean(accountNumber),
     policy: compactPolicy(policy),
     strategyPrompt: prompt,
@@ -83,7 +86,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
       status: run.status,
       totalCount: run.totalCount,
       placedCount: run.placedCount,
-      paperCount: run.paperCount,
+      mockLocalCount: run.paperCount,
       proposedCount: run.proposedCount,
       blockedCount: run.blockedCount,
       summary: run.summary
@@ -134,7 +137,8 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
 function compactPolicy(policy: TradingPolicy) {
   return {
     systemState: policy.systemState,
-    paperMode: policy.paperMode,
+    executionMode: llmExecutionMode(policy.paperMode),
+    executionModeClarification: llmModeClarification(policy.paperMode),
     includedIndices: policy.includedIndices,
     allowedCount: policy.includedIndices.length > 0 ? "index_based" : policy.additionalSymbols.length,
     strategyAuthority: policy.strategyAuthority,
@@ -166,7 +170,7 @@ function compactPerformance(performance: PerformanceSummary | undefined, paperMo
 function compactFill(fill: FillEvent) {
   return {
     filledAt: fill.filledAt,
-    source: fill.source,
+    source: llmFillSource(fill.source),
     symbol: fill.symbol,
     side: fill.side,
     quantity: fill.quantity,
@@ -208,7 +212,8 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
   const schema = tuningSchema();
   const systemPrompt = [
     "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
-    "Review recent paper/live performance, latest market scan context, macro context, current risk policy, scoring weights, and the current strategy prompt.",
+    "Review recent mock/local vs live performance, latest market scan context, macro context, current risk policy, scoring weights, and the current strategy prompt.",
+    "mock/local is the app's local simulator backed by local account state and simulated fills. It is not Alpaca Paper or any broker-hosted paper trading account.",
     "Suggest conservative improvements that can be manually reviewed before being applied.",
     "Do not propose placing trades. Do not remove explicit safety controls.",
     `Sample-size guardrail: only propose scoringWeights (factor weight) changes when closedLotCount >= minClosedLotsForWeightShift (${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots). Below that the realized sample is too thin to attribute P&L to factors — set EVERY scoringWeights field to null and instead focus on prompt clarity and risk sizing, noting the small sample in cautions.`,
@@ -460,7 +465,7 @@ function localRulesProposal(input: {
 
   return {
     summary: lowSample
-      ? "Collect more paper-trading evidence, but add an explicit learning loop to the prompt now."
+      ? "Collect more mock/local evidence, but add an explicit learning loop to the prompt now."
       : weakPerformance
         ? "Recent average return is negative; tighten order size and require higher-quality signals."
         : "Recent performance is not flashing a drawdown warning; improve the prompt feedback loop and keep risk steady.",
@@ -489,7 +494,7 @@ function localRulesProposal(input: {
     cautions: [
       "Manual approval is required before changes are applied.",
       enoughLotsForWeights
-        ? "Validate with another paper run after applying changes."
+        ? "Validate with another mock/local run after applying changes."
         : `Only ${input.closedLotCount}/${minLotsForWeights} closed lots — withholding factor-weight changes until the realized sample is large enough to trust.`,
       ...(lowSample ? ["The trade sample is still small, so avoid overfitting."] : [])
     ],

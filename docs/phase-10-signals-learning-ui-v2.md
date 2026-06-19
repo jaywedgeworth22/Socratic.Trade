@@ -3,7 +3,7 @@
 Forward plan consolidating every still-unimplemented idea, recommendation, and
 consideration from this work stream — the Codex "Stronger Trading Signals And
 Learning Loop" plan, the Codex optimization pass, the Codex review, and Claude's
-brainstorms. Paper mode remains the default; **no live-trading behavior changes**.
+brainstorms. Mock/Local mode remains the default; **no live-trading behavior changes**.
 
 ## Status legend
 `[done]` shipped · `[todo]` not started · `[partial]` partly done.
@@ -147,17 +147,21 @@ Codex: "symbol drilldown drawer … learning matrix."
 
 - **E1 `[partial]` Symbol drilldown drawer.** Click a scan row opens a drawer with
   normalized 0-100 factor scores, provenance mappings, derived-metric tiles, and an
-  AI conviction summary. Still missing: true weighted contribution/waterfall math,
+  Signal Summary that uses 0-100 score/sentiment/factor thresholds instead of
+  fractional cutoffs. Still missing: true weighted contribution/waterfall math,
   raw evidence links, and fuller freshness details.
 - **E2 `[partial]` Learning-matrix UI.** The UI has learning-loop charts by
   thesis/regime, but not the full thesis×regime grid with raw vs shrunk stats,
   sample-size gates, signal-efficacy, confidence-calibration, and FINRA short-pressure
   surfaced to humans.
-- **E3 `[partial]` Polish & customizability.** Macro tab and symbol price chart are
-  live; still open: sparklines in the scan, saved column presets + density toggle,
-  a holding-horizon chip near the strategy status, extend received-time tooltips to
-  the Decision/Tax chips and portfolio rail, and a styleable touch-friendly tooltip
-  component to replace native `title`.
+- **E3 `[partial]` Polish & customizability.** Macro tab, symbol price chart
+  with VWAP overlay, Market Scan `vs VWAP`, first-run setup state, actionable
+  Market Scan empty states, readable activity summaries, Mock/Local/Live mode
+  legibility, and mobile scroll recovery are live. Still open: sparklines in
+  the scan, saved column presets + density toggle, a holding-horizon chip near
+  the strategy status, extend received-time tooltips to the Decision/Tax chips
+  and portfolio rail, and a styleable touch-friendly tooltip component to
+  replace native `title`.
 - **E4 `[partial]` Expose scoring thresholds as settings.** Settings -> Tuning now
   exposes `policy.tuning.redTeamConvictionThreshold` (default behavior remains 80)
   so the Red Team review trigger is no longer hard-coded. Still open: FCF/D-E/EPS

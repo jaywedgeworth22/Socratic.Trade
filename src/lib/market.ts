@@ -1,4 +1,5 @@
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
+import type { GroupedDailyBar } from "./market-signals/massive";
 import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
 import type { SymbolWebSignal } from "./web-sources";
 
@@ -303,6 +304,34 @@ export function mergeQuoteData(
     source: brokerQuoteSource(scan.source, quoteData),
     topCandidates,
     quotesBySymbol: quoteMap
+  };
+}
+
+export function mergeGroupedBarData(scan: MarketScan, bars: GroupedDailyBar[], provider = "massive-vwap"): MarketScan {
+  const bySymbol = new Map(bars.map((bar) => [normalizeSymbol(bar.ticker), bar]));
+  let applied = false;
+
+  const withVwap = <T extends MarketQuote | MarketQuoteSummary>(quote: T): T => {
+    const bar = bySymbol.get(quote.symbol);
+    const vwap = positiveNumber(bar?.vwap);
+    if (!vwap) return quote;
+    applied = true;
+    return {
+      ...quote,
+      vwap,
+      sources: { ...(quote.sources ?? {}), vwap: provider }
+    };
+  };
+  const topCandidates = scan.topCandidates.map(withVwap);
+  const quotesBySymbol = Object.fromEntries(
+    Object.entries(scan.quotesBySymbol).map(([symbol, quote]) => [symbol, withVwap(quote)] as const)
+  );
+
+  return {
+    ...scan,
+    source: applied ? appendUniqueSources(scan.source, [provider]) : scan.source,
+    topCandidates,
+    quotesBySymbol
   };
 }
 

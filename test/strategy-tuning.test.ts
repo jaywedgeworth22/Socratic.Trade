@@ -42,7 +42,7 @@ describe("proposeStrategyTuning", () => {
     const proposal = await proposeStrategyTuning();
 
     expect(proposal.generatedBy).toBe("local_rules");
-    expect(proposal.summary).toContain("Collect more paper-trading evidence");
+    expect(proposal.summary).toContain("Collect more mock/local evidence");
     expect(proposal.proposedPatch.prompt).toContain("LEARNING LOOP");
     expect(proposal.cautions.join(" ")).toContain("Manual approval");
     expect(getStrategyPrompt()).toBe("BASE STRATEGY");
@@ -92,49 +92,61 @@ describe("proposeStrategyTuning", () => {
       insertFillEvent({ accountNumber: "TUNE-LLM", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 110, notional: 110, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(n / 60) }:${String(n++ % 60).padStart(2, "0")}.000Z` });
     }
 
-    vi.stubGlobal("fetch", async () => new Response(
-      JSON.stringify({
-        output_text: JSON.stringify({
-          summary: "Tune conservatively",
-          rationale: "Recent paper performance supports modest tuning.",
-          marketContext: "Macro is stable.",
-          performanceReadout: "Win rate is acceptable.",
-          proposedPrompt: "UPDATED PROMPT",
-          scoringWeights: {
-            liquidity: 1.7,
-            momentum: null,
-            value: null,
-            quality: 1.1,
-            volatility: null,
-            sentiment: 0.8,
-            diversification: null
-          },
-          policy: {
-            maxOrderNotional: 15,
-            maxDailyNotional: null,
-            maxSymbolExposurePct: null,
-            maxDailyOrders: null,
-            maxProposalsPerRun: null,
-            runCadenceMinutes: null,
-            universe: null,
-            strategyAuthority: "propose",
-            runDuringExtendedHours: false
-          },
-          riskRules: {
-            stopLossPct: 5,
-            takeProfitPct: null,
-            trailingStopPct: null
-          },
-          cautions: ["Review before applying."],
-          confidenceScore: 130
-        })
-      }),
-      { status: 200, headers: { "content-type": "application/json" } }
-    ));
+    let sawMockLocalContext = false;
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const context = JSON.parse(body.input.find((item: any) => item.role === "user")?.content ?? "{}");
+      expect(context.activeMode).toBe("mock/local");
+      expect(context.activeModeClarification).toContain("not Alpaca Paper");
+      expect(context.policy.executionMode).toBe("mock/local");
+      expect(context.policy.paperMode).toBeUndefined();
+      expect(context.recentFills[0]?.source).toBe("mock/local");
+      sawMockLocalContext = true;
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            summary: "Tune conservatively",
+            rationale: "Recent mock/local performance supports modest tuning.",
+            marketContext: "Macro is stable.",
+            performanceReadout: "Win rate is acceptable.",
+            proposedPrompt: "UPDATED PROMPT",
+            scoringWeights: {
+              liquidity: 1.7,
+              momentum: null,
+              value: null,
+              quality: 1.1,
+              volatility: null,
+              sentiment: 0.8,
+              diversification: null
+            },
+            policy: {
+              maxOrderNotional: 15,
+              maxDailyNotional: null,
+              maxSymbolExposurePct: null,
+              maxDailyOrders: null,
+              maxProposalsPerRun: null,
+              runCadenceMinutes: null,
+              universe: null,
+              strategyAuthority: "propose",
+              runDuringExtendedHours: false
+            },
+            riskRules: {
+              stopLossPct: 5,
+              takeProfitPct: null,
+              trailingStopPct: null
+            },
+            cautions: ["Review before applying."],
+            confidenceScore: 130
+          })
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
 
     const proposal = await proposeStrategyTuning();
 
     expect(proposal.generatedBy).toBe("llm");
+    expect(sawMockLocalContext).toBe(true);
     expect(proposal.confidenceScore).toBe(100);
     expect(proposal.proposedPatch).toEqual({
       prompt: "UPDATED PROMPT",

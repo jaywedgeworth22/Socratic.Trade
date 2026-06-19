@@ -132,7 +132,7 @@ function formatAuditEvent(
           : `${titlePrefix} ${capitalize(result)}`;
     const detail =
       joinDetail([
-        result === "paper" ? "Paper mode" : undefined,
+        result === "paper" ? "Mock/Local mode" : undefined,
         result === "placed" ? "Order placed" : undefined,
         stringValue(payload.orderId) ? `Order ${stringValue(payload.orderId)}` : undefined,
         firstReason(payload)
@@ -476,7 +476,7 @@ export function buildUnifiedFeed(input: {
       id: fill.id,
       createdAt: fill.filledAt,
       type: "fill",
-      title: `${fill.source === "paper" ? "Paper " : ""}${fill.side.toUpperCase()} ${fill.symbol}`,
+      title: `${fill.source === "paper" ? "Mock/Local " : ""}${fill.side.toUpperCase()} ${fill.symbol}`,
       detail: `${formattedQty} shares @ ${trimCurrency(fill.price)} · ${fill.status}`,
       status: fill.status,
       raw: fill.raw
@@ -595,13 +595,16 @@ export function buildUnifiedFeed(input: {
         status = "pending";
       }
 
-      const isPaper = events.some(ev => ev.title.startsWith("Paper ") || ev.title.includes("Paper") || (ev.type === "fill" && ev.title.startsWith("Paper")));
+      const isPaper = events.some(ev => ev.title.startsWith("Mock/Local ") || ev.title.startsWith("Paper ") || ev.title.includes("Mock/Local") || ev.title.includes("Paper") || (ev.type === "fill" && (ev.title.startsWith("Mock/Local") || ev.title.startsWith("Paper"))));
 
       if (isPaper) {
         for (const ev of events) {
+          if (ev.title.startsWith("Paper ")) {
+            ev.title = `Mock/Local ${ev.title.slice("Paper ".length)}`;
+          }
           const matchesAction = ev.title.match(/^(buy|sell|bought|sold|buy:|sell:)/i);
-          if (matchesAction && !ev.title.startsWith("Paper ")) {
-            ev.title = `Paper ${ev.title}`;
+          if (matchesAction && !ev.title.startsWith("Mock/Local ") && !ev.title.startsWith("Paper ")) {
+            ev.title = `Mock/Local ${ev.title}`;
           }
         }
       }
@@ -609,7 +612,7 @@ export function buildUnifiedFeed(input: {
       // Group title mirrors the broker-style fill/order title casing (uppercase side),
       // distinct from the title-case used by individual notification/audit sub-events.
       const displaySide = side === "buy" ? "BUY" : side === "sell" ? "SELL" : "Trade";
-      title = `${isPaper ? "Paper " : ""}${displaySide} ${symbol}`;
+      title = `${isPaper ? "Mock/Local " : ""}${displaySide} ${symbol}`;
 
       if (status === "filled") {
 
@@ -697,4 +700,3 @@ function getProposalIdFromNotification(event: NotificationEvent): string | undef
     stringValue(proposal.proposalId)
   );
 }
-

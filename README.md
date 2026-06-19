@@ -95,6 +95,7 @@ MARKET_SCAN_LIMIT=30
 MARKET_SCAN_CACHE_TTL_MS=300000
 MARKET_SCAN_EVENT_RESERVE=8
 HISTORY_TTL_MS=1800000
+MARKET_DATA_PENDING_TTL_MS=1800000 # how long an unfilled public OHLC request waits for a later shared cache fill
 MARKET_DATA_SHARE_USER_KEYED_HISTORY=off # env-key/free OHLC is shared; user-keyed OHLC stays private unless set on
 
 # Optional: fundamentals + analyst enrichment (Finnhub).

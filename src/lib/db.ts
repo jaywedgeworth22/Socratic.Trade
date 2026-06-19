@@ -204,6 +204,21 @@ function migrate(database: Database.Database): void {
       last_audit_id TEXT,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS market_data_demands (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      last_requested_at TEXT NOT NULL,
+      fulfilled_at TEXT,
+      expires_at TEXT NOT NULL,
+      UNIQUE(kind, symbol, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_market_data_demands_pending ON market_data_demands (kind, symbol, status, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_market_data_demands_user ON market_data_demands (user_id, status, expires_at);
   `);
 
   // Migrate tables to include user_id
@@ -325,6 +340,112 @@ export function setInternalSetting(key: string, value: unknown): void {
 
 export function deleteInternalSetting(key: string): void {
   getDb().prepare("DELETE FROM settings WHERE key = ?").run(key);
+}
+
+export type MarketDataDemandKind = "history";
+
+export interface MarketDataDemandFill {
+  kind: MarketDataDemandKind;
+  symbol: string;
+  pendingUserCount: number;
+  oldestRequestedAt: string;
+  latestRequestedAt: string;
+  fulfilledAt: string;
+}
+
+function marketDataDemandTtlMs(): number {
+  const parsed = Number(process.env.MARKET_DATA_PENDING_TTL_MS ?? 30 * 60_000);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 60_000;
+}
+
+function normalizeDemandSymbol(symbol: string): string {
+  return symbol.trim().toUpperCase();
+}
+
+function isoFromNow(now: number | string | Date): string {
+  if (typeof now === "string") return now;
+  return new Date(now).toISOString();
+}
+
+function pruneExpiredMarketDataDemands(nowIso: string): void {
+  getDb()
+    .prepare("UPDATE market_data_demands SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?")
+    .run(nowIso);
+}
+
+export function recordMarketDataDemand(input: {
+  kind: MarketDataDemandKind;
+  symbol: string;
+  userId?: string;
+  now?: number | string | Date;
+  ttlMs?: number;
+}): void {
+  const kind = input.kind;
+  const symbol = normalizeDemandSymbol(input.symbol);
+  if (!symbol) return;
+  const userId = input.userId ?? "local";
+  const nowIso = isoFromNow(input.now ?? new Date());
+  const ttlMs = Number.isFinite(input.ttlMs) && input.ttlMs! > 0 ? input.ttlMs! : marketDataDemandTtlMs();
+  const expiresAt = new Date(Date.parse(nowIso) + ttlMs).toISOString();
+  const id = `${kind}:${symbol}:${userId}`;
+  pruneExpiredMarketDataDemands(nowIso);
+  getDb()
+    .prepare(
+      `INSERT INTO market_data_demands (
+        id, kind, symbol, user_id, status, requested_at, last_requested_at, fulfilled_at, expires_at
+      ) VALUES (?, ?, ?, ?, 'pending', ?, ?, NULL, ?)
+      ON CONFLICT(kind, symbol, user_id) DO UPDATE SET
+        status = 'pending',
+        requested_at = CASE
+          WHEN market_data_demands.status = 'pending' THEN market_data_demands.requested_at
+          ELSE excluded.requested_at
+        END,
+        last_requested_at = excluded.last_requested_at,
+        fulfilled_at = NULL,
+        expires_at = excluded.expires_at`
+    )
+    .run(id, kind, symbol, userId, nowIso, nowIso, expiresAt);
+}
+
+export function fulfillMarketDataDemand(input: {
+  kind: MarketDataDemandKind;
+  symbol: string;
+  now?: number | string | Date;
+}): MarketDataDemandFill | undefined {
+  const kind = input.kind;
+  const symbol = normalizeDemandSymbol(input.symbol);
+  if (!symbol) return undefined;
+  const fulfilledAt = isoFromNow(input.now ?? new Date());
+  pruneExpiredMarketDataDemands(fulfilledAt);
+  const rows = getDb()
+    .prepare(
+      `SELECT user_id, requested_at, last_requested_at
+       FROM market_data_demands
+       WHERE kind = ? AND symbol = ? AND status = 'pending' AND expires_at > ?`
+    )
+    .all(kind, symbol, fulfilledAt) as Array<{ user_id: string; requested_at: string; last_requested_at: string }>;
+  if (rows.length === 0) return undefined;
+
+  getDb()
+    .prepare(
+      `UPDATE market_data_demands
+       SET status = 'fulfilled', fulfilled_at = ?
+       WHERE kind = ? AND symbol = ? AND status = 'pending' AND expires_at > ?`
+    )
+    .run(fulfilledAt, kind, symbol, fulfilledAt);
+
+  return {
+    kind,
+    symbol,
+    pendingUserCount: new Set(rows.map((row) => row.user_id)).size,
+    oldestRequestedAt: rows.reduce((min, row) => (row.requested_at < min ? row.requested_at : min), rows[0].requested_at),
+    latestRequestedAt: rows.reduce((max, row) => (row.last_requested_at > max ? row.last_requested_at : max), rows[0].last_requested_at),
+    fulfilledAt
+  };
+}
+
+export function clearMarketDataDemandsForTests(): void {
+  getDb().prepare("DELETE FROM market_data_demands").run();
 }
 
 

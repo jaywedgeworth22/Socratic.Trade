@@ -61,7 +61,7 @@ describe("dashboard feed helpers", () => {
     });
 
     expect(feed[0]?.title).toBe("Buy PLTR Approved");
-    expect(feed[0]?.detail).toContain("Paper mode");
+    expect(feed[0]?.detail).toContain("Mock/Local mode");
     expect(feed[0]?.companyName).toBe("Palantir Technologies Inc.");
   });
 
@@ -187,7 +187,7 @@ describe("dashboard feed helpers", () => {
     expect(formatShareQuantity(12345.6, "NVDA")).toBe("12,346");
   });
 
-  it("applies Paper prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
+  it("applies Mock/Local prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
     const feed = buildUnifiedFeed({
       audit: [
         {
@@ -245,13 +245,13 @@ describe("dashboard feed helpers", () => {
 
     const tradeGroup = feed.find(g => g.proposalId === "p1");
     expect(tradeGroup).toBeDefined();
-    expect(tradeGroup!.title).toBe("Paper BUY PLTR");
+    expect(tradeGroup!.title).toBe("Mock/Local BUY PLTR");
     expect(tradeGroup!.tags).toContain("notification failed");
     expect(tradeGroup!.tags).not.toContain("notification disabled");
 
     const pendingApprovalEvent = tradeGroup!.events.find(ev => ev.id === "n1");
     expect(pendingApprovalEvent).toBeDefined();
-    expect(pendingApprovalEvent!.title).toBe("Paper Buy PLTR Awaiting Approval");
+    expect(pendingApprovalEvent!.title).toBe("Mock/Local Buy PLTR Awaiting Approval");
   });
 });
 

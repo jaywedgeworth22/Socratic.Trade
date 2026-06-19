@@ -203,7 +203,7 @@ export interface TradeProposal {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap",
     string
   >
 >;
@@ -219,6 +219,8 @@ export interface MarketQuote {
   symbol: string;
   companyName?: string;
   price: number;
+  /** Latest available daily volume-weighted average price. Source-provided only; never fabricated. */
+  vwap?: number;
   bid?: number;
   ask?: number;
   volume: number;
@@ -330,6 +332,7 @@ export interface MarketQuoteSummary {
   symbol: string;
   companyName?: string;
   price: number;
+  vwap?: number;
   bid?: number;
   ask?: number;
   sector?: string;

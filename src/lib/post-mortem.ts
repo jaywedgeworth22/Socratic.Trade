@@ -1,6 +1,7 @@
 import { getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
 import { getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getExcursionsByThesis } from "./learning-loop";
+import { llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
@@ -55,18 +56,27 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
   const source = getPolicy(userId).paperMode ? "paper" : "live";
+  const executionMode = llmExecutionMode(source === "paper");
   const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);
   const timingByThesis = await getExcursionsByThesis(accountNumber, source, { userId }).catch(() => []);
 
   const systemPrompt = `You are the Post-Mortem Reflection Engine.
 Review the recent trades together with:
+- 'executionMode': mock/local means the app's local simulator, not Alpaca Paper or a broker-hosted paper trading account.
 - 'outcomesByThesis' / 'outcomesByRegime': realized win rate, average return, and total P&L grouped by 'thesisTag' and by 'regime' respectively (these mirror the proposal's tradeThesisTag and entryMarketRegime).
 - 'timingByThesis': average maximum adverse excursion (avgMaePct, pain endured), average maximum favorable excursion (avgMfePct, the move that was available), and capturePct (share of the favorable move actually realized; low => exiting winners too early, large negative avgMaePct => holding losers through deep drawdowns).
 Extract actionable, outcome-grounded lessons: which thesis tags and regimes are profitable vs losing, and whether exits are mistimed.
 Return a single concise paragraph (<= 130 words) that is specific and directive. It is fed back into the Bull Agent's prompt on future runs to improve trading accuracy.`;
 
-  const userContent = JSON.stringify({ recentTrades: tradeData, outcomesByThesis, outcomesByRegime, timingByThesis });
+  const userContent = JSON.stringify({
+    executionMode,
+    executionModeClarification: llmModeClarification(source === "paper"),
+    recentTrades: tradeData,
+    outcomesByThesis,
+    outcomesByRegime,
+    timingByThesis
+  });
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -99,7 +109,8 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
           endpoint: url,
           transport: isChatCompletions ? "chat-completions" : "responses",
           tradeCount: tradeData.length,
-          source
+          executionMode,
+          internalSource: source
         },
         tags: ["post-mortem", "reflection"],
         output: (result) => summarizeOpenAiResponseText(result.text)

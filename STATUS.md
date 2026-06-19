@@ -6,7 +6,7 @@ steps materially change.
 
 ## Current State
 
-- App: local-only Next.js Robinhood agentic trading dashboard with paper/live
+- App: local-only Next.js Robinhood agentic trading dashboard with mock/local vs live
   mode separation, policy gating, equity-only execution, and a phase-based
   design roadmap.
 - Roadmap: `PLAN.md` tracks the cross-phase implementation order; `docs/`
@@ -23,6 +23,34 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19 (`agent/codex`): **Worktree cleanup.** Normalized the partial
+  staged/unstaged index left after the Claude pickup and Codex patch reapply,
+  kept the documented UI audit, pending-demand, and Market Scan VWAP changes,
+  and verified the combined state with `npx tsc --noEmit`, `npm test` (242
+  tests), `npm run build`, `git diff --check`, PM2 preview restart, and
+  `/api/health` + `/api/scan` returning 200 on port 4101. See
+  `docs/rollouts/2026-06-19-codex-worktree-cleanup.md`.
+- 2026-06-19 (`agent/codex`): **Shared market-data pending demand.** Added
+  durable `market_data_demands` for failed public OHLC reads, source-scoped
+  history cache writes, and a `market-data` SSE event so a later shared cache
+  fill refreshes prior requesters without spending another user's private key.
+  User-key provider fills remain private by default unless
+  `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on`; the pending TTL is controlled by
+  `MARKET_DATA_PENDING_TTL_MS`. Full verification passed: `npx tsc --noEmit`,
+  `npm test` (242 tests), `npm run build`, `git diff --check`, PM2 preview
+  restart, and `/api/health` on port 4101. See
+  `docs/rollouts/2026-06-19-market-data-pending-demand.md`.
+- 2026-06-19 (`agent/codex`): **Claude pickup + scan-row VWAP follow-up.**
+  Fast-forwarded the Codex worktree to Claude's streaming/event-trigger tip,
+  preserved the existing Codex UI audit patch, and continued Claude's explicit
+  VWAP follow-up by surfacing `price vs VWAP` in Market Scan rows. `/api/scan`
+  now opportunistically merges cached Massive grouped daily `vw` data into
+  `MarketQuote.vwap`/`MarketQuoteSummary.vwap` with source attribution
+  (`massive-vwap`); the table shows a sortable `vs VWAP` column and degrades to
+  `-` when no Massive key/data is available. Verification passed: `npx tsc
+  --noEmit`, `npm test` (240 tests), `npm run build`, `git diff --check`, and
+  Codex preview `/api/health` + `/api/scan` returned 200. See
+  `docs/rollouts/2026-06-19-claude-pickup-vwap-scan.md`.
 - 2026-06-19 (`agent/claude`): **Streaming + event-trigger pass.** (1) **VWAP surfaced** —
   dashed overlay + "% vs VWAP" on the price chart. (2) **order/proposal SSE emits**
   (`executeProposal`/`rejectProposal`/cancel route). (3) **Alpaca news WebSocket worker** —
@@ -43,6 +71,21 @@ steps materially change.
   demoted to 120s fallback. Live-verified push delivery (`subscribers:1`, `event: dirty`
   received). tsc clean, 233 tests, build green. See
   `docs/rollouts/2026-06-19-push-vs-poll-vwap-sentiment-sse.md`.
+- 2026-06-19: **UI expert audit and safety/readability polish**. A parallel
+  UI/design, accessibility/responsive, and financial-products UX review plus
+  live browser probing found first-run state ambiguity, mobile fixed-shell
+  clipping, blank Market Scan empty states, raw activity JSON, and overstated
+  symbol-drawer signal language. The active dashboard now shows `Setup Needed`
+  instead of `Autonomy On` when account/universe prerequisites are missing,
+  blocks Run/Resume through setup routing, exposes persistent Mock/Local/Live mode,
+  confirms live-mode switching, restores mobile page scrolling with a compact
+  portfolio summary, replaces blank scan grids with actionable empty states,
+  summarizes activity payloads, raises helper-text contrast, starts new defaults
+  halted/propose, and sends LLMs `mock/local` execution-mode context instead of
+  ambiguous Paper-mode language. Dashboard charts now use SSR-safe SVG/CSS
+  primitives plus a hydration shell so the Codex `next dev` preview serves `/`
+  cleanly after build regeneration. See
+  `docs/rollouts/2026-06-19-ui-expert-audit-polish.md`.
 - 2026-06-19: **Integration worktree scratch cleanup**. Added root-only ignore
   rules for manual screenshot captures, one-off UI probe scripts, and accidental
   SQL-named shell output files so the `main` integration checkout stays usable
