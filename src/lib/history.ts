@@ -52,7 +52,7 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   const hit = cache.get(symbol);
   if (hit && hit.expiresAt > now) return hit.bars;
 
-  const startDate = new Date(now - 400 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+  const startDate = new Date(now - 1825 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<() => Promise<OHLCBar[] | null>> = [
@@ -147,7 +147,7 @@ async function fetchMarketstack(symbol: string, userId?: string): Promise<OHLCBa
   const key = resolveApiKey("marketstack", userId);
   if (!key) return null;
   try {
-    const url = `https://api.marketstack.com/v1/eod?access_key=${key}&symbols=${encodeURIComponent(symbol)}&limit=300&sort=ASC`;
+    const url = `https://api.marketstack.com/v1/eod?access_key=${key}&symbols=${encodeURIComponent(symbol)}&limit=1500&sort=ASC`;
     const json = await politeFetchJson<MarketstackEodResponse>(url, {});
     const rows = json?.data ?? [];
     const bars: OHLCBar[] = [];

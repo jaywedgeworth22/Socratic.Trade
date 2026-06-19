@@ -23,6 +23,11 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19: **Price chart timeframe controls and history expansion**. Added
+  standard Yahoo Finance-style timeframe buttons (1D, 5D, 1M, 6M, YTD, 1Y, 5Y, All) 
+  to the Symbol Drilldown price chart. Expanded the backend `fetchDailyOHLC`
+  history fetch horizon from ~1.1 years to 5 years (1825 days) to support the
+  longer timeframes. See `docs/rollouts/2026-06-19-price-chart-timeframes.md`.
 - 2026-06-19: **Live-safety/risk-controls slice (Phase 10 E4/E5)**. Red Team
   review threshold is now a policy tuning knob (`redTeamConvictionThreshold`,
   default behavior 80), and `crisisMaxOpeningExposurePct` optionally caps new

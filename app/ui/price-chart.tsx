@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { IChartApi } from "lightweight-charts";
+import { cn } from "./cn";
+
+const timeframes = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "All"] as const;
+type Timeframe = typeof timeframes[number];
 
 interface ChartBar {
   time: string; // YYYY-MM-DD
@@ -40,8 +44,63 @@ function smaLine(bars: ChartBar[], period: number): Array<{ time: string; value:
  */
 export function PriceChart({ symbol }: { symbol: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const barsRef = useRef<ChartBar[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">("loading");
-  const [meta, setMeta] = useState<{ change?: number } | null>(null);
+  const [meta, setMeta] = useState<{ change?: number; label?: string } | null>(null);
+  const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("1Y");
+
+  const updateTimeframe = (tf: Timeframe, chartToUse?: IChartApi, barsToUse?: ChartBar[]) => {
+    setActiveTimeframe(tf);
+    const chart = chartToUse || chartRef.current;
+    const bars = barsToUse || barsRef.current;
+    if (!chart || bars.length === 0) return;
+
+    const lastBar = bars[bars.length - 1];
+    const lastDate = new Date(lastBar.time + "T00:00:00Z");
+    let fromDate = new Date(lastDate);
+
+    if (tf === "1D") {
+      // For daily bars, 1D is just the last day (or we can go back 1 day to show 2 bars)
+      fromDate.setDate(fromDate.getDate() - 1);
+    } else if (tf === "5D") {
+      fromDate.setDate(fromDate.getDate() - 6); // roughly 5 trading days
+    } else if (tf === "1M") {
+      fromDate.setMonth(fromDate.getMonth() - 1);
+    } else if (tf === "6M") {
+      fromDate.setMonth(fromDate.getMonth() - 6);
+    } else if (tf === "YTD") {
+      fromDate = new Date(lastDate.getUTCFullYear(), 0, 1);
+    } else if (tf === "1Y") {
+      fromDate.setFullYear(fromDate.getUTCFullYear() - 1);
+    } else if (tf === "5Y") {
+      fromDate.setFullYear(fromDate.getUTCFullYear() - 5);
+    }
+
+    const fromStr = tf === "All" ? bars[0].time : fromDate.toISOString().slice(0, 10);
+
+    if (tf === "All") {
+      chart.timeScale().fitContent();
+    } else {
+      chart.timeScale().setVisibleRange({
+        from: fromStr,
+        to: lastBar.time
+      });
+    }
+
+    const visibleBars = bars.filter(b => b.time >= fromStr);
+    if (visibleBars.length > 0) {
+      const first = visibleBars[0].close;
+      const last = visibleBars[visibleBars.length - 1].close;
+      setMeta({ change: first > 0 ? ((last - first) / first) * 100 : undefined, label: tf });
+    } else {
+      // Fallback if no bars exist in the range (e.g. IPO happened recently)
+      chart.timeScale().fitContent();
+      const first = bars[0].close;
+      const last = bars[bars.length - 1].close;
+      setMeta({ change: first > 0 ? ((last - first) / first) * 100 : undefined, label: "All" });
+    }
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -80,6 +139,8 @@ export function PriceChart({ symbol }: { symbol: string }) {
           handleScale: { axisPressedMouseMove: false },
         });
         chart = c;
+        chartRef.current = c;
+        barsRef.current = bars;
 
         const candle = c.addSeries(lc.CandlestickSeries, {
           upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
@@ -104,11 +165,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
             .map((b) => ({ time: b.time, value: b.volume as number, color: b.close >= b.open ? up : down }))
         );
 
-        c.timeScale().fitContent();
-
-        const first = bars[0].close;
-        const last = bars[bars.length - 1].close;
-        setMeta({ change: first > 0 ? ((last - first) / first) * 100 : undefined });
+        updateTimeframe(activeTimeframe, c, bars);
         setState("ready");
       } catch {
         if (!disposed) setState("error");
@@ -131,17 +188,31 @@ export function PriceChart({ symbol }: { symbol: string }) {
     <div className="rounded-xl border border-line p-4">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="flex items-center gap-2 font-semibold text-fg">
-          <span className="text-[var(--accent)]">◴</span> Price · 1Y daily
+          <span className="text-[var(--accent)]">◴</span> Price
         </h3>
-        <div className="flex items-center gap-3 text-[11px] text-faint">
-          <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-[var(--accent)]" /> SMA50</span>
-          <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-info" /> SMA200</span>
-          {meta?.change !== undefined && (
-            <span className={meta.change >= 0 ? "text-up" : "text-down"}>
-              {meta.change >= 0 ? "+" : ""}{meta.change.toFixed(1)}% 1Y
-            </span>
-          )}
+        <div className="flex items-center gap-1">
+          {timeframes.map((tf) => (
+            <button
+              key={tf}
+              onClick={() => updateTimeframe(tf)}
+              className={cn(
+                "px-2 py-0.5 text-[11px] font-medium rounded transition-colors",
+                activeTimeframe === tf ? "bg-[var(--accent)] text-white" : "text-faint hover:text-fg hover:bg-surface-2"
+              )}
+            >
+              {tf}
+            </button>
+          ))}
         </div>
+      </div>
+      <div className="mb-3 flex items-center gap-3 text-[11px] text-faint">
+        <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-[var(--accent)]" /> SMA50</span>
+        <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-3 bg-info" /> SMA200</span>
+        {meta?.change !== undefined && (
+          <span className={meta.change >= 0 ? "text-up" : "text-down"}>
+            {meta.change >= 0 ? "+" : ""}{meta.change.toFixed(1)}% {meta.label}
+          </span>
+        )}
       </div>
       <div className="relative h-[300px] w-full">
         <div ref={containerRef} className="h-full w-full" />
