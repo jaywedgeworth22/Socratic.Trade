@@ -33,6 +33,12 @@ steps materially change.
   demoted to 120s fallback. Live-verified push delivery (`subscribers:1`, `event: dirty`
   received). tsc clean, 233 tests, build green. See
   `docs/rollouts/2026-06-19-push-vs-poll-vwap-sentiment-sse.md`.
+- 2026-06-19: **Integration worktree scratch cleanup**. Added root-only ignore
+  rules for manual screenshot captures, one-off UI probe scripts, and accidental
+  SQL-named shell output files so the `main` integration checkout stays usable
+  for review/fast-forward merges. Existing untracked scratch files in
+  `~/Documents/Robinhood Agentic Trading` were classified as disposable local
+  artifacts. See `docs/rollouts/2026-06-19-integration-scratch-cleanup.md`.
 - 2026-06-19 (`agent/claude`, committed): **Pinecone RAG fixed + backfilled (0→83
   vectors) and Robinhood MCP market data wired.** Root cause of the empty index was a
   swallowed Voyage 429 (billing) stacked on a latent **Pinecone v8 upsert bug** —

@@ -24,6 +24,13 @@ scratch/
 .git_diff.txt
 did.bin
 
+# Root-level one-off local debugging artifacts from manual browser/SQL probes.
+/screenshot*.png
+/test-run.ts
+/test-ui.cjs
+/test-ui.js
+/SELECT value FROM store WHERE key = *
+
 # macOS / iCloud Drive conflict copies — this repo lives under ~/Documents, which
 # is iCloud-synced; sync conflicts spawn duplicate files named "<name> 2.<ext>"
 # (or " 3", " 4"...). They are stale snapshots, not real source. Ignore them so
