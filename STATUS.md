@@ -54,6 +54,7 @@ steps materially change.
   deferred until the Sentry build wrapper is revalidated. See
   `docs/ops-observability-security.md` and
   `docs/rollouts/2026-06-19-ops-observability-security.md`.
+- 2026-06-19: **Broker Connection UI Split**. Split the unified "Add Account" UI in the dashboard into distinct buttons for each broker (Alpaca vs Robinhood) and customized the editing form to only require API Keys/Secrets for Alpaca. This prevents user confusion since Robinhood uses an OAuth flow via the MCP server and Alpaca requires static keys. Full verification passed.
 - 2026-06-19: **Live-safety/risk-controls slice (Phase 10 E4/E5)**. Red Team
   review threshold is now a policy tuning knob (`redTeamConvictionThreshold`,
   default behavior 80), and `crisisMaxOpeningExposurePct` optionally caps new

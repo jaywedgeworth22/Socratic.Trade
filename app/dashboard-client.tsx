@@ -2466,14 +2466,8 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
   if (editing) {
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
-        <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : "Add Account"}</h4>
+        <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : `Add ${editing.broker === "alpaca" ? "Alpaca" : "Robinhood"} Account`}</h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Broker">
-            <select className={inputClass} value={editing.broker || "alpaca"} onChange={e => setEditing({ ...editing, broker: e.target.value as any })}>
-              <option value="alpaca">Alpaca</option>
-              <option value="robinhood">Robinhood</option>
-            </select>
-          </Field>
           <Field label="Environment">
             <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
               <option value="paper">Paper (Simulation)</option>
@@ -2486,12 +2480,16 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
           <Field label="Account Number (Optional)">
             <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
           </Field>
-          <Field label="API Key">
-            <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required for some brokers" />
-          </Field>
-          <Field label="API Secret">
-            <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for some brokers" />
-          </Field>
+          {editing.broker === "alpaca" && (
+            <>
+              <Field label="API Key">
+                <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required for Alpaca" />
+              </Field>
+              <Field label="API Secret">
+                <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for Alpaca" />
+              </Field>
+            </>
+          )}
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
@@ -2507,9 +2505,14 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted">Connect your brokerage accounts for agentic trading.</p>
-        <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
-          <Plus size={14} className="mr-1" /> Add Account
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Add Alpaca
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
+            <Plus size={14} className="mr-1" /> Add Robinhood
+          </Button>
+        </div>
       </div>
 
       {!accounts?.length ? (
