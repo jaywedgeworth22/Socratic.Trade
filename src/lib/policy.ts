@@ -20,8 +20,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   const symbol = normalizeSymbol(proposal.symbol);
   const estimatedNotional = context.estimatedNotional ?? estimateNotional(proposal);
 
-  if (!context.policy.enabled) reasons.push("Autonomy is disabled.");
-  if (context.policy.killSwitch) reasons.push("Kill switch is active.");
+  if (context.policy.systemState === "halted") reasons.push("System is halted.");
+  if (context.policy.systemState === "liquidating" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is liquidating. Only close orders allowed.");
+  if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
   const allowedSymbols = allowedSymbolsForPolicy(context.policy);
   if (allowedSymbols.length === 0) reasons.push("Symbol allowlist is required.");
@@ -56,10 +57,18 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
   
   const isOpening = proposal.side === "buy" || proposal.side === "short";
-  if (isOpening && estimatedNotional > context.policy.maxOrderNotional) {
-    reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${context.policy.maxOrderNotional}`);
+  const effectiveMaxOrderNotional = Math.min(
+    context.policy.maxOrderNotional ?? Infinity,
+    context.policy.maxOrderPctOfNav ? (context.policy.maxOrderPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  );
+  if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
+    reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
   }
-  if (isOpening && context.dailyNotionalUsed + estimatedNotional > context.policy.maxDailyNotional) {
+  const effectiveMaxDailyNotional = Math.min(
+    context.policy.maxDailyNotional ?? Infinity,
+    context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  );
+  if (isOpening && context.dailyNotionalUsed + estimatedNotional > effectiveMaxDailyNotional) {
     reasons.push("Daily notional limit would be exceeded.");
   }
   if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
@@ -92,8 +101,16 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
 
   const projectedSymbolExposurePct = projectedExposurePct(proposal, context.positions, context.portfolio, estimatedNotional);
-  if (projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
+  if (context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
     reasons.push(`Projected ${symbol} exposure ${projectedSymbolExposurePct.toFixed(2)}% exceeds ${context.policy.maxSymbolExposurePct}%.`);
+  }
+  if (context.policy.maxSymbolExposureNotional) {
+    const existingPosition = context.positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
+    const existingValue = existingPosition ? Math.abs(existingPosition.marketValue) : 0;
+    const projectedNotional = existingValue + estimatedNotional;
+    if (projectedNotional > context.policy.maxSymbolExposureNotional) {
+      reasons.push(`Projected ${symbol} notional exposure $${projectedNotional.toFixed(2)} exceeds cap $${context.policy.maxSymbolExposureNotional.toFixed(2)}.`);
+    }
   }
 
   const sectorDecision = projectedSectorExposurePct(proposal, context, estimatedNotional);
@@ -113,8 +130,16 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 }
 
 export function allowedSymbolsForPolicy(policy: TradingPolicy): string[] {
-  if (policy.universe === "sp500") return [...SP500_SYMBOLS];
-  return policy.allowlist.map(normalizeSymbol);
+  let symbols = new Set<string>();
+  if (policy.includedIndices.includes("sp500")) SP500_SYMBOLS.forEach(s => symbols.add(s));
+  
+  policy.additionalSymbols.forEach(s => symbols.add(normalizeSymbol(s)));
+  
+  if (policy.blocklist) {
+    policy.blocklist.forEach(s => symbols.delete(normalizeSymbol(s)));
+  }
+  
+  return Array.from(symbols);
 }
 
 export function estimateNotional(proposal: TradeProposal): number {
@@ -218,8 +243,20 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
       if (context.policy.riskRules?.stopLossPct && drawdownPct > context.policy.riskRules.stopLossPct) {
         return `Stop-loss rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is down ${drawdownPct.toFixed(2)}%.`;
       }
+      if (context.policy.riskRules?.stopLossNotional) {
+        const totalDrawdownNotional = (avgCost - currentPrice) * position.quantity;
+        if (totalDrawdownNotional > context.policy.riskRules.stopLossNotional) {
+          return `Stop-loss rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is down $${totalDrawdownNotional.toFixed(2)}.`;
+        }
+      }
       if (context.policy.riskRules?.takeProfitPct && returnPct >= context.policy.riskRules.takeProfitPct) {
         return `Take-profit rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is up ${returnPct.toFixed(2)}%.`;
+      }
+      if (context.policy.riskRules?.takeProfitNotional) {
+        const totalReturnNotional = (currentPrice - avgCost) * position.quantity;
+        if (totalReturnNotional >= context.policy.riskRules.takeProfitNotional) {
+          return `Take-profit rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is up $${totalReturnNotional.toFixed(2)}.`;
+        }
       }
     }
   } else if (proposal.side === "short") {

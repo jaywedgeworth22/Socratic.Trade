@@ -4,7 +4,8 @@ export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
-export type AllowlistUniverse = "custom" | "sp500";
+export type IndexUniverse = "sp500" | "nasdaq100" | "russell2000";
+export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
@@ -56,8 +57,11 @@ export interface TuningSettings {
 
 export interface RiskRules {
   stopLossPct?: number;
+  stopLossNotional?: number;
   takeProfitPct?: number;
+  takeProfitNotional?: number;
   trailingStopPct?: number;
+  stopLossAtrMultiple?: number;
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
@@ -132,20 +136,25 @@ export interface BrokerQuote {
 }
 
 export interface TradingPolicy {
-  enabled: boolean;
+  systemState: SystemState;
   paperMode: boolean;
   paperStartingCash: number;
-  killSwitch: boolean;
   accountNumber?: string;
   connectedAccountId?: string;
-  universe: AllowlistUniverse;
+  includedIndices: IndexUniverse[];
+  additionalSymbols: string[];
+  blocklist?: string[];
   strategyAuthority: StrategyAuthority;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
-  allowlist: string[];
-  maxOrderNotional: number;
-  maxDailyNotional: number;
-  maxSymbolExposurePct: number;
+  maxOrderNotional?: number;
+  maxOrderPctOfNav?: number;
+  maxDailyNotional?: number;
+  maxDailyPctOfNav?: number;
+  maxSymbolExposurePct?: number;
+  maxSymbolExposureNotional?: number;
+  maxGrossExposurePct?: number;
+  maxNetExposurePct?: number;
   maxDailyOrders: number;
   maxProposalsPerRun: number;
   permittedOrderTypes: OrderType[];
@@ -485,7 +494,6 @@ export interface StrategyTuningPatch {
       | "maxDailyOrders"
       | "maxProposalsPerRun"
       | "runCadenceMinutes" | "evaluatorCadenceHours"
-      | "universe"
       | "strategyAuthority"
       | "runDuringExtendedHours"
     >

@@ -1269,11 +1269,11 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
         policy.notificationSettings?.enabledEvents ?? DEFAULT_POLICY.notificationSettings.enabledEvents
     }
   };
-  if (merged.maxDailyNotional >= 500_000) {
+  if ((merged.maxDailyNotional ?? 0) >= 500_000) {
     merged.maxDailyNotional = DEFAULT_POLICY.maxDailyNotional;
     if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
   }
-  if (merged.maxOrderNotional > 100) merged.maxOrderNotional = DEFAULT_POLICY.maxOrderNotional;
+  if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
   return merged;
 }
 
