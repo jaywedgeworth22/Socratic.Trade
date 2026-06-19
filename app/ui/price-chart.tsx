@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { IChartApi } from "lightweight-charts";
 import { cn } from "./cn";
 
-const timeframes = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "All"] as const;
+const timeframes = ["1M", "6M", "YTD", "1Y", "5Y", "All"] as const;
 type Timeframe = typeof timeframes[number];
 
 interface ChartBar {
@@ -60,12 +60,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
     const lastDate = new Date(lastBar.time + "T00:00:00Z");
     let fromDate = new Date(lastDate);
 
-    if (tf === "1D") {
-      // For daily bars, 1D is just the last day (or we can go back 1 day to show 2 bars)
-      fromDate.setDate(fromDate.getDate() - 1);
-    } else if (tf === "5D") {
-      fromDate.setDate(fromDate.getDate() - 6); // roughly 5 trading days
-    } else if (tf === "1M") {
+    if (tf === "1M") {
       fromDate.setMonth(fromDate.getMonth() - 1);
     } else if (tf === "6M") {
       fromDate.setMonth(fromDate.getMonth() - 6);
