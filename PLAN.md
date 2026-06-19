@@ -50,3 +50,6 @@ filling the missing pieces.
 - Webhook notifications are attempted only when configured and every attempt is audited.
 - Error/LLM observability stays opt-in and redacted by default for account, prompt, and credential data.
 - The local SQLite database has a documented Litestream replicate/restore path before production reliance.
+- Root-level manual probe artifacts such as screenshots, one-off UI scripts, and
+  accidental shell-output files stay ignored so the integration worktree remains
+  reserved for review and merges.

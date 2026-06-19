@@ -23,6 +23,12 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19: **Integration worktree scratch cleanup**. Added root-only ignore
+  rules for manual screenshot captures, one-off UI probe scripts, and accidental
+  SQL-named shell output files so the `main` integration checkout stays usable
+  for review/fast-forward merges. Existing untracked scratch files in
+  `~/Documents/Robinhood Agentic Trading` were classified as disposable local
+  artifacts. See `docs/rollouts/2026-06-19-integration-scratch-cleanup.md`.
 - 2026-06-19: **Market-data sharing/isolation guardrails**. Made the first
   broker/keyed market-data sharing decision explicit in code and docs: env-key/free
   OHLC history remains globally cached, saved user-key OHLC history is private by
