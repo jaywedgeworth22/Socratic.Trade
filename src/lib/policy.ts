@@ -131,9 +131,11 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
 export function allowedSymbolsForPolicy(policy: TradingPolicy): string[] {
   let symbols = new Set<string>();
-  if (policy.includedIndices.includes("sp500")) SP500_SYMBOLS.forEach(s => symbols.add(s));
+  const indices = policy.includedIndices || [];
+  if (indices.includes("sp500")) SP500_SYMBOLS.forEach(s => symbols.add(s));
   
-  policy.additionalSymbols.forEach(s => symbols.add(normalizeSymbol(s)));
+  const additional = policy.additionalSymbols || [];
+  additional.forEach(s => symbols.add(normalizeSymbol(s)));
   
   if (policy.blocklist) {
     policy.blocklist.forEach(s => symbols.delete(normalizeSymbol(s)));

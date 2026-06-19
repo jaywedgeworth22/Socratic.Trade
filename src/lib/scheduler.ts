@@ -45,6 +45,7 @@ async function tick(): Promise<void> {
   try {
     // --- Per-User Scheduling ---
     const users = listUsers();
+    const dueUsers: string[] = [];
 
     for (const userId of users) {
       if (!userSchedules[userId]) {
@@ -57,7 +58,7 @@ async function tick(): Promise<void> {
 
       const policy = getPolicy(userId);
 
-      if (!policy.enabled || policy.killSwitch || !policy.accountNumber) {
+      if (policy.systemState !== "active" || !policy.accountNumber) {
         schedule.nextRunAt = null;
         continue;
       }
@@ -81,12 +82,29 @@ async function tick(): Promise<void> {
       // Due for a run
       schedule.lastRunAt = new Date(now).toISOString();
       schedule.nextRunAt = new Date(now + cadenceMs).toISOString();
-
-      // Run sequentially to avoid rate-limiting or concurrency issues with external APIs
-      await runStrategyOnce(userId).catch((err) => {
-        console.error(`[scheduler] error running strategy for user ${userId}:`, err);
-      });
+      dueUsers.push(userId);
     }
+
+    // Run with bounded concurrency (max 3 at a time) to balance throughput and API rate limits
+    const MAX_CONCURRENCY = 3;
+    const executing = new Set<Promise<unknown>>();
+
+    for (const userId of dueUsers) {
+      const p = runStrategyOnce(userId)
+        .catch((err) => {
+          console.error(`[scheduler] error running strategy for user ${userId}:`, err);
+        })
+        .finally(() => {
+          executing.delete(p);
+        });
+      
+      executing.add(p);
+      if (executing.size >= MAX_CONCURRENCY) {
+        await Promise.race(executing);
+      }
+    }
+    
+    await Promise.all(executing);
   } catch (err) {
     // Never let a thrown error kill the timer
     console.error("[scheduler] tick error:", err);

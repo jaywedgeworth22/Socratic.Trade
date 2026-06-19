@@ -30,10 +30,10 @@
 }
 
 .dark {
-  --bg: #070b11;
-  --surface: rgba(14, 20, 28, 0.65);
-  --surface-2: rgba(19, 27, 37, 0.55);
-  --surface-3: rgba(26, 35, 47, 0.5);
+  --bg: #111827;
+  --surface: rgba(31, 41, 55, 0.65);
+  --surface-2: rgba(55, 65, 81, 0.55);
+  --surface-3: rgba(75, 85, 99, 0.5);
   --line: rgba(42, 57, 71, 0.4);
   --line-strong: rgba(42, 57, 71, 0.6);
   --fg: #e7eef6;

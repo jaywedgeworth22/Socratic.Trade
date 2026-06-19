@@ -77,7 +77,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   try {
     const policy = getPolicy(userId);
     if (!policy.accountNumber) throw new Error("No account selected.");
-    if (policy.killSwitch) throw new Error("Kill switch is active.");
+    if (policy.systemState === "halted") throw new Error("System is halted.");
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -138,7 +138,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       ragContext
     });
 
-    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, userId));
+    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, userId));
 
     const debatedProposals: TradeProposal[] = [];
     for (const proposal of sizedProposals) {
@@ -393,7 +393,7 @@ export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): numb
   return Math.max(0, Math.min(100, threshold));
 }
 
-function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, userId: string = "local"): TradeProposal {
+function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, userId: string = "local"): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") return proposal; // Preserve exits
   
   const source = policy.paperMode ? "paper" : "live";
@@ -423,7 +423,12 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
   const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
   const ceiling = (policy.tuning?.sizingCeilingPct ?? 100) / 100;
   const boundedMultiplier = Math.max(floor, Math.min(ceiling, multiplier));
-  const targetNotional = Math.floor(policy.maxOrderNotional * boundedMultiplier);
+  
+  const effectiveMaxOrderNotional = Math.min(
+    policy.maxOrderNotional ?? Infinity,
+    policy.maxOrderPctOfNav ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue : Infinity
+  );
+  const targetNotional = Math.floor(effectiveMaxOrderNotional * boundedMultiplier);
 
   return {
     ...proposal,
@@ -440,7 +445,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
 }> {
   const policy = getPolicy(userId);
   if (!policy.accountNumber) throw new Error("No account selected.");
-  if (policy.killSwitch) throw new Error("Kill switch is active.");
+  if (policy.systemState === "halted") throw new Error("System is halted.");
 
   const row = getProposal(proposalId, userId);
   if (!row) throw new Error("Proposal not found.");
@@ -652,7 +657,7 @@ async function proposeTrades(input: {
   if (!openaiKey) return fallbackProposal(input);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
-  const remainingNotional = Math.max(0, input.policy.maxDailyNotional - input.dailyNotionalUsed);
+  const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
   const remainingOrders = Math.max(0, input.policy.maxDailyOrders - input.dailyOrderCount);
 
   // Phase 2 fix: build a full symbol→sector map from ALL scan candidates (not just

@@ -3,7 +3,7 @@ import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
 import { normalizeSymbol } from "@/lib/money";
 import { getBrokerGateway } from "@/lib/broker";
 import { resolveRequestUserId } from "@/lib/request-user";
-import type { NotificationEventType, TradingPolicy } from "@/lib/types";
+import type { NotificationEventType, TradingPolicy, IndexUniverse } from "@/lib/types";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -21,9 +21,15 @@ export async function PUT(request: Request) {
     ...DEFAULT_POLICY,
     ...current,
     ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strategyPrompt" && key !== "userId")),
-    allowlist: Array.isArray(body.allowlist)
-      ? Array.from(new Set(body.allowlist.map(String).map(normalizeSymbol).filter(Boolean)))
-      : current.allowlist,
+    includedIndices: Array.isArray(body.includedIndices)
+      ? Array.from(new Set(body.includedIndices.map(String).filter(Boolean))) as IndexUniverse[]
+      : current.includedIndices,
+    additionalSymbols: Array.isArray(body.additionalSymbols)
+      ? Array.from(new Set(body.additionalSymbols.map(String).map(normalizeSymbol).filter(Boolean)))
+      : current.additionalSymbols,
+    blocklist: Array.isArray(body.blocklist)
+      ? Array.from(new Set(body.blocklist.map(String).map(normalizeSymbol).filter(Boolean)))
+      : current.blocklist,
     scoringWeights: {
       ...DEFAULT_POLICY.scoringWeights,
       ...current.scoringWeights,
@@ -63,12 +69,13 @@ export async function PUT(request: Request) {
 }
 
 async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
-  if (!["custom", "sp500"].includes(policy.universe)) return "universe must be custom or sp500.";
+
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
-  if (policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
-  if (policy.maxDailyNotional < policy.maxOrderNotional) return "maxDailyNotional must be at least maxOrderNotional.";
-  if (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100) return "maxSymbolExposurePct must be between 0 and 100.";
+  if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
+  if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";
+  if (policy.maxDailyNotional !== undefined && policy.maxOrderNotional !== undefined && policy.maxDailyNotional < policy.maxOrderNotional) return "maxDailyNotional must be at least maxOrderNotional.";
+  if (policy.maxSymbolExposurePct !== undefined && (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100)) return "maxSymbolExposurePct must be between 0 and 100.";
   if (policy.maxDailyOrders <= 0) return "maxDailyOrders must be positive.";
   if (policy.runCadenceMinutes < 1) return "runCadenceMinutes must be at least 1 minute.";
   if (Object.values(policy.scoringWeights).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0)) return "scoring weights must be non-negative numbers.";
@@ -96,9 +103,9 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
       return "webhookUrl must be a valid URL.";
     }
   }
-  if (policy.enabled && !policy.accountNumber) return "Select an account before enabling autonomy.";
-  if (policy.enabled && policy.universe === "custom" && policy.allowlist.length === 0) return "Configure an allowlist before enabling autonomy.";
-  if (policy.enabled && policy.accountNumber) {
+  if (policy.systemState === "active" && !policy.accountNumber) return "Select an account before enabling autonomy.";
+  if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Configure an allowlist before enabling autonomy.";
+  if (policy.systemState === "active" && policy.accountNumber) {
     const account = (await getBrokerGateway(policy, userId).getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
     if (!account) return "Selected account is not available.";
     if (!account.agenticAllowed) return "Selected account is not agentic_allowed.";

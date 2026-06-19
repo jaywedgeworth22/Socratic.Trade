@@ -88,7 +88,7 @@ export function Modal({
             if (e.target === e.currentTarget) onClose();
           }}
         >
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
           <motion.div
             ref={ref}
             role="dialog"

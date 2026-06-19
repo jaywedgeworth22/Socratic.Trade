@@ -119,7 +119,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+
   const [killConfirm, setKillConfirm] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
@@ -155,27 +155,8 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     return () => clearInterval(interval);
   }, []);
 
-  const [isMac, setIsMac] = useState(true);
-  useEffect(() => {
-    // Platform-aware command shortcut: ⌘K on macOS, Ctrl+K elsewhere (Windows/Linux).
-    const platform = typeof navigator !== "undefined" ? navigator.platform || navigator.userAgent || "" : "";
-    setIsMac(/Mac|iPhone|iPad|iPod/i.test(platform));
-  }, []);
-  const shortcutLabel = isMac ? "⌘K" : "Ctrl+K";
-  const shortcutIcon = isMac ? <><CommandIcon size={13} /> K</> : <span className="font-semibold text-xs rounded border border-line bg-surface px-1 py-0.5">Ctrl K</span>;
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      // Honor the platform's modifier: Cmd on macOS, Ctrl on Windows/Linux.
-      const mod = isMac ? e.metaKey : e.ctrlKey;
-      if (mod && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPaletteOpen((v) => !v);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isMac]);
+  // Command K is temporarily disabled per user request
+  // (Shortcut logic was removed from here)
 
   async function load(options: { quiet?: boolean } = {}) {
     if (!options.quiet) setBusy(true);
@@ -338,46 +319,32 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
 
   const policy = snapshot.policy;
   const dailyStats = snapshot.dailyStats ?? { orderCount: 0, notional: 0 };
-  const remainingNotional = Math.max(0, policy.maxDailyNotional - dailyStats.notional);
+  const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
   const remainingOrders = Math.max(0, policy.maxDailyOrders - dailyStats.orderCount);
   const enableBlockedReason = !policy.accountNumber
     ? "Select an account before enabling autonomy."
-    : policy.universe === "custom" && policy.allowlist.length === 0
+    : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Add at least one ticker to the allowlist before enabling autonomy."
       : undefined;
-  const allowedCount = policy.universe === "sp500" ? SP500_SYMBOLS.length : policy.allowlist.length;
+  const allowedCount = (policy.includedIndices.includes("sp500") ? SP500_SYMBOLS.length : 0) + policy.additionalSymbols.length;
+  
+  const isDefault = policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0;
+  const isOnlySP500 = policy.includedIndices.includes("sp500") && policy.includedIndices.length === 1 && policy.additionalSymbols.length === 0 && (policy.blocklist || []).length === 0;
+  const universeLabelText = isDefault ? "TBD" : isOnlySP500 ? "S&P 500" : "Custom";
   const mode = policy.paperMode ? "paper" : "live";
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
   // fetched live scan, falling back to the captured run's scan if it's still loading.
   const drilldownScan = tickerScan ?? snapshot.latestStrategyRun?.marketScan ?? null;
-  const dailyNotionalPct = policy.maxDailyNotional > 0 ? Math.round((dailyStats.notional / policy.maxDailyNotional) * 100) : 0;
+  const dailyNotionalPct = (policy.maxDailyNotional ?? 0) > 0 ? Math.round((dailyStats.notional / (policy.maxDailyNotional ?? 1)) * 100) : 0;
   const pendingCount = snapshot.pendingProposals.length;
-  const autonomyStatus = policy.killSwitch
+  const autonomyStatus = policy.systemState === "halted"
     ? { tone: "down" as const, label: "Halted" }
-    : policy.enabled
+    : policy.systemState === "active"
       ? { tone: "up" as const, label: "Autonomy On" }
-      : { tone: "neutral" as const, label: "Autonomy Off" };
+      : { tone: "neutral" as const, label: `Autonomy ${policy.systemState}` };
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
-  const commands: Command[] = [
-    { id: "run", label: "Run strategy once", hint: "R", icon: <Zap size={15} />, run: () => void runStrategy() },
-    { id: "refresh", label: "Refresh data", icon: <RefreshCw size={15} />, run: () => void load() },
-    { id: "decision", label: "Go to Decision", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
-    { id: "market", label: "Go to Market Scan", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
-    { id: "macro", label: "Go to Macro", icon: <Landmark size={15} />, run: () => setWorkspaceTab("macro") },
-    { id: "perf", label: "Go to Performance", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
-    { id: "tax", label: "Go to Tax", icon: <Landmark size={15} />, run: () => setWorkspaceTab("tax") },
-    { id: "strategy", label: "Go to Strategy", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("strategy") },
-    { id: "studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
-    { id: "flow", label: "Open Strategy Flow (Node Editor)", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
-    { id: "activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
-    { id: "settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
-    { id: "accounts", label: "Manage accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
-    { id: "mode", label: `Switch to ${policy.paperMode ? "Live" : "Paper"} mode`, icon: <Wallet size={15} />, run: () => void updatePolicy({ paperMode: !policy.paperMode }) },
-    { id: "autonomy", label: policy.enabled ? "Pause autonomy" : "Enable autonomy", icon: policy.enabled ? <Pause size={15} /> : <Play size={15} />, run: () => updatePolicy({ enabled: !policy.enabled, killSwitch: false }) },
-    { id: "kill", label: policy.killSwitch ? "Deactivate kill switch" : "Activate kill switch", icon: <Shield size={15} />, run: () => setKillConfirm(true) }
-  ];
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -391,7 +358,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
             <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
               <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={autonomyStatus.tone} pulse={policy.enabled && !policy.killSwitch} />
+                <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
                 {autonomyStatus.label}
               </div>
               <div className="flex items-center gap-1.5 whitespace-nowrap">
@@ -403,21 +370,19 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         </div>
 
         <div className="ml-2 hidden items-center gap-2 lg:flex">
-          <StatusPill label="Portfolio" value={money(snapshot.portfolio?.totalMarketValue)} title={`Total ${mode} account value (cash + positions marked to current prices).`} />
-          <StatusPill label="Buying power" value={money(snapshot.portfolio?.buyingPower)} title="Cash currently available to open new positions." />
-          <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional} />
-          <StatusPill label="Universe" value={policy.universe === "sp500" ? "S&P 500" : allowedCount === 0 ? "TBD" : `${allowedCount} tickers`} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
+          <StatusPill label="Universe" value={universeLabelText} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
+          <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
         </div>
 
         <div className="ml-auto flex items-center gap-2">
           <div
             className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1 md:flex"
-            title={policy.killSwitch ? "Kill switch is active — deactivate it to enable autonomy" : "Turn autonomous trading on or off"}
+            title={policy.systemState === "halted" ? "System is halted — reactivate it to enable autonomy" : "Turn autonomous trading on or off"}
           >
             <span className="text-xs font-medium text-muted">Autonomy</span>
             <Switch
-              checked={policy.enabled && !policy.killSwitch}
-              onChange={(on) => updatePolicy({ enabled: on, ...(on ? { killSwitch: false } : {}) })}
+              checked={policy.systemState === "active"}
+              onChange={(on) => updatePolicy({ systemState: on ? "active" : "halted" })}
               label="Autonomy"
             />
           </div>
@@ -441,13 +406,6 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               <option value="manage">Manage Accounts...</option>
             </select>
           </div>
-          <button
-            onClick={() => setPaletteOpen(true)}
-            title="Open command palette"
-            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-fg md:flex"
-          >
-            {shortcutIcon}
-          </button>
           <IconButton label="Refresh" onClick={() => load()} disabled={busy}>
             <RefreshCw size={15} className={cn(busy && "animate-spin")} />
           </IconButton>
@@ -476,12 +434,12 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
             <Zap size={15} /> Run
           </Button>
           <Button
-            variant={policy.killSwitch ? "primary" : "danger"}
+            variant={policy.systemState === "halted" ? "primary" : "danger"}
             size="sm"
             className="h-9"
             onClick={() => setKillConfirm(true)}
           >
-            {policy.killSwitch ? <Play size={15} /> : <X size={15} />} Kill
+            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} Kill
           </Button>
         </div>
       </header>
@@ -631,20 +589,18 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         open={killConfirm}
         onClose={() => setKillConfirm(false)}
         onConfirm={async () => {
-          await updatePolicy({ killSwitch: !policy.killSwitch });
+          await updatePolicy({ systemState: policy.systemState === "halted" ? "active" : "halted" });
           setKillConfirm(false);
         }}
-        title={policy.killSwitch ? "Deactivate kill switch?" : "Activate kill switch?"}
+        title={policy.systemState === "halted" ? "Deactivate kill switch?" : "Activate kill switch?"}
         body={
-          policy.killSwitch
+          policy.systemState === "halted"
             ? "This resumes automated trading operations."
             : "This immediately pauses all automated trading runs and blocks any new order proposals."
         }
         confirmLabel="Confirm"
-        tone={policy.killSwitch ? "primary" : "danger"}
+        tone={policy.systemState === "halted" ? "primary" : "danger"}
       />
-
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
     </div>
   );
 }
@@ -664,8 +620,8 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
   const tone = pct >= 90 ? "down" : pct >= 60 ? "warn" : "accent";
   const bar = tone === "down" ? "bg-down" : tone === "warn" ? "bg-warn" : "bg-accent";
   return (
-    <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={`${money(used)} of ${money(cap)} daily notional used`}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">Daily risk</span>
+    <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={`${money(used)} of ${money(cap)} daily volume limit used`}>
+      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
       <div className="flex items-center gap-1.5">
         <span className="tnum text-[13px] leading-tight text-fg">{pct}%</span>
         <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-3/50 backdrop-blur-md">
@@ -1513,14 +1469,28 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="Key parameters" subtitle="Edit inline — applies immediately (same values as Settings → Risk & Limits)" icon={<Shield size={16} />} />
+        <PanelHeader title="Key parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 text-sm">
-          <EditableParam label="Max order" prefix="$" value={policy.maxOrderNotional} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
-          <EditableParam label="Daily cap" prefix="$" value={policy.maxDailyNotional} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
-          <EditableParam label="Symbol cap" suffix="%" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
-          <EditableParam label="Proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: v })} />
-          <EditableParam label="Stop loss" suffix="%" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
-          <EditableParam label="Take profit" suffix="%" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
+          <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v })} onCommitRel={(v) => updatePolicy({ maxOrderPctOfNav: v })} defaultMode="rel" />
+          <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v })} onCommitRel={(v) => updatePolicy({ maxDailyPctOfNav: v })} defaultMode="abs" />
+          <EditableParam label="Symbol cap" relValue={policy.maxSymbolExposurePct} onCommitAbs={() => {}} onCommitRel={(v) => updatePolicy({ maxSymbolExposurePct: v })} defaultMode="rel" />
+          <EditableParam label="Stop loss" absValue={policy.riskRules.stopLossNotional} relValue={policy.riskRules.stopLossPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} defaultMode="rel" />
+          <EditableParam label="Take profit" absValue={policy.riskRules.takeProfitNotional} relValue={policy.riskRules.takeProfitPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} defaultMode="rel" />
+
+          <div className="col-span-2 mt-2 space-y-3">
+             <div className="grid grid-cols-2 gap-2">
+               <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
+               <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
+               <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
+             </div>
+             <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
+               <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
+             </Field>
+             <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
+               <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
+               Run during extended hours
+             </label>
+          </div>
         </div>
       </Card>
 
@@ -1546,29 +1516,67 @@ function KeyVal({ label, value }: { label: string; value: string }) {
 
 function EditableParam({
   label,
-  value,
-  prefix,
-  suffix,
-  onCommit
+  absValue,
+  relValue,
+  onCommitAbs,
+  onCommitRel,
+  defaultMode
 }: {
   label: string;
-  value: number;
-  prefix?: string;
-  suffix?: string;
-  onCommit: (v: number) => void;
+  absValue?: number;
+  relValue?: number;
+  onCommitAbs: (v: number | undefined) => void;
+  onCommitRel: (v: number | undefined) => void;
+  defaultMode: "abs" | "rel";
 }) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
+  const [mode, setMode] = useState<"abs" | "rel">(
+    absValue !== undefined ? "abs" : relValue !== undefined ? "rel" : defaultMode
+  );
+  
+  const currentVal = mode === "abs" ? absValue : relValue;
+  const [draft, setDraft] = useState(currentVal !== undefined ? String(currentVal) : "");
+  
+  useEffect(() => {
+    const val = mode === "abs" ? absValue : relValue;
+    setDraft(val !== undefined ? String(val) : "");
+  }, [mode, absValue, relValue]);
+
   function commit() {
+    if (draft.trim() === "") {
+      onCommitAbs(undefined);
+      onCommitRel(undefined);
+      return;
+    }
     const n = Number(draft);
-    if (Number.isFinite(n) && n >= 0 && n !== value) onCommit(n);
-    else setDraft(String(value));
+    if (Number.isFinite(n) && n >= 0) {
+      if (mode === "abs") {
+        onCommitAbs(n);
+        onCommitRel(undefined);
+      } else {
+        onCommitAbs(undefined);
+        onCommitRel(n);
+      }
+    } else {
+      const val = mode === "abs" ? absValue : relValue;
+      setDraft(val !== undefined ? String(val) : "");
+    }
   }
+
+  function toggleMode(e: React.MouseEvent) {
+    e.preventDefault();
+    setMode((prev) => (prev === "abs" ? "rel" : "abs"));
+  }
+
   return (
     <label className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 focus-within:border-accent">
-      <div className="text-[11px] uppercase text-faint">{label}</div>
-      <div className="flex items-baseline gap-0.5">
-        {prefix && <span className="text-sm text-faint">{prefix}</span>}
+      <div className="flex items-center justify-between text-[11px] uppercase text-faint">
+        {label}
+        <button type="button" onClick={toggleMode} className="hover:text-fg flex cursor-pointer items-center gap-1 font-semibold transition-colors">
+           {mode === "abs" ? "$" : "%"} <span className="text-[9px] opacity-50">⇄</span>
+        </button>
+      </div>
+      <div className="flex items-baseline gap-1">
+        {mode === "abs" && <span className="text-sm text-faint shrink-0">$</span>}
         <input
           type="number"
           min={0}
@@ -1581,9 +1589,10 @@ function EditableParam({
               (e.target as HTMLInputElement).blur();
             }
           }}
-          className="w-full bg-transparent tnum text-sm text-fg outline-none"
+          className="w-full min-w-0 flex-1 bg-transparent tnum text-sm text-fg outline-none"
+          placeholder={mode === "abs" ? "Not set" : "Not set"}
         />
-        {suffix && <span className="text-sm text-faint">{suffix}</span>}
+        {mode === "rel" && <span className="text-sm text-faint shrink-0">%</span>}
       </div>
     </label>
   );
@@ -1785,18 +1794,6 @@ function StrategyStudio({
 
       <div className="space-y-4">
         <div>
-          <h4 className="mb-2 text-sm font-semibold text-fg">Strategy sliders</h4>
-          <div className="grid grid-cols-2 gap-2">
-            <RangeField label="Max order $" value={policy.maxOrderNotional} min={1} max={1000} step={1} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
-            <RangeField label="Daily $" value={policy.maxDailyNotional} min={10} max={10000} step={10} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
-            <RangeField label="Symbol cap %" value={policy.maxSymbolExposurePct} min={1} max={100} step={1} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
-            <RangeField label="Proposals/run" value={policy.maxProposalsPerRun} min={1} max={10} step={1} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
-            <RangeField label="Stop loss %" value={policy.riskRules.stopLossPct ?? 0} min={0} max={50} step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
-            <RangeField label="Take profit %" value={policy.riskRules.takeProfitPct ?? 0} min={0} max={100} step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
-          </div>
-        </div>
-
-        <div>
           <h4 className="mb-2 text-sm font-semibold text-fg">Scoring weights</h4>
           <ScoringWeights weights={policy.scoringWeights} onCommit={(w) => updatePolicy({ scoringWeights: w })} />
         </div>
@@ -1849,28 +1846,26 @@ function SettingsContent({
   updatePolicy: (patch: PolicyPatch) => void;
   load: () => Promise<void>;
 }) {
-  type Section = "operate" | "keys" | "risk" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "keys" | "tax" | "tuning" | "notifications";
   const [section, setSection] = useState<Section>("operate");
-  const [sectorCaps, setSectorCaps] = useState(formatSectorCaps(policy.sectorCaps));
   const [draft, setDraft] = useState("");
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
 
   function addAllowlist() {
-    const next = normalizeSymbols([...policy.allowlist, ...draft.split(/[,\s]+/)]);
+    const next = normalizeSymbols([...policy.additionalSymbols, ...draft.split(/[,\s]+/)]);
     setDraft("");
-    updatePolicy({ allowlist: next });
+    updatePolicy({ additionalSymbols: next });
   }
 
   return (
     <div className="space-y-4">
       <Tabs
         value={section}
-        onChange={setSection}
+        onChange={(v) => setSection(v as Section)}
         tabs={[
           { id: "operate", label: "Operate" },
           { id: "keys", label: "API Keys" },
-          { id: "risk", label: "Risk & Limits" },
           { id: "tax", label: "Tax" },
           { id: "tuning", label: "Tuning" },
           { id: "notifications", label: "Notifications" }
@@ -1879,9 +1874,9 @@ function SettingsContent({
 
       {section === "operate" && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Allowed universe">
-            <select className={inputClass} value={policy.universe} onChange={(e) => updatePolicy({ universe: e.target.value as TradingPolicy["universe"] })}>
-              <option value="custom">Custom allowlist</option>
+           <Field label="Base index (optional)">
+            <select className={inputClass} value={policy.includedIndices.includes("sp500") ? "sp500" : "none"} onChange={(e) => updatePolicy({ includedIndices: e.target.value === "sp500" ? ["sp500"] : [] })}>
+              <option value="none">No index selected</option>
               <option value="sp500">S&P 500 ({SP500_SYMBOLS.length} symbols)</option>
             </select>
           </Field>
@@ -1899,17 +1894,16 @@ function SettingsContent({
               <option value="longterm">Months to years — long-term (favors long-term tax treatment)</option>
             </select>
           </Field>
-          <Field label="Custom allowlist" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed`} className="sm:col-span-2">
+          <Field label="Additional symbols" hint="Individual stocks to trade on top of the base index" className="sm:col-span-2">
             <div className="rounded-lg border border-line bg-bg/60 p-2">
               <div className="mb-2 flex flex-wrap gap-1.5">
-                {(policy.universe === "sp500" ? [] : policy.allowlist).map((s) => (
-                  <button key={s} onClick={() => updatePolicy({ allowlist: policy.allowlist.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
+                {policy.additionalSymbols.map((s) => (
+                  <button key={s} onClick={() => updatePolicy({ additionalSymbols: policy.additionalSymbols.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
                     {s} <X size={11} />
                   </button>
                 ))}
               </div>
               <input
-                disabled={policy.universe === "sp500"}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value.toUpperCase())}
                 onBlur={addAllowlist}
@@ -1926,18 +1920,18 @@ function SettingsContent({
           </Field>
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button
-              variant={policy.enabled ? "ghost" : "primary"}
-              disabled={!policy.enabled && Boolean(enableBlockedReason)}
-              title={!policy.enabled ? enableBlockedReason : undefined}
-              onClick={() => updatePolicy({ enabled: !policy.enabled, killSwitch: false })}
+              variant={policy.systemState === "active" ? "ghost" : "primary"}
+              disabled={policy.systemState !== "active" && Boolean(enableBlockedReason)}
+              title={policy.systemState !== "active" ? enableBlockedReason : undefined}
+              onClick={() => updatePolicy({ systemState: policy.systemState === "active" ? "halted" : "active" })}
             >
-              {policy.enabled ? <Pause size={15} /> : <Play size={15} />} {policy.enabled ? "Pause autonomy" : "Enable autonomy"}
+              {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
             <Button variant="ghost" onClick={() => updatePolicy({ paperMode: !policy.paperMode })}>
               {policy.paperMode ? "Switch to Live" : "Switch to Paper"}
             </Button>
           </div>
-          {!policy.enabled && enableBlockedReason && (
+          {policy.systemState !== "active" && enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />{enableBlockedReason}</p>
           )}
         </div>
@@ -1945,28 +1939,7 @@ function SettingsContent({
 
       {section === "keys" && <ApiKeysSection />}
 
-      {section === "risk" && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <NumberField label="Max order ($)" value={policy.maxOrderNotional} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
-          <NumberField label="Max daily notional ($)" value={policy.maxDailyNotional} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
-          <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
-          <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
-          <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
-          <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
-          <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
-          <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
-          <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
-            <input className={inputClass} value={sectorCaps} onChange={(e) => setSectorCaps(e.target.value)} onBlur={() => updatePolicy({ sectorCaps: parseSectorCaps(sectorCaps) })} />
-          </Field>
-          <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
-            <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
-            Run during extended hours
-          </label>
-          <p className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-[13px] text-muted sm:col-span-2">
-            Remaining today: <span className="tnum text-fg">{money(remainingNotional)}</span> notional and <span className="tnum text-fg">{remainingOrders}</span> orders.
-          </p>
-        </div>
-      )}
+
 
       {section === "tax" && (
         <div className="space-y-3">
