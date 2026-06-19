@@ -771,6 +771,7 @@ function resolveScanQuote(symbol: string, scan: MarketScan | null | undefined): 
 function SymbolButton({
   symbol,
   scan,
+  quote: quoteProp,
   onDrilldown,
   className,
   title,
@@ -778,12 +779,15 @@ function SymbolButton({
 }: {
   symbol: string;
   scan?: MarketScan | null;
+  quote?: MarketQuote | null;
   onDrilldown?: (q: MarketQuote) => void;
   className?: string;
   title?: string;
   variant?: "underline" | "chip";
 }) {
-  const quote = onDrilldown ? resolveScanQuote(symbol, scan) : null;
+  // Prefer an explicitly-provided quote (e.g. the Market Scan row already has it);
+  // otherwise resolve it from the scan by symbol.
+  const quote = quoteProp ?? (onDrilldown ? resolveScanQuote(symbol, scan) : null);
   if (!quote || !onDrilldown) {
     return <span className={className} title={title}>{symbol}</span>;
   }
@@ -1121,7 +1125,11 @@ function MarketScanView({ snapshot, onDrilldown }: { snapshot: DashboardSnapshot
             <>
               {cols.map((c) => (
                 <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
-                  {c.render(q)}
+                  {c.id === "symbol" ? (
+                    <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} />
+                  ) : (
+                    c.render(q)
+                  )}
                 </td>
               ))}
             </>
