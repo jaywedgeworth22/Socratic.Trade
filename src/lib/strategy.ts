@@ -42,7 +42,9 @@ import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting } from "./db";
+import { withLlmGeneration } from "./observability";
 import { debateProposal } from "./red-team";
+import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
 import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 /**
@@ -917,29 +919,52 @@ async function proposeTrades(input: {
         }
       };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${openaiKey}`
+  const bullResult = await withLlmGeneration(
+    {
+      name: "trading.strategy.bull",
+      model,
+      userId: input.userId,
+      input: summarizeOpenAiRequest(body),
+      metadata: {
+        endpoint: url,
+        transport: isChatCompletions ? "chat-completions" : "responses",
+        maxProposals,
+        paperMode: input.policy.paperMode,
+        currentMarketRegime
+      },
+      tags: ["strategy", "bull-agent"],
+      output: (result) => ({
+        ...summarizeOpenAiResponseText(result.text),
+        ...summarizeTradeProposals(result.proposals)
+      })
     },
-    body: JSON.stringify(body)
-  });
+    async () => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${openaiKey}`
+        },
+        body: JSON.stringify(body)
+      });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
-  }
-  const payload = await response.json();
-  const text = payload.choices?.[0]?.message?.content ??
-               payload.output_text ??
-                   payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
+      }
+      const payload = await response.json();
+      const text = extractOpenAiText(payload);
 
-  if (!text) {
-    throw new Error("Empty response returned from LLM API.");
-  }
-  
-  const bullProposals = sanitizeProposals(JSON.parse(text).proposals ?? [], maxProposals).map(p => ({
+      if (!text) {
+        throw new Error("Empty response returned from LLM API.");
+      }
+
+      const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
+      return { text, proposals: parsed.proposals ?? [] };
+    }
+  );
+
+  const bullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
@@ -1050,34 +1075,75 @@ async function proposeTrades(input: {
         }
       };
 
-  const bearResponse = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${openaiKey}`
+  const bearResult = await withLlmGeneration(
+    {
+      name: "trading.strategy.bear",
+      model,
+      userId: input.userId,
+      input: summarizeOpenAiRequest(bearBody),
+      metadata: {
+        endpoint: url,
+        transport: isChatCompletions ? "chat-completions" : "responses",
+        reviewedProposalCount: bullProposals.length,
+        paperMode: input.policy.paperMode,
+        currentMarketRegime
+      },
+      tags: ["strategy", "bear-agent", "red-team"],
+      output: (result) => ({
+        ...summarizeOpenAiResponseText(result.text),
+        ...summarizeTradeProposals(result.proposals),
+        fallbackToBull: result.fallbackToBull
+      })
     },
-    body: JSON.stringify(bearBody)
-  });
+    async () => {
+      const bearResponse = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${openaiKey}`
+        },
+        body: JSON.stringify(bearBody)
+      });
 
-  if (!bearResponse.ok) {
-    console.warn("Bear Agent API failed, falling back to Bull proposals");
+      if (!bearResponse.ok) {
+        console.warn("Bear Agent API failed, falling back to Bull proposals");
+        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+      }
+
+      const bearPayload = await bearResponse.json();
+      const bearText = extractOpenAiText(bearPayload);
+
+      if (!bearText) {
+        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+      }
+
+      const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
+      return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
+    }
+  );
+
+  if (bearResult.fallbackToBull) {
     return bullProposals;
   }
-  
-  const bearPayload = await bearResponse.json();
-  const bearText = bearPayload.choices?.[0]?.message?.content ??
-                   bearPayload.output_text ??
-                   bearPayload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
 
-  if (!bearText) {
-    return bullProposals;
-  }
-
-  const parsedBear = JSON.parse(bearText).proposals ?? [];
-  return sanitizeProposals(parsedBear, maxProposals).map(p => ({
+  return sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
+}
+
+function extractOpenAiText(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const root = payload as {
+    output_text?: unknown;
+    choices?: Array<{ message?: { content?: unknown } }>;
+    output?: Array<{ content?: Array<{ text?: unknown }> }>;
+  };
+  if (typeof root.output_text === "string") return root.output_text;
+  const chatText = root.choices?.[0]?.message?.content;
+  if (typeof chatText === "string") return chatText;
+  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
+  return typeof responseText === "string" ? responseText : undefined;
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {

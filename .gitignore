@@ -6,11 +6,16 @@
 .env*.local
 .next/
 node_modules/
+.npm-cache/
 data/
 *.db
 *.db-shm
 *.db-wal
 *.tsbuildinfo
+playwright-report/
+test-results/
+.env.sentry-build-plugin
+.litestream/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

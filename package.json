@@ -5,16 +5,30 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "dev:secrets": "node scripts/infisical-run.mjs -- npm run dev",
     "dev:codex": "node scripts/codex-dev-server.mjs",
     "dev:clean": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true && next dev",
     "build": "next build",
+    "build:secrets": "node scripts/infisical-run.mjs -- npm run build",
     "start": "next start",
+    "start:secrets": "node scripts/infisical-run.mjs -- npm run start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "gitleaks": "gitleaks detect --source . --verbose",
+    "litestream:replicate": "node scripts/litestream.mjs replicate",
+    "litestream:restore": "node scripts/litestream.mjs restore",
+    "litestream:dry-run": "node scripts/litestream.mjs dry-run"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
+    "@langfuse/otel": "^5.5.3",
+    "@langfuse/tracing": "^5.5.3",
+    "@opentelemetry/instrumentation": "^0.219.0",
+    "@opentelemetry/sdk-trace-node": "^2.8.0",
     "@pinecone-database/pinecone": "^8.0.0",
+    "@sentry/nextjs": "^10.58.0",
     "@xyflow/react": "^12.11.0",
     "better-sqlite3": "^11.10.0",
     "clsx": "^2.1.1",
@@ -34,6 +48,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4.3.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
@@ -44,6 +59,10 @@
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.1",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "axios": "^1.18.0",
+    "postcss": "^8.5.15"
   }
 }

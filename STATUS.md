@@ -28,6 +28,16 @@ steps materially change.
   to the Symbol Drilldown price chart. Expanded the backend `fetchDailyOHLC`
   history fetch horizon from ~1.1 years to 5 years (1825 days) to support the
   longer timeframes. See `docs/rollouts/2026-06-19-price-chart-timeframes.md`.
+- 2026-06-19: **Ops/observability/security foundation selected by user**. Added
+  Infisical command wrappers, local Gitleaks scanning, Sentry
+  server/edge runtime hooks, Langfuse LLM tracing with redacted summary capture by
+  default, npm Dependabot config, Litestream SQLite backup/restore wrappers, and
+  Playwright dashboard smoke tests. GitHub CI/e2e/security workflows are deferred
+  until push credentials include `workflow` scope. These are opt-in unless their
+  env vars or host CLIs are configured. Browser Sentry/source-map upload is
+  deferred until the Sentry build wrapper is revalidated. See
+  `docs/ops-observability-security.md` and
+  `docs/rollouts/2026-06-19-ops-observability-security.md`.
 - 2026-06-19: **Live-safety/risk-controls slice (Phase 10 E4/E5)**. Red Team
   review threshold is now a policy tuning knob (`redTeamConvictionThreshold`,
   default behavior 80), and `crisisMaxOpeningExposurePct` optionally caps new
