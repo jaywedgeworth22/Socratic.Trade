@@ -16,14 +16,29 @@ import type {
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 
+export const ROBINHOOD_TRADING_MCP_URL = "https://agent.robinhood.com/mcp/trading";
+const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
+
+export interface RobinhoodMcpHealth {
+  adapter: "mock" | "mcp";
+  ok: boolean;
+  configured: boolean;
+  authenticated: boolean;
+  url?: string;
+  protocolVersion: string;
+  transport: "http+sse";
+  tools: string[];
+  checkedAt: string;
+  error?: string;
+  warning?: string;
+}
+
 export function getRobinhoodGateway(): BrokerGateway {
   if (process.env.ROBINHOOD_ADAPTER === "mcp") return new HttpMcpRobinhoodGateway();
   return new MockRobinhoodGateway();
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
-  private readonly url = required("ROBINHOOD_MCP_URL");
-
   async getAccounts(): Promise<BrokerageAccount[]> {
     const raw = await this.callTool("get_accounts", {});
     const accounts = Array.isArray(raw?.accounts) ? raw.accounts : Array.isArray(raw) ? raw : [];
@@ -190,40 +205,187 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
   }
 
   private async callTool(name: string, args: Record<string, unknown>): Promise<any> {
-    const token = await getMcpAccessToken();
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: crypto.randomUUID(),
-        method: "tools/call",
-        params: { name, arguments: args }
-      })
-    });
-    if (response.status === 401) clearMcpOAuthTokens();
-    if (!response.ok) throw new Error(`Robinhood MCP HTTP ${response.status}`);
-    const payload = await response.json();
-    if (payload.error) throw new Error(payload.error.message ?? "Robinhood MCP tool failed");
-    const result = payload.result?.structuredContent ?? payload.result?.content?.[0]?.text ?? payload.result;
-    let parsed: unknown = result;
-    if (typeof result === "string") {
-      try {
-        parsed = JSON.parse(result);
-      } catch {
-        return { text: result };
-      }
-    }
-    // Robinhood's MCP wraps every tool's output in a `data` envelope (with a sibling
-    // `guide` string). Unwrap it so callers read fields directly. Harmless if absent.
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "data" in (parsed as Record<string, unknown>)) {
-      return (parsed as { data: unknown }).data;
-    }
-    return parsed;
+    return callRobinhoodMcpTool(name, args);
   }
+}
+
+export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
+  const adapter: RobinhoodMcpHealth["adapter"] = process.env.ROBINHOOD_ADAPTER === "mcp" ? "mcp" : "mock";
+  const checkedAt = new Date().toISOString();
+  const protocolVersion = getRobinhoodMcpProtocolVersion();
+  const base = {
+    adapter,
+    protocolVersion,
+    transport: "http+sse" as const,
+    checkedAt,
+    tools: [] as string[]
+  };
+
+  if (adapter !== "mcp") {
+    return {
+      ...base,
+      ok: true,
+      configured: false,
+      authenticated: false,
+      warning: "ROBINHOOD_ADAPTER is mock; set ROBINHOOD_ADAPTER=mcp to use Robinhood Trading MCP."
+    };
+  }
+
+  const url = getRobinhoodMcpUrl();
+  const token = await getMcpAccessToken();
+  if (!token) {
+    return {
+      ...base,
+      ok: false,
+      configured: true,
+      authenticated: false,
+      url,
+      error: "No Robinhood MCP access token is stored or configured. Connect OAuth or set ROBINHOOD_MCP_AUTH_TOKEN."
+    };
+  }
+
+  let warning: string | undefined;
+  try {
+    await callRobinhoodMcpMethod("initialize", {
+      protocolVersion,
+      capabilities: {},
+      clientInfo: { name: "Robinhood Agentic Trading", version: "0.1.0" }
+    });
+  } catch (error) {
+    // Some HTTP MCP proxies accept direct tools/list calls. Keep this diagnostic
+    // non-fatal and let tools/list decide whether the connection is usable.
+    warning = `initialize failed: ${messageFromError(error)}`;
+  }
+
+  try {
+    const result = await callRobinhoodMcpMethod("tools/list", {});
+    const tools = Array.isArray(result?.tools)
+      ? result.tools.map((tool: any) => String(tool?.name ?? "")).filter(Boolean).sort()
+      : [];
+    return { ...base, ok: true, configured: true, authenticated: true, url, tools, warning };
+  } catch (error) {
+    return {
+      ...base,
+      ok: false,
+      configured: true,
+      authenticated: true,
+      url,
+      error: [warning, messageFromError(error)].filter(Boolean).join("; ")
+    };
+  }
+}
+
+export async function callRobinhoodMcpTool(name: string, args: Record<string, unknown>): Promise<any> {
+  const result = await callRobinhoodMcpMethod("tools/call", { name, arguments: args });
+  return unpackMcpToolResult(result);
+}
+
+export async function callRobinhoodMcpMethod(method: string, params: Record<string, unknown>): Promise<any> {
+  const token = await getMcpAccessToken();
+  const response = await fetch(getRobinhoodMcpUrl(), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": getRobinhoodMcpProtocolVersion(),
+      ...(token ? { authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method,
+      params
+    })
+  });
+
+  if (response.status === 401) clearMcpOAuthTokens();
+
+  const body = await response.text();
+  const payload = parseMcpResponseBody(body, response.headers.get("content-type"));
+  const errorMessage = mcpErrorMessage(payload);
+  if (!response.ok) {
+    throw new Error(`Robinhood MCP HTTP ${response.status}${errorMessage ? `: ${errorMessage}` : ""}`);
+  }
+  if (errorMessage) throw new Error(errorMessage);
+  return payload.result;
+}
+
+export function parseMcpResponseBody(body: string, contentType: string | null): { result?: any; error?: any } {
+  const trimmed = body.trim();
+  if (!trimmed) return {};
+  if (isSseResponse(trimmed, contentType)) return parseSseMcpResponse(trimmed);
+  const parsed = JSON.parse(trimmed);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Robinhood MCP returned a non-object JSON payload.");
+  return parsed as { result?: any; error?: any };
+}
+
+function parseSseMcpResponse(body: string): { result?: any; error?: any } {
+  const events: string[] = [];
+  let current: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    if (line === "") {
+      if (current.length > 0) {
+        events.push(current.join("\n"));
+        current = [];
+      }
+      continue;
+    }
+    if (line.startsWith("data:")) current.push(line.slice(5).trimStart());
+  }
+  if (current.length > 0) events.push(current.join("\n"));
+
+  let lastObject: { result?: any; error?: any } | undefined;
+  for (const event of events) {
+    const data = event.trim();
+    if (!data || data === "[DONE]") continue;
+    const parsed = JSON.parse(data);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      lastObject = parsed as { result?: any; error?: any };
+      if ("result" in parsed || "error" in parsed) return lastObject;
+    }
+  }
+  if (lastObject) return lastObject;
+  throw new Error("Robinhood MCP SSE response did not include a JSON-RPC data event.");
+}
+
+function unpackMcpToolResult(raw: any): unknown {
+  const result = raw?.structuredContent ?? raw?.content?.[0]?.text ?? raw;
+  let parsed: unknown = result;
+  if (typeof result === "string") {
+    try {
+      parsed = JSON.parse(result);
+    } catch {
+      return { text: result };
+    }
+  }
+  // Robinhood's MCP wraps every tool output in a `data` envelope, with a sibling
+  // guide string. Unwrap it so gateway callers read fields directly.
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "data" in (parsed as Record<string, unknown>)) {
+    return (parsed as { data: unknown }).data;
+  }
+  return parsed;
+}
+
+function mcpErrorMessage(payload: { error?: any }): string | undefined {
+  if (!payload.error) return undefined;
+  if (typeof payload.error === "string") return payload.error;
+  return payload.error.message ? String(payload.error.message) : JSON.stringify(payload.error);
+}
+
+function isSseResponse(body: string, contentType: string | null): boolean {
+  return Boolean(contentType?.includes("text/event-stream")) || body.startsWith("event:") || body.startsWith("data:") || body.includes("\ndata:");
+}
+
+function getRobinhoodMcpUrl(): string {
+  return process.env.ROBINHOOD_MCP_URL || ROBINHOOD_TRADING_MCP_URL;
+}
+
+function getRobinhoodMcpProtocolVersion(): string {
+  return process.env.ROBINHOOD_MCP_PROTOCOL_VERSION || DEFAULT_MCP_PROTOCOL_VERSION;
+}
+
+function messageFromError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 const MOCK_PRICES: Record<string, number> = {
@@ -371,12 +533,6 @@ function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
     time_in_force: input.timeInForce,
     market_hours: input.marketHours
   };
-}
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
 }
 
 function number(value: unknown): number {

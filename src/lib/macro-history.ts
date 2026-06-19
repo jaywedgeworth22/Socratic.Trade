@@ -5,6 +5,8 @@
  * returns {} and the UI simply omits the trends. Never fabricated.
  */
 
+import { resolveApiKey } from "./db";
+
 const FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations";
 const POINTS = 90; // ~4–5 months of daily observations
 
@@ -49,9 +51,9 @@ async function fetchSeriesHistory(seriesId: string, apiKey: string): Promise<num
   }
 }
 
-export async function fetchMacroHistory(now: number = Date.now()): Promise<MacroHistory> {
+export async function fetchMacroHistory(now: number = Date.now(), userId?: string): Promise<MacroHistory> {
   if (cache.data && cache.expiresAt > now) return cache.data;
-  const apiKey = process.env.FRED_API_KEY;
+  const apiKey = resolveApiKey("fred", userId);
   if (!apiKey) return {};
 
   const entries = Object.entries(SERIES);
@@ -62,7 +64,11 @@ export async function fetchMacroHistory(now: number = Date.now()): Promise<Macro
     if (series && series.length > 0) data[key] = series;
   });
 
-  cache.data = data;
-  cache.expiresAt = now + CACHE_TTL_MS;
+  // Only cache a non-empty result, so a cold-start FRED hiccup self-heals on the next poll
+  // instead of caching an empty trends panel for 12h.
+  if (Object.keys(data).length > 0) {
+    cache.data = data;
+    cache.expiresAt = now + CACHE_TTL_MS;
+  }
   return data;
 }

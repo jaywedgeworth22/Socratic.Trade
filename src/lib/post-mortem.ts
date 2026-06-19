@@ -1,9 +1,11 @@
-import { getDb, setSetting, audit, getInternalSetting, setInternalSetting, getPolicy } from "./db";
+import { getDb, setSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
 import { getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getExcursionsByThesis } from "./learning-loop";
 
-export async function generateReflectionSummary(accountNumber: string): Promise<void> {
+export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
   const db = getDb();
+  const openaiKey = resolveApiKey("openai", userId);
+  if (!openaiKey) return;
   
   // Fetch latest 50 fill events with their corresponding proposals
   const rows = db.prepare(`
@@ -19,10 +21,10 @@ export async function generateReflectionSummary(accountNumber: string): Promise<
       p.proposal
     FROM fill_events f
     LEFT JOIN trade_proposals p ON f.proposal_id = p.id
-    WHERE f.account_number = ? AND f.status = 'filled'
+    WHERE f.account_number = ? AND f.user_id = ? AND f.status = 'filled'
     ORDER BY f.filled_at DESC
     LIMIT 50
-  `).all(accountNumber) as any[];
+  `).all(accountNumber, userId) as any[];
 
   if (rows.length === 0) return;
 
@@ -49,7 +51,7 @@ export async function generateReflectionSummary(accountNumber: string): Promise<
   // timing stats, so the reflection is grounded in what actually made or lost money
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
-  const source = getPolicy().paperMode ? "paper" : "live";
+  const source = getPolicy(userId).paperMode ? "paper" : "live";
   const outcomesByThesis = getThesisScorecard(accountNumber, source);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source);
   const timingByThesis = await getExcursionsByThesis(accountNumber, source).catch(() => []);
@@ -88,7 +90,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+        authorization: `Bearer ${openaiKey}`
       },
       body: JSON.stringify(body)
     });
@@ -112,7 +114,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         outcomesByThesis,
         outcomesByRegime,
         timingByThesis
-      });
+      }, userId);
     }
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);

@@ -1,3 +1,5 @@
+import { resolveApiKey } from "./db";
+
 export interface MacroData {
   fedFundsRate: string;
   dgs3moTreasury: string;
@@ -51,13 +53,13 @@ const cache: { expiresAt: number; data: MacroData | null } = {
 
 const CACHE_TTL_MS = 24 * 60 * 60_000; // Macro data moves slowly; cache 24h
 
-export async function fetchMacroData(): Promise<MacroData> {
+export async function fetchMacroData(userId?: string): Promise<MacroData> {
   const now = Date.now();
   if (cache.data && cache.expiresAt > now) {
     return cache.data;
   }
 
-  const apiKey = process.env.FRED_API_KEY;
+  const apiKey = resolveApiKey("fred", userId);
   if (!apiKey) {
     return DEFAULT_MACRO;
   }

@@ -10,6 +10,8 @@
  * We use the REST API here, so no S3 signing is needed.)
  */
 
+import { resolveApiKey } from "../db";
+
 export interface FullMarketBreadth {
   /** % of the full US universe advancing day-over-day. */
   breadthPct?: number;
@@ -22,11 +24,93 @@ export interface FullMarketBreadth {
   universe: number;
 }
 
-interface GroupedBar { T?: string; c?: number; v?: number }
+interface GroupedBar { T?: string; o?: number; h?: number; l?: number; c?: number; v?: number }
 interface GroupedResponse { status?: string; results?: GroupedBar[] }
+
+const numOrUndef = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+export interface GroupedDailyBar { ticker: string; open?: number; high?: number; low?: number; close: number; volume?: number }
+
+/**
+ * Bulk daily OHLCV for the whole US stock market via the REST grouped-daily endpoint (~12k
+ * tickers in one call). This is the working bulk source — the S3 flat files give the same data
+ * across more asset classes but object download is plan-gated (403 "forbidden") on this account.
+ */
+export async function fetchGroupedBarsRest(date: string, userId?: string): Promise<GroupedDailyBar[] | null> {
+  const key = resolveApiKey("massive", userId);
+  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const url = `${apiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
+    const res = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const json = (await res.json()) as GroupedResponse;
+    const rows = json?.results ?? [];
+    const bars: GroupedDailyBar[] = [];
+    for (const r of rows) {
+      if (typeof r.T === "string" && typeof r.c === "number" && Number.isFinite(r.c)) {
+        bars.push({ ticker: r.T, open: numOrUndef(r.o), high: numOrUndef(r.h), low: numOrUndef(r.l), close: r.c, volume: numOrUndef(r.v) });
+      }
+    }
+    return bars.length > 0 ? bars : null;
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+}
 
 function apiBase(): string {
   return process.env.MASSIVE_API_BASE ?? "https://api.massive.com";
+}
+
+export interface MarketNewsItem {
+  title: string;
+  publisher?: string;
+  url?: string;
+  publishedAt?: string;
+  tickers?: string[];
+}
+
+interface MassiveNewsResponse {
+  results?: Array<{
+    title?: string;
+    article_url?: string;
+    published_utc?: string;
+    publisher?: { name?: string };
+    tickers?: string[];
+  }>;
+}
+
+/** Recent market-wide news headlines (Massive /v2/reference/news, Polygon-compatible). */
+export async function fetchMassiveNews(limit = 8, userId?: string): Promise<MarketNewsItem[]> {
+  const key = resolveApiKey("massive", userId);
+  if (!key) return [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${apiBase()}/v2/reference/news?order=desc&limit=${limit}`, {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${key}` }
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return [];
+    const json = (await res.json()) as MassiveNewsResponse;
+    return (json?.results ?? [])
+      .filter((r) => typeof r.title === "string" && r.title.length > 0)
+      .map((r) => ({
+        title: r.title as string,
+        publisher: r.publisher?.name,
+        url: r.article_url,
+        publishedAt: r.published_utc,
+        tickers: Array.isArray(r.tickers) ? r.tickers.slice(0, 4) : undefined
+      }));
+  } catch {
+    clearTimeout(timeout);
+    return [];
+  }
 }
 
 /** Last `n` calendar days as YYYY-MM-DD, newest first (weekends/holidays return empty + are skipped). */
@@ -64,8 +148,14 @@ async function fetchGrouped(date: string, key: string): Promise<Map<string, { cl
 
 const MIN_VOLUME_FOR_MOVERS = 1_000_000; // ignore illiquid names when ranking movers
 
-export async function fetchFullMarketBreadth(now: number = Date.now()): Promise<FullMarketBreadth | undefined> {
-  const key = process.env.MASSIVE_API_KEY;
+// Own success-only cache so a transient failure never poisons the market-signals bundle, and
+// repeated callers (dashboard + strategy) share one grouped-file fetch.
+const BREADTH_TTL_MS = 30 * 60_000;
+const breadthCache: { expiresAt: number; data: FullMarketBreadth | undefined } = { expiresAt: 0, data: undefined };
+
+export async function fetchFullMarketBreadth(now: number = Date.now(), userId?: string): Promise<FullMarketBreadth | undefined> {
+  if (breadthCache.data && breadthCache.expiresAt > now) return breadthCache.data;
+  const key = resolveApiKey("massive", userId);
   if (!key) return undefined;
 
   // Collect the two most recent trading days that have data.
@@ -91,7 +181,7 @@ export async function fetchFullMarketBreadth(now: number = Date.now()): Promise<
   }
   const total = advancers + decliners;
   movers.sort((a, b) => b.pct - a.pct);
-  return {
+  const result: FullMarketBreadth = {
     breadthPct: total > 0 ? Math.round((advancers / total) * 100) : undefined,
     advancers,
     decliners,
@@ -100,4 +190,7 @@ export async function fetchFullMarketBreadth(now: number = Date.now()): Promise<
     asOf: today.date,
     universe: total
   };
+  breadthCache.data = result; // success-only cache
+  breadthCache.expiresAt = now + BREADTH_TTL_MS;
+  return result;
 }

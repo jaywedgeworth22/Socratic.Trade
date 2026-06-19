@@ -8,9 +8,11 @@ import {
   CheckCircle,
   ChevronRight,
   Command as CommandIcon,
+  ExternalLink,
   Gauge,
   Hourglass,
   Info,
+  KeyRound,
   Landmark,
   LayoutDashboard,
   LineChartIcon,
@@ -21,9 +23,11 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
   Settings as SettingsIcon,
   Shield,
   Sparkles,
+  Trash2,
   TrendingUp,
   Wallet,
   X,
@@ -99,11 +103,31 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const [feedTab, setFeedTab] = useState<FeedTab>("activity");
   const [feedOpen, setFeedOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountsOpen, setAccountsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [killConfirm, setKillConfirm] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
+  // A live market scan used solely to resolve a symbol → full quote when a ticker is
+  // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
+  // isn't rehydrated after a restart, so we fetch the current scan (same source the
+  // Market Scan tab uses) once on mount and keep it for drilldown lookups.
+  const [tickerScan, setTickerScan] = useState<MarketScan | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/scan")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: MarketScan | null) => {
+        if (!cancelled && data && Array.isArray(data.topCandidates)) setTickerScan(data);
+      })
+      .catch(() => {
+        /* ticker drilldown is a nice-to-have; ignore scan fetch failures */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [newProfileName, setNewProfileName] = useState("");
   const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
@@ -311,6 +335,9 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
   const allowedCount = policy.universe === "sp500" ? SP500_SYMBOLS.length : policy.allowlist.length;
   const mode = policy.paperMode ? "paper" : "live";
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
+  // Best available scan for resolving clicked tickers → full quotes: the freshly
+  // fetched live scan, falling back to the captured run's scan if it's still loading.
+  const drilldownScan = tickerScan ?? snapshot.latestStrategyRun?.marketScan ?? null;
   const dailyNotionalPct = policy.maxDailyNotional > 0 ? Math.round((dailyStats.notional / policy.maxDailyNotional) * 100) : 0;
   const pendingCount = snapshot.pendingProposals.length;
   const autonomyStatus = policy.killSwitch
@@ -333,6 +360,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
     { id: "flow", label: "Open Strategy Flow (Node Editor)", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
     { id: "activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
     { id: "settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
+    { id: "accounts", label: "Manage accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
     { id: "mode", label: `Switch to ${policy.paperMode ? "Live" : "Paper"} mode`, icon: <Wallet size={15} />, run: () => void updatePolicy({ paperMode: !policy.paperMode }) },
     { id: "autonomy", label: policy.enabled ? "Pause autonomy" : "Enable autonomy", icon: policy.enabled ? <Pause size={15} /> : <Play size={15} />, run: () => updatePolicy({ enabled: !policy.enabled, killSwitch: false }) },
     { id: "kill", label: policy.killSwitch ? "Deactivate kill switch" : "Activate kill switch", icon: <Shield size={15} />, run: () => setKillConfirm(true) }
@@ -387,7 +415,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
               onChange={(e) => {
                 const id = e.target.value;
                 if (id === "manage") {
-                  setSettingsOpen(true);
+                  setAccountsOpen(true);
                   return;
                 }
                 void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
@@ -448,7 +476,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
       {/* ── Body grid ───────────────────────────────────────────── */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 xl:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 xl:block">
-          <PortfolioRail snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} />
+          <PortfolioRail snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
         </aside>
 
         <main className="flex min-h-0 flex-col gap-3">
@@ -480,17 +508,19 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
                 busy={busy}
                 approve={approveProposal}
                 reject={rejectProposal}
+                scan={drilldownScan}
+                onDrilldown={setDrilldownSymbol}
               />
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
                 <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} />
-                <SmartMoneyView snapshot={snapshot} />
+                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
               </div>
             )}
             {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} />}
-            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} />}
+            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
             {workspaceTab === "strategy" && (
               <StrategyView
                 snapshot={snapshot}
@@ -567,7 +597,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Account, risk & notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, tax & notifications" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -578,6 +608,10 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
           updatePolicy={updatePolicy}
           load={load}
         />
+      </Modal>
+
+      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect & switch brokerage accounts" icon={<Wallet size={18} />} size="lg">
+        <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
       </Modal>
 
       <ConfirmModal
@@ -635,11 +669,15 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
 function PortfolioRail({
   snapshot,
   mode,
-  symbolMetaBySymbol
+  symbolMetaBySymbol,
+  scan,
+  onDrilldown
 }: {
   snapshot: DashboardSnapshot;
   mode: "paper" | "live";
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
+  scan: MarketScan | null;
+  onDrilldown: (q: MarketQuote) => void;
 }) {
   const portfolio = snapshot.portfolio;
   const positions = snapshot.positions;
@@ -682,7 +720,7 @@ function PortfolioRail({
               {enriched.map((p) => (
                 <tr key={p.symbol} className="border-t border-line/60 hover:bg-surface-2/50 backdrop-blur-lg">
                   <td className="px-2 py-1.5">
-                    <div className="font-semibold text-fg" title={companyTitle(p.symbol, symbolMetaBySymbol)}>{p.symbol}</div>
+                    <SymbolButton symbol={p.symbol} scan={scan} onDrilldown={onDrilldown} className="block font-semibold text-fg" title={companyTitle(p.symbol, symbolMetaBySymbol)} />
                     <div className="tnum text-[11px] text-faint">{formatShareQuantity(p.quantity, p.symbol)} sh · {p.allocPct.toFixed(1)}%</div>
                   </td>
                   <td className="px-2 py-1.5 text-right tnum text-fg">{money(p.marketValue)}</td>
@@ -700,6 +738,76 @@ function PortfolioRail({
   );
 }
 
+/* ───────────────────────── Clickable ticker ───────────────────────── */
+
+/**
+ * Resolve a full MarketQuote for a symbol from the captured run's scan so the
+ * symbol drilldown can open from anywhere — not just the Market Scan table.
+ * Prefers the fully-scored `topCandidates`; falls back to the lighter
+ * `quotesBySymbol` summary (filling only the MarketQuote-required fields, leaving
+ * the rest undefined so the drawer renders "—" rather than fabricated numbers).
+ */
+function resolveScanQuote(symbol: string, scan: MarketScan | null | undefined): MarketQuote | null {
+  if (!scan) return null;
+  const full = scan.topCandidates.find((q) => q.symbol === symbol);
+  if (full) return full;
+  const summary = scan.quotesBySymbol[symbol];
+  if (!summary) return null;
+  return { ...summary, volume: 0, intradayChangePct: 0, positionMarketValue: 0 };
+}
+
+/**
+ * A ticker that opens the symbol drilldown when we have scan data for it,
+ * mirroring the Market Scan rows. Degrades to plain text when no `onDrilldown`
+ * handler is wired up or the symbol isn't in the scan, so it's a drop-in for the
+ * `<span>{symbol}</span>` ticker pattern used across the dashboard.
+ *
+ * - `variant="underline"` (default): a quiet, always-visible underline that thickens
+ *   to link-blue on hover. Used for plain text tickers anywhere on the site.
+ * - `variant="chip"`: for a ticker sitting inside an already-colored Chip (e.g. the red
+ *   wash-sale lockout). Keeps the chip's color and box; on hover it goes bold-italic +
+ *   underline instead of turning blue, so the chip's meaning (red = locked) is preserved.
+ */
+function SymbolButton({
+  symbol,
+  scan,
+  onDrilldown,
+  className,
+  title,
+  variant = "underline"
+}: {
+  symbol: string;
+  scan?: MarketScan | null;
+  onDrilldown?: (q: MarketQuote) => void;
+  className?: string;
+  title?: string;
+  variant?: "underline" | "chip";
+}) {
+  const quote = onDrilldown ? resolveScanQuote(symbol, scan) : null;
+  if (!quote || !onDrilldown) {
+    return <span className={className} title={title}>{symbol}</span>;
+  }
+  const interactive =
+    variant === "chip"
+      ? // Inherit the chip's color/box; signal interactivity with weight + italic on hover.
+        "cursor-pointer transition-all duration-150 underline-offset-2 hover:font-bold hover:italic hover:underline active:scale-95 focus:outline-none focus-visible:rounded-sm focus-visible:ring-1 focus-visible:ring-current"
+      : // Always-on faint underline as the at-rest cue; thickens to link-blue on hover.
+        "cursor-pointer underline decoration-1 decoration-faint/50 underline-offset-[3px] transition-all duration-150 hover:text-info hover:decoration-2 hover:decoration-info active:scale-95 focus:outline-none focus-visible:rounded-sm focus-visible:ring-1 focus-visible:ring-info";
+  return (
+    <button
+      type="button"
+      title={title ?? "Open symbol intelligence"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onDrilldown(quote);
+      }}
+      className={cn(className, interactive)}
+    >
+      {symbol}
+    </button>
+  );
+}
+
 /* ───────────────────────── Decision view ───────────────────────── */
 
 function DecisionView({
@@ -707,13 +815,17 @@ function DecisionView({
   symbolMetaBySymbol,
   busy,
   approve,
-  reject
+  reject,
+  scan,
+  onDrilldown
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   busy: boolean;
   approve: (id: string) => void;
   reject: (id: string) => void;
+  scan: MarketScan | null;
+  onDrilldown: (q: MarketQuote) => void;
 }) {
   const decision = snapshot.latestStrategyRun;
   const pending = snapshot.pendingProposals;
@@ -727,7 +839,7 @@ function DecisionView({
               <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
                 <div className="flex items-center gap-2">
                   <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
-                  <span className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}>{p.proposal.symbol}</span>
+                  <SymbolButton symbol={p.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)} />
                   <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
@@ -763,7 +875,7 @@ function DecisionView({
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
                   <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
-                  <span className="font-semibold text-fg">{item.proposal.symbol}</span>
+                  <SymbolButton symbol={item.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)} />
                   <span className="tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
                   {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
                 </div>
@@ -1037,7 +1149,7 @@ function freshness(fetchedAt?: string): string {
 
 /** Surfaces the full scraped congressional + insider datasets (the scan's Congress column
  *  only shows symbols that overlap the scan; this shows everything recently disclosed). */
-function SmartMoneyView({ snapshot }: { snapshot: DashboardSnapshot }) {
+function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void }) {
   const sm = snapshot.smartMoney;
   const ws = snapshot.webSources;
   const congress = sm?.congress ?? [];
@@ -1057,7 +1169,7 @@ function SmartMoneyView({ snapshot }: { snapshot: DashboardSnapshot }) {
             {congress.map((t, i) => (
               <div key={`${t.symbol}-${t.member}-${t.tradedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                 <Chip tone={t.side === "buy" ? "up" : "down"}>{t.side === "buy" ? "BUY" : "SELL"}</Chip>
-                <span className="font-semibold text-fg">{t.symbol}</span>
+                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} />
                 <span className="truncate text-muted" title={`${t.member} (${t.chamber})`}>{t.member}</span>
                 <span className="ml-auto whitespace-nowrap text-faint">{t.tradedAt}</span>
               </div>
@@ -1081,7 +1193,7 @@ function SmartMoneyView({ snapshot }: { snapshot: DashboardSnapshot }) {
               return (
                 <div key={`${f.symbol}-${f.owner}-${f.filedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                   <Chip tone={net > 0 ? "up" : net < 0 ? "down" : "neutral"}>{net > 0 ? "BUY" : net < 0 ? "SELL" : "MIXED"}</Chip>
-                  <span className="font-semibold text-fg">{f.symbol}</span>
+                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} />
                   <span className="truncate text-muted" title={f.owner}>{f.owner}</span>
                   <span className="ml-auto whitespace-nowrap text-faint">{f.filedAt}</span>
                 </div>
@@ -1174,10 +1286,14 @@ function PerformanceView({
 
 function TaxView({
   snapshot,
-  symbolMetaBySymbol
+  symbolMetaBySymbol,
+  scan,
+  onDrilldown
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
+  scan: MarketScan | null;
+  onDrilldown: (q: MarketQuote) => void;
 }) {
   const tax = snapshot.tax;
   if (!tax) {
@@ -1213,7 +1329,9 @@ function TaxView({
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {tax.lockedSymbols.map((s) => (
-                <Chip key={s} tone="down">{s}</Chip>
+                <Chip key={s} tone="down">
+                  <SymbolButton symbol={s} scan={scan} onDrilldown={onDrilldown} variant="chip" title={companyTitle(s, symbolMetaBySymbol)} />
+                </Chip>
               ))}
             </div>
           )}
@@ -1222,7 +1340,7 @@ function TaxView({
               <span className="text-xs font-medium text-muted">Wash sales detected this year</span>
               {tax.washSales.slice(0, 6).map((w, i) => (
                 <div key={`${w.symbol}-${i}`} className="flex items-center justify-between text-[13px]">
-                  <span className="font-semibold text-fg">{w.symbol}</span>
+                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} />
                   <span className="tnum text-faint">{new Date(w.soldAt).toLocaleDateString()} · {money(w.disallowedLoss)} disallowed</span>
                 </div>
               ))}
@@ -1241,7 +1359,7 @@ function TaxView({
               <tbody>
                 {tax.harvestCandidates.map((h) => (
                   <tr key={h.symbol} className="border-b border-line/50">
-                    <td className="py-1.5 font-semibold text-fg" title={companyTitle(h.symbol, symbolMetaBySymbol)}>{h.symbol}</td>
+                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} /></td>
                     <td className="py-1.5 text-right tnum text-muted">{formatShareQuantity(h.quantity, h.symbol)} sh</td>
                     <td className="py-1.5 text-right tnum text-down">{signedMoney(h.unrealizedLoss)}</td>
                   </tr>
@@ -1271,7 +1389,7 @@ function TaxView({
               <tbody>
                 {tax.openLots.map((lot, i) => (
                   <tr key={`${lot.symbol}-${i}`} className="border-b border-line/50">
-                    <td className="px-2 py-1.5 font-semibold text-fg" title={companyTitle(lot.symbol, symbolMetaBySymbol)}>{lot.symbol}</td>
+                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} /></td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{formatShareQuantity(lot.quantity, lot.symbol)}</td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{lot.daysHeld}</td>
                     <td className="px-2 py-1.5">
@@ -1710,7 +1828,7 @@ function SettingsContent({
   updatePolicy: (patch: PolicyPatch) => void;
   load: () => Promise<void>;
 }) {
-  type Section = "operate" | "integrations" | "risk" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "keys" | "risk" | "tax" | "tuning" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [sectorCaps, setSectorCaps] = useState(formatSectorCaps(policy.sectorCaps));
   const [draft, setDraft] = useState("");
@@ -1730,7 +1848,7 @@ function SettingsContent({
         onChange={setSection}
         tabs={[
           { id: "operate", label: "Operate" },
-          { id: "integrations", label: "Integrations" },
+          { id: "keys", label: "API Keys" },
           { id: "risk", label: "Risk & Limits" },
           { id: "tax", label: "Tax" },
           { id: "tuning", label: "Tuning" },
@@ -1804,9 +1922,7 @@ function SettingsContent({
         </div>
       )}
 
-      {section === "integrations" && (
-        <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
-      )}
+      {section === "keys" && <ApiKeysSection />}
 
       {section === "risk" && (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -2098,6 +2214,149 @@ function renderActionTitle(title: string) {
       <span className={cls}>{action.toUpperCase()}</span>
       {rest}
     </span>
+  );
+}
+
+type ApiKeyStatus = {
+  service: string;
+  label: string;
+  category: string;
+  required: boolean;
+  unlocks: string;
+  docsUrl?: string;
+  envVar?: string;
+  configured: boolean;
+  source: "user" | "env" | "none";
+  updatedAt?: string;
+};
+
+function ApiKeysSection() {
+  const [keys, setKeys] = useState<ApiKeyStatus[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [busyService, setBusyService] = useState<string | null>(null);
+
+  const loadKeys = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/keys?userId=local", { cache: "no-store" });
+      if (!res.ok) throw new Error(await res.text());
+      const body = (await res.json()) as { keys?: ApiKeyStatus[] };
+      setKeys(body.keys ?? []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load API key status.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadKeys();
+  }, [loadKeys]);
+
+  async function saveKey(row: ApiKeyStatus) {
+    const value = drafts[row.service]?.trim();
+    if (!value) return;
+    setBusyService(row.service);
+    try {
+      const res = await fetch("/api/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ userId: "local", service: row.service, apiKey: value, label: row.label })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setDrafts((current) => ({ ...current, [row.service]: "" }));
+      toast.success(`${row.label} key saved.`);
+      await loadKeys();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save API key.");
+    } finally {
+      setBusyService(null);
+    }
+  }
+
+  async function clearKey(row: ApiKeyStatus) {
+    setBusyService(row.service);
+    try {
+      const res = await fetch(`/api/keys?userId=local&service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      toast.success(`${row.label} saved key cleared.`);
+      await loadKeys();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to clear API key.");
+    } finally {
+      setBusyService(null);
+    }
+  }
+
+  const requiredUnset = keys.some((row) => row.required && row.source === "none");
+
+  if (loading) {
+    return <EmptyState title="Loading API key status" icon={<RefreshCw size={18} className="animate-spin" />} />;
+  }
+
+  return (
+    <div className="space-y-3">
+      {requiredUnset && (
+        <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+          OpenAI is required for model-generated proposals. Without it, the app uses local fallback proposals.
+        </p>
+      )}
+      <div className="grid gap-2">
+        {keys.map((row) => {
+          const busy = busyService === row.service;
+          const sourceLabel = row.source === "user" ? "Set" : row.source === "env" ? "Using env" : "Not set";
+          const sourceTone = row.source === "user" ? "up" : row.source === "env" ? "info" : row.required ? "warn" : "neutral";
+          const inputType = row.service === "sec_edgar_user_agent" ? "text" : "password";
+          return (
+            <div key={row.service} className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <KeyRound size={14} className="text-muted" />
+                    <span className="font-semibold text-fg">{row.label}</span>
+                    <Chip tone={sourceTone}>{sourceLabel}</Chip>
+                    {row.required && <Chip tone="warn">Required</Chip>}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
+                    <span>{row.category}</span>
+                    {row.envVar && <span className="font-mono">{row.envVar}</span>}
+                    {row.updatedAt && <span>Saved {new Date(row.updatedAt).toLocaleDateString()}</span>}
+                  </div>
+                </div>
+                {row.docsUrl && (
+                  <a className="inline-flex items-center gap-1 text-xs font-medium text-info hover:underline" href={row.docsUrl} target="_blank" rel="noreferrer">
+                    Docs <ExternalLink size={12} />
+                  </a>
+                )}
+              </div>
+              <p className="mt-2 text-[13px] text-muted">{row.unlocks}</p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <input
+                  type={inputType}
+                  value={drafts[row.service] ?? ""}
+                  onChange={(e) => setDrafts((current) => ({ ...current, [row.service]: e.target.value }))}
+                  placeholder={row.source === "none" ? "Paste key or value" : "Saved value is hidden"}
+                  className={cn(inputClass, "min-w-0 flex-1")}
+                  autoComplete="off"
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => saveKey(row)} disabled={busy || !drafts[row.service]?.trim()}>
+                    <Save size={13} /> Save
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => clearKey(row)} disabled={busy || row.source !== "user"}>
+                    <Trash2 size={13} /> Clear
+                  </Button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-faint">
+        Yahoo Finance, Senate eFD, Capitol Trades, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
+      </p>
+    </div>
   );
 }
 

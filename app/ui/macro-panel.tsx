@@ -103,6 +103,30 @@ function TrendsSection({ history }: { history?: Record<string, number[]> }) {
   );
 }
 
+function NewsSection({ news }: { news?: Board["news"] }) {
+  if (!news || news.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-line p-4">
+      <h3 className="mb-3 flex items-center gap-2 font-semibold text-fg"><Activity size={16} className="text-info" /> Market News</h3>
+      <ul className="space-y-2">
+        {news.map((n, i) => (
+          <li key={i} className="border-l-2 border-info/40 pl-3 text-[13px] leading-snug">
+            {n.url ? (
+              <a href={n.url} target="_blank" rel="noopener noreferrer" className="text-fg hover:underline">{n.title}</a>
+            ) : (
+              <span className="text-fg">{n.title}</span>
+            )}
+            <span className="text-faint">
+              {n.publisher ? ` · ${n.publisher}` : ""}
+              {n.tickers && n.tickers.length > 0 ? ` · ${n.tickers.join(" ")}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function BreadthSection({ signals }: { signals: Board["signals"] }) {
   if (typeof signals.marketBreadthPct !== "number" && !signals.marketAdvancers) return null;
   const pct = signals.marketBreadthPct;
@@ -225,6 +249,7 @@ export function MacroBoardView({ snapshot }: { snapshot: DashboardSnapshot }) {
       <Section icon={<Gauge size={16} className="text-[var(--accent)]" />} title="Positioning & Factor Regime" tiles={positioning} />
       <BreadthSection signals={signals} />
       <Section icon={<Droplets size={16} className="text-info" />} title="Liquidity & Other" tiles={liquidity} />
+      <NewsSection news={board.news} />
     </div>
   );
 }

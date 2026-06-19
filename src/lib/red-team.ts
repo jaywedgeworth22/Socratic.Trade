@@ -1,4 +1,4 @@
-import { getPolicy, getStrategyPrompt } from "./db";
+import { getPolicy, getStrategyPrompt, resolveApiKey } from "./db";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
 
 export interface RedTeamDebateResult {
@@ -9,10 +9,13 @@ export interface RedTeamDebateResult {
 export async function debateProposal(
   proposal: TradeProposal,
   quote: MarketQuoteSummary | undefined,
-  isBullish: boolean
+  isBullish: boolean,
+  userId: string = "local"
 ): Promise<RedTeamDebateResult> {
-  const policy = getPolicy();
-  const basePrompt = getStrategyPrompt();
+  const policy = getPolicy(userId);
+  const basePrompt = getStrategyPrompt(userId);
+  const openaiKey = resolveApiKey("openai", userId);
+  if (!openaiKey) return { rejected: false, reason: "Red Team debate skipped because OpenAI is not configured." };
   
   const systemPrompt = `You are the Red Team Risk Agent. Your job is to rigorously critique the strategy's high-conviction trade proposals.
   
@@ -33,7 +36,15 @@ Respond with a JSON object containing:
   const userContent = JSON.stringify({
     proposal,
     quote,
-    isBullish
+    isBullish,
+    policy: {
+      strategyAuthority: policy.strategyAuthority,
+      holdingHorizon: policy.holdingHorizon,
+      maxOrderNotional: policy.maxOrderNotional,
+      maxDailyNotional: policy.maxDailyNotional,
+      scoringWeights: policy.scoringWeights
+    },
+    strategyPrompt: basePrompt
   });
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
@@ -62,7 +73,7 @@ Respond with a JSON object containing:
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+        authorization: `Bearer ${openaiKey}`
       },
       body: JSON.stringify(body)
     });

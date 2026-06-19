@@ -46,9 +46,10 @@ let screenerCache:
 export async function scanMarket(
   symbols: string[],
   positions: EquityPosition[],
-  scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS
+  scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
+  userId?: string
 ): Promise<MarketScan> {
-  return nasdaqDelayedProvider.scan(symbols, positions, { scoringWeights, ttlMs: marketCacheTtlMs() });
+  return nasdaqDelayedProvider.scan(symbols, positions, { scoringWeights, ttlMs: marketCacheTtlMs(), userId });
 }
 
 export const nasdaqDelayedProvider: MarketDataProvider = {
@@ -102,7 +103,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     let topCandidates: MarketQuote[] = [...ranked.slice(0, keepTop), ...eventExtra];
 
     // Enrich the candidate set with news sentiment + fundamentals, then re-score & re-sort.
-    const provider = getEnrichmentProvider();
+    const provider = getEnrichmentProvider(options?.userId);
     if (topCandidates.length > 0) {
       try {
         const enrichment = await provider.enrich(topCandidates.map((quote) => quote.symbol));

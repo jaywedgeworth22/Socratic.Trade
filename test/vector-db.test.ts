@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => {
     listIndexes: vi.fn(),
     createIndex: vi.fn(),
     embed: vi.fn(),
-    getUserApiKey: vi.fn()
+    resolveApiKey: vi.fn()
   };
 });
 
@@ -28,7 +28,7 @@ vi.mock("voyageai", () => ({
 }));
 
 vi.mock("../src/lib/db", () => ({
-  getUserApiKey: mocks.getUserApiKey
+  resolveApiKey: mocks.resolveApiKey
 }));
 
 beforeEach(() => {
@@ -38,7 +38,11 @@ beforeEach(() => {
   process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
   delete process.env.PINECONE_INDEX_NAME;
-  mocks.getUserApiKey.mockReturnValue(undefined);
+  mocks.resolveApiKey.mockImplementation((service: string) => {
+    if (service === "pinecone") return process.env.PINECONE_API_KEY;
+    if (service === "voyage") return process.env.VOYAGE_API_KEY;
+    return undefined;
+  });
 });
 
 describe("vector-db", () => {

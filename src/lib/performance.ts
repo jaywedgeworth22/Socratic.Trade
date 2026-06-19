@@ -71,6 +71,7 @@ interface PnlResult {
 }
 
 export function recordPortfolioSnapshot(input: {
+  userId?: string;
   runId?: string;
   accountNumber: string;
   source: FillSource;
@@ -78,6 +79,7 @@ export function recordPortfolioSnapshot(input: {
   positions: EquityPosition[];
 }) {
   return insertPortfolioSnapshot({
+    userId: input.userId,
     runId: input.runId,
     accountNumber: input.accountNumber,
     source: input.source,
@@ -90,6 +92,7 @@ export function recordPortfolioSnapshot(input: {
 }
 
 export function recordFillFromProposal(input: {
+  userId?: string;
   accountNumber: string;
   proposalId?: string;
   runId?: string;
@@ -123,6 +126,7 @@ export function recordFillFromProposal(input: {
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
   return insertFillEvent({
+    userId: input.userId,
     proposalId: input.proposalId,
     runId: input.runId,
     accountNumber: input.accountNumber,
@@ -140,14 +144,14 @@ export function recordFillFromProposal(input: {
   });
 }
 
-export function getPerformanceSummary(accountNumber: string, currentPrices: Record<string, number> = {}): PerformanceSummary {
-  const liveFills = listFillEvents(accountNumber, "live");
-  const paperFills = listFillEvents(accountNumber, "paper");
+export function getPerformanceSummary(accountNumber: string, currentPrices: Record<string, number> = {}, userId: string = "local"): PerformanceSummary {
+  const liveFills = listFillEvents(accountNumber, "live", 500, userId);
+  const paperFills = listFillEvents(accountNumber, "paper", 500, userId);
   const allFills = [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
   const livePnl = calculatePnl(liveFills, currentPrices);
   const paperPnl = calculatePnl(paperFills, currentPrices);
-  const liveSnapshots = listPortfolioSnapshots(accountNumber, "live");
-  const paperSnapshots = listPortfolioSnapshots(accountNumber, "paper");
+  const liveSnapshots = listPortfolioSnapshots(accountNumber, "live", 100, userId);
+  const paperSnapshots = listPortfolioSnapshots(accountNumber, "paper", 100, userId);
 
   return {
     liveEquityCurve: liveSnapshots.map((snapshot) => ({

@@ -35,29 +35,39 @@ export interface MarketSignals {
   marketBreadthAsOf?: string;
 }
 
-// Breadth wants daily freshness, so the combined cache is short; the other sources are cheap.
+// The slow-moving sources (Cboe/CFTC/Fama-French) are cached 1h here; breadth keeps its own
+// (shorter) success-only cache in massive.ts and is merged fresh on every call, so a transient
+// breadth failure never poisons this bundle. Empty/failed base results are NOT cached, so a
+// cold-start hiccup self-heals on the next dashboard poll instead of sticking for an hour.
 const CACHE_TTL_MS = 60 * 60_000; // 1h
-const cache: { expiresAt: number; data: MarketSignals | null } = { expiresAt: 0, data: null };
+const cache: { expiresAt: number; base: MarketSignals | null } = { expiresAt: 0, base: null };
 
-export async function getMarketSignals(): Promise<MarketSignals> {
+export async function getMarketSignals(userId?: string): Promise<MarketSignals> {
   const now = nowMs();
-  if (cache.data && cache.expiresAt > now) return cache.data;
+  let base = cache.base && cache.expiresAt > now ? cache.base : null;
+  if (!base) {
+    const [cboe, cot, ff] = await Promise.all([
+      fetchCboeVolStats().catch((): CboeVolStats => ({})),
+      fetchCftcSpPositioning().catch(() => undefined),
+      fetchFamaFrenchFactors().catch((): FamaFrenchFactors => ({}))
+    ]);
+    const b: MarketSignals = {};
+    if (typeof cboe.skew === "number") b.skew = cboe.skew;
+    if (typeof cboe.vvix === "number") b.vvix = cboe.vvix;
+    if (cot?.nonCommNet !== undefined) b.cotSpNonCommNet = cot.nonCommNet;
+    if (cot?.nonCommNetPctOI !== undefined) b.cotSpNonCommNetPctOI = cot.nonCommNetPctOI;
+    if (cot?.reportDate) b.cotReportDate = cot.reportDate;
+    if (ff.factors1m) b.factors1m = ff.factors1m;
+    if (ff.asOf) b.factorsAsOf = ff.asOf;
+    if (Object.keys(b).length > 0) {
+      cache.base = b;
+      cache.expiresAt = now + CACHE_TTL_MS;
+    }
+    base = b;
+  }
 
-  const [cboe, cot, ff, breadth] = await Promise.all([
-    fetchCboeVolStats().catch((): CboeVolStats => ({})),
-    fetchCftcSpPositioning().catch(() => undefined),
-    fetchFamaFrenchFactors().catch((): FamaFrenchFactors => ({})),
-    fetchFullMarketBreadth().catch(() => undefined)
-  ]);
-
-  const data: MarketSignals = {};
-  if (typeof cboe.skew === "number") data.skew = cboe.skew;
-  if (typeof cboe.vvix === "number") data.vvix = cboe.vvix;
-  if (cot?.nonCommNet !== undefined) data.cotSpNonCommNet = cot.nonCommNet;
-  if (cot?.nonCommNetPctOI !== undefined) data.cotSpNonCommNetPctOI = cot.nonCommNetPctOI;
-  if (cot?.reportDate) data.cotReportDate = cot.reportDate;
-  if (ff.factors1m) data.factors1m = ff.factors1m;
-  if (ff.asOf) data.factorsAsOf = ff.asOf;
+  const breadth = await fetchFullMarketBreadth(now, userId).catch(() => undefined);
+  const data: MarketSignals = { ...base };
   if (breadth) {
     if (typeof breadth.breadthPct === "number") data.marketBreadthPct = breadth.breadthPct;
     data.marketAdvancers = breadth.advancers;
@@ -66,9 +76,6 @@ export async function getMarketSignals(): Promise<MarketSignals> {
     if (breadth.topLosers.length > 0) data.marketTopLosers = breadth.topLosers;
     if (breadth.asOf) data.marketBreadthAsOf = breadth.asOf;
   }
-
-  cache.data = data;
-  cache.expiresAt = now + CACHE_TTL_MS;
   return data;
 }
 

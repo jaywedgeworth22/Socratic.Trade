@@ -348,6 +348,7 @@ export interface MarketQuoteSummary {
 export interface MarketDataProviderOptions {
   scoringWeights?: ScoringWeights;
   ttlMs?: number;
+  userId?: string;
 }
 
 export interface MarketDataProvider {

@@ -167,61 +167,6 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Score Waterfall */}
-        <div className="rounded-xl border border-line p-4">
-          <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><TrendingUp size={16} className="text-[var(--accent)]" /> Factor Scores</h3>
-          {fb ? (
-            <div className="space-y-3">
-              {factorItems.map(item => (
-                <div key={item.label} className="relative">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-faint">{item.label}</span>
-                    <span className="text-fg font-medium">{item.value.toFixed(1)}</span>
-                  </div>
-                  {/* Visual bar */}
-                  <div className="h-1.5 w-full bg-surface-3 rounded-full overflow-hidden">
-                    <div className="h-full bg-up rounded-full" style={{ width: `${Math.max(0, Math.min(100, item.value))}%` }} />
-                  </div>
-                </div>
-              ))}
-              <div className="mt-4 pt-3 border-t border-line flex justify-between font-bold">
-                <span>Composite Score</span>
-                <span className="text-fg">{quote.score.toFixed(1)}</span>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-faint">No factor breakdown available.</p>
-          )}
-        </div>
-
-        {/* Provenance & Freshness */}
-        <div className="rounded-xl border border-line p-4">
-          <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><Database size={16} className="text-info" /> Source Provenance</h3>
-          <div className="space-y-2 text-xs">
-            <div className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
-              <span className="text-faint capitalize">Derived Metrics</span>
-              <Chip tone="neutral" className="bg-surface-2">Calculated</Chip>
-            </div>
-            {quote.sources ? (
-              Object.entries(quote.sources).map(([key, provider]) => (
-                <div key={key} className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
-                  <span className="text-faint capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
-                  <Chip tone="neutral" className="bg-surface-2">{provider}</Chip>
-                </div>
-              ))
-            ) : (
-              <p className="text-faint">No source attribution provided.</p>
-            )}
-            {quote.asOf && (
-              <div className="pt-2 mt-2 border-t border-line text-faint flex items-center gap-2">
-                <Zap size={12} /> Data as of {new Date(quote.asOf).toLocaleString()}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Evidence Bulletins */}
       <div className="rounded-xl border border-line p-4">
         <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><Search size={16} /> Evidence Bulletins</h3>
@@ -244,6 +189,59 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
                   <li key={i} className="text-[13px] text-muted list-disc list-inside">{hl}</li>
                 ))}
               </ul>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Factor Scores */}
+      <div className="rounded-xl border border-line p-4">
+        <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><TrendingUp size={16} className="text-[var(--accent)]" /> Factor Scores</h3>
+        {fb ? (
+          <div className="space-y-3">
+            {factorItems.map(item => (
+              <div key={item.label} className="relative">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-faint">{item.label}</span>
+                  <span className="text-fg font-medium">{item.value.toFixed(1)}</span>
+                </div>
+                {/* Visual bar */}
+                <div className="h-1.5 w-full bg-surface-3 rounded-full overflow-hidden">
+                  <div className="h-full bg-up rounded-full" style={{ width: `${Math.max(0, Math.min(100, item.value))}%` }} />
+                </div>
+              </div>
+            ))}
+            <div className="mt-4 pt-3 border-t border-line flex justify-between font-bold">
+              <span>Composite Score</span>
+              <span className="text-fg">{quote.score.toFixed(1)}</span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-faint">No factor breakdown available.</p>
+        )}
+      </div>
+
+      {/* Source Provenance & Freshness — kept last so the data lineage sits at the bottom of the drawer */}
+      <div className="rounded-xl border border-line p-4">
+        <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><Database size={16} className="text-info" /> Source Provenance</h3>
+        <div className="space-y-2 text-xs">
+          <div className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
+            <span className="text-faint capitalize">Derived Metrics</span>
+            <Chip tone="neutral" className="bg-surface-2">Calculated</Chip>
+          </div>
+          {quote.sources ? (
+            Object.entries(quote.sources).map(([key, provider]) => (
+              <div key={key} className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
+                <span className="text-faint capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
+                <Chip tone="neutral" className="bg-surface-2">{provider}</Chip>
+              </div>
+            ))
+          ) : (
+            <p className="text-faint">No source attribution provided.</p>
+          )}
+          {quote.asOf && (
+            <div className="pt-2 mt-2 border-t border-line text-faint flex items-center gap-2">
+              <Zap size={12} /> Data as of {new Date(quote.asOf).toLocaleString()}
             </div>
           )}
         </div>

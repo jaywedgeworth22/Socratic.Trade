@@ -13,9 +13,10 @@ export const dynamic = "force-dynamic";
 // the screener (~5 min) and per-symbol enrichment (~6 h). Read-only; places nothing.
 export async function GET() {
   try {
-    const policy = getPolicy();
+    const userId = "local";
+    const policy = getPolicy(userId);
     const symbols = allowedSymbolsForPolicy(policy);
-    const gateway = getBrokerGateway(policy);
+    const gateway = getBrokerGateway(policy, userId);
     let positions: EquityPosition[] = [];
     if (policy.accountNumber) {
       try {
@@ -24,7 +25,7 @@ export async function GET() {
         positions = [];
       }
     }
-    const base = await scanMarket(symbols, positions, policy.scoringWeights);
+    const base = await scanMarket(symbols, positions, policy.scoringWeights, userId);
     // Merge live broker bid/ask quotes for the top candidates, matching the strategy
     // run path (mergeQuoteData) so the table's Bid/Ask and freshest prices are populated.
     let scan = base;

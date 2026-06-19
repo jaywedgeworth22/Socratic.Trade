@@ -42,6 +42,37 @@ steps materially change.
   gitignored.
 - Current publish branch packages the latest dashboard, cockpit UI,
   market-data, strategy, short/cover, and handoff-doc work for review.
+- 2026-06-19: Robinhood MCP connection hardening landed as the first backlog
+  slice from the external-app review. `src/lib/robinhood.ts` now defaults to the
+  official Trading MCP endpoint, sends Streamable HTTP/SSE + protocol headers,
+  parses JSON and SSE responses, unwraps Robinhood's `data` envelope, and exposes
+  a `GET /api/broker/mcp/health` diagnostic route that checks auth and lists
+  available tools. While verifying, narrow Phase 11 user-key plumbing was also
+  aligned so API-key validation, Red Team, and post-mortem OpenAI calls remain
+  buildable through `resolveApiKey`. UI status-card wiring is deferred to avoid
+  colliding with concurrent account/settings changes in `app/dashboard-client.tsx`.
+  Verified with `npx tsc --noEmit`, `npm test` (200 tests), and `npm run build`. See
+  `docs/rollouts/2026-06-19-robinhood-mcp-transport.md`.
+- 2026-06-19: Phase 10/11 continuation added Settings → API Keys with source-aware
+  Set / Using env / Not set status, write-only masked save/clear controls, provider
+  docs links, and a broadened `/api/keys` catalog. Major keyed paths now route
+  through `resolveApiKey(service,userId)`: OpenAI strategy/tuning/red-team/
+  post-mortem, enrichment providers, FRED macro/history, keyed OHLC, Massive
+  breadth/news/flat-file helpers, SEC EDGAR UA, and Pinecone/Voyage. Strategy-run
+  audit/daily-stat/fill/snapshot paths got narrower default-user scoping, and the
+  Bull/Bear scan payload drops neutral empty fields. Verified with `npx tsc
+  --noEmit`, `npm test` (201 tests), and `npm run build`. See
+  `docs/rollouts/2026-06-19-api-key-routing-and-prompt-compaction.md`.
+- 2026-06-18: Fully utilized Massive (REST history primary in the OHLC cascade,
+  full-market breadth, market news on the Macro tab, a bulk daily-bars route
+  `GET /api/market/flatfile`, and a SigV4 S3 flat-file connector — signature
+  verified, object download plan-gated). Split account management into a dedicated
+  **Accounts** modal (out of Settings). Fixed a cold-start cache-poisoning bug so
+  macro/breadth/history caches only store successful, non-empty results (breadth
+  has its own 30-min success cache). Ran a two-track multi-agent platform review
+  (UX + architecture/strategy/LLM) → `docs/reviews/2026-06-18-*.md` (verify/synth
+  truncated by a session limit; reports reconstructed from the reviewers' findings).
+  See `docs/rollouts/2026-06-18-massive-full-util-accounts-modal-review.md`.
 - **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
 - **Regime Detection**: The current market regime is deterministically evaluated using VIX and Fed rates, shifting the responsibility entirely from the LLM.
 - **UI UX Polish**: The cockpit features interactive charting (Recharts Brush for panning/zooming), Sonner toasts for real-time action feedback, and dynamic lazy-loading for heavy bundle dependencies.

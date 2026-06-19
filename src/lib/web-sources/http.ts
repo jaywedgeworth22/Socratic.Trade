@@ -5,6 +5,8 @@
 // User-Agent, per-request timeouts, light retry, and a sequential rate limiter so
 // a single refresh can't burst dozens of parallel requests at a .gov host.
 
+import { resolveApiKey } from "../db";
+
 /** Browser-like UA for sites that block obvious bots (Senate eFD, Capitol Trades). */
 export const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -14,7 +16,7 @@ export const BROWSER_UA =
  * Overridable via SEC_EDGAR_USER_AGENT for users who want to use their own contact.
  */
 export function secUserAgent(): string {
-  return process.env.SEC_EDGAR_USER_AGENT ?? "RobinhoodAgenticTrading/1.0 (contact: admin@localhost)";
+  return resolveApiKey("sec_edgar_user_agent", "local") ?? "RobinhoodAgenticTrading/1.0 (contact: admin@localhost)";
 }
 
 export function sleep(ms: number): Promise<void> {

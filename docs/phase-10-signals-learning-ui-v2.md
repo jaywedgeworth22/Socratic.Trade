@@ -111,8 +111,11 @@ Codex: "major planned sources remain unimplemented." Default to free/official fi
 ## Phase D — LLM efficiency & prompt quality
 Codex: "make prompt compaction adaptive."
 
-- **D1 `[todo]` Adaptive compaction.** Per candidate, send only non-neutral signals;
-  globally send only fields changed since last run; hard-cap bulletins per symbol.
+- **D1 `[partial]` Adaptive compaction.** Candidate payloads are minified and now
+  drop neutral/empty values (undefined/null, non-finite numbers, empty bulletin/news
+  arrays, zero `posMV`) before reaching the Bull/Bear prompts. Still open: globally
+  send only fields changed since last run and make bulletin caps configurable per
+  symbol/source.
 - **D2 `[todo]` Prompt-cache the stable system prefix** (keep dynamic learning blocks
   last) to cut token cost.
 - **D3 `[partial]` Async raw-document digests / retrieval.** Voyage + Pinecone RAG

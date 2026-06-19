@@ -28,7 +28,7 @@ import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
-import { getSetting, getInternalSetting, setInternalSetting } from "./db";
+import { getSetting, getInternalSetting, resolveApiKey, setInternalSetting } from "./db";
 import { debateProposal } from "./red-team";
 import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
@@ -64,7 +64,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     if (policy.killSwitch) throw new Error("Kill switch is active.");
 
     const gateway = getBrokerGateway(policy, userId);
-    await reconcilePendingFills(gateway, policy.accountNumber);
+    await reconcilePendingFills(gateway, policy.accountNumber, userId);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
@@ -76,10 +76,10 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
 
     const allowedSymbols = allowedSymbolsForPolicy(policy);
-    const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights);
+    const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId);
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
-    const daily = dailyExecutionStats(policy.accountNumber);
+    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live");
 
     // In Paper mode, decisions run against the standalone paper account (starting cash +
@@ -129,7 +129,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       if ((proposal.confidenceScore ?? 0) >= 80) { // High conviction threshold
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-        const redTeamResult = await debateProposal(proposal, quote, isBullish);
+        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Skip this proposal completely, as the Red Team found a critical flaw
@@ -167,7 +167,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       }
 
       const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
-      const dailyNow = dailyExecutionStats(policy.accountNumber);
+      const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
@@ -209,6 +209,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         const proposalId = crypto.randomUUID();
         insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
         const fill = recordFillFromProposal({
+          userId,
           accountNumber: policy.accountNumber,
           proposalId,
           runId,
@@ -246,6 +247,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         status: "placed"
       });
       const fill = recordFillFromProposal({
+        userId,
         accountNumber: policy.accountNumber,
         proposalId,
         runId,
@@ -268,7 +270,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // reference price. Persisting the skipped names (not just what we bought) is what lets
     // later learning run counterfactuals ("names you passed that then ran") and attribute
     // outcomes to factors. The run regime is deterministic and shared across candidates.
-    const runRegime = determineMarketRegime(await fetchMacroData());
+    const runRegime = determineMarketRegime(await fetchMacroData(userId));
     const quoteBySymbol = new Map((marketScan?.topCandidates ?? []).map((q) => [normalizeSymbol(q.symbol), q]));
     const chosenSymbols = new Set(results.map((r) => normalizeSymbol(r.proposal.symbol)));
 
@@ -294,7 +296,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       runId,
       chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
       topSkipped: skippedEvidence
-    });
+    }, userId);
 
     // SignalSnapshot: the full scored set, each a complete CandidateEvidence digest.
     // getSignalEfficacy joins closed lots → signals by runId|symbol, so skipped entries
@@ -303,7 +305,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       runId,
       asOf: new Date().toISOString(),
       signals: [...chosenEvidence, ...skippedEvidence]
-    });
+    }, userId);
 
     const placed = results.filter((r) => r.status === "placed").length;
     const paperCount = results.filter((r) => r.status === "paper").length;
@@ -322,7 +324,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
     finishStrategyRun(runId, "completed", summary, userId);
     // Always snapshot the real account; snapshot the paper account too when in Paper mode.
-    recordPortfolioSnapshot({ runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
+    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
     if (policy.paperMode) {
       const paperProjection = getPaperPortfolioProjection({
         accountNumber: policy.accountNumber,
@@ -330,6 +332,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         currentPrices
       });
       recordPortfolioSnapshot({
+        userId,
         runId,
         accountNumber: policy.accountNumber,
         source: "paper",
@@ -340,11 +343,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     result = { runId, status: "completed", summary, proposals: results, marketScan };
     
     // Phase 7: Async trigger post-mortem reflection
-    generateReflectionSummary(policy.accountNumber).catch((e) => console.error("Post-mortem error:", e));
+    generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
     
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
-    finishStrategyRun(runId, "failed", summary);
+    finishStrategyRun(runId, "failed", summary, userId);
     result = { runId, status: "failed", summary, proposals: [] };
     const policy = getPolicy(userId);
     if (summary === "Kill switch is active.") {
@@ -357,7 +360,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
-  audit("strategy_run", result);
+  audit("strategy_run", result, userId);
   return result;
 }
 
@@ -422,7 +425,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     gateway.getEquityPositions(policy.accountNumber)
   ]);
   const allowedSymbols = allowedSymbolsForPolicy(policy);
-  const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights);
+  const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId);
   const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
   const approvalScan = mergeQuoteData(
     approvalScanBase,
@@ -438,8 +441,8 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
   if (!tradability[proposal.symbol]?.tradable) {
     const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
-    updateProposalStatus(proposalId, "blocked");
-    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason });
+    updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId);
+    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
     await sendNotification(
       {
         type: "block",
@@ -452,7 +455,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   }
 
   const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
-  const daily = dailyExecutionStats(policy.accountNumber);
+  const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
   const decision = evaluateTradeProposal(proposal, {
     policy,
     portfolio: account.portfolio,
@@ -465,7 +468,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   });
 
   if (!decision.approved) {
-    updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional);
+    updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId);
     audit("proposal_approved", {
       proposalId,
       symbol: proposal.symbol,
@@ -473,7 +476,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       action: "approval",
       result: "blocked",
       reasons: decision.reasons
-    });
+    }, userId);
     await sendNotification(
       {
         type: "block",
@@ -486,8 +489,9 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   }
 
   if (policy.paperMode) {
-    updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional);
+    updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional, userId);
     const fill = recordFillFromProposal({
+      userId,
       accountNumber: row.accountNumber,
       proposalId,
       runId: row.runId,
@@ -503,13 +507,14 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) }
     });
     recordPortfolioSnapshot({
+      userId,
       runId: row.runId,
       accountNumber: row.accountNumber,
       source: "paper",
       portfolio: paperProjection.portfolio,
       positions: paperProjection.positions
     });
-    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" });
+    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" }, userId);
     await sendNotification(
       {
         type: "fill",
@@ -523,8 +528,9 @@ export async function executeProposal(proposalId: string, userId: string = "loca
 
   const refId = crypto.randomUUID();
   const execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
-  updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional);
+  updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
   const fill = recordFillFromProposal({
+    userId,
     accountNumber: row.accountNumber,
     proposalId,
     runId: row.runId,
@@ -542,7 +548,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     action: "approval",
     result: "placed",
     orderId: execution.orderId
-  });
+  }, userId);
   await sendNotification(
     {
       type: "fill",
@@ -554,15 +560,15 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   return { status: "placed", orderId: execution.orderId };
 }
 
-export function rejectProposal(proposalId: string): void {
-  const proposal = getProposal(proposalId);
-  updateProposalStatus(proposalId, "rejected");
+export function rejectProposal(proposalId: string, userId: string = "local"): void {
+  const proposal = getProposal(proposalId, userId);
+  updateProposalStatus(proposalId, "rejected", undefined, undefined, undefined, userId);
   audit("proposal_rejected", {
     proposalId,
     symbol: proposal?.proposal.symbol,
     side: proposal?.proposal.side,
     action: "rejection"
-  });
+  }, userId);
 }
 
 /**
@@ -612,7 +618,8 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
 }): Promise<TradeProposal[]> {
-  if (!process.env.OPENAI_API_KEY) return fallbackProposal(input);
+  const openaiKey = resolveApiKey("openai", input.userId);
+  if (!openaiKey) return fallbackProposal(input);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, input.policy.maxDailyNotional - input.dailyNotionalUsed);
@@ -732,7 +739,7 @@ async function proposeTrades(input: {
 
   // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
   // (plus regime-critical) fields and note the rest as unchanged to save tokens.
-  const macro = await fetchMacroData();
+  const macro = await fetchMacroData(input.userId);
   const previousMacro = getInternalSetting<MacroData>("last_macro_sent");
   const { macro: macroForPrompt, omitted: macroOmitted } = pruneMacro(macro, previousMacro);
   setInternalSetting("last_macro_sent", macro);
@@ -751,7 +758,7 @@ async function proposeTrades(input: {
 
   // Market-wide regime/sentiment from free, no-key sources (Cboe tail-risk, CFTC positioning,
   // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
-  const marketSignals = await getMarketSignals().catch(() => undefined);
+  const marketSignals = await getMarketSignals(input.userId).catch(() => undefined);
 
   // [PHASE 2 OPTIMIZATION] Total Allowlist Abstraction
   // Instead of sending hundreds of allowed symbols to the LLM, we just tell it to only trade
@@ -879,7 +886,7 @@ async function proposeTrades(input: {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      authorization: `Bearer ${openaiKey}`
     },
     body: JSON.stringify(body)
   });
@@ -960,7 +967,7 @@ async function proposeTrades(input: {
   // review plus risk context — not a second copy of the full market scan / allowlist.
   const proposedSymbols = new Set(bullProposals.map((proposal) => normalizeSymbol(proposal.symbol)));
   const candidatesUnderReview = userContent.marketScan?.topCandidates?.filter((candidate) =>
-    proposedSymbols.has(normalizeSymbol(candidate.sym))
+    typeof candidate.sym === "string" && proposedSymbols.has(normalizeSymbol(candidate.sym))
   );
   const bearUserContent = {
     currentDate: userContent.currentDate,
@@ -1013,7 +1020,7 @@ async function proposeTrades(input: {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      authorization: `Bearer ${openaiKey}`
     },
     body: JSON.stringify(bearBody)
   });
@@ -1083,48 +1090,64 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
     hasAskData,
     topCandidates: marketScan.topCandidates
       .filter(quote => quote.score >= 40) // [PHASE 2 OPTIMIZATION] Strict backend pre-filtering
-      .map((quote, index) => ({
-      rank: index + 1,
-      sym: quote.symbol,
-      px: quote.price,
-      bid: quote.bid,
-      ask: quote.ask,
-      vol: quote.volume,
-      mktCap: quote.marketCap,
-      chgPct: quote.intradayChangePct,
-      pe: quote.peRatio,
-      eps: quote.eps,
-      div: quote.dividendYield,
-      fcf: quote.fcfYield,
-      de: quote.debtToEquity,
-      epsGr: quote.epsGrowth,
-      pb: quote.pbRatio,
-      shortFloat: quote.shortPercentOfFloat,
-      beta: quote.beta,
-      range52w: pricePosition52w(quote),
-      // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) — not
-      // provided by any API, computed deterministically so the LLM doesn't have to.
-      ...deriveMetrics(quote),
-      secRelStr: quote.sectorRelStrength, // intraday move vs sector average (relative strength)
-      newsSent: quote.sentiment,
-      insiderSent: quote.insiderSentiment,
-      senateNet: quote.senateTrades,
-      smartMoney: quote.evidenceBulletins?.slice(0, 3),
-      rating: quote.analystRating,
-      ratingScore: quote.analystScore,
-      news: quote.headlines?.slice(0, 2),
-      sec: quote.sector,
-      ind: quote.industry,
-      posMV: quote.positionMarketValue,
-      score: quote.score,
-      factors: quote.factorBreakdown,
-      provider: quote.provider,
-      asOf: quote.asOf
-    })),
+      .map(compactCandidateForPrompt),
     instructions: hasAskData
       ? "Ask-relative buy limits are allowed only for candidates that include ask."
       : "No ask prices are available in this scan. Do not invent ask-relative limit prices."
   };
+}
+
+function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+  return compactPromptObject({
+    rank: index + 1,
+    sym: quote.symbol,
+    px: quote.price,
+    bid: quote.bid,
+    ask: quote.ask,
+    vol: quote.volume,
+    mktCap: quote.marketCap,
+    chgPct: quote.intradayChangePct,
+    pe: quote.peRatio,
+    eps: quote.eps,
+    div: quote.dividendYield,
+    fcf: quote.fcfYield,
+    de: quote.debtToEquity,
+    epsGr: quote.epsGrowth,
+    pb: quote.pbRatio,
+    shortFloat: quote.shortPercentOfFloat,
+    beta: quote.beta,
+    range52w: pricePosition52w(quote),
+    // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) are
+    // computed deterministically, then omitted when their inputs are unavailable.
+    ...deriveMetrics(quote),
+    secRelStr: quote.sectorRelStrength,
+    newsSent: quote.sentiment,
+    insiderSent: quote.insiderSentiment,
+    senateNet: quote.senateTrades,
+    smartMoney: quote.evidenceBulletins?.slice(0, 3),
+    rating: quote.analystRating,
+    ratingScore: quote.analystScore,
+    news: quote.headlines?.slice(0, 2),
+    sec: quote.sector,
+    ind: quote.industry,
+    posMV: quote.positionMarketValue,
+    score: quote.score,
+    factors: quote.factorBreakdown,
+    provider: quote.provider,
+    asOf: quote.asOf
+  });
+}
+
+function compactPromptObject(values: Record<string, unknown>): Record<string, unknown> {
+  const compacted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "number" && !Number.isFinite(value)) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    if (key === "posMV" && value === 0) continue;
+    compacted[key] = value;
+  }
+  return compacted;
 }
 
 function fallbackProposal(input: {
@@ -1177,8 +1200,8 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
     }));
 }
 
-export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string): Promise<void> {
-  const pending = listFillEvents(accountNumber, "live").filter(
+export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
+  const pending = listFillEvents(accountNumber, "live", 500, userId).filter(
     (fill) => fill.status === "pending_reconciliation" && fill.brokerOrderId
   );
   if (pending.length === 0) return;
@@ -1204,7 +1227,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
             ...((fill.raw as Record<string, unknown>) ?? {}),
             reconciliation: matched
           }
-        });
+        }, userId);
         
         audit("fill_reconciled", {
           fillId: fill.id,
@@ -1212,7 +1235,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           status: "filled",
           price,
           quantity: qty
-        });
+        }, userId);
       } else if (["cancelled", "rejected", "failed"].includes(matched.state)) {
         updateFillEvent(fill.id, {
           status: matched.state,
@@ -1220,13 +1243,13 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
             ...((fill.raw as Record<string, unknown>) ?? {}),
             reconciliation: matched
           }
-        });
+        }, userId);
         
         audit("fill_reconciled", {
           fillId: fill.id,
           symbol: fill.symbol,
           status: matched.state
-        });
+        }, userId);
       }
     }
   } catch (error) {

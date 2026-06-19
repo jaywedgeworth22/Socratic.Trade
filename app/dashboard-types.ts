@@ -18,6 +18,7 @@ import type { TaxSummary } from "@/lib/tax";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
+import type { MarketNewsItem } from "@/lib/market-signals/massive";
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
@@ -77,6 +78,8 @@ export interface DashboardSnapshot {
     regime: string;
     /** Trailing ~90-day daily histories for sparklines (keyed: tenY, twoY, vix, hyCreditSpread, usd, wti). */
     history?: Record<string, number[]>;
+    /** Recent market-wide news headlines (Massive). */
+    news?: MarketNewsItem[];
   };
   performance?: PerformanceSummary;
   thesisScorecard?: ThesisStat[];

@@ -1,6 +1,6 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
 import { VoyageAIClient } from "voyageai";
-import { getUserApiKey } from "./db";
+import { resolveApiKey } from "./db";
 
 // Using "voyage-finance-2" for high fidelity financial embeddings
 const VOYAGE_MODEL = "voyage-finance-2";
@@ -32,8 +32,8 @@ function sleep(ms: number): Promise<void> {
  * Ensures we have valid clients for Pinecone and Voyage.
  */
 function getClients(userId: string = "local") {
-  const pineconeKey = getUserApiKey(userId, "pinecone")?.apiKey || process.env.PINECONE_API_KEY;
-  const voyageKey = getUserApiKey(userId, "voyage")?.apiKey || process.env.VOYAGE_API_KEY;
+  const pineconeKey = resolveApiKey("pinecone", userId);
+  const voyageKey = resolveApiKey("voyage", userId);
 
   if (!pineconeKey || !voyageKey) {
     return { pc: null, voyage: null, initCacheKey: "" };

@@ -3,7 +3,8 @@ import {
   getStrategyPrompt,
   latestAuditByKind,
   listFillEvents,
-  listStrategyRuns
+  listStrategyRuns,
+  resolveApiKey
 } from "./db";
 import { fetchMacroData } from "./macro";
 import { getClosedLotCount, getPerformanceSummary, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
@@ -52,17 +53,17 @@ type LlmTuningPayload = {
   confidenceScore: number;
 };
 
-export async function proposeStrategyTuning(): Promise<StrategyTuningProposal> {
-  const policy = getPolicy();
-  const prompt = getStrategyPrompt();
-  const latestDecision = latestAuditByKind("strategy_run")?.payload as LatestDecisionPayload | undefined;
-  const macro = await fetchMacroData();
+export async function proposeStrategyTuning(userId: string = "local"): Promise<StrategyTuningProposal> {
+  const policy = getPolicy(userId);
+  const prompt = getStrategyPrompt(userId);
+  const latestDecision = latestAuditByKind("strategy_run", userId)?.payload as LatestDecisionPayload | undefined;
+  const macro = await fetchMacroData(userId);
   const accountNumber = policy.accountNumber;
-  const performance = accountNumber ? getPerformanceSummary(accountNumber) : undefined;
-  const fills = accountNumber ? listFillEvents(accountNumber, policy.paperMode ? "paper" : "live", 30) : [];
+  const performance = accountNumber ? getPerformanceSummary(accountNumber, {}, userId) : undefined;
+  const fills = accountNumber ? listFillEvents(accountNumber, policy.paperMode ? "paper" : "live", 30, userId) : [];
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, policy.paperMode ? "paper" : "live") : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
-  const runs = listStrategyRuns(10);
+  const runs = listStrategyRuns(10, userId);
   const context = {
     currentDate: new Date().toISOString(),
     activeMode: policy.paperMode ? "paper" : "live",
@@ -99,11 +100,12 @@ export async function proposeStrategyTuning(): Promise<StrategyTuningProposal> {
     macro
   };
 
-  if (!process.env.OPENAI_API_KEY) {
+  const openaiKey = resolveApiKey("openai", userId);
+  if (!openaiKey) {
     return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount });
   }
 
-  const payload = await requestLlmTuning(context);
+  const payload = await requestLlmTuning(context, openaiKey);
   const proposedPatch = toPatch(payload, prompt);
   const cautions = [...payload.cautions];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
@@ -196,7 +198,7 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown): Promise<LlmTuningPayload> {
+async function requestLlmTuning(context: unknown, openaiKey: string): Promise<LlmTuningPayload> {
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const isChatCompletions = url.includes("/chat/completions");
@@ -245,7 +247,7 @@ async function requestLlmTuning(context: unknown): Promise<LlmTuningPayload> {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      authorization: `Bearer ${openaiKey}`
     },
     body: JSON.stringify(body)
   });

@@ -1043,11 +1043,55 @@ export interface UserApiKey {
   updatedAt: string;
 }
 
-export function getUserApiKey(userId: string, service: string): UserApiKey | undefined {
-  const row = getDb()
-    .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? AND service = ?")
-    .get(userId, service) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined;
-  if (!row) return undefined;
+export type ApiKeySource = "user" | "env" | "none";
+
+const API_KEY_ENV_MAP: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  finnhub: "FINNHUB_API_KEY",
+  fmp: "FMP_API_KEY",
+  alphavantage: "ALPHAVANTAGE_API_KEY",
+  marketstack: "MARKETSTACK_API_KEY",
+  tradier: "TRADIER_API_KEY",
+  fred: "FRED_API_KEY",
+  sec_edgar_user_agent: "SEC_EDGAR_USER_AGENT",
+  massive: "MASSIVE_API_KEY",
+  massive_s3_endpoint: "MASSIVE_S3_ENDPOINT",
+  massive_bucket: "MASSIVE_BUCKET",
+  massive_access_key_id: "MASSIVE_ACCESS_KEY_ID",
+  massive_secret_access_key: "MASSIVE_SECRET_ACCESS_KEY",
+  pinecone: "PINECONE_API_KEY",
+  voyage: "VOYAGE_API_KEY",
+  alpaca_paper_api_key: "ALPACA_PAPER_API_KEY",
+  alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY"
+};
+
+const API_KEY_SERVICE_ALIASES: Record<string, string> = {
+  alpha_vantage: "alphavantage",
+  alphavantage_api_key: "alphavantage",
+  finnhub_api_key: "finnhub",
+  fmp_api_key: "fmp",
+  openai_api_key: "openai",
+  marketstack_api_key: "marketstack",
+  tradier_api_key: "tradier",
+  fred_api_key: "fred",
+  sec_edgar: "sec_edgar_user_agent",
+  sec_edgar_user_agent: "sec_edgar_user_agent",
+  massive_api_key: "massive",
+  pinecone_api_key: "pinecone",
+  voyage_api_key: "voyage",
+  alpaca_paper_api_key: "alpaca_paper_api_key",
+  alpaca_paper_secret_key: "alpaca_paper_secret_key"
+};
+
+function keyRowToApiKey(row: {
+  id: string;
+  user_id: string;
+  service: string;
+  api_key: string;
+  label: string | null;
+  created_at: string;
+  updated_at: string;
+}): UserApiKey {
   return {
     id: row.id,
     userId: row.user_id,
@@ -1059,24 +1103,43 @@ export function getUserApiKey(userId: string, service: string): UserApiKey | und
   };
 }
 
+export function normalizeApiKeyService(service: string): string {
+  const normalized = service.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return API_KEY_SERVICE_ALIASES[normalized] ?? normalized;
+}
+
+export function apiKeyEnvVarForService(service: string): string | undefined {
+  const canonical = normalizeApiKeyService(service);
+  return API_KEY_ENV_MAP[canonical];
+}
+
+export function listSupportedApiKeyServices(): string[] {
+  return Object.keys(API_KEY_ENV_MAP);
+}
+
+export function getUserApiKey(userId: string, service: string): UserApiKey | undefined {
+  const canonical = normalizeApiKeyService(service);
+  const statement = getDb().prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? AND service = ?");
+  const row =
+    (statement.get(userId, canonical) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined) ??
+    (canonical !== service
+      ? (statement.get(userId, service) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined)
+      : undefined);
+  if (!row) return undefined;
+  return keyRowToApiKey(row);
+}
+
 export function listUserApiKeys(userId: string): UserApiKey[] {
   const rows = getDb()
     .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY service")
     .all(userId) as Array<{ id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string }>;
-  return rows.map((row) => ({
-    id: row.id,
-    userId: row.user_id,
-    service: row.service,
-    apiKey: decryptValue(row.api_key),
-    label: row.label ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }));
+  return rows.map(keyRowToApiKey);
 }
 
 export function upsertUserApiKey(userId: string, service: string, apiKey: string, label?: string): UserApiKey {
+  const canonical = normalizeApiKeyService(service);
   const now = new Date().toISOString();
-  const id = `${userId}_${service}`;
+  const id = `${userId}_${canonical}`;
   const encryptedKey = encryptValue(apiKey);
   getDb()
     .prepare(
@@ -1084,14 +1147,17 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, service) DO UPDATE SET api_key = excluded.api_key, label = excluded.label, updated_at = excluded.updated_at`
     )
-    .run(id, userId, service, encryptedKey, label ?? null, now, now);
-  return { id, userId, service, apiKey, label, createdAt: now, updatedAt: now };
+    .run(id, userId, canonical, encryptedKey, label ?? null, now, now);
+  return { id, userId, service: canonical, apiKey, label, createdAt: now, updatedAt: now };
 }
 
 export function deleteUserApiKey(userId: string, service: string): void {
-  getDb()
-    .prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?")
-    .run(userId, service);
+  const canonical = normalizeApiKeyService(service);
+  const db = getDb();
+  db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
+  if (canonical !== service) {
+    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+  }
 }
 
 export function listConnectedAccounts(userId: string = "local"): ConnectedAccount[] {
@@ -1184,31 +1250,24 @@ export function deleteConnectedAccount(id: string, userId: string = "local"): vo
   getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
+export function resolveApiKeyWithSource(service: string, userId?: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
+  const canonical = normalizeApiKeyService(service);
+  if (userId) {
+    const userKey = getUserApiKey(userId, canonical);
+    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", service: canonical };
+  }
+  const envVar = apiKeyEnvVarForService(canonical);
+  const envKey = envVar ? process.env[envVar] : undefined;
+  if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
+  return { source: "none", envVar, service: canonical };
+}
+
 /**
  * Resolves the API key for a given service, checking per-user storage first,
  * then falling back to the environment variable.
  */
 export function resolveApiKey(service: string, userId?: string): string | undefined {
-  if (userId) {
-    const userKey = getUserApiKey(userId, service);
-    if (userKey?.apiKey) return userKey.apiKey;
-  }
-  // Fall back to environment variable
-  const envMap: Record<string, string> = {
-    finnhub: "FINNHUB_API_KEY",
-    fmp: "FMP_API_KEY",
-    openai: "OPENAI_API_KEY",
-    marketstack: "MARKETSTACK_API_KEY",
-    alphavantage: "ALPHAVANTAGE_API_KEY",
-    tradier: "TRADIER_API_KEY",
-    massive: "MASSIVE_API_KEY",
-    massive_s3_endpoint: "MASSIVE_S3_ENDPOINT",
-    massive_bucket: "MASSIVE_BUCKET",
-    massive_access_key_id: "MASSIVE_ACCESS_KEY_ID",
-    massive_secret_access_key: "MASSIVE_SECRET_ACCESS_KEY"
-  };
-  const envVar = envMap[service.toLowerCase()];
-  return envVar ? process.env[envVar] : undefined;
+  return resolveApiKeyWithSource(service, userId).key;
 }
 
 export function listUsers(): string[] {

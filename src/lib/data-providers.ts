@@ -10,6 +10,7 @@
 // the final real tier — no API key required, uses session crumb auth.
 
 import { normalizeSymbol } from "./money";
+import { resolveApiKey } from "./db";
 
 // Per-source analyst breakdown so the Rating column can blend across providers and
 // the tooltip can show each provider's individual read.
@@ -192,11 +193,14 @@ async function fetchWithRetry(
 // Builds a cascade: [Finnhub?, FMP?] → Yahoo Finance.
 // Yahoo Finance requires no API key and is always the final real tier.
 
-export function getEnrichmentProvider(): MarketEnrichmentProvider {
+export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
-  if (process.env.FINNHUB_API_KEY) providers.push(new FinnhubEnrichmentProvider(process.env.FINNHUB_API_KEY));
-  if (process.env.ALPHAVANTAGE_API_KEY) providers.push(new AlphaVantageEnrichmentProvider(process.env.ALPHAVANTAGE_API_KEY));
-  if (process.env.FMP_API_KEY) providers.push(new FmpEnrichmentProvider(process.env.FMP_API_KEY));
+  const finnhubKey = resolveApiKey("finnhub", userId);
+  const alphaVantageKey = resolveApiKey("alphavantage", userId);
+  const fmpKey = resolveApiKey("fmp", userId);
+  if (finnhubKey) providers.push(new FinnhubEnrichmentProvider(finnhubKey));
+  if (alphaVantageKey) providers.push(new AlphaVantageEnrichmentProvider(alphaVantageKey));
+  if (fmpKey) providers.push(new FmpEnrichmentProvider(fmpKey));
   providers.push(new YahooFinanceEnrichmentProvider());
   // Always wrap in the cascade — even for a single provider — so per-field source
   // stamping and analyst blending happen uniformly.

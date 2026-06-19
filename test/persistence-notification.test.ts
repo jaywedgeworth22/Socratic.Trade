@@ -110,6 +110,27 @@ describe("persistence and notifications", () => {
     expect(getActiveConnectedAccount()?.id).toBe(accountId);
   });
 
+  it("resolves user API keys before env fallback and reports the source", async () => {
+    const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+    process.env.FINNHUB_API_KEY = "env-finnhub";
+    try {
+      const { deleteUserApiKey, resolveApiKey, resolveApiKeyWithSource, upsertUserApiKey } = await import("../src/lib/db");
+      const userId = `key-user-${randomUUID()}`;
+
+      expect(resolveApiKeyWithSource("finnhub", userId)).toMatchObject({ key: "env-finnhub", source: "env", envVar: "FINNHUB_API_KEY" });
+
+      upsertUserApiKey(userId, "FINNHUB_API_KEY", "user-finnhub");
+      expect(resolveApiKey("finnhub", userId)).toBe("user-finnhub");
+      expect(resolveApiKeyWithSource("finnhub", userId)).toMatchObject({ key: "user-finnhub", source: "user" });
+
+      deleteUserApiKey(userId, "finnhub");
+      expect(resolveApiKeyWithSource("finnhub", userId)).toMatchObject({ key: "env-finnhub", source: "env" });
+    } finally {
+      if (originalFinnhubKey) process.env.FINNHUB_API_KEY = originalFinnhubKey;
+      else delete process.env.FINNHUB_API_KEY;
+    }
+  });
+
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;

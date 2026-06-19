@@ -24,7 +24,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const bars = await fetchDailyOHLC(symbol);
+    const bars = await fetchDailyOHLC(symbol, Date.now(), "local");
     if (!bars || bars.length === 0) {
       return NextResponse.json({ symbol, bars: [], note: "no price history available" });
     }

@@ -10,20 +10,26 @@ auth. A real login/identity layer is the last milestone.
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/
-  `deleteUserApiKey`/`resolveApiKey(service, userId?)` in `src/lib/db.ts`
-  (scaffolding, currently unused by providers). `resolveApiKey` already falls back
-  to the matching `process.env` var when a user hasn't supplied a key.
+  `deleteUserApiKey`/`resolveApiKey(service, userId?)`/
+  `resolveApiKeyWithSource(service, userId?)` in `src/lib/db.ts`. Service names are
+  canonicalized, saved keys are encrypted, user keys win, and env vars remain the
+  shared fallback.
 - `connected_accounts` brokerage-account storage for the default `local` user.
   Connected account credentials are encrypted at rest, omitted from dashboard
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
   from the active connected account before falling back to legacy per-user/env keys.
+- Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
+  Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
+  text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
+  responses, unwraps Robinhood's `data` envelope, and exposes
+  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 
 ## Milestones
 
-### M1 `[partial]` API-keys Settings section (buildable now, single-user)
+### M1 `[done]` API-keys Settings section (buildable now, single-user)
 A Settings → **"API Keys"** tab listing every required + optional/helpful key with a
 status badge (Set / Using env / Not set) and a masked input to save/clear it. Stored
 per-user via `upsertUserApiKey` under the default user.
@@ -33,13 +39,18 @@ per-user via `upsertUserApiKey` under the default user.
   (macro), `SEC_EDGAR_USER_AGENT` (politeness).
 - **No key needed (note this in the UI):** Yahoo Finance, Senate eFD, Capitol
   Trades, SEC EDGAR (UA only), FINRA short-volume.
-- **Live trading (optional):** the `ROBINHOOD_MCP_*` credentials.
+- **Live trading (optional):** the `ROBINHOOD_MCP_*` credentials. The default
+  Trading MCP URL is `https://agent.robinhood.com/mcp/trading`.
 - Each row shows what it unlocks and links to where to get it. Never display stored
   secrets (mask), and never log them.
 
-Current partial implementation: Settings → Integrations manages brokerage accounts
-and keeps connected-account secrets server-only, but there is not yet a general API
-Keys tab for market-data/LLM provider keys.
+Current implementation: Settings → API Keys lists OpenAI, Finnhub, FMP, Alpha
+Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set /
+Using env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
+Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
+secret values. Settings → Accounts continues to own brokerage-account credentials.
+Robinhood MCP can be diagnosed via `GET /api/broker/mcp/health`; an in-app
+Robinhood MCP status card remains optional UI polish.
 
 ### M2 `[partial]` Route providers through `resolveApiKey(service, userId)`
 Replace direct `process.env.X` reads in `data-providers.ts`, `macro.ts`, the LLM
@@ -47,9 +58,14 @@ caller, and `web-sources/*` with `resolveApiKey(service, userId)` so a user's ow
 takes precedence, with the env var as the shared fallback. Keep capability-gating:
 missing key → that provider is skipped (neutral/stale signal), never faked.
 
-Current partial implementation: Alpaca uses the active connected account first;
-Voyage/Pinecone use `getUserApiKey`; broad market-data, macro, and LLM providers
-still need consistent `resolveApiKey(service, userId)` routing.
+Current partial implementation: Alpaca uses the active connected account first.
+`resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
+Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
+Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
+User-Agent, and Pinecone/Voyage. Remaining work is mostly architectural: make
+every future keyed connector accept `userId`, continue removing legacy direct
+env reads when new sources land, and verify source attribution when a saved user
+key overrides env.
 
 ### M3 `[todo]` Per-user preferences & policy
 Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope them
@@ -62,6 +78,10 @@ weights. The default user keeps the current global config (migrate it in).
 signals (congress/insider/FINRA) are **shared** (same for everyone, cached once);
 **policies, proposals, fills, P&L, learning scorecards are per-user**. Add a
 `user_id` column (default `local`) to the per-user tables and scope all queries.
+Some default-user paths are already scoped, including proposal approval, daily
+execution stats, strategy-run audits, fill reconciliation, fill insertion, and
+portfolio snapshots; scorecard and scheduler-wide isolation still need a dedicated
+pass.
 
 ### M5 `[todo]` Concurrent per-user execution
 The scheduler runs one global strategy today. Make it iterate active users, running

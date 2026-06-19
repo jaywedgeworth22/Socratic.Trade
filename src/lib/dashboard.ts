@@ -26,6 +26,7 @@ import { fetchMacroData, determineMarketRegime } from "./macro";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
+import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan } from "./types";
 
@@ -72,7 +73,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
-  const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices) : undefined;
+  const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
   const scorecardSource = policy.paperMode ? "paper" : "live";
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices) : [];
@@ -101,7 +102,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
 
   // Macro & market-regime board for the Macro tab (FRED macro + derived metrics + free
   // market-wide signals). Caches keep this cheap; failures degrade to defaults / omitted.
-  const macro = await fetchMacroData();
+  const macro = await fetchMacroData(userId);
   // Only compute internals from a full scan. Some historical/trimmed audit shapes only
   // preserve symbol metadata, which is useful for UI labels but not valuation math.
   const scanForInternals = fullMarketScan(latestStrategyRun?.marketScan);
@@ -111,9 +112,10 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const macroBoard = {
     macro,
     derived: deriveMacroMetrics(macro, { marketEarningsYield }),
-    signals: await getMarketSignals().catch((): MarketSignals => ({})),
+    signals: await getMarketSignals(userId).catch((): MarketSignals => ({})),
     regime: determineMarketRegime(macro),
-    history: await fetchMacroHistory().catch(() => ({} as Record<string, number[]>))
+    history: await fetchMacroHistory(Date.now(), userId).catch(() => ({} as Record<string, number[]>)),
+    news: await fetchMassiveNews(8, userId).catch(() => [])
   };
 
   const unifiedFeed = buildUnifiedFeed({

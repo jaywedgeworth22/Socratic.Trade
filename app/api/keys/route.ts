@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listUserApiKeys, upsertUserApiKey, deleteUserApiKey, resolveApiKey } from "@/lib/db";
+import { apiKeyEnvVarForService, listUserApiKeys, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
 
 /**
  * Multi-user API Key Management
@@ -8,7 +8,7 @@ import { listUserApiKeys, upsertUserApiKey, deleteUserApiKey, resolveApiKey } fr
  * userId query param (no auth). In production, this should be gated
  * behind proper authentication middleware.
  *
- * Supported services: "finnhub", "fmp", "openai"
+ * Supported services are defined in API_KEY_CATALOG below.
  *
  * GET  /api/keys?userId=<id>           → list all keys for user
  * GET  /api/keys?userId=<id>&service=<s> → resolve key (user → env fallback)
@@ -16,43 +16,124 @@ import { listUserApiKeys, upsertUserApiKey, deleteUserApiKey, resolveApiKey } fr
  * DELETE /api/keys?userId=<id>&service=<s>  → delete key
  */
 
-const VALID_SERVICES = ["finnhub", "fmp", "openai"];
+const API_KEY_CATALOG = [
+  {
+    service: "openai",
+    label: "OpenAI",
+    category: "Required",
+    required: true,
+    unlocks: "LLM trade proposals, strategy reviews, red-team debate, and post-mortems.",
+    docsUrl: "https://platform.openai.com/api-keys"
+  },
+  {
+    service: "finnhub",
+    label: "Finnhub",
+    category: "Market data",
+    required: false,
+    unlocks: "News sentiment, analyst recommendations, company profile, and financial metrics.",
+    docsUrl: "https://finnhub.io/dashboard"
+  },
+  {
+    service: "fmp",
+    label: "Financial Modeling Prep",
+    category: "Market data",
+    required: false,
+    unlocks: "Fundamentals, ratios, analyst grades, and earnings-related enrichment.",
+    docsUrl: "https://site.financialmodelingprep.com/developer/docs"
+  },
+  {
+    service: "alphavantage",
+    label: "Alpha Vantage",
+    category: "Market data",
+    required: false,
+    unlocks: "Supplemental fundamentals and sentiment where the keyed quota is available.",
+    docsUrl: "https://www.alphavantage.co/support/#api-key"
+  },
+  {
+    service: "marketstack",
+    label: "Marketstack",
+    category: "Price history",
+    required: false,
+    unlocks: "Reliable daily OHLC fallback for price charts and computed technicals.",
+    docsUrl: "https://marketstack.com/signup/free"
+  },
+  {
+    service: "tradier",
+    label: "Tradier",
+    category: "Price history",
+    required: false,
+    unlocks: "Primary keyed daily OHLC source for charts and in-house technical signals.",
+    docsUrl: "https://developer.tradier.com/"
+  },
+  {
+    service: "fred",
+    label: "FRED",
+    category: "Macro",
+    required: false,
+    unlocks: "Rates, inflation, growth, credit spreads, VIX, and Macro tab sparklines.",
+    docsUrl: "https://fred.stlouisfed.org/docs/api/api_key.html"
+  },
+  {
+    service: "sec_edgar_user_agent",
+    label: "SEC EDGAR User-Agent",
+    category: "Scrapers",
+    required: false,
+    unlocks: "Polite SEC Form 4 and 8-K requests with your descriptive contact string.",
+    docsUrl: "https://www.sec.gov/os/accessing-edgar-data"
+  },
+  {
+    service: "massive",
+    label: "Massive",
+    category: "Market-wide signals",
+    required: false,
+    unlocks: "Full-market breadth, broad liquid movers, news, and keyed price-history primary data.",
+    docsUrl: "https://massive.com"
+  }
+] as const;
+
+const VALID_SERVICES: ReadonlySet<string> = new Set(API_KEY_CATALOG.map((item) => item.service));
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId");
+  const userId = searchParams.get("userId") ?? "local";
 
-  if (!userId) {
-    return NextResponse.json({ error: "userId query parameter is required" }, { status: 400 });
-  }
+  if (!userId) return NextResponse.json({ error: "userId query parameter is required" }, { status: 400 });
 
   const service = searchParams.get("service");
 
   // If a specific service is requested, resolve the key (user DB → env fallback)
   if (service) {
-    if (!VALID_SERVICES.includes(service.toLowerCase())) {
-      return NextResponse.json({ error: `Invalid service. Must be one of: ${VALID_SERVICES.join(", ")}` }, { status: 400 });
+    const canonical = normalizeApiKeyService(service);
+    if (!VALID_SERVICES.has(canonical)) {
+      return NextResponse.json({ error: `Invalid service. Must be one of: ${[...VALID_SERVICES].join(", ")}` }, { status: 400 });
     }
-    const key = resolveApiKey(service, userId);
+    const resolved = resolveApiKeyWithSource(canonical, userId);
     return NextResponse.json({
-      service,
-      configured: Boolean(key),
-      source: key ? "user" : "none"
+      service: canonical,
+      configured: Boolean(resolved.key),
+      source: resolved.source,
+      envVar: resolved.envVar
       // NOTE: never return the actual key in a GET response for security
     });
   }
 
   // List all keys for the user (mask the actual key values)
   const keys = listUserApiKeys(userId);
+  const storedByService = new Map(keys.map((key) => [normalizeApiKeyService(key.service), key]));
   return NextResponse.json({
-    keys: keys.map((k) => ({
-      id: k.id,
-      service: k.service,
-      label: k.label,
-      configured: true,
-      createdAt: k.createdAt,
-      updatedAt: k.updatedAt
-    }))
+    keys: API_KEY_CATALOG.map((entry) => {
+      const stored = storedByService.get(entry.service);
+      const resolved = resolveApiKeyWithSource(entry.service, userId);
+      const envVar = apiKeyEnvVarForService(entry.service);
+      return {
+        ...entry,
+        envVar,
+        configured: Boolean(resolved.key),
+        source: resolved.source,
+        updatedAt: stored?.updatedAt,
+        savedLabel: stored?.label
+      };
+    })
   });
 }
 
@@ -64,14 +145,15 @@ export async function POST(request: NextRequest) {
     if (!userId || typeof userId !== "string") {
       return NextResponse.json({ error: "userId is required" }, { status: 400 });
     }
-    if (!service || typeof service !== "string" || !VALID_SERVICES.includes(service.toLowerCase())) {
-      return NextResponse.json({ error: `service is required and must be one of: ${VALID_SERVICES.join(", ")}` }, { status: 400 });
+    const canonical = service ? normalizeApiKeyService(service) : "";
+    if (!canonical || !VALID_SERVICES.has(canonical)) {
+      return NextResponse.json({ error: `service is required and must be one of: ${[...VALID_SERVICES].join(", ")}` }, { status: 400 });
     }
     if (!apiKey || typeof apiKey !== "string" || apiKey.trim().length === 0) {
       return NextResponse.json({ error: "apiKey is required and must be a non-empty string" }, { status: 400 });
     }
 
-    const result = upsertUserApiKey(userId, service.toLowerCase(), apiKey.trim(), label);
+    const result = upsertUserApiKey(userId, canonical, apiKey.trim(), label);
     return NextResponse.json({
       success: true,
       key: {
@@ -96,10 +178,11 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "userId and service query parameters are required" }, { status: 400 });
   }
 
-  if (!VALID_SERVICES.includes(service.toLowerCase())) {
-    return NextResponse.json({ error: `Invalid service. Must be one of: ${VALID_SERVICES.join(", ")}` }, { status: 400 });
+  const canonical = normalizeApiKeyService(service);
+  if (!VALID_SERVICES.has(canonical)) {
+    return NextResponse.json({ error: `Invalid service. Must be one of: ${[...VALID_SERVICES].join(", ")}` }, { status: 400 });
   }
 
-  const deleted = deleteUserApiKey(userId, service.toLowerCase());
+  const deleted = deleteUserApiKey(userId, canonical);
   return NextResponse.json({ success: true, deleted });
 }
