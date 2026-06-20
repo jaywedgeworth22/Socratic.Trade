@@ -535,7 +535,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             >
               <option value="" disabled>Select Account...</option>
               {snapshot.connectedAccounts?.map(acc => (
-                <option key={acc.id} value={acc.id}>{acc.label} ({acc.environment})</option>
+                <option key={acc.id} value={acc.id}>{acc.broker === "test" ? acc.label : `${acc.label} (${acc.environment})`}</option>
               ))}
               <option value="manage">Manage Accounts...</option>
             </select>
@@ -2338,9 +2338,7 @@ function SettingsContent({
             >
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
-            <Button variant={policy.paperMode && activeAccount?.environment === "live" ? "danger" : "ghost"} title={liveBlockedReason} onClick={requestModeSwitch}>
-              {policy.paperMode ? `Switch to ${brokerTargetLabel}` : "Switch to Test"}
-            </Button>
+            {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no separate paperMode toggle. */}
           </div>
           {enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />Setup required: {enableBlockedReason}</p>

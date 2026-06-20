@@ -525,8 +525,14 @@ export function getPolicy(userId: string = "local"): TradingPolicy {
     policy.connectedAccountId = activeAccount.id;
     policy.activeBroker = activeAccount.broker;
     policy.accountNumber = activeAccount.accountNumber;
+    // The active account IS the mode: the Test account runs the local simulator
+    // (paperMode), while any real broker account (Alpaca paper/brokerage, Robinhood)
+    // runs against the broker. There is no separate paperMode override anymore.
+    policy.paperMode = activeAccount.broker === "test";
+  } else {
+    policy.paperMode = true;
   }
-  
+
   return policy;
 }
 
@@ -1669,6 +1675,23 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   }));
+}
+
+// A "Test" account (local simulator: real quotes, simulated fills) is always available
+// as the safe default. Selecting it = Test mode; selecting a real broker account = that
+// broker's mode. This replaces the old paperMode toggle.
+export function ensureTestAccount(userId: string = "local"): void {
+  const accounts = listConnectedAccounts(userId);
+  if (accounts.some((a) => a.broker === "test")) return;
+  upsertConnectedAccount({
+    id: `test-${userId}`,
+    userId,
+    broker: "test",
+    environment: "paper",
+    accountNumber: "TEST",
+    label: "Test",
+    isActive: accounts.every((a) => !a.isActive)
+  });
 }
 
 export function getActiveConnectedAccount(userId: string = "local"): ConnectedAccount | undefined {

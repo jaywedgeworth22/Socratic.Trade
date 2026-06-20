@@ -11,7 +11,8 @@ import {
   listStrategyProfiles,
   listStrategyRuns,
   listFillEvents,
-  listConnectedAccounts
+  listConnectedAccounts,
+  ensureTestAccount
 } from "./db";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
@@ -31,6 +32,7 @@ import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan } from "./types";
 
 export async function getDashboardSnapshot(userId: string = "local") {
+  ensureTestAccount(userId);
   const policy = getPolicy(userId);
   const gateway = getBrokerGateway(policy, userId);
   let accounts: any[] = [];
