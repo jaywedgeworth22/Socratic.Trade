@@ -1,12 +1,15 @@
 import type { BrokerGateway, TradingPolicy } from "./types";
-import { getRobinhoodGateway } from "./robinhood";
+import { getRobinhoodGateway, getTestGateway } from "./robinhood";
 import { getAlpacaGateway } from "./alpaca";
 
 export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"): BrokerGateway {
   if (policy.activeBroker === "alpaca") {
     return getAlpacaGateway(userId);
   }
-  
-  // Default to Robinhood if missing or set to robinhood
+  if (policy.activeBroker === "test") {
+    // Local Test broker: real quotes, simulated fills, no real broker connection.
+    return getTestGateway();
+  }
+  // Robinhood (MCP-only) is the remaining broker.
   return getRobinhoodGateway();
 }

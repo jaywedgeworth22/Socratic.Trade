@@ -96,7 +96,7 @@ type WorkspaceTab = "decision" | "market" | "macro" | "performance" | "tax" | "s
 type FeedTab = "activity" | "runs" | "notifications";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 type RobinhoodMcpHealth = {
-  adapter?: "mock" | "mcp";
+  adapter?: "mcp";
   ok: boolean;
   configured: boolean;
   authenticated: boolean;
@@ -125,7 +125,7 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
 }
 
 function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const mode = snapshot.policy.paperMode ? "Mock/Local Mode" : "Live Mode";
+  const mode = snapshot.policy.paperMode ? "Test Mode" : "Live Mode";
   const state = snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed";
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
@@ -313,7 +313,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           body.status === "placed"
             ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
             : body.status === "paper"
-              ? "Proposal executed in Mock/Local mode."
+              ? "Proposal executed in Test mode."
               : `Result: ${body.status}`
         );
       }
@@ -476,7 +476,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               </div>
               <div className="flex items-center gap-1.5 whitespace-nowrap">
                 <Dot tone={policy.paperMode ? "info" : "down"} />
-                {policy.paperMode ? "Mock/Local Mode" : "Live Mode"}
+                {policy.paperMode ? "Test Mode" : "Live Mode"}
               </div>
             </div>
           </div>
@@ -787,9 +787,9 @@ function MobilePortfolioSummary({ snapshot, mode }: { snapshot: DashboardSnapsho
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
-          <p className="text-xs text-faint">{mode === "paper" ? "Mock/Local account" : "Live account"}</p>
+          <p className="text-xs text-faint">{mode === "paper" ? "Test account" : "Live account"}</p>
         </div>
-        <Chip tone={mode === "paper" ? "info" : "down"}>{mode === "paper" ? "Mock/Local" : "Live"}</Chip>
+        <Chip tone={mode === "paper" ? "info" : "down"}>{mode === "paper" ? "Test" : "Live"}</Chip>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div>
@@ -841,7 +841,7 @@ function PortfolioRail({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
@@ -1471,10 +1471,10 @@ function PerformanceView({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
-        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<TrendingUp size={16} />} />
+        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
           <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Mock/Local gain/loss on positions still open, marked to current prices." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Test gain/loss on positions still open, marked to current prices." />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
         </div>
@@ -1973,7 +1973,7 @@ function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
             <th className="px-2 py-1.5 text-left font-semibold">Time</th>
             <th className="px-2 py-1.5 text-left font-semibold">Status</th>
             <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Mock/Local</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Test</th>
             <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
             <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
           </tr>
@@ -2188,11 +2188,11 @@ function SettingsContent({
           <div className={cn("rounded-lg border px-3 py-2 text-[13px] sm:col-span-2", policy.paperMode ? "border-info/25 bg-info/10 text-muted" : "border-down/35 bg-down/10 text-down")}>
             <div className="mb-1 flex items-center gap-2 font-semibold text-fg">
               <Shield size={14} />
-              {policy.paperMode ? "Mock/Local mode is active" : "Live mode is active"}
+              {policy.paperMode ? "Test mode is active" : "Live mode is active"}
             </div>
             <p>
               {policy.paperMode
-                ? "Mock/Local mode records proposals and simulated fills against local app data without submitting broker orders."
+                ? "Test mode records proposals and simulated fills against local app data without submitting broker orders."
                 : "Live mode can submit real broker orders when an approved or autonomous run executes. Keep account, universe, and risk limits current."}
             </p>
           </div>
@@ -2302,7 +2302,7 @@ function SettingsContent({
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
             <Button variant={policy.paperMode ? "danger" : "ghost"} title={liveBlockedReason} onClick={requestModeSwitch}>
-              {policy.paperMode ? "Switch to Live" : "Switch to Mock/Local"}
+              {policy.paperMode ? "Switch to Live" : "Switch to Test"}
             </Button>
           </div>
           {enableBlockedReason && (
@@ -2456,7 +2456,7 @@ function SettingsContent({
           updatePolicy({ paperMode: false });
         }}
         title="Switch to Live mode?"
-        body="Live mode can submit real broker orders when approved proposals or autonomous runs execute. Use Mock/Local mode for local simulation and confirm your account, universe, and risk limits first."
+        body="Live mode can submit real broker orders when approved proposals or autonomous runs execute. Use Test mode for local simulation and confirm your account, universe, and risk limits first."
         confirmLabel="Switch to Live"
         tone="danger"
       />
@@ -2814,6 +2814,37 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
     void refreshMcpHealth();
   }, [refreshMcpHealth]);
 
+  // After Robinhood OAuth returns (/?robinhoodMcp=connected), pull the real agentic
+  // (read+write) account into connected accounts — no manual entry, no mock.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("robinhoodMcp") !== "connected") return;
+    params.delete("robinhoodMcp");
+    const qs = params.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    void syncRobinhood();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function syncRobinhood() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/connected-accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ broker: "robinhood" })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast.success("Robinhood agentic account synced.");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to sync Robinhood account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save() {
     if (!editing?.broker || !editing?.environment) return;
     setBusy(true);
@@ -2856,8 +2887,8 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Environment">
             <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Broker Paper"}</option>
-              <option value="live">Live (Real Money)</option>
+              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Paper"}</option>
+              <option value="live">{editing.broker === "alpaca" ? "Alpaca Brokerage (Real Money)" : "Brokerage (Real Money)"}</option>
             </select>
           </Field>
           <Field label="Label (Optional)">
@@ -2891,12 +2922,20 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted">Connect your brokerage accounts for agentic trading.</p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {!accounts?.some(a => a.broker === "robinhood") && (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+              if (mcpHealth?.authenticated) { void syncRobinhood(); }
+              else { window.location.href = "/api/auth/robinhood/start"; }
+            }}>
+              <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
-            <Plus size={14} className="mr-1" /> Add Alpaca
+            <Plus size={14} className="mr-1" /> Connect Alpaca Paper Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
-            <Plus size={14} className="mr-1" /> Add Robinhood
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "live" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca Brokerage Account
           </Button>
         </div>
       </div>
@@ -2946,18 +2985,14 @@ function RobinhoodMcpStatusCard({
     ? "neutral"
     : health.ok && health.authenticated
       ? "up"
-      : health.adapter === "mock"
-        ? "warn"
-        : "down";
+      : "down";
   const label = !health
     ? "Checking"
     : health.ok && health.authenticated
       ? "Connected"
-      : health.adapter === "mock"
-        ? "Mock mode"
-        : health.authenticated
-          ? "Tool check failed"
-          : "Not connected";
+      : health.authenticated
+        ? "Tool check failed"
+        : "Not connected";
   const detail = health?.error ?? health?.warning;
   const visibleTools = health?.tools?.slice(0, 8) ?? [];
 
@@ -2981,7 +3016,7 @@ function RobinhoodMcpStatusCard({
           <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
             <RefreshCw size={13} className={cn(busy && "animate-spin")} /> Refresh
           </Button>
-          {health && !health.authenticated && health.adapter !== "mock" && (
+          {health && !health.authenticated && (
             <Button size="sm" variant="accentSoft" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
               <ExternalLink size={13} /> Connect OAuth
             </Button>

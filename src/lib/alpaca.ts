@@ -24,10 +24,12 @@ export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
 
 class AlpacaBrokerGateway implements BrokerGateway {
   private alpaca: Alpaca;
+  private label: string;
 
   constructor(userId: string) {
     const activeAccount = getActiveConnectedAccount(userId);
     const accountKeys = activeAccount?.broker === "alpaca" ? activeAccount : undefined;
+    this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
     const keyId =
       accountKeys?.apiKey ||
       getUserApiKey(userId, "ALPACA_PAPER_API_KEY")?.apiKey ||
@@ -53,7 +55,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     return [
       {
         accountNumber: account.account_number,
-        label: "Alpaca Paper",
+        label: this.label,
         agenticAllowed: true
       }
     ];

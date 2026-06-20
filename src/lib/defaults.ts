@@ -53,7 +53,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   taxSettings: DEFAULT_TAX_SETTINGS,
-  activeBroker: "robinhood"
+  activeBroker: "test"
 };
 
 export const DEFAULT_STRATEGY_PROMPT = `OBJECTIVE

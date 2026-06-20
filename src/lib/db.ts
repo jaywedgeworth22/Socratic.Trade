@@ -1662,7 +1662,7 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   return rows.map(r => ({
     id: String(r.id),
     userId: String(r.user_id),
-    broker: String(r.broker) as "alpaca" | "robinhood",
+    broker: String(r.broker) as "alpaca" | "robinhood" | "test",
     environment: String(r.environment) as "live" | "paper",
     accountNumber: r.account_number != null ? String(r.account_number) : undefined,
     label: String(r.label),
@@ -1680,7 +1680,7 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
   return {
     id: String(row.id),
     userId: String(row.user_id),
-    broker: String(row.broker) as "alpaca" | "robinhood",
+    broker: String(row.broker) as "alpaca" | "robinhood" | "test",
     environment: String(row.environment) as "live" | "paper",
     accountNumber: row.account_number != null ? String(row.account_number) : undefined,
     label: String(row.label),

@@ -96,7 +96,7 @@ export interface DashboardSnapshot {
 export type SortDir = "asc" | "desc";
 export type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 export type RobinhoodMcpHealth = {
-      adapter?: "mock" | "mcp";
+      adapter?: "mcp";
       ok: boolean;
       configured: boolean;
       authenticated: boolean;

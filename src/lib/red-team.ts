@@ -26,7 +26,7 @@ The strategy has proposed to ${proposal.side.toUpperCase()} ${proposal.symbol} w
 Rationale provided: ${proposal.rationale}
 
 Your objective is to play the Devil's Advocate. You must actively search for reasons why this trade will FAIL.
-If executionMode is mock/local, that means the app's local simulator, not Alpaca Paper or any broker-hosted paper trading account.
+If executionMode is test/local, that means the app's local simulator, not Alpaca Paper or any broker-hosted paper trading account.
 If the proposal is a BUY or COVER (bullish), you are the BEAR. Look for poor fundamentals, bad smart-money signals, or overbought technicals.
 If the proposal is a SELL or SHORT (bearish), you are the BULL. Look for strong fundamentals, insider buying, or oversold technicals.
 

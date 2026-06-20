@@ -1,4 +1,5 @@
 import { upsertConnectedAccount } from "@/lib/db";
+import { getRobinhoodGateway } from "@/lib/robinhood";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
@@ -9,12 +10,48 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const userId = resolveRequestUserId(req, body);
-    const broker = body.broker === "alpaca" || body.broker === "robinhood" ? body.broker : undefined;
-    const environment = body.environment === "paper" || body.environment === "live" ? body.environment : undefined;
-    if (!broker || !environment) {
-      return new NextResponse("broker and environment are required", { status: 400 });
+    const broker =
+      body.broker === "alpaca" || body.broker === "robinhood" || body.broker === "test" ? body.broker : undefined;
+    if (!broker) {
+      return new NextResponse("broker is required (alpaca | robinhood | test)", { status: 400 });
     }
-    const defaultLabel = `${broker === "alpaca" ? "Alpaca" : "Robinhood"} ${environment === "paper" ? "Paper" : "Live"}`;
+
+    // Robinhood: sync the real agentic (read+write) account from the live MCP — never a
+    // hand-typed number, and never the read-only Investing/Roth IRA accounts. Requires the
+    // Robinhood MCP to already be connected (OAuth complete).
+    if (broker === "robinhood") {
+      const accounts = await getRobinhoodGateway().getAccounts();
+      const agentic = accounts.find((a) => a.agenticAllowed);
+      if (!agentic) {
+        return new NextResponse(
+          "No agentic-enabled Robinhood account found. Connect your Robinhood agentic account first.",
+          { status: 400 }
+        );
+      }
+      upsertConnectedAccount({
+        id: body.id || crypto.randomUUID(),
+        userId,
+        broker: "robinhood",
+        environment: "live",
+        accountNumber: agentic.accountNumber,
+        label: agentic.label || "Robinhood Agentic",
+        isActive: body.isActive ?? false
+      });
+      return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
+    }
+
+    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, the API KEY
+    // PREFIX is authoritative for paper vs brokerage — "PK…" = Paper (paper-api),
+    // "AK…" = Brokerage (live api). That prefix is what actually decides which Alpaca
+    // endpoint the key works against, so it overrides whichever button was clicked.
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+    let environment: "paper" | "live" = body.environment === "live" ? "live" : "paper";
+    if (broker === "alpaca" && apiKey) {
+      if (apiKey.toUpperCase().startsWith("PK")) environment = "paper";
+      else if (apiKey.toUpperCase().startsWith("AK")) environment = "live";
+    }
+    const defaultLabel =
+      broker === "test" ? "Test" : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
     upsertConnectedAccount({
       id: body.id || crypto.randomUUID(),
       userId,
@@ -22,7 +59,7 @@ export async function POST(req: Request) {
       environment,
       accountNumber: typeof body.accountNumber === "string" ? body.accountNumber.trim() || undefined : undefined,
       label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel,
-      apiKey: typeof body.apiKey === "string" ? body.apiKey.trim() || undefined : undefined,
+      apiKey: apiKey || undefined,
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
       isActive: body.isActive ?? false
     });

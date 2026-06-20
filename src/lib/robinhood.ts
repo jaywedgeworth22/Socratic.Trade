@@ -21,7 +21,7 @@ export const ROBINHOOD_TRADING_MCP_URL = "https://agent.robinhood.com/mcp/tradin
 const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
 
 export interface RobinhoodMcpHealth {
-  adapter: "mock" | "mcp";
+  adapter: "mcp";
   ok: boolean;
   configured: boolean;
   authenticated: boolean;
@@ -35,8 +35,15 @@ export interface RobinhoodMcpHealth {
 }
 
 export function getRobinhoodGateway(): BrokerGateway {
-  if (process.env.ROBINHOOD_ADAPTER === "mcp") return new HttpMcpRobinhoodGateway();
-  return new MockRobinhoodGateway();
+  // Robinhood is MCP-only. When it isn't connected, the MCP gateway surfaces honest
+  // errors and the health card shows "not connected" — it never returns fabricated data.
+  return new HttpMcpRobinhoodGateway();
+}
+
+// Local "Test" broker: real market quotes (Yahoo) + simulated fills, no real broker.
+// Honestly labeled "Test" — it never impersonates Robinhood or any real account.
+export function getTestGateway(): BrokerGateway {
+  return new TestBrokerGateway();
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
@@ -211,24 +218,23 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
 }
 
 export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
-  const adapter: RobinhoodMcpHealth["adapter"] = process.env.ROBINHOOD_ADAPTER === "mcp" ? "mcp" : "mock";
   const checkedAt = new Date().toISOString();
   const protocolVersion = getRobinhoodMcpProtocolVersion();
   const base = {
-    adapter,
+    adapter: "mcp" as const,
     protocolVersion,
     transport: "http+sse" as const,
     checkedAt,
     tools: [] as string[]
   };
 
-  if (adapter !== "mcp") {
+  if (process.env.ROBINHOOD_ADAPTER !== "mcp") {
     return {
       ...base,
       ok: true,
       configured: false,
       authenticated: false,
-      warning: "ROBINHOOD_ADAPTER is mock; set ROBINHOOD_ADAPTER=mcp to use Robinhood Trading MCP."
+      warning: "Robinhood is not connected. Connect your Robinhood agentic account to enable it."
     };
   }
 
@@ -411,20 +417,17 @@ const MOCK_PRICES: Record<string, number> = {
   GOOG: 170
 };
 
-class MockRobinhoodGateway implements BrokerGateway {
+class TestBrokerGateway implements BrokerGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
-    return [{ accountNumber: "RH-MOCK-AGENT", label: "Mock agentic account", agenticAllowed: true }];
+    return [{ accountNumber: "TEST", label: "Test", agenticAllowed: true }];
   }
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
-    return { accountNumber, totalMarketValue: 100, buyingPower: 40, equityMarketValue: 60, optionMarketValue: 0, cash: 40 };
+    return { accountNumber, totalMarketValue: 0, buyingPower: 0, equityMarketValue: 0, optionMarketValue: 0, cash: 0 };
   }
 
   async getEquityPositions(): Promise<EquityPosition[]> {
-    return [
-      { symbol: "VOO", quantity: 0.08, averageCost: 500, marketValue: 40, sector: "ETF", industry: "Index Fund" },
-      { symbol: "AAPL", quantity: 0.1, averageCost: 200, marketValue: 20, sector: "Technology", industry: "Consumer Electronics" }
-    ];
+    return [];
   }
 
   async getEquityOrders(): Promise<EquityOrder[]> {
@@ -465,7 +468,7 @@ class MockRobinhoodGateway implements BrokerGateway {
               bid: price * 0.999,
               ask: price * 1.001,
               asOf: new Date().toISOString(),
-              provider: "mock-robinhood"
+              provider: "test"
             }
           ] as const;
         }
@@ -480,7 +483,7 @@ class MockRobinhoodGateway implements BrokerGateway {
               bid: 99.9,
               ask: 100.1,
               asOf: new Date().toISOString(),
-              provider: "mock-robinhood"
+              provider: "test"
             }
           ] as const;
         }
@@ -500,7 +503,7 @@ class MockRobinhoodGateway implements BrokerGateway {
     const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
     const price = quotes[normalizeSymbol(input.symbol)]?.price ?? 100;
     const estPrice = input.limitPrice ?? input.stopPrice ?? price;
-    return { estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * estPrice, alerts: [], raw: { mock: true } };
+    return { estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * estPrice, alerts: [], raw: { test: true } };
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
@@ -509,12 +512,12 @@ class MockRobinhoodGateway implements BrokerGateway {
     const estPrice = input.limitPrice ?? input.stopPrice ?? price;
     const quantity = input.quantity ?? (input.dollarAmount ? input.dollarAmount / estPrice : undefined);
     return {
-      orderId: `mock-${input.refId}`,
+      orderId: `test-${input.refId}`,
       refId: input.refId,
       state: "filled",
       filledQuantity: quantity,
       averagePrice: estPrice,
-      raw: { mock: true }
+      raw: { test: true }
     };
   }
 

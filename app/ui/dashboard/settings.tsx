@@ -211,7 +211,7 @@ export function SettingsContent({
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
             <Button variant="ghost" onClick={() => updatePolicy({ paperMode: !policy.paperMode })}>
-              {policy.paperMode ? "Switch to Live" : "Switch to Mock/Local"}
+              {policy.paperMode ? "Switch to Live" : "Switch to Test"}
             </Button>
           </div>
           {policy.systemState !== "active" && enableBlockedReason && (
@@ -654,18 +654,14 @@ export function RobinhoodMcpStatusCard({
     ? "neutral"
     : health.ok && health.authenticated
       ? "up"
-      : health.adapter === "mock"
-        ? "warn"
-        : "down";
+      : "down";
   const label = !health
     ? "Checking"
     : health.ok && health.authenticated
       ? "Connected"
-      : health.adapter === "mock"
-        ? "Mock mode"
-        : health.authenticated
-          ? "Tool check failed"
-          : "Not connected";
+      : health.authenticated
+        ? "Tool check failed"
+        : "Not connected";
   const detail = health?.error ?? health?.warning;
   const visibleTools = health?.tools?.slice(0, 8) ?? [];
 
@@ -689,7 +685,7 @@ export function RobinhoodMcpStatusCard({
           <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
             <RefreshCw size={13} className={cn(busy && "animate-spin")} /> Refresh
           </Button>
-          {health && !health.authenticated && health.adapter !== "mock" && (
+          {health && !health.authenticated && (
             <Button size="sm" variant="accentSoft" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
               <ExternalLink size={13} /> Connect OAuth
             </Button>

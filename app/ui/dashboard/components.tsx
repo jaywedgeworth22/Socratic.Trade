@@ -281,7 +281,7 @@ export function PortfolioRail({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />

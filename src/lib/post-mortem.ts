@@ -63,7 +63,7 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
 
   const systemPrompt = `You are the Post-Mortem Reflection Engine.
 Review the recent trades together with:
-- 'executionMode': mock/local means the app's local simulator, not Alpaca Paper or a broker-hosted paper trading account.
+- 'executionMode': test/local means the app's local simulator, not Alpaca Paper or a broker-hosted paper trading account.
 - 'outcomesByThesis' / 'outcomesByRegime': realized win rate, average return, and total P&L grouped by 'thesisTag' and by 'regime' respectively (these mirror the proposal's tradeThesisTag and entryMarketRegime).
 - 'timingByThesis': average maximum adverse excursion (avgMaePct, pain endured), average maximum favorable excursion (avgMfePct, the move that was available), and capturePct (share of the favorable move actually realized; low => exiting winners too early, large negative avgMaePct => holding losers through deep drawdowns).
 Extract actionable, outcome-grounded lessons: which thesis tags and regimes are profitable vs losing, and whether exits are mistimed.

@@ -360,10 +360,10 @@ export function PerformanceView({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
-        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Mock/Local account" : "Live account"} icon={<TrendingUp size={16} />} />
+        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
           <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Mock/Local gain/loss on positions still open, marked to current prices." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Test gain/loss on positions still open, marked to current prices." />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
         </div>
@@ -710,7 +710,7 @@ export function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
             <th className="px-2 py-1.5 text-left font-semibold">Time</th>
             <th className="px-2 py-1.5 text-left font-semibold">Status</th>
             <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Mock/Local</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Test</th>
             <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
             <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
           </tr>

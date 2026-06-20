@@ -42,7 +42,7 @@ describe("proposeStrategyTuning", () => {
     const proposal = await proposeStrategyTuning();
 
     expect(proposal.generatedBy).toBe("local_rules");
-    expect(proposal.summary).toContain("Collect more mock/local evidence");
+    expect(proposal.summary).toContain("Collect more test/local evidence");
     expect(proposal.proposedPatch.prompt).toContain("LEARNING LOOP");
     expect(proposal.cautions.join(" ")).toContain("Manual approval");
     expect(getStrategyPrompt()).toBe("BASE STRATEGY");
@@ -96,17 +96,17 @@ describe("proposeStrategyTuning", () => {
     vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       const context = JSON.parse(body.input.find((item: any) => item.role === "user")?.content ?? "{}");
-      expect(context.activeMode).toBe("mock/local");
+      expect(context.activeMode).toBe("test/local");
       expect(context.activeModeClarification).toContain("not Alpaca Paper");
-      expect(context.policy.executionMode).toBe("mock/local");
+      expect(context.policy.executionMode).toBe("test/local");
       expect(context.policy.paperMode).toBeUndefined();
-      expect(context.recentFills[0]?.source).toBe("mock/local");
+      expect(context.recentFills[0]?.source).toBe("test/local");
       sawMockLocalContext = true;
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
             summary: "Tune conservatively",
-            rationale: "Recent mock/local performance supports modest tuning.",
+            rationale: "Recent test/local performance supports modest tuning.",
             marketContext: "Macro is stable.",
             performanceReadout: "Win rate is acceptable.",
             proposedPrompt: "UPDATED PROMPT",
