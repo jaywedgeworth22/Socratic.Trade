@@ -7,6 +7,8 @@ export interface PolicyContext {
   portfolio: Portfolio;
   positions: EquityPosition[];
   dailyNotionalUsed: number;
+  /** Order notional already executed within the trailing 60 minutes (R1 hourly cap). */
+  hourlyNotionalUsed?: number;
   dailyOrderCount: number;
   estimatedNotional?: number;
   marketScan?: MarketScan;
@@ -70,6 +72,13 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   );
   if (isOpening && context.dailyNotionalUsed + estimatedNotional > effectiveMaxDailyNotional) {
     reasons.push("Daily notional limit would be exceeded.");
+  }
+  if (
+    isOpening &&
+    context.policy.maxHourlyNotional != null &&
+    (context.hourlyNotionalUsed ?? 0) + estimatedNotional > context.policy.maxHourlyNotional
+  ) {
+    reasons.push("Hourly notional limit would be exceeded.");
   }
   if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
     reasons.push("Daily order count limit would be exceeded.");

@@ -143,6 +143,27 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain("Daily order count");
   });
 
+  it("blocks hourly notional overflow independently of the daily cap (R1)", () => {
+    const base = context();
+    const decision = evaluateTradeProposal(proposal, {
+      ...base,
+      policy: { ...base.policy, maxHourlyNotional: 100 },
+      hourlyNotionalUsed: 95 // 95 + 10 estimated > 100, but well under the daily cap
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("Hourly notional");
+  });
+
+  it("allows an order within the hourly cap (R1)", () => {
+    const base = context();
+    const decision = evaluateTradeProposal(proposal, {
+      ...base,
+      policy: { ...base.policy, maxHourlyNotional: 1000 },
+      hourlyNotionalUsed: 100
+    });
+    expect(decision.approved).toBe(true);
+  });
+
   it("blocks over-concentrated post-trade exposure", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "AAPL", dollarAmount: 2000 }, context(2000));
     expect(decision.approved).toBe(false);

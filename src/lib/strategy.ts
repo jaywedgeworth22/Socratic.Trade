@@ -10,7 +10,9 @@ import {
   insertProposal,
   insertStrategyRun,
   listFillEvents,
+  notionalInLastMinutes,
   releaseStrategyLock,
+  setPolicy,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -186,17 +188,20 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
           },
           { policy, userId }
         );
+        autoRevertOnCapBreach(decision.reasons, policy, userId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
 
       const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+      const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
       const decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
         positions: workingPositions,
         dailyNotionalUsed: dailyNow.notional,
+        hourlyNotionalUsed: hourlyNow.notional,
         dailyOrderCount: dailyNow.orderCount,
         estimatedNotional: review.estimatedNotional,
         marketScan,
@@ -214,6 +219,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
           },
           { policy, userId }
         );
+        autoRevertOnCapBreach(decision.reasons, policy, userId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -450,6 +456,17 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
   };
 }
 
+// R1 §1.4.3 — if an autonomous ("decide") run trips a notional/order cap, drop the account back to
+// "propose" so a human is back in the loop before any further orders. Returns true if it reverted.
+const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Daily order count limit"];
+function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
+  if (policy.strategyAuthority !== "decide" || !reasons) return false;
+  if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
+  setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId);
+  return true;
+}
+
 export async function executeProposal(proposalId: string, userId: string = "local"): Promise<{
   status: string;
   orderId?: string;
@@ -504,11 +521,13 @@ export async function executeProposal(proposalId: string, userId: string = "loca
 
   const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
   const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+  const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
   const decision = evaluateTradeProposal(proposal, {
     policy,
     portfolio: account.portfolio,
     positions: account.positions,
     dailyNotionalUsed: daily.notional,
+    hourlyNotionalUsed: hourly.notional,
     dailyOrderCount: daily.orderCount,
     estimatedNotional: review.estimatedNotional,
     marketScan: approvalScan,
@@ -533,6 +552,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       },
       { policy, userId }
     );
+    autoRevertOnCapBreach(decision.reasons, policy, userId);
     return { status: "blocked", reasons: decision.reasons };
   }
 
