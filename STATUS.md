@@ -32,10 +32,12 @@ steps materially change.
   incl. IRAs via `getUserWashSaleLockedSymbols`); **R1 hourly notional cap + auto-revert** to `propose` on
   breach; schema/types foundation (`taxation_type` column, `maxHourlyNotional`, `synthetic_trailing_stops`
   table + accessors, `notionalInLastMinutes`); UI for the hourly cap + a tax-treatment picker. 278 tests,
-  build green. **Remaining (per user direction):** consolidate the redundant Run/Resume/autonomy controls
-  into one logical group (the order gate — `systemState==="halted"` ⇒ no orders — already works); R2
-  synthetic trailing-stop monitor; H3/H4 stop-execution **gated** behind the autonomy control. See
-  `docs/rollouts/2026-06-20-r1-r5-audit-and-safety-banner.md`.
+  build green. **Now also shipped:** the Run/Resume/autonomy controls consolidated into one **Start/Stop**
+  + **approval-mode** selector (Propose/Decide) + **Run once**; **R2 synthetic trailing-stop monitor**
+  (`synthetic-stops.ts`, +5 tests) with **H4 gated market exits** (scheduler fires them only for
+  Started/active users — `systemState==="halted"` ⇒ no orders). **Deferred:** H3 native Alpaca trailing
+  (needs a broad `OrderType` change — the synthetic path covers Alpaca for now). 283 tests, build green.
+  See `docs/rollouts/2026-06-20-r1-r5-audit-and-safety-banner.md`.
 - 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `trading.jays.services` (`03bfc38`).**
   Robinhood now connects via its MCP (root cause of the long OAuth failure: the redirect URI must be a
   `http://localhost` loopback, NOT the public Cloudflare-fronted `.services` URL — see memory

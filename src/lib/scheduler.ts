@@ -8,6 +8,7 @@ import { getPolicy, listUsers } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { checkRegimeFlip } from "./regime-watch";
 import { runStrategyOnce } from "./strategy";
+import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { refreshDueWebSources } from "./web-sources";
 
@@ -68,6 +69,11 @@ async function tick(): Promise<void> {
         schedule.nextRunAt = null;
         continue;
       }
+
+      // R2: synthetic trailing-stop monitor — runs every tick for active (Started) users, regardless
+      // of the strategy-run cadence (a trail needs frequent checking). We only reach here when
+      // systemState === "active", so the protective market exit is gated behind Start.
+      void runSyntheticStopMonitor(userId, policy, true).catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err));
 
       // Event-only mode: the trigger engine drives runs; skip the fixed-interval cadence.
       // (Default — engine off or mode interval/both — leaves the interval lane unchanged.)

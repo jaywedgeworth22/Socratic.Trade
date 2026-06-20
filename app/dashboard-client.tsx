@@ -541,14 +541,17 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         <div className="ml-0 flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:ml-auto">
           <div
             className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1 md:flex"
-            title={enableBlockedReason ?? (policy.systemState === "halted" ? "System is halted — reactivate it to enable autonomy" : "Turn autonomous trading on or off")}
+            title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
           >
-            <span className="text-xs font-medium text-muted">Autonomy</span>
-            <Switch
-              checked={policy.systemState === "active"}
-              onChange={requestAutonomy}
-              label="Autonomy"
-            />
+            <span className="text-xs font-medium text-muted">Mode</span>
+            <select
+              className="bg-transparent text-xs font-medium text-fg outline-none"
+              value={policy.strategyAuthority}
+              onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
+            >
+              <option value="propose">Propose → you approve</option>
+              <option value="decide">Decide → auto-executes</option>
+            </select>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -608,12 +611,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             }}
             disabled={busy}
           >
-            <Zap size={15} /> Run
+            <Zap size={15} /> Run once
           </Button>
           <Button
             variant={policy.systemState === "halted" ? "primary" : "danger"}
             size="sm"
             className="h-9"
+            title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
             onClick={() => {
               if (policy.systemState === "halted" && enableBlockedReason) {
                 routeSetupBlocker(enableBlockedReason);
@@ -622,7 +626,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               setKillConfirm(true);
             }}
           >
-            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} {policy.systemState === "halted" ? "Resume" : "Kill"}
+            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} {policy.systemState === "halted" ? "Start" : "Stop"}
           </Button>
         </div>
       </header>
@@ -778,16 +782,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         open={killConfirm}
         onClose={() => setKillConfirm(false)}
         onConfirm={async () => {
-          await updatePolicy({ systemState: policy.systemState === "halted" ? "active" : "halted" });
+          requestAutonomy(policy.systemState === "halted");
           setKillConfirm(false);
         }}
-        title={policy.systemState === "halted" ? "Resume automated trading?" : "Activate kill switch?"}
+        title={policy.systemState === "halted" ? "Start the system?" : "Stop the system?"}
         body={
           policy.systemState === "halted"
-            ? "This returns the system to active autonomy. The account and universe checks still apply before any live order can be submitted."
-            : "This immediately pauses all automated trading runs and blocks any new order proposals."
+            ? `This starts the system running. Only while running can orders be placed — and in ${policy.strategyAuthority === "decide" ? "Decide mode the agent executes approved orders automatically" : "Propose mode each order still waits for your approval"}. Account and universe checks still apply.`
+            : "This immediately stops all automated trading runs and blocks any new orders until you start it again."
         }
-        confirmLabel={policy.systemState === "halted" ? "Resume" : "Activate kill switch"}
+        confirmLabel={policy.systemState === "halted" ? "Start" : "Stop"}
         tone={policy.systemState === "halted" ? "primary" : "danger"}
       />
     </div>

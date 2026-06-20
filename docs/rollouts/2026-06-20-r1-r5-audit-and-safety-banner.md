@@ -90,12 +90,22 @@ is deliberately started running** (linked account is $0, so low residual risk du
   tab (sets `taxSettings.taxationType`); the connect-accounts route now accepts a per-account
   `taxationType` that overrides the policy-level default; `dashboard.ts` resolves account-level →
   policy-level. **278 tests, build green; deploying.**
-- **Still TODO** (surfaced to the user): consolidate the redundant Run/Resume/autonomy controls into one
-  logical group — the autonomy **Switch** (`dashboard-client.tsx:548`) and the **Resume/Kill** button
-  (`:614`) both write `systemState`, which is the "not logical" confusion; the order gate itself already
-  works (`systemState === "halted"` ⇒ `throw` in `strategy.ts:86,462`, so no orders unless deliberately
-  running). R2 synthetic trailing-stop monitor (detection scaffolding is in `db.ts`); H3/H4 stop-execution
-  **gated** behind the autonomy control.
+- **Wave 4 — control-group consolidation + R2/H4 (per user direction).**
+  - **Controls (one Start/Stop + approval mode):** removed the redundant autonomy **Switch**; the header
+    now has a **Mode** selector (Propose → you approve / Decide → auto-executes), a **Run once** button
+    (manual scan), and a single **Start/Stop** primary that opens a confirm explaining the gate ("only
+    while running can orders be placed", mode-aware). `systemState === "halted"` ⇒ `throw` in `strategy.ts`
+    remains the hard order gate, so nothing trades until Start.
+  - **R2 synthetic trailing-stop monitor** (`src/lib/synthetic-stops.ts`): pure `evaluateStop`
+    (extreme-tracking, %/abs trail, **bad-tick >10% filter**) + `runSyntheticStopMonitor` (purges closed
+    positions, auto-registers longs when `riskRules.trailingStopPct` is set, persists extremes). +5 tests.
+    Works for ALL brokers (incl. Robinhood MCP) via a market exit — simpler/safer than mixing native.
+  - **H4 gated execution:** when a stop triggers, the monitor fires a **market** sell/cover + records the
+    fill — but only when `running`; the scheduler calls it only for `systemState === "active"` users, so
+    exits are gated behind Start. When not running it audits `synthetic_stop_would_trigger` (detection only).
+  - **H3 (native Alpaca trailing) deferred:** `OrderType` has no `trailing_stop`; adding it is a broad
+    cross-cutting change. The synthetic-for-all-brokers path covers Alpaca too; native delegation is a
+    future optimization — noted, not silently dropped.
 
 ## Follow-ups / notes
 - The 6-agent audit over-reported by reading the blueprint's illustrative snippets as code. Lesson:
