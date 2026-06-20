@@ -6,6 +6,7 @@
 
 import { getPolicy, listUsers } from "./db";
 import { isRunAllowedNow } from "./market-hours";
+import { checkRegimeFlip } from "./regime-watch";
 import { runStrategyOnce } from "./strategy";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { refreshDueWebSources } from "./web-sources";
@@ -42,6 +43,10 @@ async function tick(): Promise<void> {
   // keep the dashboard + agent context fresh even while autonomous trading is paused.
   // Skipped instantly when not yet due; fully self-guarded so it can't break a tick.
   void refreshDueWebSources().catch((err) => console.error("[scheduler] web-source refresh error:", err));
+
+  // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded, runs beside the web-source
+  // refresh. Records + announces a regime change; only triggers a run when TRIGGER_ENGINE is on.
+  void checkRegimeFlip().catch((err) => console.error("[scheduler] regime check error:", err));
 
   try {
     // --- Per-User Scheduling ---

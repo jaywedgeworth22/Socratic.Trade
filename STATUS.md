@@ -23,6 +23,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude`): **Event-trigger Phase 1 (deterministic, no LLM).** Grounded in a
+  4-agent investigation of the post-Codex fill/regime/broker surface. (1) **Regime flip detector**
+  (`src/lib/regime-watch.ts`) on the scheduler tick — persists `regime:current`, audits + pushes +
+  broadcasts a (non-triggering) material event on a flip. (2) **Real-time fills** — Alpaca
+  `trade_updates` WebSocket worker (binary frames → JSON, no msgpack) → `onBrokerFill`
+  (`src/lib/fills.ts`) reconciles + emits a dashboard `order` event; **fills never trigger an LLM
+  run** (expert policy). Opt-in `STREAMS_ALPACA_TRADE_UPDATES_ENABLED`. (3) Closed an SSE gap (run-loop
+  placement now emits `order`). Note: true bracket/OCO orders don't exist here — "re-arm brackets" is
+  reconcile + a deferred risk re-check. tsc clean, 261 tests, build green; live `trade_updates`
+  authorized + regime seeded. See `docs/rollouts/2026-06-20-phase1-deterministic-triggers.md`.
 - 2026-06-20 (`agent/codex`): **Execution/RAG/LLM Blueprint Foundations.**
   Implemented the first runtime slice from `docs/architecture-blueprint.md`:
   `deriveExecutionState(...)` now distinguishes `mock/local`, `broker/paper`,

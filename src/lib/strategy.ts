@@ -286,6 +286,9 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
         { policy, userId }
       );
+      // Push so open dashboards refresh on an autonomously-placed order (the approval path
+      // already emits this; the run-loop placement previously did not).
+      emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { runId, proposalId, symbol: normalizedProposal.symbol, orderId: execution.orderId } });
       results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: execution.orderId });
     }
 

@@ -61,7 +61,18 @@ are specified in the panel output and deferred to a later phase.
 
 ## Rollout (panel)
 - **Phase 0** (done): plumbing, default off, zero behavior change.
-- **Phase 1**: deterministic Tier-0/1 (fills re-arm brackets, regime re-score) — no LLM, no cost.
+- **Phase 1** (done): deterministic Tier-0/1 — no LLM, no cost:
+  - **Regime flip detector** (`src/lib/regime-watch.ts`) on the scheduler tick: persists the label
+    (`regime:current`), audits `regime_flip`, pushes a dashboard refresh + a (non-triggering)
+    material event on a change. Seeds silently first run.
+  - **Real-time fill handling**: the Alpaca `trade_updates` WebSocket worker
+    (`src/lib/streams/alpaca-trade-updates-stream.ts`) → `onBrokerFill` (`src/lib/fills.ts`)
+    reconciles the fill against the broker immediately + emits a dashboard `order` event. Fills are
+    **deterministic-only** — they do not trigger an LLM run. Opt-in `STREAMS_ALPACA_TRADE_UPDATES_ENABLED`.
+  - **NOTE on "re-arm brackets":** true resting bracket/OCO orders do **not** exist in this codebase
+    (only a per-run `generateProactiveRiskProposals` threshold check). So Phase 1 does reconcile +
+    dashboard push on fill; auto re-running the risk check on every fill (which would place market
+    exits outside a run) is intentionally deferred as a behavior change.
 - **Phase 2** (partially started — 8-K producer): event lane on behind `admitRun`, run-count budget;
   enable regime/8-K/insider/technical; keep congress/breadth off; default `mode=both`, cadence 90.
 - **Phase 3**: token/$ budget ceiling + tuning from event→run→P&L data.
