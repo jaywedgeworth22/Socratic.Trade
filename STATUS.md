@@ -37,6 +37,19 @@ steps materially change.
   the Robinhood agentic account. Reconciled with Codex `8654289` (execution-rag) and `e390851` (triggers).
   tsc clean, 261 tests, build green; prod kept on Test, autonomy halted. See
   `docs/rollouts/2026-06-20-broker-honesty-redesign.md`.
+- 2026-06-20 (`agent/codex`): **Broker-neutral account connection wording.**
+  Updated Accounts UI copy so users are told to connect one or more supported
+  accounts when they want broker-backed execution, with Paper accounts optional
+  and user-selected. The account modal keeps explicit buttons for Robinhood MCP,
+  Alpaca Paper, and Alpaca Brokerage, and Robinhood edit states now describe the
+  MCP/OAuth sync path instead of exposing Paper/API-key wording. Docs were
+  aligned in README, PLAN, Phase 11, and the architecture blueprint. Verification
+  passed: `npx tsc --noEmit`, `npm test` (37 files, 261 tests), `npm run build`,
+  `git diff --check`, Playwright smoke against temporary `next start`, PM2
+  `trading-codex` restart, `/api/health`, and a focused Accounts modal browser
+  smoke on port 4101. See
+  `docs/rollouts/2026-06-20-broker-neutral-account-connection-copy.md`.
+- 2026-06-20 (worker_m4_1): **Multi-Tenant RAG & Rate-Limit Hardening.** Implemented User ID sanitization, Voyage API rate limit Full Jitter backoff, publication date prepending, parallel Pinecone queries for custom tenants with in-memory deduplication/ranking, Finnhub/FMP transient cache poisoning prevention, Alpha Vantage HTTP 200 warning detection, and raw-user credential lookup preservation. Verification passed: tsc clean, 271 tests green, build OK. See `docs/rollouts/2026-06-20-multi-tenant-rag-rate-limit-hardening.md`.
 - 2026-06-20 (`agent/claude`): **Event-trigger Phase 1 (deterministic, no LLM).** Grounded in a
   4-agent investigation of the post-Codex fill/regime/broker surface. (1) **Regime flip detector**
   (`src/lib/regime-watch.ts`) on the scheduler tick — persists `regime:current`, audits + pushes +
@@ -47,19 +60,27 @@ steps materially change.
   placement now emits `order`). Note: true bracket/OCO orders don't exist here — "re-arm brackets" is
   reconcile + a deferred risk re-check. tsc clean, 261 tests, build green; live `trade_updates`
   authorized + regime seeded. See `docs/rollouts/2026-06-20-phase1-deterministic-triggers.md`.
+- 2026-06-20 (`agent/codex`): **Terminology documentation alignment.**
+  Fast-forwarded the Codex worktree to the integrated `main` tip and aligned
+  current-state docs with the runtime Test/Paper/Brokerage terminology. No code
+  behavior changed. Verification passed: `npx tsc --noEmit`, `npm test` (37
+  files, 261 tests), `npm run build`, `git diff --check`, PM2 `trading-codex`
+  restart, and `/api/health` on port 4101. See
+  `docs/rollouts/2026-06-20-terminology-doc-alignment.md`.
 - 2026-06-20 (`agent/codex`): **Execution/RAG/LLM Blueprint Foundations.**
   Implemented the first runtime slice from `docs/architecture-blueprint.md`:
-  `deriveExecutionState(...)` now distinguishes `mock/local`, `broker/paper`,
+  `deriveExecutionState(...)` now distinguishes `test/local`, `broker/paper`,
   and `broker/live`; active Alpaca Paper accounts no longer force local
   `paperMode`; strategy, tuning, red-team, and post-mortem LLM context uses the
-  same terms; dashboard safety labels show Mock/Local, Broker Paper, or Broker
-  Live; OpenAI requests share deterministic temperature + output caps; and
+  same terms; dashboard safety labels show Test, Paper, or Brokerage; OpenAI
+  requests share deterministic temperature + output caps; and
   Pinecone RAG guards reserved metadata, queries user-or-public context, and uses
   exponential jittered retry delays. Verification passed: `npx tsc --noEmit`,
   `npm test` (37 files, 261 tests), `npm run build`, `git diff --check`, PM2
   `trading-codex` restart, health/root HTTP checks, and in-app browser Settings
   -> Operate visual smoke. See
   `docs/rollouts/2026-06-20-execution-rag-llm-foundations.md`.
+- 2026-06-20 (`agent/antigravity`): **Alpaca Single-Key & OAuth Authentication Support.** Fully enabled Alpaca connection and streaming utilizing only an API Key (OAuth token) without requiring a separate Secret Key. Swapped headers to `Authorization: Bearer <token>` for REST news enrichment fetches when secret key is empty, and updated WebSocket news and trade updates streams to authenticate with `{ action: "auth", key: "oauth", secret: token }`. Adjusted settings modal input placeholders to clarify optional status of the API Secret field. Verification passed: `npx tsc --noEmit`, `npm test` (261 tests), and `npm run build`. See `docs/rollouts/2026-06-20-alpaca-oauth-single-key.md`.
 - 2026-06-20 (`agent/antigravity`): **Architecture Blueprint Alignment.** Drafted `docs/architecture-blueprint.md` as a target architecture, not completed runtime implementation, covering:
   1. Section 1.4: Autonomous Live Execution Security Gate & keyframe/animation definitions for animate-pulse-fast.
   2. Section 2.5: Synthetic Stop Edge Case Mitigations.
@@ -156,11 +177,11 @@ steps materially change.
   clipping, blank Market Scan empty states, raw activity JSON, and overstated
   symbol-drawer signal language. The active dashboard now shows `Setup Needed`
   instead of `Autonomy On` when account/universe prerequisites are missing,
-  blocks Run/Resume through setup routing, exposes persistent Mock/Local/Live mode,
+  blocks Run/Resume through setup routing, exposes persistent Test/Paper/Brokerage mode,
   confirms live-mode switching, restores mobile page scrolling with a compact
   portfolio summary, replaces blank scan grids with actionable empty states,
   summarizes activity payloads, raises helper-text contrast, starts new defaults
-  halted/propose, and sends LLMs `mock/local` execution-mode context instead of
+  halted/propose, and sends LLMs `test/local` execution-mode context instead of
   ambiguous Paper-mode language. Dashboard charts now use SSR-safe SVG/CSS
   primitives plus a hydration shell so the Codex `next dev` preview serves `/`
   cleanly after build regeneration. See

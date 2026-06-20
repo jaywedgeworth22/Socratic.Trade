@@ -72,13 +72,21 @@ describe("vector-db", () => {
     expect(mocks.createIndex).toHaveBeenCalledTimes(1);
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({
       model: "voyage-finance-2",
-      input: ["AAPL 8-K Item 2.02 details", "MSFT 8-K Item 5.02 details"],
+      input: [
+        "[Published: 2026-06-18] AAPL 8-K Item 2.02 details",
+        "[Published: 2026-06-18] MSFT 8-K Item 5.02 details"
+      ],
       inputType: "document"
     }));
     // Pinecone SDK v8 takes an options object: index.upsert({ records }).
     const records = mocks.upsert.mock.calls[0][0].records;
     expect(records).toHaveLength(2);
-    expect(records[0].metadata).toMatchObject({ symbol: "AAPL", source: "sec-8k", text: "AAPL 8-K Item 2.02 details", userId: "local" });
+    expect(records[0].metadata).toMatchObject({
+      symbol: "AAPL",
+      source: "sec-8k",
+      text: "[Published: 2026-06-18] AAPL 8-K Item 2.02 details",
+      userId: "local"
+    });
   });
 
   it("does not let document metadata spoof reserved tenant or text fields", async () => {
@@ -103,7 +111,7 @@ describe("vector-db", () => {
     expect(records[0].metadata).toMatchObject({
       symbol: "AAPL",
       source: "notes",
-      text: "Private AAPL context",
+      text: "[Published: 2026-06-20] Private AAPL context",
       userId: "user-1"
     });
   });
@@ -121,8 +129,8 @@ describe("vector-db", () => {
     ]);
 
     expect(mocks.embed).toHaveBeenCalledTimes(2);
-    expect(mocks.embed.mock.calls[0][0]).toMatchObject({ input: ["AAPL context"], inputType: "document" });
-    expect(mocks.embed.mock.calls[1][0]).toMatchObject({ input: ["MSFT context"], inputType: "document" });
+    expect(mocks.embed.mock.calls[0][0]).toMatchObject({ input: ["[Published: 2026-06-18] AAPL context"], inputType: "document" });
+    expect(mocks.embed.mock.calls[1][0]).toMatchObject({ input: ["[Published: 2026-06-18] MSFT context"], inputType: "document" });
   });
 
   it("retries Voyage 429s before giving up on a batch", async () => {
@@ -168,16 +176,71 @@ describe("vector-db", () => {
 
     expect(results).toEqual(["AAPL retrieved filing context"]);
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
-    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.query).toHaveBeenCalledTimes(2);
+    expect(mocks.query.mock.calls[0][0]).toMatchObject({
       topK: 2,
       filter: {
         symbol: { $eq: "AAPL" },
-        $or: [
-          { userId: { $eq: "user-1" } },
-          { userId: { $eq: "local" } }
-        ]
+        userId: { $eq: "user-1" }
       },
       includeMetadata: true
-    }));
+    });
+    expect(mocks.query.mock.calls[1][0]).toMatchObject({
+      topK: 2,
+      filter: {
+        symbol: { $eq: "AAPL" },
+        userId: { $eq: "local" }
+      },
+      includeMetadata: true
+    });
+  });
+
+  it("sanitizes user IDs correctly", async () => {
+    const { sanitizeUserId } = await import("../src/lib/vector-db");
+    expect(sanitizeUserId("user; DROP TABLE users;")).toBe("userDROPTABLEusers");
+    expect(sanitizeUserId("test-user_123.dots@domain.com")).toBe("test-user_123.dots@domain.com");
+    expect(sanitizeUserId("a".repeat(150))).toBe("a".repeat(100));
+    expect(sanitizeUserId("")).toBe("local");
+    expect(sanitizeUserId(undefined)).toBe("local");
+    expect(sanitizeUserId("!!!")).toBe("local");
+  });
+
+  it("keeps raw user IDs for key lookup while sanitizing Pinecone filters", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    mocks.query.mockResolvedValue({ matches: [] });
+    const { retrieveContext } = await import("../src/lib/vector-db");
+
+    await retrieveContext("query", "AAPL", 2, "auth0|user 1");
+
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0|user 1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0|user 1");
+    expect(mocks.query.mock.calls[0][0].filter.userId).toEqual({ $eq: "auth0user1" });
+  });
+
+  it("applies deduplication, score sorting, and slicing in retrieveContext", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    
+    // First query returns records with IDs and scores
+    mocks.query.mockResolvedValueOnce({
+      matches: [
+        { id: "doc-1", score: 0.9, metadata: { text: "High score user doc" } },
+        { id: "doc-2", score: 0.7, metadata: { text: "Medium score user doc" } }
+      ]
+    });
+    // Second query (public "local") returns overlapping ID with lower score, and a new public doc
+    mocks.query.mockResolvedValueOnce({
+      matches: [
+        { id: "doc-1", score: 0.8, metadata: { text: "High score user doc duplicate" } },
+        { id: "doc-3", score: 0.95, metadata: { text: "Very high score public doc" } }
+      ]
+    });
+
+    const { retrieveContext } = await import("../src/lib/vector-db");
+    const results = await retrieveContext("query", "AAPL", 2, "user-1");
+
+    // Total top 2 should be doc-3 (0.95) and doc-1 (0.9, deduplicated)
+    expect(results).toEqual(["Very high score public doc", "High score user doc"]);
   });
 });

@@ -1,6 +1,7 @@
 # Robinhood Agentic Trading Dashboard
 
-Local-only Next.js dashboard for managing a Robinhood agentic account through MCP.
+Local-only Next.js dashboard for managing supported agentic trading accounts,
+including Robinhood through MCP and Alpaca through API keys.
 
 ## For AI Tools And Contributors
 
@@ -26,9 +27,11 @@ and a dated rollout note before commit/push. Do not recreate a single
   technicals, macro/market signals, and cached public web-source evidence before
   asking the LLM for proposals.
 - Lets an LLM propose trades, then enforces deterministic policy gates before live order placement.
-- Reviews every order with Robinhood before placement.
+- Reviews broker-routed orders through the active provider before placement when
+  the provider supports a review step.
 - Uses idempotency keys for live order placement.
-- Defaults to mock Robinhood data and Paper mode.
+- Defaults to Test mode, a local simulator with simulated fills. Users can
+  optionally connect one or more supported broker accounts from Accounts.
 
 ## Safety Defaults
 
@@ -55,7 +58,7 @@ The S&P 500 universe is stored locally in `src/lib/sp500.ts`; the app does not f
 Use **Strategy Authority** in the dashboard controls:
 
 - `LLM proposes` records reviewed recommendations but does not submit orders, even when live mode is on.
-- `LLM decides` uses the existing autonomous path: policy gate, Robinhood review, then Paper or Live placement depending on mode.
+- `LLM decides` uses the existing autonomous path: policy gate, broker review when available, then Test, Paper, or Brokerage handling depending on the active account mode.
 
 ## Setup
 
@@ -88,7 +91,7 @@ the default `dev` script does not kill unrelated port-3000 processes.
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini        # or gpt-4o for deeper reasoning
 OPENAI_API_URL=...               # optional: override to use an OpenAI-compatible endpoint
-ROBINHOOD_ADAPTER=mock           # "mock" (default) or "mcp" for real Robinhood MCP
+ROBINHOOD_ADAPTER=mock           # "mock"/unset means Robinhood disconnected; "mcp" enables real Robinhood MCP
 DATABASE_URL=file:./data/app.db
 ENCRYPTION_KEY=...               # optional 64-char hex key; used for stored API keys
 MARKET_SCAN_LIMIT=30
@@ -139,8 +142,8 @@ PINECONE_API_KEY=...
 VECTOR_EMBED_BATCH_SIZE=8
 VECTOR_EMBED_BATCH_DELAY_MS=21000  # unpaid Voyage accounts are limited to 3 RPM
 
-# Optional: native Alpaca paper account credentials. The UI-connected account
-# store takes precedence when an active Alpaca account is selected.
+# Optional: native Alpaca credentials. Users may also connect supported account
+# types in Accounts; Paper accounts are optional and user-selected.
 ALPACA_PAPER_API_KEY=...
 ALPACA_PAPER_SECRET_KEY=...
 
@@ -161,15 +164,19 @@ MASSIVE_SECRET_ACCESS_KEY=...
 WEBHOOK_URL=...
 ```
 
-## Paper vs Live
+## Test, Paper, And Brokerage Accounts
 
-- **Paper mode** is a standalone simulation: it starts from a configurable paper cash
-  balance (`Paper start ($)` in the Risk panel, default `$10,000`), applies simulated
-  fills, and marks open positions to the same live prices Live uses. Paper trades feed
-  back into later decisions, so the simulated account evolves the way a live one would.
-- **Live mode** places real orders through the broker adapter.
-- Both modes use the identical market-data path (NASDAQ screener + broker quotes +
-  Finnhub enrichment when `FINNHUB_API_KEY` is set).
+- **Test mode** is the local simulator: it starts from configurable local cash,
+  applies simulated fills, and is available even when no broker account is
+  connected.
+- **Paper** is optional and broker-hosted. Users only enter Paper mode after
+  connecting a supported provider's paper/sandbox account, such as Alpaca Paper.
+  The app does not invent balances or fills for these accounts.
+- **Brokerage** is a production broker account, such as Robinhood MCP or Alpaca
+  Brokerage. Broker-routed orders can affect real capital when policy, approval,
+  and risk gates allow them.
+- All modes use the same market-data and policy paths where possible; the account
+  connection only changes where balances, positions, fills, and orders come from.
 
 To use a real MCP transport, set:
 
@@ -195,9 +202,10 @@ ROBINHOOD_MCP_SCOPES=tools:call
 
 If the provider supports dynamic client registration, use
 `ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` instead of `ROBINHOOD_MCP_CLIENT_ID`.
-Then run the app locally and open `/api/auth/robinhood/start` to complete consent.
-The app stores OAuth state, the registered client, and refreshable tokens in the
-local SQLite settings table.
+Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
+or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
+state, the registered client, and refreshable tokens in the local SQLite
+settings table.
 
 ## Tests
 

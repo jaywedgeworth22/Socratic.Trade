@@ -482,7 +482,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   function routeSetupBlocker(reason: string) {
     toast.warning(reason, {
       description: !policy.accountNumber && !policy.connectedAccountId
-        ? "Open Accounts to connect or select a brokerage account."
+        ? "Open Accounts to connect or select a supported account."
         : "Open Settings to choose a tradable universe."
     });
     if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
@@ -770,7 +770,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect & switch brokerage accounts" icon={<Wallet size={18} />} size="lg">
+      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect and switch supported accounts" icon={<Wallet size={18} />} size="lg">
         <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
       </Modal>
 
@@ -2192,7 +2192,7 @@ function SettingsContent({
       : "Brokerage"
     : "Broker Mode";
   const liveBlockedReason = !activeAccount
-    ? "Connect or select a brokerage account before switching to broker mode."
+    ? "Connect or select a supported account before switching out of Test mode."
     : undefined;
 
   function addAllowlist() {
@@ -2219,7 +2219,7 @@ function SettingsContent({
   function requestModeSwitch() {
     if (policy.paperMode) {
       if (liveBlockedReason) {
-        toast.warning(liveBlockedReason, { description: "Broker-routed mode should only be enabled from a connected brokerage account." });
+        toast.warning(liveBlockedReason, { description: "Broker-routed Paper or Brokerage mode is optional and should only be enabled from a connected account." });
         openAccounts();
         return;
       }
@@ -2522,7 +2522,7 @@ function SettingsContent({
         }}
         title={`Switch to ${brokerTargetLabel} mode?`}
         body={activeAccount?.environment === "paper"
-          ? "Paper uses a broker-hosted sandbox account such as Alpaca Paper. It is separate from Test (local simulation) and may call broker paper endpoints, but real capital is not at risk."
+          ? "Paper uses a broker-hosted sandbox account when the user chooses to connect one. It is separate from Test (local simulation), may call broker paper endpoints, and does not put real capital at risk."
           : "Brokerage can submit real broker orders when approved proposals or autonomous runs execute. Use Test mode for local simulation and confirm your account, universe, and risk limits first."}
         confirmLabel={`Switch to ${brokerTargetLabel}`}
         tone={activeAccount?.environment === "paper" ? "primary" : "danger"}
@@ -2952,14 +2952,20 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
         <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : `Add ${editing.broker === "alpaca" ? "Alpaca" : "Robinhood"} Account`}</h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Environment">
-            <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Paper"}</option>
-              <option value="live">{editing.broker === "alpaca" ? "Alpaca Brokerage (Real Money)" : "Brokerage (Real Money)"}</option>
-            </select>
-          </Field>
+          {editing.broker === "alpaca" ? (
+            <Field label="Environment">
+              <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
+                <option value="paper">Alpaca Paper</option>
+                <option value="live">Alpaca Brokerage (Real Money)</option>
+              </select>
+            </Field>
+          ) : (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted">
+              Robinhood uses OAuth through MCP and syncs the agentic Brokerage account. No API key fields are required here.
+            </div>
+          )}
           <Field label="Label (Optional)">
-            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder="e.g. My Alpaca IRA" />
+            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder={editing.broker === "alpaca" ? "e.g. Alpaca Paper" : "e.g. Robinhood Agentic"} />
           </Field>
           <Field label="Account Number (Optional)">
             <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
@@ -2967,10 +2973,10 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
           {editing.broker === "alpaca" && (
             <>
               <Field label="API Key">
-                <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required for Alpaca" />
+                <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
               </Field>
               <Field label="API Secret">
-                <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for Alpaca" />
+                <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
             </>
           )}
@@ -2987,8 +2993,10 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
     <div className="space-y-3">
       <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted">Connect your brokerage accounts for agentic trading.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-2xl text-sm text-muted">
+          Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
+        </p>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {!accounts?.some(a => a.broker === "robinhood") && (
             <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
@@ -3009,7 +3017,7 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
 
       {!accounts?.length ? (
         <div className="rounded-lg border border-line border-dashed p-6 text-center text-sm text-faint">
-          No accounts connected. Add an Alpaca or Robinhood account to start trading.
+          No connected accounts yet. Use the buttons above to connect any supported account when you want broker-backed execution; Paper accounts are optional.
         </div>
       ) : (
         <div className="space-y-2">

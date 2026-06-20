@@ -2,7 +2,7 @@
 
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
-their own API keys**. Paper mode stays the default; no live-trading behavior change.
+their own API keys**. Test mode stays the default; no live-trading behavior change.
 
 **For now (testing):** no login portal. A single default user (`local`) is active;
 everything is scoped to that user so the multi-user plumbing is exercised without
@@ -14,17 +14,21 @@ auth. A real login/identity layer is the last milestone.
   `resolveApiKeyWithSource(service, userId?)` in `src/lib/db.ts`. Service names are
   canonicalized, saved keys are encrypted, user keys win, and env vars remain the
   shared fallback.
-- `connected_accounts` brokerage-account storage for the default `local` user.
+- `connected_accounts` account storage for the default `local` user.
   Connected account credentials are encrypted at rest, omitted from dashboard
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
   from the active connected account before falling back to legacy per-user/env keys.
-- Execution mode is now derived as `mock/local`, `broker/paper`, or `broker/live`
+  Robinhood is connected through the MCP OAuth/status flow rather than manual API
+  key fields, and users may connect one or more supported account types from
+  Accounts. Paper accounts are optional; users do not need to connect one unless
+  they want broker-hosted sandbox execution.
+- Execution mode is now derived as `test/local`, `broker/paper`, or `broker/live`
   from the local simulation toggle plus the active connected-account environment.
   Active broker paper accounts no longer collapse back into local `paperMode`,
   so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
-  labels can distinguish Mock/Local from broker-hosted paper environments such as
-  Alpaca Paper.
+  labels can distinguish Test from broker-hosted paper environments such as
+  Alpaca Paper, and Brokerage from live broker production accounts.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
@@ -89,16 +93,21 @@ caller, and `web-sources/*` with `resolveApiKey(service, userId)` so a user's ow
 takes precedence, with the env var as the shared fallback. Keep capability-gating:
 missing key → that provider is skipped (neutral/stale signal), never faked.
 
-Current partial implementation: Alpaca uses the active connected account first.
+Current partial implementation: account settings are broker-aware rather than
+Alpaca-only. Alpaca uses the active connected account first; Robinhood syncs the
+agentic brokerage account through MCP after OAuth; and the account UI presents
+supported account buttons instead of requiring a Paper account.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
-User-Agent, and Pinecone/Voyage. Current API-key routes resolve their request
-user through the central request helper and still default to `local` when no
-user hint is present. Remaining work is mostly architectural: make every future
-keyed connector accept `userId`, continue removing legacy direct env reads when
-new sources land, and verify source attribution when a saved user key overrides
-env.
+User-Agent, and Pinecone/Voyage. Pinecone vector metadata/query filters use a
+sanitized tenant ID, while Pinecone/Voyage credential lookup still uses the raw
+app user ID so saved keys keep working for identity-provider IDs with punctuation.
+Current API-key routes resolve their request user through the central request
+helper and still default to `local` when no user hint is present. Remaining work
+is mostly architectural: make every future keyed connector accept `userId`,
+continue removing legacy direct env reads when new sources land, and verify
+source attribution when a saved user key overrides env.
 
 ### M3 `[todo]` Per-user preferences & policy
 Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope them
@@ -156,4 +165,4 @@ commands must not overwrite an existing DB without a separate manual decision.
 Single-user behavior is byte-for-byte unchanged with the default user; adding a key
 in Settings makes that provider use it (verified via the source attribution string);
 two users with different policies produce different proposals from the same shared
-market data; secrets are never shown or logged; paper mode stays default.
+market data; secrets are never shown or logged; Test mode stays default.

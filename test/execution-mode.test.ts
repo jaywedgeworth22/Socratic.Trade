@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "../src/lib/execution-mode";
+import { deriveExecutionState, llmExecutionMode, llmModeClarification, getThemeClasses, type ExecutionAccount } from "../src/lib/execution-mode";
+import type { ConnectedAccount } from "../src/lib/types";
 
 const alpacaPaperAccount: ExecutionAccount = {
   id: "alpaca-paper",
@@ -16,6 +17,18 @@ const alpacaLiveAccount: ExecutionAccount = {
   environment: "live",
   accountNumber: "APCA-LIVE",
   label: "Alpaca Live"
+};
+
+const mockConnectedAccount: ConnectedAccount = {
+  id: "conn-1",
+  userId: "local",
+  broker: "alpaca",
+  environment: "paper",
+  accountNumber: "APCA-PAPER",
+  label: "Alpaca Paper",
+  isActive: true,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
 };
 
 describe("deriveExecutionState", () => {
@@ -61,5 +74,33 @@ describe("deriveExecutionState", () => {
     expect(state.broker).toBe("alpaca");
     expect(state.usesLocalSimulation).toBe(true);
     expect(state.submitsBrokerOrders).toBe(false);
+  });
+
+  it("supports the boolean overload (paperMode = true/false, activeAccount)", () => {
+    // 1. paperMode: true
+    expect(deriveExecutionState(true, mockConnectedAccount)).toBe("mock");
+    expect(deriveExecutionState(true, undefined)).toBe("mock");
+
+    // 2. paperMode: false, activeAccount environment = paper
+    expect(deriveExecutionState(false, mockConnectedAccount)).toBe("paper");
+
+    // 3. paperMode: false, activeAccount environment = live
+    const liveConnectedAccount: ConnectedAccount = {
+      ...mockConnectedAccount,
+      id: "conn-2",
+      environment: "live"
+    };
+    expect(deriveExecutionState(false, liveConnectedAccount)).toBe("live");
+
+    // 4. paperMode: false, activeAccount = undefined
+    expect(deriveExecutionState(false, undefined)).toBe("mock");
+  });
+});
+
+describe("getThemeClasses", () => {
+  it("returns correct styling classes for each state", () => {
+    expect(getThemeClasses("mock")).toContain("slate-500");
+    expect(getThemeClasses("paper")).toContain("emerald-500");
+    expect(getThemeClasses("live")).toContain("amber-500");
   });
 });

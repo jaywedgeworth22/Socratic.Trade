@@ -36,15 +36,15 @@ export function startAlpacaTradeUpdatesStream(): void {
   }
   const key = resolveApiKey("alpaca_paper_api_key");
   const secret = resolveApiKey("alpaca_paper_secret_key");
-  if (!key || !secret) {
-    console.warn("[stream:alpaca-trades] missing Alpaca key/secret; not starting.");
+  if (!key) {
+    console.warn("[stream:alpaca-trades] missing Alpaca API key; not starting.");
     return;
   }
   state.started = true;
-  connect(key, secret);
+  connect(key, secret || undefined);
 }
 
-function connect(key: string, secret: string): void {
+function connect(key: string, secret?: string): void {
   if (state.closing) return;
   let ws: WebSocket;
   try {
@@ -58,7 +58,11 @@ function connect(key: string, secret: string): void {
 
   ws.onopen = () => {
     try {
-      ws.send(JSON.stringify({ action: "auth", key, secret }));
+      if (secret) {
+        ws.send(JSON.stringify({ action: "auth", key, secret }));
+      } else {
+        ws.send(JSON.stringify({ action: "auth", key: "oauth", secret: key }));
+      }
     } catch {
       // onclose will reconnect
     }
@@ -106,7 +110,7 @@ function connect(key: string, secret: string): void {
   };
 }
 
-function scheduleReconnect(key: string, secret: string): void {
+function scheduleReconnect(key: string, secret?: string): void {
   if (state.closing) return;
   const delay = Math.min(state.backoffMs, MAX_BACKOFF_MS);
   state.backoffMs = Math.min(state.backoffMs * 2, MAX_BACKOFF_MS);
