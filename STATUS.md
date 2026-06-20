@@ -23,6 +23,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/antigravity`): **Architecture Blueprint Alignment.** Drafted `docs/architecture-blueprint.md` as a target architecture, not completed runtime implementation, covering:
+  1. Section 1.4: Autonomous Live Execution Security Gate & keyframe/animation definitions for animate-pulse-fast.
+  2. Section 2.5: Synthetic Stop Edge Case Mitigations.
+  3. Sections 3.3 & 3.4: Taxation Policy Settings (IRA Support) - Wash Sale Prevention & DB/Types mapping.
+  4. Section 4.4: Multi-Tenant RAG & Rate Limit Hardening.
+  5. Sections 5.5 & 5.6: Prompt Caching Surcharge/Eviction & Prompt Abbreviations Glossary.
+  The blueprint was corrected after review to avoid implying unfinished controls are already live. Verification passed: TypeScript compiler checks, unit tests, and Next.js production build.
 - 2026-06-19 (`agent/antigravity`): **Branch consolidation and plan review.** Committed all uncommitted Codex workspace changes, merged `agent/codex` into `main`, and integrated the updated `main` branch into `agent/claude` and `agent/antigravity` worktrees. Verified the unified tree with type checking, unit tests, and Next.js builds. Reviewed all consolidated plans, UX expert guidance, and cross-functional expert guidelines. Devised a review report and architectural flow. See `docs/rollouts/2026-06-19-branch-consolidation-and-review.md`.
 - 2026-06-19 (`agent/codex`): **Expert guidance consolidation.** Consolidated
   scattered UI/design/financial-products UX advice into
