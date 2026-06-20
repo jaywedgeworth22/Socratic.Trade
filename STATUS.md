@@ -6,8 +6,9 @@ steps materially change.
 
 ## Current State
 
-- App: local-only Next.js Robinhood agentic trading dashboard with mock/local vs live
-  mode separation, policy gating, equity-only execution, and a phase-based
+- App: local-only Next.js Robinhood agentic trading dashboard with honest
+  **Test / Paper (Alpaca) / Brokerage** execution modes driven by the active
+  connected account, policy gating, equity-only execution, and a phase-based
   design roadmap.
 - Roadmap: `PLAN.md` tracks the cross-phase implementation order; `docs/`
   contains the per-phase design details.
@@ -23,6 +24,19 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `trading.jays.services` (`03bfc38`).**
+  Robinhood now connects via its MCP (root cause of the long OAuth failure: the redirect URI must be a
+  `http://localhost` loopback, NOT the public Cloudflare-fronted `.services` URL — see memory
+  `robinhood-mcp-oauth-prod`). Removed the fabricated `MockRobinhoodGateway` → honest `TestBrokerGateway`
+  (real quotes + simulated fills); Robinhood is MCP-only; renamed all `Mock/Local`→`Test`,
+  `mock/local`→`test/local`, `Broker Paper`/`Broker Live`→`Paper`/`Brokerage` across src/app/tests
+  (the internal `broker/paper`·`broker/live` mode strings stay). The **active connected account drives
+  the mode** (Test = local sim / Alpaca Paper / Brokerage); `paperMode` is derived in `getPolicy`; the
+  Switch-to-Test/Brokerage toggle is retired; a seeded **Test** account is the always-available safe
+  default; Alpaca paper-vs-brokerage derives from the API key prefix (PK/AK); the connect route syncs only
+  the Robinhood agentic account. Reconciled with Codex `8654289` (execution-rag) and `e390851` (triggers).
+  tsc clean, 261 tests, build green; prod kept on Test, autonomy halted. See
+  `docs/rollouts/2026-06-20-broker-honesty-redesign.md`.
 - 2026-06-20 (`agent/claude`): **Event-trigger Phase 1 (deterministic, no LLM).** Grounded in a
   4-agent investigation of the post-Codex fill/regime/broker surface. (1) **Regime flip detector**
   (`src/lib/regime-watch.ts`) on the scheduler tick — persists `regime:current`, audits + pushes +

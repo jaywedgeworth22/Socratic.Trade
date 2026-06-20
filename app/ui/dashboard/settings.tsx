@@ -210,9 +210,7 @@ export function SettingsContent({
             >
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
-            <Button variant="ghost" onClick={() => updatePolicy({ paperMode: !policy.paperMode })}>
-              {policy.paperMode ? "Switch to Live" : "Switch to Test"}
-            </Button>
+            {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no manual paperMode toggle. */}
           </div>
           {policy.systemState !== "active" && enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />{enableBlockedReason}</p>

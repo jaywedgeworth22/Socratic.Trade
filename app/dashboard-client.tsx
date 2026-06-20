@@ -135,6 +135,28 @@ function executionTone(state: ExecutionState): "info" | "up" | "down" {
   return "info";
 }
 
+// Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
+// decides the color + message so a live (Brokerage) session can never be mistaken for a
+// Test sandbox. Display-only — it does not place or gate orders.
+function executionBanner(state: ExecutionState): { className: string; text: string } {
+  if (state.mode === "broker/live") {
+    return {
+      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 animate-pulse",
+      text: `BROKERAGE · LIVE CAPITAL — approved orders execute against ${state.accountLabel ?? "your broker"} with real money.`
+    };
+  }
+  if (state.mode === "broker/paper") {
+    return {
+      className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
+      text: `PAPER — broker sandbox (${state.accountLabel ?? "Alpaca Paper"}). Orders route to the broker's paper endpoint; no real capital at risk.`
+    };
+  }
+  return {
+    className: "border-slate-800 bg-slate-900/70 text-slate-300",
+    text: "TEST — local simulation with simulated fills. No broker orders; no real capital at risk."
+  };
+}
+
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -476,8 +498,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
 
+  const safetyBanner = executionBanner(executionState);
   return (
     <div className="flex min-h-dvh flex-col overflow-x-hidden xl:h-dvh xl:overflow-hidden">
+      {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
+      <div
+        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
+        title={executionState.clarification}
+      >
+        {safetyBanner.text}
+      </div>
       {/* ── Command bar ─────────────────────────────────────────── */}
       <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md xl:h-14 xl:flex-nowrap xl:px-4 xl:py-0">
         <div className="flex items-center gap-2.5">
