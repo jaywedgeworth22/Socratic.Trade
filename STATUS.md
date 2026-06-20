@@ -6,7 +6,7 @@ steps materially change.
 
 ## Current State
 
-- App: local-only Next.js Robinhood agentic trading dashboard with mock/local vs live
+- App: local-only Next.js Robinhood agentic trading dashboard with Test vs Paper vs Brokerage
   mode separation, policy gating, equity-only execution, and a phase-based
   design roadmap.
 - Roadmap: `PLAN.md` tracks the cross-phase implementation order; `docs/`
@@ -23,13 +23,20 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/codex`): **Terminology documentation alignment.**
+  Fast-forwarded the Codex worktree to the integrated `main` tip and aligned
+  current-state docs with the runtime Test/Paper/Brokerage terminology. No code
+  behavior changed. Verification passed: `npx tsc --noEmit`, `npm test` (37
+  files, 261 tests), `npm run build`, `git diff --check`, PM2 `trading-codex`
+  restart, and `/api/health` on port 4101. See
+  `docs/rollouts/2026-06-20-terminology-doc-alignment.md`.
 - 2026-06-20 (`agent/codex`): **Execution/RAG/LLM Blueprint Foundations.**
   Implemented the first runtime slice from `docs/architecture-blueprint.md`:
-  `deriveExecutionState(...)` now distinguishes `mock/local`, `broker/paper`,
+  `deriveExecutionState(...)` now distinguishes `test/local`, `broker/paper`,
   and `broker/live`; active Alpaca Paper accounts no longer force local
   `paperMode`; strategy, tuning, red-team, and post-mortem LLM context uses the
-  same terms; dashboard safety labels show Mock/Local, Broker Paper, or Broker
-  Live; OpenAI requests share deterministic temperature + output caps; and
+  same terms; dashboard safety labels show Test, Paper, or Brokerage; OpenAI
+  requests share deterministic temperature + output caps; and
   Pinecone RAG guards reserved metadata, queries user-or-public context, and uses
   exponential jittered retry delays. Verification passed: `npx tsc --noEmit`,
   `npm test` (37 files, 261 tests), `npm run build`, `git diff --check`, PM2
@@ -132,11 +139,11 @@ steps materially change.
   clipping, blank Market Scan empty states, raw activity JSON, and overstated
   symbol-drawer signal language. The active dashboard now shows `Setup Needed`
   instead of `Autonomy On` when account/universe prerequisites are missing,
-  blocks Run/Resume through setup routing, exposes persistent Mock/Local/Live mode,
+  blocks Run/Resume through setup routing, exposes persistent Test/Paper/Brokerage mode,
   confirms live-mode switching, restores mobile page scrolling with a compact
   portfolio summary, replaces blank scan grids with actionable empty states,
   summarizes activity payloads, raises helper-text contrast, starts new defaults
-  halted/propose, and sends LLMs `mock/local` execution-mode context instead of
+  halted/propose, and sends LLMs `test/local` execution-mode context instead of
   ambiguous Paper-mode language. Dashboard charts now use SSR-safe SVG/CSS
   primitives plus a hydration shell so the Codex `next dev` preview serves `/`
   cleanly after build regeneration. See

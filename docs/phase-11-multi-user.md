@@ -2,7 +2,7 @@
 
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
-their own API keys**. Paper mode stays the default; no live-trading behavior change.
+their own API keys**. Test mode stays the default; no live-trading behavior change.
 
 **For now (testing):** no login portal. A single default user (`local`) is active;
 everything is scoped to that user so the multi-user plumbing is exercised without
@@ -19,12 +19,12 @@ auth. A real login/identity layer is the last milestone.
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
   from the active connected account before falling back to legacy per-user/env keys.
-- Execution mode is now derived as `mock/local`, `broker/paper`, or `broker/live`
+- Execution mode is now derived as `test/local`, `broker/paper`, or `broker/live`
   from the local simulation toggle plus the active connected-account environment.
   Active broker paper accounts no longer collapse back into local `paperMode`,
   so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
-  labels can distinguish Mock/Local from broker-hosted paper environments such as
-  Alpaca Paper.
+  labels can distinguish Test from broker-hosted paper environments such as
+  Alpaca Paper, and Brokerage from live broker production accounts.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
@@ -156,4 +156,4 @@ commands must not overwrite an existing DB without a separate manual decision.
 Single-user behavior is byte-for-byte unchanged with the default user; adding a key
 in Settings makes that provider use it (verified via the source attribution string);
 two users with different policies produce different proposals from the same shared
-market data; secrets are never shown or logged; paper mode stays default.
+market data; secrets are never shown or logged; Test mode stays default.
