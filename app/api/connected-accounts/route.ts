@@ -1,4 +1,4 @@
-import { upsertConnectedAccount } from "@/lib/db";
+import { getActiveConnectedAccount, listConnectedAccounts, upsertConnectedAccount } from "@/lib/db";
 import { getRobinhoodGateway } from "@/lib/robinhood";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
@@ -28,14 +28,19 @@ export async function POST(req: Request) {
           { status: 400 }
         );
       }
+      // Idempotent: reuse the existing row for this account if already synced (no duplicate
+      // rows on re-sync), and activate it on first connect (when nothing else is active yet).
+      const existing = listConnectedAccounts(userId).find(
+        (a) => a.broker === "robinhood" && a.accountNumber === agentic.accountNumber
+      );
       upsertConnectedAccount({
-        id: body.id || crypto.randomUUID(),
+        id: existing?.id ?? body.id ?? crypto.randomUUID(),
         userId,
         broker: "robinhood",
         environment: "live",
         accountNumber: agentic.accountNumber,
         label: agentic.label || "Robinhood Agentic",
-        isActive: body.isActive ?? false
+        isActive: body.isActive ?? existing?.isActive ?? !getActiveConnectedAccount(userId)
       });
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
     }
