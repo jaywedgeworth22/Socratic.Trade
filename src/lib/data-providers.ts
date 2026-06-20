@@ -219,7 +219,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (finnhubKey) providers.push(new FinnhubEnrichmentProvider(finnhubKey));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
-  if (alpacaNewsKey && alpacaNewsSecret) providers.push(new AlpacaNewsEnrichmentProvider(alpacaNewsKey, alpacaNewsSecret));
+  if (alpacaNewsKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaNewsKey, alpacaNewsSecret || undefined));
   if (alphaVantageKey) providers.push(new AlphaVantageEnrichmentProvider(alphaVantageKey));
   if (fmpKey) providers.push(new FmpEnrichmentProvider(fmpKey));
   providers.push(new YahooFinanceEnrichmentProvider());
@@ -572,7 +572,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://data.alpaca.markets/v1beta1/news";
 
-  constructor(private readonly apiKey: string, private readonly apiSecret: string) {}
+  constructor(private readonly apiKey: string, private readonly apiSecret?: string) {}
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
@@ -607,12 +607,17 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
       const timeout = setTimeout(() => controller.abort(), 8000);
       let articles: Array<{ headline?: string; symbols?: string[] }> = [];
       try {
+        const headers: Record<string, string> = {
+          accept: "application/json"
+        };
+        if (this.apiSecret) {
+          headers["APCA-API-KEY-ID"] = this.apiKey;
+          headers["APCA-API-SECRET-KEY"] = this.apiSecret;
+        } else {
+          headers["Authorization"] = `Bearer ${this.apiKey}`;
+        }
         const response = await fetchWithRetry(url, {
-          headers: {
-            "APCA-API-KEY-ID": this.apiKey,
-            "APCA-API-SECRET-KEY": this.apiSecret,
-            accept: "application/json"
-          },
+          headers,
           cache: "no-store",
           signal: controller.signal
         });
@@ -807,7 +812,15 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
 
 // ── Finnhub provider ─────────────────────────────────────────────────────────
 
-class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
+export function isTransientError(error: unknown): boolean {
+  if (!error) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  if (/\b429\b|rate limit|too many requests/i.test(message)) return true;
+  if (/\btimeout\b|abort|network|fetch|conn|socket|eai_again|dns|504|502|503/i.test(message)) return true;
+  return false;
+}
+
+export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "finnhub";
   readonly configured = true;
   private readonly base = "https://finnhub.io/api/v1";
@@ -920,7 +933,21 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
               ...(eps !== undefined && { eps })
             };
 
-            cache.set(`finnhub:${symbol}`, { expiresAt: now + ttlMs(), data });
+            const promises = [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw];
+            const allRejected = promises.every((p) => p.status === "rejected");
+            const hasTransientError = promises.some(
+              (p) => p.status === "rejected" && isTransientError(p.reason)
+            );
+            const isEmpty = Object.keys(data).length === 0;
+
+            if (allRejected || hasTransientError || isEmpty) {
+              console.warn(
+                `[data-providers] Finnhub enrichment for ${symbol} skipped caching: ` +
+                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+              );
+            } else {
+              cache.set(`finnhub:${symbol}`, { expiresAt: now + ttlMs(), data });
+            }
             result[symbol] = data;
           } catch {
             result[symbol] = {}; // empty; later cascade tiers can still fill gaps.
@@ -948,7 +975,7 @@ class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
 // Supplies P/E (ratios-ttm) and analyst consensus (grades-consensus).
 // Sector/industry/headlines are not available on the free plan.
 
-class FmpEnrichmentProvider implements MarketEnrichmentProvider {
+export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp";
   readonly configured = true;
   private readonly base = "https://financialmodelingprep.com/stable";
@@ -1041,7 +1068,21 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             ...(senateTrades !== undefined && { senateTrades })
           };
 
-          cache.set(`fmp:${symbol}`, { expiresAt: now + ttlMs(), data });
+          const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
+          const allRejected = promises.every((p) => p.status === "rejected");
+          const hasTransientError = promises.some(
+            (p) => p.status === "rejected" && isTransientError(p.reason)
+          );
+          const isEmpty = Object.keys(data).length === 0;
+
+          if (allRejected || hasTransientError || isEmpty) {
+            console.warn(
+              `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
+              `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+            );
+          } else {
+            cache.set(`fmp:${symbol}`, { expiresAt: now + ttlMs(), data });
+          }
           result[symbol] = data;
         })
       );
@@ -1064,7 +1105,7 @@ class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
 // ── Alpha Vantage provider ───────────────────────────────────────────────────
 
-class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
+export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpha-vantage";
   readonly configured = true;
   private readonly base = "https://www.alphavantage.co/query";
@@ -1096,7 +1137,12 @@ class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
             try {
               const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
-              payload = await response.json();
+              payload = await response.json() as Record<string, unknown>;
+              
+              if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
+                const msg = String(payload.Note || payload.Information || payload["Error Message"]);
+                throw new Error(`Alpha Vantage API warning/error: ${msg}`);
+              }
             } finally {
               clearTimeout(timeout);
             }

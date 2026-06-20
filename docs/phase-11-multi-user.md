@@ -93,12 +93,14 @@ Current partial implementation: Alpaca uses the active connected account first.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
-User-Agent, and Pinecone/Voyage. Current API-key routes resolve their request
-user through the central request helper and still default to `local` when no
-user hint is present. Remaining work is mostly architectural: make every future
-keyed connector accept `userId`, continue removing legacy direct env reads when
-new sources land, and verify source attribution when a saved user key overrides
-env.
+User-Agent, and Pinecone/Voyage. Pinecone vector metadata/query filters use a
+sanitized tenant ID, while Pinecone/Voyage credential lookup still uses the raw
+app user ID so saved keys keep working for identity-provider IDs with punctuation.
+Current API-key routes resolve their request user through the central request
+helper and still default to `local` when no user hint is present. Remaining work
+is mostly architectural: make every future keyed connector accept `userId`,
+continue removing legacy direct env reads when new sources land, and verify
+source attribution when a saved user key overrides env.
 
 ### M3 `[todo]` Per-user preferences & policy
 Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope them

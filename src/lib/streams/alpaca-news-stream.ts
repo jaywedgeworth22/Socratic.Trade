@@ -38,15 +38,15 @@ export function startAlpacaNewsStream(): void {
   }
   const key = resolveApiKey("alpaca_paper_api_key");
   const secret = resolveApiKey("alpaca_paper_secret_key");
-  if (!key || !secret) {
-    console.warn("[stream:alpaca-news] missing Alpaca key/secret; not starting.");
+  if (!key) {
+    console.warn("[stream:alpaca-news] missing Alpaca key; not starting.");
     return;
   }
   state.started = true;
-  connect(key, secret);
+  connect(key, secret || undefined);
 }
 
-function connect(key: string, secret: string): void {
+function connect(key: string, secret?: string): void {
   if (state.closing) return;
   let ws: WebSocket;
   try {
@@ -69,7 +69,11 @@ function connect(key: string, secret: string): void {
       const m = raw as Record<string, unknown>;
       const t = m.T;
       if (t === "success" && m.msg === "connected") {
-        ws.send(JSON.stringify({ action: "auth", key, secret }));
+        if (secret) {
+          ws.send(JSON.stringify({ action: "auth", key, secret }));
+        } else {
+          ws.send(JSON.stringify({ action: "auth", key: "oauth", secret: key }));
+        }
       } else if (t === "success" && m.msg === "authenticated") {
         ws.send(JSON.stringify({ action: "subscribe", news: ["*"] }));
         state.backoffMs = 1000; // reset after a clean auth
@@ -93,7 +97,7 @@ function connect(key: string, secret: string): void {
   };
 }
 
-function scheduleReconnect(key: string, secret: string): void {
+function scheduleReconnect(key: string, secret?: string): void {
   if (state.closing) return;
   const delay = Math.min(state.backoffMs, MAX_BACKOFF_MS);
   state.backoffMs = Math.min(state.backoffMs * 2, MAX_BACKOFF_MS);

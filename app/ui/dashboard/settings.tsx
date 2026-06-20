@@ -584,10 +584,10 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
             <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
           </Field>
           <Field label="API Key">
-            <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required for some brokers" />
+            <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key or OAuth Token)" />
           </Field>
           <Field label="API Secret">
-            <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for some brokers" />
+            <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Optional (leave empty for OAuth)" />
           </Field>
         </div>
         <div className="flex justify-end gap-2 pt-2">

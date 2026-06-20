@@ -23,6 +23,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (worker_m4_1): **Multi-Tenant RAG & Rate-Limit Hardening.** Implemented User ID sanitization, Voyage API rate limit Full Jitter backoff, publication date prepending, parallel Pinecone queries for custom tenants with in-memory deduplication/ranking, Finnhub/FMP transient cache poisoning prevention, Alpha Vantage HTTP 200 warning detection, and raw-user credential lookup preservation. Verification passed: tsc clean, 271 tests green, build OK. See `docs/rollouts/2026-06-20-multi-tenant-rag-rate-limit-hardening.md`.
 - 2026-06-20 (`agent/claude`): **Event-trigger Phase 1 (deterministic, no LLM).** Grounded in a
   4-agent investigation of the post-Codex fill/regime/broker surface. (1) **Regime flip detector**
   (`src/lib/regime-watch.ts`) on the scheduler tick — persists `regime:current`, audits + pushes +
@@ -46,6 +47,7 @@ steps materially change.
   `trading-codex` restart, health/root HTTP checks, and in-app browser Settings
   -> Operate visual smoke. See
   `docs/rollouts/2026-06-20-execution-rag-llm-foundations.md`.
+- 2026-06-20 (`agent/antigravity`): **Alpaca Single-Key & OAuth Authentication Support.** Fully enabled Alpaca connection and streaming utilizing only an API Key (OAuth token) without requiring a separate Secret Key. Swapped headers to `Authorization: Bearer <token>` for REST news enrichment fetches when secret key is empty, and updated WebSocket news and trade updates streams to authenticate with `{ action: "auth", key: "oauth", secret: token }`. Adjusted settings modal input placeholders to clarify optional status of the API Secret field. Verification passed: `npx tsc --noEmit`, `npm test` (261 tests), and `npm run build`. See `docs/rollouts/2026-06-20-alpaca-oauth-single-key.md`.
 - 2026-06-20 (`agent/antigravity`): **Architecture Blueprint Alignment.** Drafted `docs/architecture-blueprint.md` as a target architecture, not completed runtime implementation, covering:
   1. Section 1.4: Autonomous Live Execution Security Gate & keyframe/animation definitions for animate-pulse-fast.
   2. Section 2.5: Synthetic Stop Edge Case Mitigations.

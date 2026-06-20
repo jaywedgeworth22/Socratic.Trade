@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   analystScoreFromCounts,
   analystScoreFromMean,
   getEnrichmentProvider,
+  isTransientError,
   labelFromAnalystScore,
   mockEnrichmentProvider,
   noopProvider,
@@ -143,5 +144,165 @@ describe("analyst scoring helpers", () => {
     expect(labelFromAnalystScore(50)).toBe("Hold");
     expect(labelFromAnalystScore(30)).toBe("Sell");
     expect(labelFromAnalystScore(10)).toBe("Strong Sell");
+  });
+});
+
+describe("isTransientError", () => {
+  it("detects transient errors correctly", () => {
+    expect(isTransientError(new Error("rate limit exceeded"))).toBe(true);
+    expect(isTransientError(new Error("HTTP 429 Too Many Requests"))).toBe(true);
+    expect(isTransientError(new Error("timeout of 5000ms exceeded"))).toBe(true);
+    expect(isTransientError("socket hang up")).toBe(true);
+    expect(isTransientError(new Error("failed to fetch"))).toBe(true);
+    expect(isTransientError(new Error("ECONNRESET"))).toBe(true);
+    expect(isTransientError(new Error("HTTP 504 Gateway Timeout"))).toBe(true);
+    expect(isTransientError(new Error("database error"))).toBe(false);
+    expect(isTransientError(new Error("HTTP 404 Not Found"))).toBe(false);
+    expect(isTransientError(undefined)).toBe(false);
+  });
+});
+
+describe("Finnhub & FMP Cache Poisoning Protection", () => {
+  it("prevents cache writes on Finnhub when a transient error occurs", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("quote")) {
+        return new Response("Too Many Requests", { status: 429, statusText: "Too Many Requests" });
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    const provider = new FinnhubEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({});
+    expect(fetchCount).toBe(6);
+
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({});
+    expect(fetchCount).toBe(12);
+  });
+
+  it("caches normally on Finnhub when all queries succeed", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("profile2")) {
+        return new Response(JSON.stringify({ name: "Apple" }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    const provider = new FinnhubEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ companyName: "Apple" });
+    expect(fetchCount).toBe(5);
+
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ companyName: "Apple" });
+    expect(fetchCount).toBe(5);
+  });
+
+  it("prevents cache writes on FMP when a transient error occurs", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("ratios-ttm")) {
+        return new Response("Gateway Timeout", { status: 504 });
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({});
+    expect(fetchCount).toBe(4);
+
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({});
+    expect(fetchCount).toBe(8);
+  });
+
+  it("caches normally on FMP when all queries succeed", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("ratios-ttm")) {
+        return new Response(JSON.stringify([{ priceToEarningsRatioTTM: "25.5" }]));
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 25.5 });
+    expect(fetchCount).toBe(4);
+
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 25.5 });
+    expect(fetchCount).toBe(4);
+  });
+});
+
+describe("Alpha Vantage Warning Detection", () => {
+  it("throws error and does not cache when Alpha Vantage returns HTTP 200 with Note", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response(JSON.stringify({
+        Note: "Thank you for using Alpha Vantage! Standard rate limit is 25 requests per day..."
+      }));
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({});
+    expect(fetchCount).toBe(1);
+
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({});
+    expect(fetchCount).toBe(2);
+  });
+
+  it("caches normally on Alpha Vantage when response has news feed", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response(JSON.stringify({
+        feed: [
+          {
+            title: "AAPL is doing great",
+            ticker_sentiment: [{ ticker: "AAPL", ticker_sentiment_score: "0.2" }]
+          }
+        ]
+      }));
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ headlines: ["AAPL is doing great"], sentiment: 70 });
+    expect(fetchCount).toBe(1);
+
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ headlines: ["AAPL is doing great"], sentiment: 70 });
+    expect(fetchCount).toBe(1);
   });
 });

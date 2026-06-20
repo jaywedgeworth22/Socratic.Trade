@@ -137,7 +137,8 @@ Codex: "make prompt compaction adaptive."
   limits do not make the whole refresh fail; after billing is configured, the live
   key embeds `voyage-finance-2` successfully, while the cap keeps token usage
   near-free. 2026-06-20 hardening protects reserved vector metadata (`userId`,
-  `text`), retrieves with a tenant-safe user-or-public Pinecone filter, and uses
+  `text`), retrieves with a tenant-safe user-or-public Pinecone filter, keeps
+  saved Pinecone/Voyage credential lookup keyed by the raw app user ID, and uses
   exponential jittered delay for 429 retries while preserving configured batch
   pacing. Retrieved snippets are sent in the dynamic user payload as
   `retrievedFinancialContext`, not in the stable system prompt. Still open: full

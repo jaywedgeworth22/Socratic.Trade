@@ -81,6 +81,17 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Sanitizes user IDs to prevent injection attacks and ensure query stability.
+ * Allows alphanumeric, dashes, underscores, dots, and '@'. Caps at 100 characters.
+ */
+export function sanitizeUserId(userId?: string): string {
+  if (!userId) return "local";
+  const sanitized = userId.trim().replace(/[^a-zA-Z0-9_\-.@]/g, "");
+  if (!sanitized) return "local";
+  return sanitized.slice(0, 100);
+}
+
+/**
  * Ensures we have valid clients for Pinecone and Voyage.
  */
 function getClients(userId: string = "local") {
@@ -183,15 +194,16 @@ function retryAfterMs(error: unknown, attempt: number): number {
   }
   const batchDelay = embedBatchDelayMs();
   const baseDelay = embedRetryDelayMs();
-  if (batchDelay <= 0 && baseDelay <= 0) return 0;
-  const exponentialDelay = baseDelay > 0 ? baseDelay * (2 ** attempt) : 0;
-  const jitterCap = baseDelay > 0 ? Math.min(500, baseDelay * 0.25) : 0;
-  return Math.min(60_000, Math.max(batchDelay, exponentialDelay) + Math.random() * jitterCap);
+  
+  const backoff = Math.min(60_000, baseDelay * Math.pow(2, attempt));
+  const delay = Math.random() * backoff;
+  return Math.max(batchDelay, delay);
 }
 
-async function embedDocumentsWithRetry(
+async function embedWithRetry(
   voyage: VoyageAIClient,
-  input: string[]
+  input: string[],
+  inputType: "document" | "query"
 ): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
   const attempts = embedRetryAttempts();
   for (let attempt = 0; ; attempt++) {
@@ -199,15 +211,22 @@ async function embedDocumentsWithRetry(
       return await voyage.embed({
         model: VOYAGE_MODEL,
         input,
-        inputType: "document"
+        inputType
       });
     } catch (error) {
       if (!isRateLimitError(error) || attempt >= attempts) throw error;
       const delay = retryAfterMs(error, attempt);
-      console.warn(`[vector-db] Voyage rate limited; retrying batch in ${Math.round(delay / 1000)}s.`);
+      console.warn(`[vector-db] Voyage rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
       await sleep(delay);
     }
   }
+}
+
+async function embedDocumentsWithRetry(
+  voyage: VoyageAIClient,
+  input: string[]
+): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
+  return embedWithRetry(voyage, input, "document");
 }
 
 /**
@@ -226,8 +245,25 @@ export async function storeContext(
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
 export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<StoreContextsResult> {
+  const sanitizedUserId = sanitizeUserId(userId);
   const validDocuments = documents
-    .map((doc) => ({ ...doc, text: trimContextText(doc.text) }))
+    .map((doc) => {
+      let text = doc.text;
+      const timestamp = doc.metadata?.timestamp;
+      if (timestamp) {
+        const tsStr = String(timestamp);
+        if (tsStr.length >= 10) {
+          const dateStr = tsStr.slice(0, 10);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            const prefix = `[Published: ${dateStr}]`;
+            if (!text.startsWith("[Published:")) {
+              text = `${prefix} ${text}`;
+            }
+          }
+        }
+      }
+      return { ...doc, text: trimContextText(text) };
+    })
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
 
@@ -258,7 +294,7 @@ export async function storeContexts(documents: ContextDocument[], userId: string
         records.push({
           id: contextId(document, indexInBatch),
           values: embedding,
-          metadata: cleanMetadata(document.metadata, document.text, userId)
+          metadata: cleanMetadata(document.metadata, document.text, sanitizedUserId)
         });
       });
 
@@ -320,15 +356,12 @@ export async function retrieveContext(
   limit: number = 3,
   userId: string = "local"
 ): Promise<string[]> {
+  const sanitizedUserId = sanitizeUserId(userId);
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
 
   try {
-    const response = await voyage.embed({
-      model: VOYAGE_MODEL,
-      input: [query],
-      inputType: "query"
-    });
+    const response = await embedWithRetry(voyage, [query], "query");
 
     const embedding = response.data?.[0]?.embedding;
     if (!embedding) return [];
@@ -336,20 +369,61 @@ export async function retrieveContext(
     if (!(await indexExists(pc))) return [];
 
     const index = pc.Index(indexName());
-    const results = await index.query({
-      vector: embedding,
-      topK: limit,
-      filter: {
-        symbol: { $eq: symbol },
-        $or: [
-          { userId: { $eq: userId } },
-          { userId: { $eq: "local" } }
-        ]
-      },
-      includeMetadata: true,
-    });
 
-    return results.matches
+    let matches: any[] = [];
+
+    if (sanitizedUserId === "local") {
+      const results = await index.query({
+        vector: embedding,
+        topK: limit,
+        filter: {
+          symbol: { $eq: symbol },
+          userId: { $eq: "local" }
+        },
+        includeMetadata: true,
+      });
+      matches = results.matches || [];
+    } else {
+      const [userResults, localResults] = await Promise.all([
+        index.query({
+          vector: embedding,
+          topK: limit,
+          filter: {
+            symbol: { $eq: symbol },
+            userId: { $eq: sanitizedUserId }
+          },
+          includeMetadata: true,
+        }),
+        index.query({
+          vector: embedding,
+          topK: limit,
+          filter: {
+            symbol: { $eq: symbol },
+            userId: { $eq: "local" }
+          },
+          includeMetadata: true,
+        })
+      ]);
+
+      const combined = [...(userResults.matches || []), ...(localResults.matches || [])];
+      combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+      const seenIds = new Set<string>();
+      const unique = [];
+      for (const m of combined) {
+        if (m.id) {
+          if (!seenIds.has(m.id)) {
+            seenIds.add(m.id);
+            unique.push(m);
+          }
+        } else {
+          unique.push(m);
+        }
+      }
+      matches = unique.slice(0, limit);
+    }
+
+    return matches
       .map(match => match.metadata?.text as string)
       .filter(Boolean);
   } catch (err) {
