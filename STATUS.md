@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/antigravity`): **Rename project to Agentic Trading in documents.** Renamed the project title in `PLAN.md` to "Agentic Trading Dashboard", ensuring the overall application is consistently referred to as "Agentic Trading" rather than "Robinhood Agentic Trading" (now broker-neutral to support Alpaca and multi-broker setups). Verifications passed: tsc clean, 287 tests green, build OK.
 - 2026-06-20 (integration): **Public-repo consolidation into private dashboard.** Imported Atlas
   (`jaywedgeworth22/public`) design docs to `docs/atlas/`, archived reference material under
   `reference/atlas-public/`, and ported **user watchlist** + **price alerts** (SQLite + API routes +

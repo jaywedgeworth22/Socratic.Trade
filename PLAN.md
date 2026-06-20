@@ -1,4 +1,4 @@
-# Improvement Plan - Robinhood Agentic Dashboard
+# Improvement Plan - Agentic Trading Dashboard
 
 Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,
 measurable, customizable, and easier to operate. The current codebase is treated
