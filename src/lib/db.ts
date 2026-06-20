@@ -18,7 +18,11 @@ import type {
   StrategyRunRow,
   TradingPolicy,
   TradeProposal,
-  ConnectedAccount
+  ConnectedAccount,
+  PriceAlert,
+  PriceAlertOp,
+  PriceAlertStatus,
+  WatchlistItem
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -243,6 +247,28 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_market_data_demands_pending ON market_data_demands (kind, symbol, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_market_data_demands_user ON market_data_demands (user_id, status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS user_watchlist (
+      user_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      added_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_watchlist_user ON user_watchlist (user_id);
+
+    CREATE TABLE IF NOT EXISTS price_alerts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      op TEXT NOT NULL CHECK(op IN ('<', '>')),
+      price REAL NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK(status IN ('armed', 'triggered')),
+      created_at TEXT NOT NULL,
+      triggered_at TEXT,
+      triggered_price REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_price_alerts_user_status ON price_alerts (user_id, status, created_at);
   `);
 
   // Migrate tables to include user_id
@@ -1938,9 +1964,122 @@ export function listUsers(): string[] {
        UNION
        SELECT user_id FROM user_api_keys
        UNION
-       SELECT user_id FROM connected_accounts`
+       SELECT user_id FROM connected_accounts
+       UNION
+       SELECT user_id FROM user_watchlist
+       UNION
+       SELECT user_id FROM price_alerts`
     )
     .all() as Array<{ user_id: string }>;
   const users = rows.map((r) => r.user_id).filter(Boolean);
   return users.length > 0 ? Array.from(new Set(users)) : ["local"];
+}
+
+type RawWatchlistRow = { symbol: string; added_at: string };
+type RawPriceAlertRow = {
+  id: string;
+  user_id: string;
+  symbol: string;
+  op: string;
+  price: number;
+  note: string;
+  status: string;
+  created_at: string;
+  triggered_at: string | null;
+  triggered_price: number | null;
+};
+
+function mapPriceAlert(row: RawPriceAlertRow): PriceAlert {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    symbol: row.symbol,
+    op: row.op as PriceAlertOp,
+    price: row.price,
+    note: row.note,
+    status: row.status as PriceAlertStatus,
+    createdAt: row.created_at,
+    triggeredAt: row.triggered_at,
+    triggeredPrice: row.triggered_price
+  };
+}
+
+export function addWatchlistSymbol(userId: string, symbol: string): WatchlistItem {
+  const addedAt = new Date().toISOString();
+  getDb()
+    .prepare("INSERT OR IGNORE INTO user_watchlist (user_id, symbol, added_at) VALUES (?, ?, ?)")
+    .run(userId, symbol, addedAt);
+  const row = getDb()
+    .prepare("SELECT symbol, added_at FROM user_watchlist WHERE user_id = ? AND symbol = ?")
+    .get(userId, symbol) as RawWatchlistRow;
+  return { symbol: row.symbol, addedAt: row.added_at };
+}
+
+export function removeWatchlistSymbol(userId: string, symbol: string): boolean {
+  const result = getDb().prepare("DELETE FROM user_watchlist WHERE user_id = ? AND symbol = ?").run(userId, symbol);
+  return result.changes > 0;
+}
+
+export function listWatchlistSymbols(userId: string): WatchlistItem[] {
+  const rows = getDb()
+    .prepare("SELECT symbol, added_at FROM user_watchlist WHERE user_id = ? ORDER BY symbol ASC")
+    .all(userId) as RawWatchlistRow[];
+  return rows.map((row) => ({ symbol: row.symbol, addedAt: row.added_at }));
+}
+
+export function createPriceAlert(alert: PriceAlert): PriceAlert {
+  getDb()
+    .prepare(
+      `INSERT INTO price_alerts
+       (id, user_id, symbol, op, price, note, status, created_at, triggered_at, triggered_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      alert.id,
+      alert.userId,
+      alert.symbol,
+      alert.op,
+      alert.price,
+      alert.note,
+      alert.status,
+      alert.createdAt,
+      alert.triggeredAt,
+      alert.triggeredPrice
+    );
+  return alert;
+}
+
+export function listPriceAlerts(userId: string, status: "all" | "armed" | "triggered" = "all"): PriceAlert[] {
+  const rows =
+    status === "all"
+      ? (getDb()
+          .prepare("SELECT * FROM price_alerts WHERE user_id = ? ORDER BY created_at DESC")
+          .all(userId) as RawPriceAlertRow[])
+      : (getDb()
+          .prepare("SELECT * FROM price_alerts WHERE user_id = ? AND status = ? ORDER BY created_at DESC")
+          .all(userId, status) as RawPriceAlertRow[]);
+  return rows.map(mapPriceAlert);
+}
+
+export function listArmedPriceAlerts(userId: string): PriceAlert[] {
+  return listPriceAlerts(userId, "armed");
+}
+
+export function deletePriceAlert(userId: string, id: string): boolean {
+  const result = getDb().prepare("DELETE FROM price_alerts WHERE id = ? AND user_id = ?").run(id, userId);
+  return result.changes > 0;
+}
+
+export function markPriceAlertTriggered(id: string, userId: string, triggeredPrice: number): PriceAlert | null {
+  const triggeredAt = new Date().toISOString();
+  const result = getDb()
+    .prepare(
+      `UPDATE price_alerts
+       SET status = 'triggered', triggered_at = ?, triggered_price = ?
+       WHERE id = ? AND user_id = ? AND status = 'armed'`
+    )
+    .run(triggeredAt, triggeredPrice, id, userId);
+  if (result.changes === 0) return null;
+  const row = getDb().prepare("SELECT * FROM price_alerts WHERE id = ? AND user_id = ?").get(id, userId) as RawPriceAlertRow | undefined;
+  return row ? mapPriceAlert(row) : null;
 }

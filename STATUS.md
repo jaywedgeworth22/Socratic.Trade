@@ -6,7 +6,7 @@ steps materially change.
 
 ## Current State
 
-- App: local-only Next.js Robinhood agentic trading dashboard with honest
+- App: local-only Next.js agentic trading dashboard with honest
   **Test / Paper (Alpaca) / Brokerage** execution modes driven by the active
   connected account, policy gating, equity-only execution, and a phase-based
   design roadmap.
@@ -24,6 +24,12 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (integration): **Public-repo consolidation into private dashboard.** Imported Atlas
+  (`jaywedgeworth22/public`) design docs to `docs/atlas/`, archived reference material under
+  `reference/atlas-public/`, and ported **user watchlist** + **price alerts** (SQLite + API routes +
+  scheduler poller + `price_alert` notifications). Chat orchestrator, conversation history, and
+  salience memory remain deferred — see `docs/atlas-integration-map.md` and
+  `docs/rollouts/2026-06-20-public-repo-consolidation.md`.
 - 2026-06-20 (`agent/claude`): **Blueprint R1–R5 completion (in progress).** 6-agent audit of the
   Antigravity/Codex blueprint work, with findings verified against real code (several audit "bugs" were
   false positives reading the blueprint's example snippets; R4 multi-tenant RAG was already shipped by

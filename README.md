@@ -1,4 +1,4 @@
-# Robinhood Agentic Trading Dashboard
+# Agentic Trading Dashboard
 
 Local-only Next.js dashboard for managing supported agentic trading accounts,
 including Robinhood through MCP and Alpaca through API keys.

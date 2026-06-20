@@ -256,7 +256,7 @@ export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
     await callRobinhoodMcpMethod("initialize", {
       protocolVersion,
       capabilities: {},
-      clientInfo: { name: "Robinhood Agentic Trading", version: "0.1.0" }
+      clientInfo: { name: "Agentic Trading", version: "0.1.0" }
     });
   } catch (error) {
     // Some HTTP MCP proxies accept direct tools/list calls. Keep this diagnostic

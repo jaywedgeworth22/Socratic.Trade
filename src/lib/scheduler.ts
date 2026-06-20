@@ -4,6 +4,7 @@
 // plus Node module caching ensures startScheduler() is effectively a no-op on
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
+import { checkAllUserPriceAlerts } from "./alerts";
 import { getPolicy, listUsers } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { checkRegimeFlip } from "./regime-watch";
@@ -48,6 +49,9 @@ async function tick(): Promise<void> {
   // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded, runs beside the web-source
   // refresh. Records + announces a regime change; only triggers a run when TRIGGER_ENGINE is on.
   void checkRegimeFlip().catch((err) => console.error("[scheduler] regime check error:", err));
+
+  // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
+  void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
 
   try {
     // --- Per-User Scheduling ---

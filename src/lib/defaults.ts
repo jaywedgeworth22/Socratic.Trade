@@ -25,7 +25,7 @@ export const DEFAULT_RISK_RULES: RiskRules = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   webhookUrl: "",
-  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch"]
+  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert"]
 };
 
 export const DEFAULT_POLICY: TradingPolicy = {

@@ -44,7 +44,7 @@ export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
     registrationUrl: process.env.ROBINHOOD_MCP_CLIENT_REGISTRATION_URL || undefined,
     redirectUri: process.env.ROBINHOOD_MCP_REDIRECT_URI || "http://localhost:3000/api/auth/robinhood/callback",
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
-    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Robinhood Agentic Trading"
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
   };
 }
 

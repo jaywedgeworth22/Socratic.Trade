@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "Agentic Trading Cockpit",
-  description: "Local dashboard for managing a Robinhood agentic trading account"
+  description: "Local dashboard for managing an agentic trading account"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

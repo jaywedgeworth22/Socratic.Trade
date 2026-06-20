@@ -137,6 +137,20 @@ function formatDiscordPayload(input: {
       }
       break;
     }
+    case "price_alert": {
+      color = 3447003; // Blue
+      const alert = payload?.alert;
+      const currentPrice = payload?.currentPrice;
+      if (alert) {
+        fields.push(
+          { name: "Symbol", value: String(alert.symbol), inline: true },
+          { name: "Rule", value: `${alert.op} $${Number(alert.price).toFixed(2)}`, inline: true },
+          { name: "Triggered At", value: `$${Number(currentPrice ?? alert.triggeredPrice).toFixed(2)}`, inline: true }
+        );
+        if (alert.note) description = String(alert.note);
+      }
+      break;
+    }
     case "run_failed": {
       color = 15158332; // Red
       description = payload?.summary ?? "Strategy run failed.";

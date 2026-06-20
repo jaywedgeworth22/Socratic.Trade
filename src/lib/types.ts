@@ -10,7 +10,27 @@ export type StrategyAuthority = "propose" | "decide";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch";
+export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert";
+export type PriceAlertOp = "<" | ">";
+export type PriceAlertStatus = "armed" | "triggered";
+
+export interface PriceAlert {
+  id: string;
+  userId: string;
+  symbol: string;
+  op: PriceAlertOp;
+  price: number;
+  note: string;
+  status: PriceAlertStatus;
+  createdAt: string;
+  triggeredAt: string | null;
+  triggeredPrice: number | null;
+}
+
+export interface WatchlistItem {
+  symbol: string;
+  addedAt: string;
+}
 export type NotificationStatus = "sent" | "failed" | "skipped";
 /** Direction of a bar-based technical read (TradingView push or in-house computed). */
 export type TechnicalDirection = "bullish" | "bearish" | "neutral";
