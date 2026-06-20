@@ -151,7 +151,37 @@ deployment machine.
 ## Don't
 
 - Don't run destructive git operations (`reset --hard`, force-push, branch
-  deletion) without explicit user confirmation in the current conversation,
-  even if a previous session was authorized to push.
+ deletion) without explicit user confirmation in the current conversation,
+ even if a previous session was authorized to push.
 - Don't place real trades or toggle `paperMode: false` while testing — Paper
-  mode is the default for a reason.
+ mode is the default for a reason.
+
+## Cursor Cloud specific instructions
+
+These notes apply when running in the Cursor Cloud agent VM. They override the
+host-machine "Hosting & dev servers" section above, which describes the user's
+local multi-worktree/PM2 setup and does NOT apply here.
+
+- The Cloud VM is a single `/workspace` checkout. There are no per-agent
+ worktrees, no PM2 processes, and no ports 4100/4101/4102/4000 — ignore that
+ entire worktree/PM2 table for cloud work.
+- Run the dev server with `npm run dev` (Next.js on `http://127.0.0.1:3000`).
+ Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
+ port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
+ dev` after a build.
+- Standard verification commands live in `README.md`/the "Verify before claiming
+ done" section: `npx tsc --noEmit`, `npm test` (vitest), `npm run build`. All
+ pass clean in this environment.
+- `next lint` is NOT configured (no eslint config is committed); it drops into
+ an interactive setup prompt, so it is not part of verification. Use the
+ tsc/test/build trio instead.
+- No secrets or API keys are required to run the app. It defaults to **Test
+ mode** (a local SQLite simulator at `data/app.db`) and the Market Scan pulls
+ live Yahoo Finance quotes with no key. `DATABASE_URL` defaults to
+ `file:./data/app.db` (`src/lib/db.ts`), so the app runs even without a
+ `.env.local`. Copy `.env.example` → `.env.local` only when you need to set
+ optional provider keys.
+- The LLM agentic loop ("Run once" / `decide` autonomy) needs `OPENAI_API_KEY`.
+ Without it, the dashboard, market scan, watchlist/policy/account configuration,
+ and Test-mode simulation all still work — only LLM-driven proposal generation
+ is unavailable.
