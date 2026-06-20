@@ -1,5 +1,6 @@
-import { getPolicy, getStrategyPrompt, resolveApiKey } from "./db";
-import { llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveApiKey } from "./db";
+import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
@@ -16,6 +17,7 @@ export async function debateProposal(
   userId: string = "local"
 ): Promise<RedTeamDebateResult> {
   const policy = getPolicy(userId);
+  const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
   const openaiKey = resolveApiKey("openai", userId);
   if (!openaiKey) return { rejected: false, reason: "Red Team debate skipped because OpenAI is not configured." };
@@ -26,7 +28,7 @@ The strategy has proposed to ${proposal.side.toUpperCase()} ${proposal.symbol} w
 Rationale provided: ${proposal.rationale}
 
 Your objective is to play the Devil's Advocate. You must actively search for reasons why this trade will FAIL.
-If executionMode is mock/local, that means the app's local simulator, not Alpaca Paper or any broker-hosted paper trading account.
+Execution modes are distinct: mock/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.
 If the proposal is a BUY or COVER (bullish), you are the BEAR. Look for poor fundamentals, bad smart-money signals, or overbought technicals.
 If the proposal is a SELL or SHORT (bearish), you are the BULL. Look for strong fundamentals, insider buying, or oversold technicals.
 
@@ -37,14 +39,14 @@ Respond with a JSON object containing:
 - rejected: boolean (true if you found a critical flaw, false if approved)
 - reason: string (your counter-argument or approval reasoning)`;
 
-  const executionMode = llmExecutionMode(policy.paperMode);
+  const executionMode = llmExecutionMode(executionState);
   const userContent = JSON.stringify({
     proposal,
     quote,
     isBullish,
     policy: {
       executionMode,
-      executionModeClarification: llmModeClarification(policy.paperMode),
+      executionModeClarification: llmModeClarification(executionState),
       strategyAuthority: policy.strategyAuthority,
       holdingHorizon: policy.holdingHorizon,
       maxOrderNotional: policy.maxOrderNotional,
@@ -57,9 +59,11 @@ Respond with a JSON object containing:
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const isChatCompletions = url.includes("/chat/completions");
+  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
 
-  const body = isChatCompletions
-    ? {
+  const body = withLlmRequestBounds(
+    isChatCompletions
+      ? {
         model,
         messages: [
           { role: "system", content: systemPrompt },
@@ -67,13 +71,16 @@ Respond with a JSON object containing:
         ],
         response_format: { type: "json_object" }
       }
-    : {
+      : {
         model,
         input: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userContent }
         ]
-      };
+      },
+    transport,
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate }
+  );
 
   try {
     const traced = await withLlmGeneration(
@@ -84,7 +91,7 @@ Respond with a JSON object containing:
         input: summarizeOpenAiRequest(body),
         metadata: {
           endpoint: url,
-          transport: isChatCompletions ? "chat-completions" : "responses",
+          transport,
           symbol: proposal.symbol,
           side: proposal.side,
           isBullish,

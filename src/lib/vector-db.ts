@@ -137,6 +137,7 @@ async function indexExists(pc: Pinecone): Promise<boolean> {
 function cleanMetadata(metadata: ContextDocument["metadata"], text: string, userId: string): RecordMetadata {
   const out: Record<string, string | number | boolean | string[]> = { text, userId };
   for (const [key, value] of Object.entries(metadata)) {
+    if (key === "text" || key === "userId") continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
@@ -180,7 +181,12 @@ function retryAfterMs(error: unknown, attempt: number): number {
     const dateDelay = Date.parse(retryAfter) - Date.now();
     if (Number.isFinite(dateDelay) && dateDelay > 0) return dateDelay;
   }
-  return Math.max(embedBatchDelayMs(), Math.min(60_000, embedRetryDelayMs() * (attempt + 1)));
+  const batchDelay = embedBatchDelayMs();
+  const baseDelay = embedRetryDelayMs();
+  if (batchDelay <= 0 && baseDelay <= 0) return 0;
+  const exponentialDelay = baseDelay > 0 ? baseDelay * (2 ** attempt) : 0;
+  const jitterCap = baseDelay > 0 ? Math.min(500, baseDelay * 0.25) : 0;
+  return Math.min(60_000, Math.max(batchDelay, exponentialDelay) + Math.random() * jitterCap);
 }
 
 async function embedDocumentsWithRetry(
@@ -334,8 +340,11 @@ export async function retrieveContext(
       vector: embedding,
       topK: limit,
       filter: {
-        symbol,
-        userId
+        symbol: { $eq: symbol },
+        $or: [
+          { userId: { $eq: userId } },
+          { userId: { $eq: "local" } }
+        ]
       },
       includeMetadata: true,
     });

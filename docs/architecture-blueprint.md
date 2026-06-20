@@ -2,7 +2,7 @@
 
 This document establishes a target architectural blueprint, database schemas, type modifications, and reasoning prompt structures for the next-generation trading engine. It is a design plan for multi-tenant safety, tax-aware execution, trailing stop-losses, robust data pipelines, and prompt/reasoning optimizations.
 
-**Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands.
+**Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3.
 
 ---
 

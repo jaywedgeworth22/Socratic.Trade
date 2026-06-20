@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
+import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
@@ -123,6 +124,34 @@ describe("persistence and notifications", () => {
     expect(getActiveConnectedAccount()?.id).toBe(accountId);
   });
 
+  it("keeps active broker paper account separate from the Mock/Local policy toggle", async () => {
+    const userId = `execution-mode-user-${randomUUID()}`;
+    const accountId = randomUUID();
+    const { getActiveConnectedAccount, getPolicy, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const { deriveExecutionState } = await import("../src/lib/execution-mode");
+
+    upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "APCA-PAPER-TEST",
+      label: "Alpaca Paper",
+      isActive: true
+    });
+    setPolicy({ ...DEFAULT_POLICY, paperMode: false, accountNumber: "APCA-PAPER-TEST", activeBroker: "alpaca" }, userId);
+
+    const policy = getPolicy(userId);
+    const activeAccount = getActiveConnectedAccount(userId);
+    const executionState = deriveExecutionState(policy, activeAccount);
+
+    expect(policy.paperMode).toBe(false);
+    expect(policy.activeBroker).toBe("alpaca");
+    expect(policy.connectedAccountId).toBe(accountId);
+    expect(executionState.mode).toBe("broker/paper");
+    expect(executionState.clarification).toContain("Alpaca Paper");
+  });
+
   it("resolves user API keys before env fallback and reports the source", async () => {
     const originalFinnhubKey = process.env.FINNHUB_API_KEY;
     process.env.FINNHUB_API_KEY = "env-finnhub";
@@ -193,6 +222,8 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
+        paperMode: true,
+        includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
       });
@@ -204,7 +235,7 @@ describe("persistence and notifications", () => {
     } finally {
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
     }
-  });
+  }, 15_000);
 
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
@@ -260,9 +291,24 @@ describe("persistence and notifications", () => {
         isActive: true
       });
       setActiveConnectedAccount(mockAccountId);
-      setPolicy({ ...DEFAULT_POLICY, systemState: "active", additionalSymbols: ["AAPL"], strategyAuthority: "decide" });
+      setPolicy({
+        ...DEFAULT_POLICY,
+        systemState: "active",
+        paperMode: true,
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        strategyAuthority: "decide"
+      });
 
       await runStrategyOnce();
+
+      expect(openAiBodies).toHaveLength(2);
+      expect(openAiBodies.map((body) => body.max_output_tokens)).toEqual([
+        LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+        LLM_OUTPUT_TOKEN_CAPS.strategyCritique
+      ]);
+      expect(openAiBodies.every((body) => body.temperature === LLM_REQUEST_DEFAULTS.deterministicTemperature)).toBe(true);
+      expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];
       const systemContent = bullBody.input.find((item: any) => item.role === "system")?.content ?? "";

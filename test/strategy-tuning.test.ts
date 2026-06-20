@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
+import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-tuning-${randomUUID()}.db`)}`;
@@ -95,6 +96,9 @@ describe("proposeStrategyTuning", () => {
     let sawMockLocalContext = false;
     vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyTuning);
+      expect(body.temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
+      expect(body.max_completion_tokens).toBeUndefined();
       const context = JSON.parse(body.input.find((item: any) => item.role === "user")?.content ?? "{}");
       expect(context.activeMode).toBe("mock/local");
       expect(context.activeModeClarification).toContain("not Alpaca Paper");
@@ -163,6 +167,103 @@ describe("proposeStrategyTuning", () => {
         }
       }
     });
+  });
+
+  it("sends broker paper context for an Alpaca Paper account without calling it Mock/Local", async () => {
+    const userId = `tune-broker-paper-${randomUUID()}`;
+    const accountNumber = "TUNE-ALPACA-PAPER";
+    const accountId = randomUUID();
+    const { insertFillEvent, setActiveConnectedAccount, setPolicy, setStrategyPrompt, upsertConnectedAccount } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber,
+      label: "Alpaca Paper",
+      isActive: true
+    });
+    setActiveConnectedAccount(accountId, userId);
+    setStrategyPrompt("BROKER PAPER STRATEGY", userId);
+    setPolicy({
+      ...DEFAULT_POLICY,
+      accountNumber,
+      paperMode: false,
+      activeBroker: "alpaca",
+      scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
+    }, userId);
+    insertFillEvent({
+      userId,
+      accountNumber,
+      source: "live",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "filled"
+    });
+
+    let sawBrokerPaperContext = false;
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const context = JSON.parse(body.input.find((item: any) => item.role === "user")?.content ?? "{}");
+      expect(context.activeMode).toBe("broker/paper");
+      expect(context.activeModeClarification).toContain("Alpaca Paper");
+      expect(context.activeModeClarification).toContain("real capital is not at risk");
+      expect(context.policy.executionMode).toBe("broker/paper");
+      expect(context.policy.executionModeClarification).toContain("Alpaca Paper");
+      expect(context.recentFills[0]?.source).toBe("broker/paper");
+      sawBrokerPaperContext = true;
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            summary: "Review broker paper separately",
+            rationale: "Broker paper fills are sandbox broker fills, not local simulator fills.",
+            marketContext: "Macro is stable.",
+            performanceReadout: "Continue gathering broker paper evidence.",
+            proposedPrompt: "BROKER PAPER STRATEGY",
+            scoringWeights: {
+              liquidity: null,
+              momentum: null,
+              value: null,
+              quality: null,
+              volatility: null,
+              sentiment: null,
+              diversification: null
+            },
+            policy: {
+              maxOrderNotional: null,
+              maxDailyNotional: null,
+              maxSymbolExposurePct: null,
+              maxDailyOrders: null,
+              maxProposalsPerRun: null,
+              runCadenceMinutes: null,
+              strategyAuthority: null,
+              runDuringExtendedHours: null
+            },
+            riskRules: {
+              stopLossPct: null,
+              takeProfitPct: null,
+              trailingStopPct: null
+            },
+            cautions: ["Keep broker paper separate from mock/local results."],
+            confidenceScore: 80
+          })
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const proposal = await proposeStrategyTuning(userId);
+
+    expect(proposal.generatedBy).toBe("llm");
+    expect(sawBrokerPaperContext).toBe(true);
+    expect(proposal.cautions.join(" ")).toContain("broker paper");
   });
 
   it("hard-strips LLM-proposed factor weights below the 20-lot gate, regardless of the prompt", async () => {
