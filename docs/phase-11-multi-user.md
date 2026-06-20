@@ -19,6 +19,12 @@ auth. A real login/identity layer is the last milestone.
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
   from the active connected account before falling back to legacy per-user/env keys.
+- Execution mode is now derived as `mock/local`, `broker/paper`, or `broker/live`
+  from the local simulation toggle plus the active connected-account environment.
+  Active broker paper accounts no longer collapse back into local `paperMode`,
+  so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
+  labels can distinguish Mock/Local from broker-hosted paper environments such as
+  Alpaca Paper.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`

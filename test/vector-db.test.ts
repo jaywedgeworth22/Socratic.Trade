@@ -81,6 +81,33 @@ describe("vector-db", () => {
     expect(records[0].metadata).toMatchObject({ symbol: "AAPL", source: "sec-8k", text: "AAPL 8-K Item 2.02 details", userId: "local" });
   });
 
+  it("does not let document metadata spoof reserved tenant or text fields", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      {
+        text: "Private AAPL context",
+        metadata: {
+          symbol: "AAPL",
+          source: "notes",
+          timestamp: "2026-06-20",
+          userId: "attacker",
+          text: "spoofed body"
+        }
+      }
+    ], "user-1");
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata).toMatchObject({
+      symbol: "AAPL",
+      source: "notes",
+      text: "Private AAPL context",
+      userId: "user-1"
+    });
+  });
+
   it("honors the configured embedding batch size", async () => {
     process.env.VECTOR_EMBED_BATCH_SIZE = "1";
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
@@ -131,7 +158,7 @@ describe("vector-db", () => {
     expect(mocks.createIndex).toHaveBeenCalledTimes(1);
   });
 
-  it("retrieves matching text with query embeddings and symbol/user filters", async () => {
+  it("retrieves matching text with query embeddings and tenant-safe public/user filters", async () => {
     mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     mocks.query.mockResolvedValue({ matches: [{ metadata: { text: "AAPL retrieved filing context" } }, { metadata: {} }] });
@@ -143,7 +170,13 @@ describe("vector-db", () => {
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
     expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({
       topK: 2,
-      filter: { symbol: "AAPL", userId: "user-1" },
+      filter: {
+        symbol: { $eq: "AAPL" },
+        $or: [
+          { userId: { $eq: "user-1" } },
+          { userId: { $eq: "local" } }
+        ]
+      },
       includeMetadata: true
     }));
   });

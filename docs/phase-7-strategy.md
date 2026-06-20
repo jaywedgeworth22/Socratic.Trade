@@ -126,6 +126,11 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   trade history changed (signature = `#filledTrades:latestFillTime`), instead of
   every run. This saves an LLM call on no-fill runs and keeps the Bull
   system-prompt prefix stable so provider prompt-caching can hit.
+- **Bounded LLM requests (2026-06-20)** — Bull, Bear, Red Team, strategy-tuning,
+  and post-mortem calls now use shared OpenAI request bounds with deterministic
+  temperature and explicit output caps. Their prompts and payloads also use
+  `mock/local`, `broker/paper`, and `broker/live` wording so broker-hosted paper
+  fills are not confused with local simulated fills.
 - **Context trimming** — large allowlists (e.g. full S&P 500) are sent as a
   compact note instead of every ticker; `recentOrders` is slimmed to 8 records;
   the Bear/critique agent receives only the candidates under review rather than

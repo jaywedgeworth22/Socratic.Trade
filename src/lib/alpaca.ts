@@ -176,7 +176,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder> {
     await this.alpaca.cancelOrder(orderId);
-    return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { mock: false } };
+    return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: {} };
   }
 }
 

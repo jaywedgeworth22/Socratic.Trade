@@ -38,6 +38,7 @@ import { TableVirtuoso } from "react-virtuoso";
 import { toast } from "sonner";
 import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { deriveMetrics } from "@/lib/derived-metrics";
+import { deriveExecutionState, type ExecutionState } from "@/lib/execution-mode";
 import {
   cellTitle,
   companyTitle,
@@ -117,6 +118,23 @@ function safeJson(value: string): unknown {
   }
 }
 
+function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
+  return (
+    snapshot.connectedAccounts?.find((account) => account.id === snapshot.policy.connectedAccountId) ??
+    snapshot.connectedAccounts?.find((account) => account.isActive)
+  );
+}
+
+function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
+  return deriveExecutionState(snapshot.policy, activeConnectedAccountFor(snapshot));
+}
+
+function executionTone(state: ExecutionState): "info" | "up" | "down" {
+  if (state.mode === "broker/live") return "down";
+  if (state.mode === "broker/paper") return "up";
+  return "info";
+}
+
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -125,7 +143,8 @@ export function DashboardClient({ initialSnapshot }: { initialSnapshot: Dashboar
 }
 
 function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const mode = snapshot.policy.paperMode ? "Test Mode" : "Live Mode";
+  const executionState = executionStateFor(snapshot);
+  const mode = `${executionState.label} Mode`;
   const state = snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed";
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
@@ -419,7 +438,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     .filter((label): label is string => Boolean(label));
   const isOnlyOneIndex = selectedIndexLabels.length === 1 && policy.additionalSymbols.length === 0 && (policy.blocklist || []).length === 0;
   const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
-  const mode = policy.paperMode ? "paper" : "live";
+  const executionState = executionStateFor(snapshot);
+  const mode = executionState.usesLocalSimulation ? "paper" : "live";
+  const accountModeLabel = executionState.label;
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
   // fetched live scan, falling back to the captured run's scan if it's still loading.
@@ -475,8 +496,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 {marketStatus.label}
               </div>
               <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={policy.paperMode ? "info" : "down"} />
-                {policy.paperMode ? "Test Mode" : "Live Mode"}
+                <Dot tone={executionTone(executionState)} />
+                <span title={executionState.clarification}>{executionState.label} Mode</span>
               </div>
             </div>
           </div>
@@ -579,12 +600,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {/* ── Body grid ───────────────────────────────────────────── */}
       <div className="grid flex-1 grid-cols-1 gap-3 p-3 xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 xl:block">
-          <PortfolioRail snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
+          <PortfolioRail snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
         </aside>
 
         <main className="flex min-w-0 flex-col gap-3 xl:min-h-0">
           <div className="xl:hidden">
-            <MobilePortfolioSummary snapshot={snapshot} mode={mode} />
+            <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
           <div className="flex min-w-0 items-center justify-between overflow-x-auto">
             <Tabs
@@ -625,7 +646,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               </div>
             )}
             {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
-            {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} />}
+            {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
             {workspaceTab === "strategy" && (
               <StrategyView
@@ -773,7 +794,7 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
 
 /* ───────────────────────── Portfolio rail ───────────────────────── */
 
-function MobilePortfolioSummary({ snapshot, mode }: { snapshot: DashboardSnapshot; mode: "paper" | "live" }) {
+function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: DashboardSnapshot; mode: "paper" | "live"; modeLabel: string }) {
   const portfolio = snapshot.portfolio;
   const positions = snapshot.positions;
   const total = portfolio?.totalMarketValue ?? 0;
@@ -787,9 +808,9 @@ function MobilePortfolioSummary({ snapshot, mode }: { snapshot: DashboardSnapsho
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
-          <p className="text-xs text-faint">{mode === "paper" ? "Test account" : "Live account"}</p>
+          <p className="text-xs text-faint">{modeLabel} account</p>
         </div>
-        <Chip tone={mode === "paper" ? "info" : "down"}>{mode === "paper" ? "Test" : "Live"}</Chip>
+        <Chip tone={mode === "paper" ? "info" : modeLabel === "Paper" ? "up" : "down"}>{modeLabel}</Chip>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div>
@@ -812,6 +833,7 @@ function MobilePortfolioSummary({ snapshot, mode }: { snapshot: DashboardSnapsho
 function PortfolioRail({
   snapshot,
   mode,
+  modeLabel,
   symbolMetaBySymbol,
   scan,
   onDrilldown,
@@ -819,6 +841,7 @@ function PortfolioRail({
 }: {
   snapshot: DashboardSnapshot;
   mode: "paper" | "live";
+  modeLabel: string;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
@@ -841,7 +864,7 @@ function PortfolioRail({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={`${modeLabel} account`} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
@@ -1449,10 +1472,12 @@ function marketStatusFor(session?: string): { tone: "up" | "warn" | "neutral"; l
 function PerformanceView({
   snapshot,
   mode,
+  modeLabel,
   symbolMetaBySymbol
 }: {
   snapshot: DashboardSnapshot;
   mode: "paper" | "live";
+  modeLabel: string;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
 }) {
   const perf = snapshot.performance;
@@ -1471,10 +1496,10 @@ function PerformanceView({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
-        <PanelHeader title="Equity" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<TrendingUp size={16} />} />
+        <PanelHeader title="Equity" subtitle={`${modeLabel} account`} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
           <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title="Test gain/loss on positions still open, marked to current prices." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
         </div>
@@ -2129,8 +2154,15 @@ function SettingsContent({
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
-  const liveBlockedReason = !policy.accountNumber && !policy.connectedAccountId
-    ? "Connect or select a brokerage account before switching to Live mode."
+  const activeAccount = activeConnectedAccountFor(snapshot);
+  const executionState = deriveExecutionState(policy, activeAccount);
+  const brokerTargetLabel = activeAccount
+    ? activeAccount.environment === "paper"
+      ? "Paper"
+      : "Brokerage"
+    : "Broker Mode";
+  const liveBlockedReason = !activeAccount
+    ? "Connect or select a brokerage account before switching to broker mode."
     : undefined;
 
   function addAllowlist() {
@@ -2157,7 +2189,7 @@ function SettingsContent({
   function requestModeSwitch() {
     if (policy.paperMode) {
       if (liveBlockedReason) {
-        toast.warning(liveBlockedReason, { description: "Live mode should only be enabled from a connected brokerage account." });
+        toast.warning(liveBlockedReason, { description: "Broker-routed mode should only be enabled from a connected brokerage account." });
         openAccounts();
         return;
       }
@@ -2185,15 +2217,20 @@ function SettingsContent({
 
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
-          <div className={cn("rounded-lg border px-3 py-2 text-[13px] sm:col-span-2", policy.paperMode ? "border-info/25 bg-info/10 text-muted" : "border-down/35 bg-down/10 text-down")}>
+          <div className={cn(
+            "rounded-lg border px-3 py-2 text-[13px] sm:col-span-2",
+            executionState.mode === "test/local"
+              ? "border-info/25 bg-info/10 text-muted"
+              : executionState.mode === "broker/paper"
+                ? "border-up/25 bg-up/10 text-muted"
+                : "border-down/35 bg-down/10 text-down"
+          )}>
             <div className="mb-1 flex items-center gap-2 font-semibold text-fg">
               <Shield size={14} />
-              {policy.paperMode ? "Test mode is active" : "Live mode is active"}
+              {executionState.label} mode is active
             </div>
             <p>
-              {policy.paperMode
-                ? "Test mode records proposals and simulated fills against local app data without submitting broker orders."
-                : "Live mode can submit real broker orders when an approved or autonomous run executes. Keep account, universe, and risk limits current."}
+              {executionState.clarification}
             </p>
           </div>
           <Field label="Base indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
@@ -2301,8 +2338,8 @@ function SettingsContent({
             >
               {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
             </Button>
-            <Button variant={policy.paperMode ? "danger" : "ghost"} title={liveBlockedReason} onClick={requestModeSwitch}>
-              {policy.paperMode ? "Switch to Live" : "Switch to Test"}
+            <Button variant={policy.paperMode && activeAccount?.environment === "live" ? "danger" : "ghost"} title={liveBlockedReason} onClick={requestModeSwitch}>
+              {policy.paperMode ? `Switch to ${brokerTargetLabel}` : "Switch to Test"}
             </Button>
           </div>
           {enableBlockedReason && (
@@ -2455,10 +2492,12 @@ function SettingsContent({
           setLiveConfirmOpen(false);
           updatePolicy({ paperMode: false });
         }}
-        title="Switch to Live mode?"
-        body="Live mode can submit real broker orders when approved proposals or autonomous runs execute. Use Test mode for local simulation and confirm your account, universe, and risk limits first."
-        confirmLabel="Switch to Live"
-        tone="danger"
+        title={`Switch to ${brokerTargetLabel} mode?`}
+        body={activeAccount?.environment === "paper"
+          ? "Paper uses a broker-hosted sandbox account such as Alpaca Paper. It is separate from Test (local simulation) and may call broker paper endpoints, but real capital is not at risk."
+          : "Brokerage can submit real broker orders when approved proposals or autonomous runs execute. Use Test mode for local simulation and confirm your account, universe, and risk limits first."}
+        confirmLabel={`Switch to ${brokerTargetLabel}`}
+        tone={activeAccount?.environment === "paper" ? "primary" : "danger"}
       />
     </>
   );
@@ -2524,7 +2563,7 @@ function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutra
 }
 
 function displayStatus(status: string): string {
-  if (status === "paper") return "MOCK/LOCAL";
+  if (status === "paper") return "TEST";
   return status.toUpperCase();
 }
 

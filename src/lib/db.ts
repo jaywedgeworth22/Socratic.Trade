@@ -524,7 +524,6 @@ export function getPolicy(userId: string = "local"): TradingPolicy {
   if (activeAccount) {
     policy.connectedAccountId = activeAccount.id;
     policy.activeBroker = activeAccount.broker;
-    policy.paperMode = activeAccount.environment === "paper";
     policy.accountNumber = activeAccount.accountNumber;
   }
   

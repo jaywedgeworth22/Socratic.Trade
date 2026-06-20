@@ -573,7 +573,7 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
           </Field>
           <Field label="Environment">
             <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Broker Paper"}</option>
+              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Paper"}</option>
               <option value="live">Live (Real Money)</option>
             </select>
           </Field>

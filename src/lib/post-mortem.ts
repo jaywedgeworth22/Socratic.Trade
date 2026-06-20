@@ -1,7 +1,8 @@
-import { getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
+import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
 import { getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getExcursionsByThesis } from "./learning-loop";
-import { llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
@@ -55,15 +56,17 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // timing stats, so the reflection is grounded in what actually made or lost money
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
-  const source = getPolicy(userId).paperMode ? "paper" : "live";
-  const executionMode = llmExecutionMode(source === "paper");
+  const policy = getPolicy(userId);
+  const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
+  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const executionMode = llmExecutionMode(executionState);
   const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);
   const timingByThesis = await getExcursionsByThesis(accountNumber, source, { userId }).catch(() => []);
 
   const systemPrompt = `You are the Post-Mortem Reflection Engine.
 Review the recent trades together with:
-- 'executionMode': test/local means the app's local simulator, not Alpaca Paper or a broker-hosted paper trading account.
+- 'executionMode': test/local is the app's local simulator; broker/paper is a broker-hosted sandbox such as Alpaca Paper; broker/live is a production broker account.
 - 'outcomesByThesis' / 'outcomesByRegime': realized win rate, average return, and total P&L grouped by 'thesisTag' and by 'regime' respectively (these mirror the proposal's tradeThesisTag and entryMarketRegime).
 - 'timingByThesis': average maximum adverse excursion (avgMaePct, pain endured), average maximum favorable excursion (avgMfePct, the move that was available), and capturePct (share of the favorable move actually realized; low => exiting winners too early, large negative avgMaePct => holding losers through deep drawdowns).
 Extract actionable, outcome-grounded lessons: which thesis tags and regimes are profitable vs losing, and whether exits are mistimed.
@@ -71,7 +74,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
 
   const userContent = JSON.stringify({
     executionMode,
-    executionModeClarification: llmModeClarification(source === "paper"),
+    executionModeClarification: llmModeClarification(executionState),
     recentTrades: tradeData,
     outcomesByThesis,
     outcomesByRegime,
@@ -81,22 +84,27 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const isChatCompletions = url.includes("/chat/completions");
+  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
 
-  const body = isChatCompletions
-    ? {
+  const body = withLlmRequestBounds(
+    isChatCompletions
+      ? {
         model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userContent }
         ]
       }
-    : {
+      : {
         model,
         input: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userContent }
         ]
-      };
+      },
+    transport,
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection }
+  );
 
   try {
     const traced = await withLlmGeneration(
@@ -107,7 +115,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         input: summarizeOpenAiRequest(body),
         metadata: {
           endpoint: url,
-          transport: isChatCompletions ? "chat-completions" : "responses",
+          transport,
           tradeCount: tradeData.length,
           executionMode,
           internalSource: source

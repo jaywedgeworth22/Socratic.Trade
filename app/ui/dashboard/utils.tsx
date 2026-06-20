@@ -75,7 +75,7 @@ export function statusTone(status: string): "up" | "down" | "warn" | "accent" | 
 }
 
 export function displayStatus(status: string): string {
-  if (status === "paper") return "MOCK/LOCAL";
+  if (status === "paper") return "TEST";
   return status.toUpperCase();
 }
 

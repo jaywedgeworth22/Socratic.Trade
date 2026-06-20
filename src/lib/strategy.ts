@@ -3,6 +3,7 @@ import {
   audit,
   dailyExecutionStats,
   finishStrategyRun,
+  getActiveConnectedAccount,
   getPolicy,
   getProposal,
   getStrategyPrompt,
@@ -20,7 +21,8 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
-import { llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
+import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -47,7 +49,7 @@ import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting }
 import { withLlmGeneration } from "./observability";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, FillSource, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -78,6 +80,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
   try {
     const policy = getPolicy(userId);
+    const activeAccount = getActiveConnectedAccount(userId);
+    const executionState = deriveExecutionState(policy, activeAccount);
     if (!policy.accountNumber) throw new Error("No account selected.");
     if (policy.systemState === "halted") throw new Error("System is halted.");
 
@@ -98,12 +102,12 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live", new Date(), userId);
+    const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, executionState.usesLocalSimulation ? "paper" : "live", new Date(), userId);
 
     // In Test mode, decisions run against the standalone local account
     // (starting cash + prior simulated fills, marked to live prices).
     const currentPrices = currentPricesFromScan(marketScan);
-    const account = policy.paperMode
+    const account = executionState.usesLocalSimulation
       ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
       : { portfolio, positions };
     const workingPortfolio = account.portfolio;
@@ -131,6 +135,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       policyAllowlist: allowedSymbols,
       prompt: getStrategyPrompt(userId),
       policy,
+      activeAccount,
       portfolio: workingPortfolio,
       positions: workingPositions,
       recentOrders: compactRecentOrders(orders),
@@ -140,7 +145,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       ragContext
     });
 
-    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, userId));
+    const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId));
 
     const debatedProposals: TradeProposal[] = [];
     for (const proposal of sizedProposals) {
@@ -223,7 +229,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         continue;
       }
 
-      if (policy.paperMode) {
+      if (executionState.usesLocalSimulation) {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
         const fill = recordFillFromProposal({
@@ -331,7 +337,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
     const tradeCount = placed + paperCount + proposed;
-    const tradeNoun = policy.paperMode ? "Test Trade" : "Trade";
+    const tradeNoun = executionState.usesLocalSimulation ? "Test Trade" : "Trade";
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
       `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
@@ -345,7 +351,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     finishStrategyRun(runId, "completed", summary, userId);
     // Always snapshot the real account; snapshot the local simulation too in Test mode.
     recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
-    if (policy.paperMode) {
+    if (executionState.usesLocalSimulation) {
       const paperProjection = getPaperPortfolioProjection({
         accountNumber: policy.accountNumber,
         startingCash: policy.paperStartingCash,
@@ -398,10 +404,8 @@ export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): numb
   return Math.max(0, Math.min(100, threshold));
 }
 
-function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, userId: string = "local"): TradeProposal {
+function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local"): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") return proposal; // Preserve exits
-  
-  const source = policy.paperMode ? "paper" : "live";
   const account = policy.accountNumber;
   if (!account) return proposal;
 
@@ -449,6 +453,8 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   reasons?: string[];
 }> {
   const policy = getPolicy(userId);
+  const activeAccount = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccount);
   if (!policy.accountNumber) throw new Error("No account selected.");
   if (policy.systemState === "halted") throw new Error("System is halted.");
 
@@ -473,7 +479,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
 
   // In Test mode, evaluate the approval against the standalone local account.
   const currentPrices = currentPricesFromScan(approvalScan);
-  const account = policy.paperMode
+  const account = executionState.usesLocalSimulation
     ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
     : { portfolio, positions };
 
@@ -503,7 +509,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     dailyOrderCount: daily.orderCount,
     estimatedNotional: review.estimatedNotional,
     marketScan: approvalScan,
-    washSaleLockedSymbols: getWashSaleLockedSymbols(policy.accountNumber, policy.paperMode ? "paper" : "live", new Date(), userId)
+    washSaleLockedSymbols: getWashSaleLockedSymbols(policy.accountNumber, executionState.usesLocalSimulation ? "paper" : "live", new Date(), userId)
   });
 
   if (!decision.approved) {
@@ -527,7 +533,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     return { status: "blocked", reasons: decision.reasons };
   }
 
-  if (policy.paperMode) {
+  if (executionState.usesLocalSimulation) {
     updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional, userId);
     const fill = recordFillFromProposal({
       userId,
@@ -654,6 +660,7 @@ async function proposeTrades(input: {
   policyAllowlist: string[];
   prompt: string;
   policy: TradingPolicy;
+  activeAccount?: ExecutionAccount;
   portfolio: Portfolio;
   positions: EquityPosition[];
   recentOrders: unknown[];
@@ -698,7 +705,8 @@ async function proposeTrades(input: {
 
   const currentPrices = currentPricesFromScan(input.marketScan);
   const reflection = getUserSetting(input.userId, "reflection_summary", "");
-  const source = input.policy.paperMode ? "paper" : "live";
+  const executionState = deriveExecutionState(input.policy, input.activeAccount);
+  const source: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=2 closed lots (thin
@@ -741,15 +749,15 @@ async function proposeTrades(input: {
         harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
       }
     : null;
-  const executionMode = llmExecutionMode(input.policy.paperMode);
-  const executionModeClarification = llmModeClarification(input.policy.paperMode);
+  const executionMode = llmExecutionMode(executionState);
+  const executionModeClarification = llmModeClarification(executionState);
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
     "",
     "Execution Mode:",
     `Current executionMode is "${executionMode}".`,
     executionModeClarification,
-    "Do not call test/local mode Paper mode. Alpaca Paper is a separate broker-hosted paper account concept.",
+    "Do not call test/local mode Paper mode. Paper, including Alpaca Paper, is a separate broker-hosted sandbox account concept.",
     "",
     "Investment Strategy:",
     input.prompt,
@@ -864,6 +872,7 @@ async function proposeTrades(input: {
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const isChatCompletions = url.includes("/chat/completions");
+  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
 
   const schema = {
     type: "object",
@@ -911,8 +920,9 @@ async function proposeTrades(input: {
     }
   };
 
-  const body = isChatCompletions
-    ? {
+  const body = withLlmRequestBounds(
+    isChatCompletions
+      ? {
         model,
         messages: [
           { role: "system", content: systemPrompt },
@@ -927,7 +937,7 @@ async function proposeTrades(input: {
           }
         }
       }
-    : {
+      : {
         model,
         input: [
           { role: "system", content: systemPrompt },
@@ -940,7 +950,10 @@ async function proposeTrades(input: {
             schema
           }
         }
-      };
+      },
+    transport,
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal }
+  );
 
   const bullResult = await withLlmGeneration(
     {
@@ -950,10 +963,11 @@ async function proposeTrades(input: {
       input: summarizeOpenAiRequest(body),
       metadata: {
         endpoint: url,
-        transport: isChatCompletions ? "chat-completions" : "responses",
+        transport,
         maxProposals,
         executionMode,
         internalPaperMode: input.policy.paperMode,
+        usesLocalSimulation: executionState.usesLocalSimulation,
         currentMarketRegime
       },
       tags: ["strategy", "bull-agent"],
@@ -997,7 +1011,7 @@ async function proposeTrades(input: {
   const bearSystemPrompt = [
     "You are the Bear Agent (Red Team Risk Manager) for an autonomous trading system.",
     "Your objective is to CRITIQUE the following proposed trades generated by the Bull Agent.",
-    "If executionMode is test/local, that means the app's local simulator, not Alpaca Paper or any broker-hosted paper trading account.",
+    "Execution modes are distinct: test/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.",
     "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
@@ -1071,8 +1085,9 @@ async function proposeTrades(input: {
     bullAgentProposals: bullProposals
   };
 
-  const bearBody = isChatCompletions
-    ? {
+  const bearBody = withLlmRequestBounds(
+    isChatCompletions
+      ? {
         model,
         messages: [
           { role: "system", content: bearSystemPrompt },
@@ -1087,7 +1102,7 @@ async function proposeTrades(input: {
           }
         }
       }
-    : {
+      : {
         model,
         input: [
           { role: "system", content: bearSystemPrompt },
@@ -1100,7 +1115,10 @@ async function proposeTrades(input: {
             schema: bearSchema
           }
         }
-      };
+      },
+    transport,
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique }
+  );
 
   const bearResult = await withLlmGeneration(
     {
@@ -1110,10 +1128,11 @@ async function proposeTrades(input: {
       input: summarizeOpenAiRequest(bearBody),
       metadata: {
         endpoint: url,
-        transport: isChatCompletions ? "chat-completions" : "responses",
+        transport,
         reviewedProposalCount: bullProposals.length,
         executionMode,
         internalPaperMode: input.policy.paperMode,
+        usesLocalSimulation: executionState.usesLocalSimulation,
         currentMarketRegime
       },
       tags: ["strategy", "bear-agent", "red-team"],
@@ -1303,9 +1322,9 @@ function fallbackProposal(input: {
       timeInForce: "gfd",
       marketHours: "regular_hours",
       rationale:
-        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple mock rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
+        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple rule-based rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
       tradeThesisTag: "Development Fallback",
-      entryMarketRegime: "Mock Regime"
+      entryMarketRegime: "Rule-based"
     }
   ];
 }

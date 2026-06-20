@@ -23,6 +23,19 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/codex`): **Execution/RAG/LLM Blueprint Foundations.**
+  Implemented the first runtime slice from `docs/architecture-blueprint.md`:
+  `deriveExecutionState(...)` now distinguishes `mock/local`, `broker/paper`,
+  and `broker/live`; active Alpaca Paper accounts no longer force local
+  `paperMode`; strategy, tuning, red-team, and post-mortem LLM context uses the
+  same terms; dashboard safety labels show Mock/Local, Broker Paper, or Broker
+  Live; OpenAI requests share deterministic temperature + output caps; and
+  Pinecone RAG guards reserved metadata, queries user-or-public context, and uses
+  exponential jittered retry delays. Verification passed: `npx tsc --noEmit`,
+  `npm test` (37 files, 261 tests), `npm run build`, `git diff --check`, PM2
+  `trading-codex` restart, health/root HTTP checks, and in-app browser Settings
+  -> Operate visual smoke. See
+  `docs/rollouts/2026-06-20-execution-rag-llm-foundations.md`.
 - 2026-06-20 (`agent/antigravity`): **Architecture Blueprint Alignment.** Drafted `docs/architecture-blueprint.md` as a target architecture, not completed runtime implementation, covering:
   1. Section 1.4: Autonomous Live Execution Security Gate & keyframe/animation definitions for animate-pulse-fast.
   2. Section 2.5: Synthetic Stop Edge Case Mitigations.

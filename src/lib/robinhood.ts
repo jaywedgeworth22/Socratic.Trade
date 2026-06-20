@@ -522,7 +522,7 @@ class TestBrokerGateway implements BrokerGateway {
   }
 
   async cancelEquityOrder(_accountNumber: string, orderId: string): Promise<ExecutedOrder> {
-    return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { mock: true } };
+    return { orderId, refId: crypto.randomUUID(), state: "cancel_requested", raw: { test: true } };
   }
 }
 
