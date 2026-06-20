@@ -154,4 +154,26 @@ deployment machine.
   deletion) without explicit user confirmation in the current conversation,
   even if a previous session was authorized to push.
 - Don't place real trades or toggle `paperMode: false` while testing — Paper
-  mode is the default for a reason.
+ mode is the default for a reason.
+
+## Cursor Cloud specific instructions
+
+- The "Hosting & dev servers (multi-agent coordination)" section above (PM2,
+ git worktrees, ports 4100/4101/4102/4000) describes the original author's
+ deployment machine. It does **not** apply to the Cursor Cloud VM. In Cloud,
+ there are no per-agent worktrees or PM2 processes — just run the standard
+ scripts from the repo root.
+- Dependencies install with a plain `npm install` (the startup update script).
+ `better-sqlite3` is the only native dep and installs from prebuilt binaries.
+- Run the app with `npm run dev` (Next.js dev server on `http://127.0.0.1:3000`).
+ It boots fully in **Test mode** with no API keys: every env var in
+ `.env.example` is optional, `DATABASE_URL` defaults to `file:./data/app.db`,
+ and Yahoo Finance is the keyless market-data floor. You do not need to create
+ `.env.local` to run/test; copy it from `.env.example` only if you want to set
+ optional keys (it is gitignored). `OPENAI_API_KEY` is required only for actual
+ LLM strategy runs ("Run once"/"Start"); the dashboard, config, scan, and
+ policy persistence all work without it.
+- Verification is `npx tsc --noEmit`, `npm test` (vitest), `npm run build` (see
+ the "Verify before claiming done" section). `npm run lint` is **not** usable
+ non-interactively: no ESLint config is committed, so `next lint` drops into an
+ interactive setup prompt. Use `tsc` as the type/lint gate instead.
