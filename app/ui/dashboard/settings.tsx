@@ -1,5 +1,6 @@
-import { SP500_SYMBOLS } from "@/lib/sp500";
+import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES } from "@/lib/index-universes";
 import type {
+    IndexUniverse,
     NotificationSettings,
     ScoringWeights,
     StrategyTuningProposal,
@@ -80,6 +81,13 @@ export function SettingsContent({
     updatePolicy({ blocklist: next });
   }
 
+  function toggleIndex(index: IndexUniverse, checked: boolean) {
+    const selected = new Set(policy.includedIndices);
+    if (checked) selected.add(index);
+    else selected.delete(index);
+    updatePolicy({ includedIndices: SUPPORTED_INDEX_UNIVERSES.filter((item) => selected.has(item)) });
+  }
+
   return (
     <div className="space-y-4">
       <Tabs
@@ -97,78 +105,101 @@ export function SettingsContent({
 
       {section === "operate" && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Included indices">
-            <label className="flex items-center gap-2 text-sm text-fg h-10">
-              <input 
-                type="checkbox" 
-                checked={policy.includedIndices.includes("sp500")}
-                onChange={(e) => updatePolicy({ includedIndices: e.target.checked ? ["sp500"] : [] })} 
-                className="rounded border-line bg-surface/50"
-              />
-              S&P 500
-            </label>
+          <Field label="Base indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
+            <div className="grid gap-2 sm:grid-cols-3">
+              {SUPPORTED_INDEX_UNIVERSES.map((index) => {
+                const selected = policy.includedIndices.includes(index);
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => toggleIndex(index, !selected)}
+                    className={cn(
+                      "flex min-h-16 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-info",
+                      selected
+                        ? "border-info/60 bg-info/15 text-fg shadow-[inset_0_0_0_1px_rgba(96,165,250,0.22)]"
+                        : "border-line bg-bg/60 text-muted hover:border-accent/50 hover:bg-surface-2/70 hover:text-fg"
+                    )}
+                  >
+                    <span>
+                      <span className="block font-semibold">{INDEX_UNIVERSES[index].label}</span>
+                      <span className={cn("block text-xs", selected ? "text-muted" : "text-faint")}>{INDEX_UNIVERSES[index].symbols.length} symbols</span>
+                    </span>
+                    <span className={cn(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
+                      selected ? "border-info bg-info text-bg" : "border-line bg-surface-3/50 text-faint"
+                    )}>
+                      {selected ? <CheckCircle size={15} /> : <Plus size={15} />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </Field>
+          <div className="grid gap-3 sm:col-span-2 lg:grid-cols-2">
+            <Field label="Additional Watchlist" hint="Adds individual tickers on top of the selected base indexes">
+              <div className="rounded-lg border border-line bg-bg/60 p-2 focus-within:border-accent">
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {policy.additionalSymbols.map((s) => (
+                    <button type="button" key={s} onClick={() => updatePolicy({ additionalSymbols: policy.additionalSymbols.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
+                      {s} <X size={11} />
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value.toUpperCase())}
+                  onBlur={addAllowlist}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addAllowlist();
+                    }
+                  }}
+                  placeholder="Add ticker, press Enter"
+                  className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
+                />
+              </div>
+            </Field>
+            <Field label="Ignore List" hint="Subtracts symbols from the selected indexes and watchlist">
+              <div className="rounded-lg border border-line bg-bg/60 p-2 focus-within:border-accent">
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {(policy.blocklist || []).map((s) => (
+                    <button type="button" key={s} onClick={() => updatePolicy({ blocklist: (policy.blocklist || []).filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-down/20 px-2 py-0.5 text-xs font-medium text-down">
+                      {s} <X size={11} />
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={blockDraft}
+                  onChange={(e) => setBlockDraft(e.target.value.toUpperCase())}
+                  onBlur={addBlocklist}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addBlocklist();
+                    }
+                  }}
+                  placeholder="Add ticker to ignore"
+                  className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
+                />
+              </div>
+            </Field>
+          </div>
           <Field label="Strategy authority" className="sm:col-span-2">
             <select className={inputClass} value={policy.strategyAuthority} onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}>
               <option value="propose">LLM proposes — you approve</option>
               <option value="decide">LLM decides — runs autonomously</option>
             </select>
           </Field>
-          <Field label="Holding horizon" hint="How long you plan to hold most new positions — shapes the agent's setups, exits, and tax awareness" className="sm:col-span-2">
+          <Field label="Holding horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
             <select className={inputClass} value={policy.holdingHorizon ?? "swing"} onChange={(e) => updatePolicy({ holdingHorizon: e.target.value as TradingPolicy["holdingHorizon"] })}>
               <option value="intraday">Intraday — day trades</option>
               <option value="swing">Days to weeks — swing trades</option>
               <option value="position">Weeks to months — position trades</option>
               <option value="longterm">Months to years — long-term (favors long-term tax treatment)</option>
             </select>
-          </Field>
-          <Field label="Custom allowlist" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed`} className="sm:col-span-2">
-            <div className="rounded-lg border border-line bg-bg/60 p-2 focus-within:border-accent">
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {policy.additionalSymbols.map((s) => (
-                  <button key={s} onClick={() => updatePolicy({ additionalSymbols: policy.additionalSymbols.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
-                    {s} <X size={11} />
-                  </button>
-                ))}
-              </div>
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value.toUpperCase())}
-                onBlur={addAllowlist}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    addAllowlist();
-                  }
-                }}
-                placeholder="Add ticker, press Enter"
-                className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
-              />
-            </div>
-          </Field>
-          <Field label="Custom blocklist" hint="Explicitly prevent trading these symbols" className="sm:col-span-2">
-            <div className="rounded-lg border border-line bg-bg/60 p-2 focus-within:border-accent">
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {(policy.blocklist || []).map((s) => (
-                  <button key={s} onClick={() => updatePolicy({ blocklist: (policy.blocklist || []).filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-down/20 text-down px-2 py-0.5 text-xs font-medium">
-                    {s} <X size={11} />
-                  </button>
-                ))}
-              </div>
-              <input
-                value={blockDraft}
-                onChange={(e) => setBlockDraft(e.target.value.toUpperCase())}
-                onBlur={addBlocklist}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    addBlocklist();
-                  }
-                }}
-                placeholder="Add ticker to block, press Enter"
-                className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
-              />
-            </div>
           </Field>
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button
@@ -204,10 +235,15 @@ export function SettingsContent({
           <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
             <input className={inputClass} value={sectorCaps} onChange={(e) => setSectorCaps(e.target.value)} onBlur={() => updatePolicy({ sectorCaps: parseSectorCaps(sectorCaps) })} />
           </Field>
-          <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
-            <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
-            Run during extended hours
-          </label>
+          <div className="space-y-1 sm:col-span-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
+              Run during extended hours
+            </label>
+            <p className="text-xs leading-relaxed text-faint">
+              Allows scheduled or event-triggered strategy runs during 4:00-9:30 AM ET and 4:00-8:00 PM ET. Extended-hours orders still require the separate order permission, and dollar/fractional orders stay regular-hours only.
+            </p>
+          </div>
           <p className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-[13px] text-muted sm:col-span-2">
             Remaining today: <span className="tnum text-fg">{money(remainingNotional)}</span> notional and <span className="tnum text-fg">{remainingOrders}</span> orders.
           </p>

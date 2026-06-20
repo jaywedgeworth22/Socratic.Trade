@@ -1,5 +1,6 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
+import { isIndexUniverse } from "@/lib/index-universes";
 import { normalizeSymbol } from "@/lib/money";
 import { getBrokerGateway } from "@/lib/broker";
 import { resolveRequestUserId } from "@/lib/request-user";
@@ -22,7 +23,7 @@ export async function PUT(request: Request) {
     ...current,
     ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strategyPrompt" && key !== "userId")),
     includedIndices: Array.isArray(body.includedIndices)
-      ? Array.from(new Set(body.includedIndices.map(String).filter(Boolean))) as IndexUniverse[]
+      ? Array.from(new Set(body.includedIndices.map(String).filter(isIndexUniverse))) as IndexUniverse[]
       : current.includedIndices,
     additionalSymbols: Array.isArray(body.additionalSymbols)
       ? Array.from(new Set(body.additionalSymbols.map(String).map(normalizeSymbol).filter(Boolean)))
@@ -104,7 +105,7 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
     }
   }
   if (policy.systemState === "active" && !policy.accountNumber) return "Select an account before enabling autonomy.";
-  if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Configure an allowlist before enabling autonomy.";
+  if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Select at least one base index or additional watchlist symbol before enabling autonomy.";
   if (policy.systemState === "active" && policy.accountNumber) {
     const account = (await getBrokerGateway(policy, userId).getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
     if (!account) return "Selected account is not available.";

@@ -22,6 +22,7 @@ import type {
 } from "./types";
 
 let db: Database.Database | undefined;
+const SP500_DEFAULT_UNIVERSE_MIGRATION_KEY = "migration:sp500_default_universe:2026-06-19";
 
 function databasePath(): string {
   const value = process.env.DATABASE_URL ?? "file:./data/app.db";
@@ -266,6 +267,7 @@ function migrate(database: Database.Database): void {
   ensure.run("policy", JSON.stringify(DEFAULT_POLICY), now);
   ensure.run("strategyPrompt", JSON.stringify(DEFAULT_STRATEGY_PROMPT), now);
   ensureDefaultProfile(database, now);
+  applySp500DefaultUniverseMigration(database, now);
 }
 
 function ensureDefaultProfile(database: Database.Database, now: string): void {
@@ -289,6 +291,68 @@ function ensureDefaultProfile(database: Database.Database, now: string): void {
   if (!active) {
     database.prepare("UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = (SELECT id FROM strategy_profiles WHERE user_id = ? ORDER BY created_at LIMIT 1)").run(now, userId);
   }
+}
+
+function applySp500DefaultUniverseMigration(database: Database.Database, now: string): void {
+  const applied = database
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(SP500_DEFAULT_UNIVERSE_MIGRATION_KEY);
+  if (applied) return;
+
+  const migratePolicyJson = (raw: string): TradingPolicy | undefined => {
+    try {
+      const policy = JSON.parse(raw) as Partial<TradingPolicy>;
+      if (!isPristineEmptyUniversePolicy(policy)) return undefined;
+      return mergePolicy({ ...policy, includedIndices: ["sp500"] });
+    } catch {
+      return undefined;
+    }
+  };
+
+  const settingsPolicy = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
+  const migratedSettingsPolicy = settingsPolicy ? migratePolicyJson(settingsPolicy.value) : undefined;
+  if (migratedSettingsPolicy) {
+    database
+      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'policy'")
+      .run(JSON.stringify(migratedSettingsPolicy), now);
+  }
+
+  const userSettingsPolicies = database
+    .prepare("SELECT id, value FROM user_settings WHERE key = 'policy'")
+    .all() as Array<{ id: string; value: string }>;
+  const updateUserSetting = database.prepare("UPDATE user_settings SET value = ?, updated_at = ? WHERE id = ?");
+  for (const row of userSettingsPolicies) {
+    const migratedPolicy = migratePolicyJson(row.value);
+    if (migratedPolicy) updateUserSetting.run(JSON.stringify(migratedPolicy), now, row.id);
+  }
+
+  const defaultProfiles = database
+    .prepare("SELECT id, policy FROM strategy_profiles WHERE id = 'default'")
+    .all() as Array<{ id: string; policy: string }>;
+  const updateProfile = database.prepare("UPDATE strategy_profiles SET policy = ?, scoring_weights = ?, updated_at = ? WHERE id = ?");
+  for (const row of defaultProfiles) {
+    const migratedPolicy = migratePolicyJson(row.policy);
+    if (migratedPolicy) {
+      updateProfile.run(JSON.stringify(migratedPolicy), JSON.stringify(migratedPolicy.scoringWeights), now, row.id);
+    }
+  }
+
+  database
+    .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+    .run(SP500_DEFAULT_UNIVERSE_MIGRATION_KEY, JSON.stringify({ appliedAt: now }), now);
+}
+
+function isPristineEmptyUniversePolicy(policy: Partial<TradingPolicy>): boolean {
+  const additionalSymbols = policy.additionalSymbols ?? [];
+  const blocklist = policy.blocklist ?? [];
+  return (
+    Array.isArray(policy.includedIndices) &&
+    policy.includedIndices.length === 0 &&
+    Array.isArray(additionalSymbols) &&
+    additionalSymbols.length === 0 &&
+    Array.isArray(blocklist) &&
+    blocklist.length === 0
+  );
 }
 
 export function getUserSetting<T>(userId: string, key: string, fallback: T): T {

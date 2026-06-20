@@ -1,8 +1,11 @@
 import React from "react";
 import { MarketQuote } from "@/lib/types";
 import { deriveMetrics } from "@/lib/derived-metrics";
+import { friendlySource, orderedSourceEntries, provenanceLabel } from "@/lib/dashboard-ui";
+import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import { Chip } from "./primitives";
 import { PriceChart } from "./price-chart";
+import { TickerLogo } from "./ticker-logo";
 import { Database, LineChart, BrainCircuit, Activity, Zap, TrendingUp, Search, Calculator } from "lucide-react";
 
 /** Compact dollar formatter for daily $ volume (input is in $millions). */
@@ -12,7 +15,7 @@ function formatDollarsM(millions: number): string {
   return `$${(millions * 1000).toFixed(0)}K`;
 }
 
-export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
+export function SymbolDrilldown({ quote, logoDisplay = "tile" }: { quote: MarketQuote; logoDisplay?: TickerLogoDisplay }) {
   // Local parser for the "Why this matters" summary
   const generateSummary = (q: MarketQuote) => {
     const pros = [];
@@ -51,6 +54,12 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
   const { pros, cons } = generateSummary(quote);
   const fb = quote.factorBreakdown;
   const dm = deriveMetrics(quote);
+  const sourceEntries = orderedSourceEntries(quote.sources);
+  const logoFallback = (
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/20 px-1 text-center text-[13px] font-bold text-[var(--accent)]">
+      {quote.symbol}
+    </div>
+  );
 
   // Backend-computed ratios (not returned by any API) — see src/lib/derived-metrics.ts.
   const derivedTiles: { label: string; value: string | null; title: string; tone?: "up" | "down" }[] = [
@@ -100,9 +109,7 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
     <div className="flex h-full flex-col gap-6 overflow-y-auto p-6 pb-24 text-sm text-fg">
       {/* Header Info */}
       <div className="flex items-center gap-4 border-b border-line pb-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/20 text-[var(--accent)] font-bold text-lg">
-          {quote.symbol}
-        </div>
+        <TickerLogo symbol={quote.symbol} display={logoDisplay} size="lg" fallback={logoFallback} />
         <div className="flex-1">
           <h2 className="text-xl font-semibold text-fg">{quote.companyName || quote.symbol}</h2>
           <div className="text-faint flex items-center gap-2 mt-1">
@@ -226,14 +233,18 @@ export function SymbolDrilldown({ quote }: { quote: MarketQuote }) {
         <h3 className="mb-4 flex items-center gap-2 font-semibold text-fg"><Database size={16} className="text-info" /> Source Provenance</h3>
         <div className="space-y-2 text-xs">
           <div className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
-            <span className="text-faint capitalize">Derived Metrics</span>
+            <span className="text-faint">Signal strength</span>
             <Chip tone="neutral" className="bg-surface-2">Calculated</Chip>
           </div>
-          {quote.sources ? (
-            Object.entries(quote.sources).map(([key, provider]) => (
-              <div key={key} className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
-                <span className="text-faint capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
-                <Chip tone="neutral" className="bg-surface-2">{provider}</Chip>
+          <div className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
+            <span className="text-faint">Derived metrics</span>
+            <Chip tone="neutral" className="bg-surface-2">Calculated</Chip>
+          </div>
+          {sourceEntries.length > 0 ? (
+            sourceEntries.map(([field, provider]) => (
+              <div key={field} className="flex justify-between items-center py-1 border-b border-line/50 last:border-0">
+                <span className="text-faint">{provenanceLabel(field)}</span>
+                <Chip tone="neutral" className="bg-surface-2">{friendlySource(provider)}</Chip>
               </div>
             ))
           ) : (

@@ -1,4 +1,4 @@
-import type { EquityPosition, MarketQuote, NotificationEvent, OrderSide } from "./types";
+import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent, OrderSide } from "./types";
 import type { SymbolMeta } from "./dashboard-feed";
 import { formatQuantity } from "./money";
 
@@ -29,6 +29,50 @@ const SOURCE_LABELS: Record<string, string> = {
   blended: "blended (multiple sources)"
 };
 
+const PROVENANCE_LABELS: Partial<Record<keyof EnrichmentSources, string>> = {
+  companyName: "Company name",
+  sector: "Sector",
+  industry: "Industry",
+  price: "Price",
+  intradayChangePct: "Intraday change",
+  volume: "Volume",
+  bid: "Bid",
+  ask: "Ask",
+  vwap: "VWAP",
+  peRatio: "P/E ratio",
+  analystRating: "Analyst rating",
+  sentiment: "News sentiment",
+  dividendYield: "Dividend yield",
+  eps: "EPS",
+  fcfYield: "FCF yield",
+  debtToEquity: "Debt / equity",
+  epsGrowth: "EPS growth",
+  insiderSentiment: "Insider sentiment",
+  senateTrades: "Congressional trades"
+};
+
+const PROVENANCE_ORDER: Array<keyof EnrichmentSources> = [
+  "companyName",
+  "sector",
+  "industry",
+  "price",
+  "intradayChangePct",
+  "volume",
+  "bid",
+  "ask",
+  "vwap",
+  "peRatio",
+  "analystRating",
+  "sentiment",
+  "dividendYield",
+  "eps",
+  "fcfYield",
+  "debtToEquity",
+  "epsGrowth",
+  "insiderSentiment",
+  "senateTrades"
+];
+
 export function enrichPositionsForDisplay(positions: EquityPosition[], totalMarketValue: number): EnrichedPosition[] {
   return positions.map((position) => {
     const costBasis = position.averageCost * position.quantity;
@@ -46,6 +90,21 @@ export function enrichPositionsForDisplay(positions: EquityPosition[], totalMark
 export function friendlySource(name?: string): string {
   if (!name) return "unknown";
   return SOURCE_LABELS[name] ?? name;
+}
+
+export function provenanceLabel(field: keyof EnrichmentSources): string {
+  return PROVENANCE_LABELS[field] ?? field.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
+}
+
+export function orderedSourceEntries(sources?: EnrichmentSources): Array<[keyof EnrichmentSources, string]> {
+  if (!sources) return [];
+  const order = new Map(PROVENANCE_ORDER.map((field, index) => [field, index]));
+  return (Object.entries(sources) as Array<[keyof EnrichmentSources, string]>).sort(([left], [right]) => {
+    const leftOrder = order.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = order.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return String(left).localeCompare(String(right));
+  });
 }
 
 export function companyTitle(symbol: string, symbolMetaBySymbol: Record<string, SymbolMeta>): string | undefined {

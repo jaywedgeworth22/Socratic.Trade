@@ -4,7 +4,7 @@ export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
-export type IndexUniverse = "sp500" | "nasdaq100" | "russell2000";
+export type IndexUniverse = "sp500" | "nasdaq100" | "dow30";
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */

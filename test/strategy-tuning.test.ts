@@ -126,7 +126,6 @@ describe("proposeStrategyTuning", () => {
               maxDailyOrders: null,
               maxProposalsPerRun: null,
               runCadenceMinutes: null,
-              universe: null,
               strategyAuthority: "propose",
               runDuringExtendedHours: false
             },
@@ -180,7 +179,7 @@ describe("proposeStrategyTuning", () => {
         output_text: JSON.stringify({
           summary: "s", rationale: "r", marketContext: "m", performanceReadout: "p", proposedPrompt: "UPDATED",
           scoringWeights: { liquidity: 2.0, momentum: 1.5, value: null, quality: null, volatility: null, sentiment: null, diversification: null },
-          policy: { maxOrderNotional: 15, maxDailyNotional: null, maxSymbolExposurePct: null, maxDailyOrders: null, maxProposalsPerRun: null, runCadenceMinutes: null, universe: null, strategyAuthority: null, runDuringExtendedHours: null },
+          policy: { maxOrderNotional: 15, maxDailyNotional: null, maxSymbolExposurePct: null, maxDailyOrders: null, maxProposalsPerRun: null, runCadenceMinutes: null, strategyAuthority: null, runDuringExtendedHours: null },
           riskRules: { stopLossPct: null, takeProfitPct: null, trailingStopPct: null },
           cautions: [], confidenceScore: 70
         })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { evaluateTradeProposal } from "../src/lib/policy";
+import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
 import type { EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 
 const portfolio: Portfolio = {
@@ -76,7 +76,7 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
-  it("blocks symbols outside the allowlist", () => {
+  it("blocks symbols outside the allowed universe", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "TSLA" }, context());
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
@@ -89,6 +89,34 @@ describe("evaluateTradeProposal", () => {
       estimatedNotional: 10
     });
     expect(decision.approved).toBe(true);
+  });
+
+  it("allows Nasdaq 100 and Dow 30 symbols when those universes are selected", () => {
+    const nasdaqDecision = evaluateTradeProposal({ ...proposal, symbol: "ASML" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["nasdaq100"], additionalSymbols: [] },
+      estimatedNotional: 10
+    });
+    const dowDecision = evaluateTradeProposal({ ...proposal, symbol: "GS" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["dow30"], additionalSymbols: [] },
+      estimatedNotional: 10
+    });
+
+    expect(nasdaqDecision.approved).toBe(true);
+    expect(dowDecision.approved).toBe(true);
+  });
+
+  it("subtracts the ignore list from selected indexes and additional watchlist symbols", () => {
+    const policy: TradingPolicy = { ...enabledPolicy, includedIndices: ["dow30"], additionalSymbols: ["AAPL", "VOO"], blocklist: ["AAPL", "GS"] };
+    const allowedSymbols = allowedSymbolsForPolicy(policy);
+    const blockedDecision = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, { ...context(), policy, estimatedNotional: 10 });
+
+    expect(allowedSymbols).not.toContain("AAPL");
+    expect(allowedSymbols).not.toContain("GS");
+    expect(allowedSymbols).toContain("VOO");
+    expect(blockedDecision.approved).toBe(false);
+    expect(blockedDecision.reasons.join(" ")).toContain("not in the allowed universe");
   });
 
   it("blocks orders over max notional", () => {

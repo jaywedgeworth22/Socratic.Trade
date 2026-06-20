@@ -7,6 +7,7 @@ import {
   resolveApiKey
 } from "./db";
 import { llmExecutionMode, llmFillSource, llmModeClarification } from "./execution-mode";
+import { symbolsForPolicyUniverse } from "./index-universes";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { getClosedLotCount, getPerformanceSummary, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
@@ -140,7 +141,9 @@ function compactPolicy(policy: TradingPolicy) {
     executionMode: llmExecutionMode(policy.paperMode),
     executionModeClarification: llmModeClarification(policy.paperMode),
     includedIndices: policy.includedIndices,
-    allowedCount: policy.includedIndices.length > 0 ? "index_based" : policy.additionalSymbols.length,
+    additionalWatchlistCount: policy.additionalSymbols.length,
+    ignoredSymbolCount: policy.blocklist?.length ?? 0,
+    allowedCount: symbolsForPolicyUniverse(policy).length,
     strategyAuthority: policy.strategyAuthority,
     maxOrderNotional: policy.maxOrderNotional,
     maxDailyNotional: policy.maxDailyNotional,
@@ -343,7 +346,6 @@ function tuningSchema() {
           "maxDailyOrders",
           "maxProposalsPerRun",
           "runCadenceMinutes",
-          "universe",
           "strategyAuthority",
           "runDuringExtendedHours"
         ],
@@ -354,7 +356,6 @@ function tuningSchema() {
           maxDailyOrders: nullableNumber,
           maxProposalsPerRun: nullableNumber,
           runCadenceMinutes: nullableNumber,
-          universe: { enum: ["custom", "sp500", null] },
           strategyAuthority: { enum: ["propose", "decide", null] },
           runDuringExtendedHours: { type: ["boolean", "null"] }
         }

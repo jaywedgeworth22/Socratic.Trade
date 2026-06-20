@@ -32,7 +32,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   systemState: "halted",
   paperMode: true,
   paperStartingCash: 10000,
-  includedIndices: [],
+  includedIndices: ["sp500"],
   additionalSymbols: [],
   blocklist: [],
   strategyAuthority: "propose",

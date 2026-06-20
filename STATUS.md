@@ -23,6 +23,40 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-19 (`agent/codex`): **Expert guidance consolidation.** Consolidated
+  scattered UI/design/financial-products UX advice into
+  `docs/reviews/ui-expert-guidance.md`, and non-UI strategy/architecture/LLM/risk/data
+  expert-panel advice into `docs/reviews/cross-functional-expert-guidance.md`.
+  Original dated reviews and rollout notes remain as evidence; the new docs are
+  the entry points for future work. See
+  `docs/rollouts/2026-06-19-expert-guidance-consolidation.md`.
+- 2026-06-19 (`agent/codex`): **Ticker logo display preference.** Added a
+  cached `/api/logos/ticker` proxy for `davidepalazzo/ticker-logos` PNGs and a
+  local Settings → Display preference for Normal tile, Transparent, or Off.
+  Portfolio symbols, Market Scan rows, and Symbol Intelligence headers now use
+  the selected display mode while falling back to text when a logo is missing.
+  Verification passed: raw GitHub PNG HEAD probe, focused logo tests, `npx tsc
+  --noEmit`, `npm test` (248 tests), `npm run build`, `git diff --check`, PM2
+  preview restart, local `/api/health`, `/api/logos/ticker?symbol=AAPL`, root
+  `localhost:4101/`, and Playwright Settings → Display + mobile overflow smoke.
+  See `docs/rollouts/2026-06-19-ticker-logo-display.md`.
+- 2026-06-19 (`agent/codex`): **Operate universe UI and backend index support.**
+  Settings → Operate now groups Base indexes, Additional Watchlist, and Ignore
+  List together; S&P 500 is the default starting universe, and base indexes are
+  large multi-select toggle buttons for S&P 500, Nasdaq 100, and Dow 30. A
+  one-time backend migration moves untouched empty default policies to S&P 500
+  without reapplying after a user intentionally clears the universe. Backend
+  policy expansion, policy API validation, scanner counts, and LLM tuning
+  context now use the same shared index-universe source, with the Ignore List
+  subtracting from both indexes and additional symbols. Smart Money tickers fall
+  back to sparse symbol-drawer records instead of inert bold text when the latest
+  scan lacks that symbol. Verification passed: focused default-universe
+  migration test, `npx tsc --noEmit`, `npm test` (250 tests), `npm run build`,
+  `git diff --check`, PM2 preview restart, `/api/health`, `/api/policy`,
+  `HEAD /`, and identity-encoded `GET /` returning 200 on port 4101. Browser
+  visual verification was attempted through the in-app browser but blocked by
+  Browser Use URL policy. See
+  `docs/rollouts/2026-06-19-operate-universe-watchlist-ignore.md`.
 - 2026-06-19 (`agent/codex`): **Worktree cleanup.** Normalized the partial
   staged/unstaged index left after the Claude pickup and Codex patch reapply,
   kept the documented UI audit, pending-demand, and Market Scan VWAP changes,

@@ -50,9 +50,12 @@ import {
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
-import { SP500_SYMBOLS } from "@/lib/sp500";
+import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse } from "@/lib/index-universes";
+import { DEFAULT_TICKER_LOGO_DISPLAY, isTickerLogoDisplay } from "@/lib/ticker-logos";
+import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import type {
   EquityPosition,
+  IndexUniverse,
   MarketQuote,
   MarketScan,
   NotificationSettings,
@@ -68,6 +71,7 @@ import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
+import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import {
   Button,
@@ -90,6 +94,7 @@ type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications";
+const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 type RobinhoodMcpHealth = {
   adapter?: "mock" | "mcp";
   ok: boolean;
@@ -166,6 +171,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   // isn't rehydrated after a restart, so we fetch the current scan (same source the
   // Market Scan tab uses) once on mount and keep it for drilldown lookups.
   const [tickerScan, setTickerScan] = useState<MarketScan | null>(null);
+  const [tickerLogoDisplay, setTickerLogoDisplay] = useState<TickerLogoDisplay>(DEFAULT_TICKER_LOGO_DISPLAY);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -180,6 +186,24 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TICKER_LOGO_DISPLAY_KEY);
+      if (isTickerLogoDisplay(saved)) setTickerLogoDisplay(saved);
+    } catch {
+      /* ignore storage failures */
+    }
+  }, []);
+
+  function updateTickerLogoDisplay(next: TickerLogoDisplay) {
+    setTickerLogoDisplay(next);
+    try {
+      localStorage.setItem(TICKER_LOGO_DISPLAY_KEY, next);
+    } catch {
+      /* ignore storage failures */
+    }
+  }
 
   const [newProfileName, setNewProfileName] = useState("");
   const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
@@ -385,13 +409,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const enableBlockedReason = !policy.accountNumber
     ? "Select an account before enabling autonomy."
     : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
-      ? "Add at least one ticker to the allowlist before enabling autonomy."
+      ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
       : undefined;
-  const allowedCount = (policy.includedIndices.includes("sp500") ? SP500_SYMBOLS.length : 0) + policy.additionalSymbols.length;
+  const allowedCount = symbolsForPolicyUniverse(policy).length;
   
   const isDefault = policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0;
-  const isOnlySP500 = policy.includedIndices.includes("sp500") && policy.includedIndices.length === 1 && policy.additionalSymbols.length === 0 && (policy.blocklist || []).length === 0;
-  const universeLabelText = isDefault ? "TBD" : isOnlySP500 ? "S&P 500" : "Custom";
+  const selectedIndexLabels = policy.includedIndices
+    .map((index) => INDEX_UNIVERSES[index]?.label)
+    .filter((label): label is string => Boolean(label));
+  const isOnlyOneIndex = selectedIndexLabels.length === 1 && policy.additionalSymbols.length === 0 && (policy.blocklist || []).length === 0;
+  const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
   const mode = policy.paperMode ? "paper" : "live";
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
@@ -552,7 +579,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {/* ── Body grid ───────────────────────────────────────────── */}
       <div className="grid flex-1 grid-cols-1 gap-3 p-3 xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 xl:block">
-          <PortfolioRail snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
+          <PortfolioRail snapshot={snapshot} mode={mode} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
         </aside>
 
         <main className="flex min-w-0 flex-col gap-3 xl:min-h-0">
@@ -593,7 +620,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
-                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} />
+                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} tickerLogoDisplay={tickerLogoDisplay} />
                 <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
               </div>
             )}
@@ -649,7 +676,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       </SlideOver>
 
       <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
-        {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} />}
+        {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
       </SlideOver>
 
       <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
@@ -685,6 +712,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           remainingNotional={remainingNotional}
           remainingOrders={remainingOrders}
           updatePolicy={updatePolicy}
+          tickerLogoDisplay={tickerLogoDisplay}
+          setTickerLogoDisplay={updateTickerLogoDisplay}
           openAccounts={() => setAccountsOpen(true)}
           load={load}
         />
@@ -785,13 +814,15 @@ function PortfolioRail({
   mode,
   symbolMetaBySymbol,
   scan,
-  onDrilldown
+  onDrilldown,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   mode: "paper" | "live";
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const portfolio = snapshot.portfolio;
   const positions = snapshot.positions;
@@ -834,7 +865,7 @@ function PortfolioRail({
               {enriched.map((p) => (
                 <tr key={p.symbol} className="border-t border-line/60 hover:bg-surface-2/50 backdrop-blur-lg">
                   <td className="px-2 py-1.5">
-                    <SymbolButton symbol={p.symbol} scan={scan} onDrilldown={onDrilldown} className="block font-semibold text-fg" title={companyTitle(p.symbol, symbolMetaBySymbol)} />
+                    <SymbolButton symbol={p.symbol} scan={scan} onDrilldown={onDrilldown} className="block font-semibold text-fg" title={companyTitle(p.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
                     <div className="tnum text-[11px] text-faint">{formatShareQuantity(p.quantity, p.symbol)} sh · {p.allocPct.toFixed(1)}%</div>
                   </td>
                   <td className="px-2 py-1.5 text-right tnum text-fg">{money(p.marketValue)}</td>
@@ -871,10 +902,9 @@ function resolveScanQuote(symbol: string, scan: MarketScan | null | undefined): 
 }
 
 /**
- * A ticker that opens the symbol drilldown when we have scan data for it,
- * mirroring the Market Scan rows. Degrades to plain text when no `onDrilldown`
- * handler is wired up or the symbol isn't in the scan, so it's a drop-in for the
- * `<span>{symbol}</span>` ticker pattern used across the dashboard.
+ * A ticker that opens the symbol drilldown, mirroring the Market Scan rows.
+ * When scan data is missing, it still opens the drawer with a sparse symbol
+ * record so event-only tickers do not fall back to inert bold text.
  *
  * - `variant="underline"` (default): a quiet, always-visible underline that thickens
  *   to link-blue on hover. Used for plain text tickers anywhere on the site.
@@ -889,7 +919,9 @@ function SymbolButton({
   onDrilldown,
   className,
   title,
-  variant = "underline"
+  variant = "underline",
+  logoDisplay,
+  showLogo = false
 }: {
   symbol: string;
   scan?: MarketScan | null;
@@ -898,12 +930,23 @@ function SymbolButton({
   className?: string;
   title?: string;
   variant?: "underline" | "chip";
+  logoDisplay?: TickerLogoDisplay;
+  showLogo?: boolean;
 }) {
   // Prefer an explicitly-provided quote (e.g. the Market Scan row already has it);
   // otherwise resolve it from the scan by symbol.
   const quote = quoteProp ?? (onDrilldown ? resolveScanQuote(symbol, scan) : null);
-  if (!quote || !onDrilldown) {
-    return <span className={className} title={title}>{symbol}</span>;
+  const drilldownTarget = quote ?? ({ symbol, price: 0, score: 0, source: "", generatedAt: new Date().toISOString() } as unknown as MarketQuote);
+  const content = showLogo && variant !== "chip" && logoDisplay && logoDisplay !== "off"
+    ? (
+      <span className="inline-flex items-center gap-1.5">
+        <TickerLogo symbol={symbol} display={logoDisplay} />
+        <span>{symbol}</span>
+      </span>
+    )
+    : symbol;
+  if (!onDrilldown) {
+    return <span className={className} title={title}>{content}</span>;
   }
   const interactive =
     variant === "chip"
@@ -917,11 +960,11 @@ function SymbolButton({
       title={title ?? "Open symbol intelligence"}
       onClick={(e) => {
         e.stopPropagation();
-        onDrilldown(quote);
+        onDrilldown(drilldownTarget);
       }}
       className={cn(className, interactive)}
     >
-      {symbol}
+      {content}
     </button>
   );
 }
@@ -1122,11 +1165,13 @@ const SCAN_COLS_KEY = "scan-visible-cols";
 function MarketScanView({
   snapshot,
   onDrilldown,
-  onConfigureUniverse
+  onConfigureUniverse,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   onDrilldown: (q: MarketQuote) => void;
   onConfigureUniverse: () => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
   const [visible, setVisible] = useState<string[]>(DEFAULT_SCAN_COLS);
@@ -1290,7 +1335,7 @@ function MarketScanView({
                 {cols.map((c) => (
                   <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
                     {c.id === "symbol" ? (
-                      <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} />
+                      <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} logoDisplay={tickerLogoDisplay} showLogo />
                     ) : (
                       c.render(q)
                     )}
@@ -1682,10 +1727,15 @@ function StrategyView({
              <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
              </Field>
-             <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
-               <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
-               Run during extended hours
-             </label>
+             <div className="space-y-1 sm:col-span-2">
+               <label className="flex items-center gap-2 text-sm text-muted">
+                 <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
+                 Run during extended hours
+               </label>
+               <p className="text-xs leading-relaxed text-faint">
+                 Allows scheduled or event-triggered strategy runs during 4:00-9:30 AM ET and 4:00-8:00 PM ET. Extended-hours orders still require the separate order permission, and dollar/fractional orders stay regular-hours only.
+               </p>
+             </div>
           </div>
         </div>
       </Card>
@@ -2055,6 +2105,8 @@ function SettingsContent({
   remainingNotional,
   remainingOrders,
   updatePolicy,
+  tickerLogoDisplay,
+  setTickerLogoDisplay,
   openAccounts,
   load
 }: {
@@ -2065,12 +2117,15 @@ function SettingsContent({
   remainingNotional: number;
   remainingOrders: number;
   updatePolicy: (patch: PolicyPatch) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
+  setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
   openAccounts: () => void;
   load: () => Promise<void>;
 }) {
-  type Section = "operate" | "keys" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications";
   const [section, setSection] = useState<Section>("operate");
   const [draft, setDraft] = useState("");
+  const [blockDraft, setBlockDraft] = useState("");
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
@@ -2083,6 +2138,20 @@ function SettingsContent({
     const next = normalizeSymbols([...policy.additionalSymbols, ...draft.split(/[,\s]+/)]);
     setDraft("");
     updatePolicy({ additionalSymbols: next });
+  }
+
+  function addBlocklist() {
+    if (blockDraft.trim() === "") return;
+    const next = normalizeSymbols([...(policy.blocklist || []), ...blockDraft.split(/[,\s]+/)]);
+    setBlockDraft("");
+    updatePolicy({ blocklist: next });
+  }
+
+  function toggleIndex(index: IndexUniverse, checked: boolean) {
+    const selected = new Set(policy.includedIndices);
+    if (checked) selected.add(index);
+    else selected.delete(index);
+    updatePolicy({ includedIndices: SUPPORTED_INDEX_UNIVERSES.filter((item) => selected.has(item)) });
   }
 
   function requestModeSwitch() {
@@ -2106,6 +2175,7 @@ function SettingsContent({
           onChange={(v) => setSection(v as Section)}
           tabs={[
             { id: "operate", label: "Operate" },
+            { id: "display", label: "Display" },
             { id: "keys", label: "API Keys" },
             { id: "tax", label: "Tax" },
             { id: "tuning", label: "Tuning" },
@@ -2126,49 +2196,101 @@ function SettingsContent({
                 : "Live mode can submit real broker orders when an approved or autonomous run executes. Keep account, universe, and risk limits current."}
             </p>
           </div>
-           <Field label="Base index (optional)">
-            <select className={inputClass} value={policy.includedIndices.includes("sp500") ? "sp500" : "none"} onChange={(e) => updatePolicy({ includedIndices: e.target.value === "sp500" ? ["sp500"] : [] })}>
-              <option value="none">No index selected</option>
-              <option value="sp500">S&P 500 ({SP500_SYMBOLS.length} symbols)</option>
-            </select>
+          <Field label="Base indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
+            <div className="grid gap-2 sm:grid-cols-3">
+              {SUPPORTED_INDEX_UNIVERSES.map((index) => {
+                const selected = policy.includedIndices.includes(index);
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => toggleIndex(index, !selected)}
+                    className={cn(
+                      "flex min-h-16 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-info",
+                      selected
+                        ? "border-info/60 bg-info/15 text-fg shadow-[inset_0_0_0_1px_rgba(96,165,250,0.22)]"
+                        : "border-line bg-bg/60 text-muted hover:border-accent/50 hover:bg-surface-2/70 hover:text-fg"
+                    )}
+                  >
+                    <span>
+                      <span className="block font-semibold">{INDEX_UNIVERSES[index].label}</span>
+                      <span className={cn("block text-xs", selected ? "text-muted" : "text-faint")}>{INDEX_UNIVERSES[index].symbols.length} symbols</span>
+                    </span>
+                    <span className={cn(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
+                      selected ? "border-info bg-info text-bg" : "border-line bg-surface-3/50 text-faint"
+                    )}>
+                      {selected ? <Check size={15} /> : <Plus size={15} />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </Field>
+          <div className="grid gap-3 sm:col-span-2 lg:grid-cols-2">
+            <Field label="Additional Watchlist" hint="Adds individual tickers on top of the selected base indexes">
+              <div className="rounded-lg border border-line bg-bg/60 p-2 focus-within:border-accent">
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {policy.additionalSymbols.map((s) => (
+                    <button type="button" key={s} onClick={() => updatePolicy({ additionalSymbols: policy.additionalSymbols.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
+                      {s} <X size={11} />
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value.toUpperCase())}
+                  onBlur={addAllowlist}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addAllowlist();
+                    }
+                  }}
+                  placeholder="Add ticker, press Enter"
+                  className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
+                />
+              </div>
+            </Field>
+            <Field label="Ignore List" hint="Subtracts symbols from the selected indexes and watchlist">
+              <div className="rounded-lg border border-line bg-bg/60 p-2 focus-within:border-accent">
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {(policy.blocklist || []).map((s) => (
+                    <button type="button" key={s} onClick={() => updatePolicy({ blocklist: (policy.blocklist || []).filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-down/20 px-2 py-0.5 text-xs font-medium text-down">
+                      {s} <X size={11} />
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={blockDraft}
+                  onChange={(e) => setBlockDraft(e.target.value.toUpperCase())}
+                  onBlur={addBlocklist}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addBlocklist();
+                    }
+                  }}
+                  placeholder="Add ticker to ignore"
+                  className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
+                />
+              </div>
+            </Field>
+          </div>
           <Field label="Strategy authority" className="sm:col-span-2">
             <select className={inputClass} value={policy.strategyAuthority} onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}>
               <option value="propose">LLM proposes — you approve</option>
               <option value="decide">LLM decides — runs autonomously</option>
             </select>
           </Field>
-          <Field label="Holding horizon" hint="How long you plan to hold most new positions — shapes the agent's setups, exits, and tax awareness" className="sm:col-span-2">
+          <Field label="Holding horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
             <select className={inputClass} value={policy.holdingHorizon ?? "swing"} onChange={(e) => updatePolicy({ holdingHorizon: e.target.value as TradingPolicy["holdingHorizon"] })}>
               <option value="intraday">Intraday — day trades</option>
               <option value="swing">Days to weeks — swing trades</option>
               <option value="position">Weeks to months — position trades</option>
               <option value="longterm">Months to years — long-term (favors long-term tax treatment)</option>
             </select>
-          </Field>
-          <Field label="Additional symbols" hint="Individual stocks to trade on top of the base index" className="sm:col-span-2">
-            <div className="rounded-lg border border-line bg-bg/60 p-2">
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {policy.additionalSymbols.map((s) => (
-                  <button key={s} onClick={() => updatePolicy({ additionalSymbols: policy.additionalSymbols.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
-                    {s} <X size={11} />
-                  </button>
-                ))}
-              </div>
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value.toUpperCase())}
-                onBlur={addAllowlist}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    addAllowlist();
-                  }
-                }}
-                placeholder="Add ticker, press Enter"
-                className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint disabled:opacity-50"
-              />
-            </div>
           </Field>
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button
@@ -2186,6 +2308,30 @@ function SettingsContent({
           {enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />Setup required: {enableBlockedReason}</p>
           )}
+          </div>
+        )}
+
+        {section === "display" && (
+          <div className="space-y-3">
+            <Field label="Ticker logos" hint="Applies to portfolio symbols, Market Scan rows, and symbol intelligence headers">
+              <Segmented<TickerLogoDisplay>
+                value={tickerLogoDisplay}
+                onChange={setTickerLogoDisplay}
+                options={[
+                  { value: "tile", label: "Normal tile" },
+                  { value: "transparent", label: "Transparent" },
+                  { value: "off", label: "Off" }
+                ]}
+              />
+            </Field>
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
+              {(["AAPL", "MSFT", "NVDA"] as const).map((symbol) => (
+                <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
+                  <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
+                  <span>{symbol}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

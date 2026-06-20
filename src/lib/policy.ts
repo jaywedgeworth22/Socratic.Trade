@@ -1,6 +1,6 @@
 import type { EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
-import { SP500_SYMBOLS } from "./sp500";
+import { symbolsForPolicyUniverse } from "./index-universes";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -25,7 +25,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
   const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-  if (allowedSymbols.length === 0) reasons.push("Symbol allowlist is required.");
+  if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
   if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
   if (!context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
@@ -130,18 +130,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 }
 
 export function allowedSymbolsForPolicy(policy: TradingPolicy): string[] {
-  let symbols = new Set<string>();
-  const indices = policy.includedIndices || [];
-  if (indices.includes("sp500")) SP500_SYMBOLS.forEach(s => symbols.add(s));
-  
-  const additional = policy.additionalSymbols || [];
-  additional.forEach(s => symbols.add(normalizeSymbol(s)));
-  
-  if (policy.blocklist) {
-    policy.blocklist.forEach(s => symbols.delete(normalizeSymbol(s)));
-  }
-  
-  return Array.from(symbols);
+  return symbolsForPolicyUniverse(policy);
 }
 
 export function estimateNotional(proposal: TradeProposal): number {

@@ -612,10 +612,15 @@ export function StrategyView({
              <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
              </Field>
-             <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
-               <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
-               Run during extended hours
-             </label>
+             <div className="space-y-1 sm:col-span-2">
+               <label className="flex items-center gap-2 text-sm text-muted">
+                 <input type="checkbox" checked={policy.runDuringExtendedHours} onChange={(e) => updatePolicy({ runDuringExtendedHours: e.target.checked })} />
+                 Run during extended hours
+               </label>
+               <p className="text-xs leading-relaxed text-faint">
+                 Allows scheduled or event-triggered strategy runs during 4:00-9:30 AM ET and 4:00-8:00 PM ET. Extended-hours orders still require the separate order permission, and dollar/fractional orders stay regular-hours only.
+               </p>
+             </div>
           </div>
         </div>
       </Card>

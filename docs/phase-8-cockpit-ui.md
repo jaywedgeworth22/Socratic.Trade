@@ -125,6 +125,20 @@ across panels, feeds, popovers, or status chips.
   direction or a buy/sell signal.
 - Top status values are kept visible in the command bar: Mock/Local/Live mode,
   autonomy/setup state, market session, daily risk, and allowed universe.
+- Settings → Operate groups the tradable universe controls together: Base
+  indexes are large multi-select toggle buttons, S&P 500 is selected by
+  default, Additional Watchlist adds explicit tickers, and Ignore List subtracts
+  symbols from the final universe. The backend runs a one-time migration for
+  untouched empty default policies so existing local installs get the same S&P
+  500 start state without repeatedly overriding later user edits.
+- Settings → Display includes a local ticker-logo preference: Normal tile,
+  Transparent, or Off. Logos are loaded through the app's cached proxy for
+  `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
+  than blocking symbol navigation.
+- `Run during extended hours` means scheduled/event-triggered strategy runs may
+  start during pre/post-market windows; it does not by itself permit
+  extended-hours order placement, and dollar/fractional orders remain
+  regular-hours only.
 - The dashboard must never show `Autonomy On` when required setup is missing.
   Render `Setup Needed`, block Run/Resume, and route the user to Accounts or
   Settings.
