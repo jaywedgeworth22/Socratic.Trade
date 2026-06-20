@@ -3,7 +3,7 @@
 Forward plan consolidating every still-unimplemented idea, recommendation, and
 consideration from this work stream — the Codex "Stronger Trading Signals And
 Learning Loop" plan, the Codex optimization pass, the Codex review, and Claude's
-brainstorms. Mock/Local mode remains the default; **no live-trading behavior changes**.
+brainstorms. Test mode remains the default; **no live-trading behavior changes**.
 
 ## Status legend
 `[done]` shipped · `[todo]` not started · `[partial]` partly done.
@@ -160,7 +160,7 @@ Codex: "symbol drilldown drawer … learning matrix."
   surfaced to humans.
 - **E3 `[partial]` Polish & customizability.** Macro tab, symbol price chart
   with VWAP overlay, Market Scan `vs VWAP`, first-run setup state, actionable
-  Market Scan empty states, readable activity summaries, Mock/Local/Live mode
+  Market Scan empty states, readable activity summaries, Test/Paper/Brokerage mode
   legibility, and mobile scroll recovery are live. Still open: sparklines in
   the scan, saved column presets + density toggle, a holding-horizon chip near
   the strategy status, extend received-time tooltips to the Decision/Tax chips

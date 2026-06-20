@@ -525,6 +525,24 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
     void refreshMcpHealth();
   }, [refreshMcpHealth]);
 
+  async function syncRobinhood() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/connected-accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ broker: "robinhood" })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast.success("Robinhood agentic account synced.");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to sync Robinhood account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save() {
     if (!editing?.broker || !editing?.environment) return;
     setBusy(true);
@@ -566,29 +584,52 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
         <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : "Add Account"}</h4>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Broker">
-            <select className={inputClass} value={editing.broker || "alpaca"} onChange={e => setEditing({ ...editing, broker: e.target.value as any })}>
+            <select
+              className={inputClass}
+              value={editing.broker || "alpaca"}
+              onChange={e => {
+                const broker = e.target.value as "alpaca" | "robinhood";
+                setEditing({
+                  ...editing,
+                  broker,
+                  environment: broker === "robinhood" ? "live" : editing.environment ?? "paper",
+                  apiKey: broker === "robinhood" ? undefined : editing.apiKey,
+                  apiSecret: broker === "robinhood" ? undefined : editing.apiSecret
+                });
+              }}
+            >
               <option value="alpaca">Alpaca</option>
               <option value="robinhood">Robinhood</option>
             </select>
           </Field>
-          <Field label="Environment">
-            <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-              <option value="paper">{editing.broker === "alpaca" ? "Alpaca Paper" : "Paper"}</option>
-              <option value="live">Live (Real Money)</option>
-            </select>
-          </Field>
+          {editing.broker === "alpaca" ? (
+            <Field label="Environment">
+              <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
+                <option value="paper">Alpaca Paper</option>
+                <option value="live">Alpaca Brokerage (Real Money)</option>
+              </select>
+            </Field>
+          ) : (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted">
+              Robinhood uses OAuth through MCP and syncs the agentic Brokerage account. No API key fields are required here.
+            </div>
+          )}
           <Field label="Label (Optional)">
-            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder="e.g. My Alpaca IRA" />
+            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder={editing.broker === "alpaca" ? "e.g. Alpaca Paper" : "e.g. Robinhood Agentic"} />
           </Field>
           <Field label="Account Number (Optional)">
             <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
           </Field>
-          <Field label="API Key">
-            <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key or OAuth Token)" />
-          </Field>
-          <Field label="API Secret">
-            <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Optional (leave empty for OAuth)" />
-          </Field>
+          {editing.broker === "alpaca" && (
+            <>
+              <Field label="API Key">
+                <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key or OAuth Token)" />
+              </Field>
+              <Field label="API Secret">
+                <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Optional (leave empty for OAuth)" />
+              </Field>
+            </>
+          )}
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
@@ -602,16 +643,31 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
     <div className="space-y-3">
       <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted">Connect your brokerage accounts for agentic trading.</p>
-        <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
-          <Plus size={14} className="mr-1" /> Add Account
-        </Button>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-2xl text-sm text-muted">
+          Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
+        </p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {!accounts?.some((account) => account.broker === "robinhood") && (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+              if (mcpHealth?.authenticated) { void syncRobinhood(); }
+              else { window.location.href = "/api/auth/robinhood/start"; }
+            }}>
+              <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca Paper Account
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "live" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca Brokerage Account
+          </Button>
+        </div>
       </div>
 
       {!accounts?.length ? (
         <div className="rounded-lg border border-line border-dashed p-6 text-center text-sm text-faint">
-          No accounts connected. Add an Alpaca or Robinhood account to start trading.
+          No connected accounts yet. Use the buttons above to connect any supported account when you want broker-backed execution; Paper accounts are optional.
         </div>
       ) : (
         <div className="space-y-2">

@@ -2,7 +2,7 @@
 
 This document establishes a target architectural blueprint, database schemas, type modifications, and reasoning prompt structures for the next-generation trading engine. It is a design plan for multi-tenant safety, tax-aware execution, trailing stop-losses, robust data pipelines, and prompt/reasoning optimizations.
 
-**Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3. Pinecone metadata/query tenant IDs are sanitized, but Pinecone/Voyage API-key lookup still uses the raw app user ID.
+**Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3. Runtime labels now use **Test**, **Paper**, and **Brokerage**: Test is the app's local simulator, Paper is an optional broker-hosted sandbox account a user chooses to connect, and Brokerage is a live broker production account. Pinecone metadata/query tenant IDs are sanitized, but Pinecone/Voyage API-key lookup still uses the raw app user ID.
 
 ---
 
@@ -21,7 +21,7 @@ The target active execution state is resolved dynamically by combining the curre
                                  │ Yes
                                  ▼
                      ┌───────────────────────┐
-                     │      MOCK/LOCAL       │ (State 1: Local Simulator)
+                     │        TEST           │ (State 1: Local Simulator)
                      └───────────────────────┘
                                  │ No
                                  ▼
@@ -33,19 +33,19 @@ The target active execution state is resolved dynamically by combining the curre
          │ activeAccount.environment === "paper"       │ activeAccount.environment === "live"
          ▼                                             ▼
 ┌───────────────────┐                         ┌───────────────────┐
-│   BROKER PAPER    │                         │    BROKER LIVE    │
+│       PAPER       │                         │     BROKERAGE     │
 │ (State 2: Sandbox)│                         │ (State 3: Capital)│
 └───────────────────┘                         └───────────────────┘
 ```
 
 #### State Definitions
-1. **Mock/Local (Simulated)**: 
+1. **Test (Local Simulator)**:
    - **Trigger**: `policy.paperMode === true`.
    - **Behavior**: All order processing, position tracking, and fills are handled by the local SQLite database state machine. Zero network calls are made to external broker execution endpoints.
-2. **Broker Paper (Simulation)**:
+2. **Paper (Broker Sandbox)**:
    - **Trigger**: `policy.paperMode === false` AND `activeAccount.environment === "paper"`.
-   - **Behavior**: Orders are routed to the broker's sandbox/paper environment (e.g., Alpaca Paper API). Account balance, buying power, and position queries are routed to the broker's paper endpoints.
-3. **Broker Live (Real Money)**:
+   - **Behavior**: Orders are routed to the broker's sandbox/paper environment when the user has connected one (for example, Alpaca Paper). Account balance, buying power, and position queries are routed to that broker's paper endpoints.
+3. **Brokerage (Live Capital)**:
    - **Trigger**: `policy.paperMode === false` AND `activeAccount.environment === "live"`.
    - **Behavior**: Orders are routed directly to the broker's live production API (e.g., Alpaca Live API or Robinhood MCP). Fills execute in real-time using real capital.
 
@@ -55,7 +55,7 @@ The target active execution state is resolved dynamically by combining the curre
 
 To prevent catastrophic operational mistakes (e.g., executing live trades thinking the dashboard is in mock mode), the UI dynamically swaps visual theme profiles based on the active execution state:
 
-| Style Dimension | State 1: Mock/Local | State 2: Broker Paper | State 3: Broker Live |
+| Style Dimension | State 1: Test | State 2: Paper | State 3: Brokerage |
 | :--- | :--- | :--- | :--- |
 | **Theme Profile** | **Slate** | **Emerald/Teal** | **Amber/Red** |
 | **Primary Text** | `text-slate-200` | `text-emerald-400` | `text-amber-500` / `text-red-400` |
@@ -66,9 +66,9 @@ To prevent catastrophic operational mistakes (e.g., executing live trades thinki
 
 #### Tailwind Implementation Snippet
 ```tsx
-function getThemeClasses(state: "mock" | "paper" | "live") {
+function getThemeClasses(state: "test" | "paper" | "live") {
   switch (state) {
-    case "mock":
+    case "test":
       return "bg-slate-950/50 border-slate-800 text-slate-200 shadow-slate-500/5";
     case "paper":
       return "bg-emerald-950/20 border-emerald-900/50 text-emerald-400 shadow-emerald-500/10 ring-1 ring-emerald-500/20 animate-pulse";
@@ -79,7 +79,7 @@ function getThemeClasses(state: "mock" | "paper" | "live") {
 ```
 
 #### 1.2.1 Tailwind CSS Custom Animation Definition
-To support the urgent pulse styling for State 3: Broker Live, custom keyframes and animation utility classes are configured in `app/globals.css`:
+To support the urgent pulse styling for State 3: Brokerage, custom keyframes and animation utility classes are configured in `app/globals.css`:
 
 ```css
 @keyframes pulse-fast {
@@ -104,15 +104,15 @@ To support the urgent pulse styling for State 3: Broker Live, custom keyframes a
 
 #### Top-Bar Status Alerts
 A persistent, full-width status bar should be displayed at the top of the screen:
-- **Mock/Local**: `bg-slate-900 border-b border-slate-800 text-slate-400 text-xs text-center py-1.5`
-  > "⚠️ SIMULATION MODE: Local Mock Environment (Simulated Fills). Real capital is safe."
-- **Broker Paper**: `bg-emerald-950/80 border-b border-emerald-900 text-emerald-400 text-xs text-center py-1.5 font-medium`
-  > "🧪 PAPER TRADING: Active Broker Sandbox. Executing simulated broker orders."
-- **Broker Live**: `bg-red-950/90 border-b border-red-900 text-red-200 text-xs text-center py-1.5 font-bold animate-pulse`
-  > "🚨 LIVE PRODUCTION: Real Capital at Risk. Executing real orders on [Alpaca/Robinhood]."
+- **Test**: `bg-slate-900 border-b border-slate-800 text-slate-400 text-xs text-center py-1.5`
+  > "TEST MODE: Local simulation with simulated fills. Real capital is safe."
+- **Paper**: `bg-emerald-950/80 border-b border-emerald-900 text-emerald-400 text-xs text-center py-1.5 font-medium`
+  > "PAPER TRADING: Active broker sandbox. Executing broker-paper orders."
+- **Brokerage**: `bg-red-950/90 border-b border-red-900 text-red-200 text-xs text-center py-1.5 font-bold animate-pulse`
+  > "LIVE BROKERAGE: Real capital at risk. Executing live broker orders on [active broker]."
 
 #### Live Order Confirmation Ticket Modal
-When the system is in **Broker Live** state and a trade is proposed (or triggered via Autonomy loop), the user interface intercepts execution with a high-friction confirmation ticket:
+When the system is in **Brokerage** state and a trade is proposed (or triggered via Autonomy loop), the user interface intercepts execution with a high-friction confirmation ticket:
 
 1. **Trade Summary**: Displays target ticker, action (BUY/SELL/SHORT/COVER), proposed quantity, estimated notional cost, and the resulting portfolio exposure percentage.
 2. **Dynamic Risk Check**: Displays real-time bids/asks and bid-ask spread in basis points (warns if spread exceeds 50 bps).
@@ -144,7 +144,7 @@ To protect live capital and prevent runaway algorithmic execution, a multi-layer
 - If any order would exceed these limits, the execution engine rejects the order, logs a policy violation to the audit logs, and automatically reverts the account to "propose" mode.
 
 #### 1.4.4 Null/Undefined activeAccount Fallback
-- If `activeAccount` is null, undefined, or missing, the system gracefully defaults execution to State 1: Mock/Local.
+- If `activeAccount` is null, undefined, or missing, the system gracefully defaults execution to State 1: Test.
 - In this fallback state, all real strategy execution and external order placement are strictly blocked, and the dashboard displays a clear warning message indicating the inactive broker state.
 
 ---
