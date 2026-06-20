@@ -14,11 +14,15 @@ auth. A real login/identity layer is the last milestone.
   `resolveApiKeyWithSource(service, userId?)` in `src/lib/db.ts`. Service names are
   canonicalized, saved keys are encrypted, user keys win, and env vars remain the
   shared fallback.
-- `connected_accounts` brokerage-account storage for the default `local` user.
+- `connected_accounts` account storage for the default `local` user.
   Connected account credentials are encrypted at rest, omitted from dashboard
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
   from the active connected account before falling back to legacy per-user/env keys.
+  Robinhood is connected through the MCP OAuth/status flow rather than manual API
+  key fields, and users may connect one or more supported account types from
+  Accounts. Paper accounts are optional; users do not need to connect one unless
+  they want broker-hosted sandbox execution.
 - Execution mode is now derived as `test/local`, `broker/paper`, or `broker/live`
   from the local simulation toggle plus the active connected-account environment.
   Active broker paper accounts no longer collapse back into local `paperMode`,
@@ -89,7 +93,10 @@ caller, and `web-sources/*` with `resolveApiKey(service, userId)` so a user's ow
 takes precedence, with the env var as the shared fallback. Keep capability-gating:
 missing key → that provider is skipped (neutral/stale signal), never faked.
 
-Current partial implementation: Alpaca uses the active connected account first.
+Current partial implementation: account settings are broker-aware rather than
+Alpaca-only. Alpaca uses the active connected account first; Robinhood syncs the
+agentic brokerage account through MCP after OAuth; and the account UI presents
+supported account buttons instead of requiring a Paper account.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR

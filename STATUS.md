@@ -23,6 +23,18 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/codex`): **Broker-neutral account connection wording.**
+  Updated Accounts UI copy so users are told to connect one or more supported
+  accounts when they want broker-backed execution, with Paper accounts optional
+  and user-selected. The account modal keeps explicit buttons for Robinhood MCP,
+  Alpaca Paper, and Alpaca Brokerage, and Robinhood edit states now describe the
+  MCP/OAuth sync path instead of exposing Paper/API-key wording. Docs were
+  aligned in README, PLAN, Phase 11, and the architecture blueprint. Verification
+  passed: `npx tsc --noEmit`, `npm test` (37 files, 261 tests), `npm run build`,
+  `git diff --check`, Playwright smoke against temporary `next start`, PM2
+  `trading-codex` restart, `/api/health`, and a focused Accounts modal browser
+  smoke on port 4101. See
+  `docs/rollouts/2026-06-20-broker-neutral-account-connection-copy.md`.
 - 2026-06-20 (`agent/codex`): **Terminology documentation alignment.**
   Fast-forwarded the Codex worktree to the integrated `main` tip and aligned
   current-state docs with the runtime Test/Paper/Brokerage terminology. No code

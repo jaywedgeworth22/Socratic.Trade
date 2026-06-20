@@ -2,7 +2,7 @@
 
 This document establishes a target architectural blueprint, database schemas, type modifications, and reasoning prompt structures for the next-generation trading engine. It is a design plan for multi-tenant safety, tax-aware execution, trailing stop-losses, robust data pipelines, and prompt/reasoning optimizations.
 
-**Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3. Runtime labels now use **Test**, **Paper**, and **Brokerage**: Test is the app's local simulator, Paper is a broker-hosted sandbox such as Alpaca Paper, and Brokerage is a live broker production account.
+**Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3. Runtime labels now use **Test**, **Paper**, and **Brokerage**: Test is the app's local simulator, Paper is an optional broker-hosted sandbox account a user chooses to connect, and Brokerage is a live broker production account.
 
 ---
 
@@ -44,7 +44,7 @@ The target active execution state is resolved dynamically by combining the curre
    - **Behavior**: All order processing, position tracking, and fills are handled by the local SQLite database state machine. Zero network calls are made to external broker execution endpoints.
 2. **Paper (Broker Sandbox)**:
    - **Trigger**: `policy.paperMode === false` AND `activeAccount.environment === "paper"`.
-   - **Behavior**: Orders are routed to the broker's sandbox/paper environment (e.g., Alpaca Paper API). Account balance, buying power, and position queries are routed to the broker's paper endpoints.
+   - **Behavior**: Orders are routed to the broker's sandbox/paper environment when the user has connected one (for example, Alpaca Paper). Account balance, buying power, and position queries are routed to that broker's paper endpoints.
 3. **Brokerage (Live Capital)**:
    - **Trigger**: `policy.paperMode === false` AND `activeAccount.environment === "live"`.
    - **Behavior**: Orders are routed directly to the broker's live production API (e.g., Alpaca Live API or Robinhood MCP). Fills execute in real-time using real capital.
@@ -109,7 +109,7 @@ A persistent, full-width status bar should be displayed at the top of the screen
 - **Paper**: `bg-emerald-950/80 border-b border-emerald-900 text-emerald-400 text-xs text-center py-1.5 font-medium`
   > "PAPER TRADING: Active broker sandbox. Executing broker-paper orders."
 - **Brokerage**: `bg-red-950/90 border-b border-red-900 text-red-200 text-xs text-center py-1.5 font-bold animate-pulse`
-  > "LIVE BROKERAGE: Real capital at risk. Executing live broker orders on [Alpaca/Robinhood]."
+  > "LIVE BROKERAGE: Real capital at risk. Executing live broker orders on [active broker]."
 
 #### Live Order Confirmation Ticket Modal
 When the system is in **Brokerage** state and a trade is proposed (or triggered via Autonomy loop), the user interface intercepts execution with a high-friction confirmation ticket:
