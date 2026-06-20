@@ -1778,6 +1778,7 @@ function StrategyView({
                <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
                <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
                <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
+               <NumberField label="Max hourly notional ($)" value={policy.maxHourlyNotional} onCommit={(v) => updatePolicy({ maxHourlyNotional: v })} />
              </div>
              <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
@@ -2409,6 +2410,19 @@ function SettingsContent({
           <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[13px] text-muted">
             Estimates only — not tax advice. These settings tune the after-tax signals the agent sees and the wash-sale guardrail.
           </p>
+          <div className="grid gap-1">
+            <label className="text-sm font-medium text-fg">Account tax treatment</label>
+            <select
+              className={inputClass}
+              value={taxSettings.taxationType ?? "taxable"}
+              onChange={(e) => updatePolicy({ taxSettings: { ...taxSettings, taxationType: e.target.value as "taxable" | "roth_ira" | "traditional_ira" } })}
+            >
+              <option value="taxable">Taxable (brokerage)</option>
+              <option value="roth_ira">Roth IRA — tax-free</option>
+              <option value="traditional_ira">Traditional IRA — tax-deferred</option>
+            </select>
+            <p className="text-xs text-faint">IRAs are tax-sheltered: 0% estimated tax and no in-account wash-sale lockout. A loss in a <em>taxable</em> account still locks rebuys of that symbol across all your accounts for 30 days.</p>
+          </div>
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Wash-sale guard</span>

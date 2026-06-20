@@ -92,7 +92,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const activeAccountForTax = getActiveConnectedAccount(userId);
   const tax = accountNumber
-    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccountForTax?.taxationType }, new Date(), userId)
+    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccountForTax?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId)
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);

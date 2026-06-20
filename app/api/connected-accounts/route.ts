@@ -15,6 +15,10 @@ export async function POST(req: Request) {
     if (!broker) {
       return new NextResponse("broker is required (alpaca | robinhood | test)", { status: 400 });
     }
+    const taxationType =
+      body.taxationType === "roth_ira" || body.taxationType === "traditional_ira" || body.taxationType === "taxable"
+        ? body.taxationType
+        : undefined;
 
     // Robinhood: sync the real agentic (read+write) account from the live MCP — never a
     // hand-typed number, and never the read-only Investing/Roth IRA accounts. Requires the
@@ -40,6 +44,7 @@ export async function POST(req: Request) {
         environment: "live",
         accountNumber: agentic.accountNumber,
         label: agentic.label || "Robinhood Agentic",
+        taxationType: taxationType ?? existing?.taxationType,
         isActive: body.isActive ?? existing?.isActive ?? !getActiveConnectedAccount(userId)
       });
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
@@ -66,6 +71,7 @@ export async function POST(req: Request) {
       label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel,
       apiKey: apiKey || undefined,
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
+      taxationType,
       isActive: body.isActive ?? false
     });
     return NextResponse.json({ ok: true });

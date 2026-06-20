@@ -81,9 +81,21 @@ is deliberately started running** (linked account is $0, so low residual risk du
   implement the **cross-account** lockout (a TAXABLE-account loss locks rebuys across ALL accounts incl.
   IRAs; an IRA's own loss locks nothing). `strategy.ts` now feeds the **cross-account** set to the policy
   guard at both the run-loop and approval paths. +3 tests in `test/tax.test.ts`. **276 tests green.**
-- Still TODO (next): tax-type **picker UI** + connect-route field (so users can set IRA); R1 hourly-cap
-  enforcement + auto-revert; the autonomy/Run/Resume **control-group gate** (the user's #1 ask); R2
-  detection loop; H3/H4 execution behind the gate.
+- **Wave 3 — R1 hourly cap + auto-revert** (`policy.ts`, `strategy.ts`): `maxHourlyNotional` enforced in
+  `evaluateTradeProposal` (rolling 60-min window via `notionalInLastMinutes`) at the run-loop + approval
+  paths; a daily/hourly/order-count breach in `decide` mode auto-reverts the account to `propose` + audits
+  `policy_violation_cap_exceeded`. +2 policy tests. Settable via a new **Max hourly notional** field in the
+  live Key-parameters card.
+- **R3 usable from the UI**: a tax-treatment picker (Taxable / Roth IRA / Traditional IRA) in the live Tax
+  tab (sets `taxSettings.taxationType`); the connect-accounts route now accepts a per-account
+  `taxationType` that overrides the policy-level default; `dashboard.ts` resolves account-level →
+  policy-level. **278 tests, build green; deploying.**
+- **Still TODO** (surfaced to the user): consolidate the redundant Run/Resume/autonomy controls into one
+  logical group — the autonomy **Switch** (`dashboard-client.tsx:548`) and the **Resume/Kill** button
+  (`:614`) both write `systemState`, which is the "not logical" confusion; the order gate itself already
+  works (`systemState === "halted"` ⇒ `throw` in `strategy.ts:86,462`, so no orders unless deliberately
+  running). R2 synthetic trailing-stop monitor (detection scaffolding is in `db.ts`); H3/H4 stop-execution
+  **gated** behind the autonomy control.
 
 ## Follow-ups / notes
 - The 6-agent audit over-reported by reading the blueprint's illustrative snippets as code. Lesson:

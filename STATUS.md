@@ -24,6 +24,18 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude`): **Blueprint R1–R5 completion (in progress).** 6-agent audit of the
+  Antigravity/Codex blueprint work, with findings verified against real code (several audit "bugs" were
+  false positives reading the blueprint's example snippets; R4 multi-tenant RAG was already shipped by
+  `worker_m4_1`). Shipped so far: **R1 tri-state safety banner** (deployed `5747770`); **R3 IRA taxation**
+  (IRA ⇒ 0% tax + own-account wash-sale bypass; a TAXABLE-account loss locks rebuys across ALL accounts
+  incl. IRAs via `getUserWashSaleLockedSymbols`); **R1 hourly notional cap + auto-revert** to `propose` on
+  breach; schema/types foundation (`taxation_type` column, `maxHourlyNotional`, `synthetic_trailing_stops`
+  table + accessors, `notionalInLastMinutes`); UI for the hourly cap + a tax-treatment picker. 278 tests,
+  build green. **Remaining (per user direction):** consolidate the redundant Run/Resume/autonomy controls
+  into one logical group (the order gate — `systemState==="halted"` ⇒ no orders — already works); R2
+  synthetic trailing-stop monitor; H3/H4 stop-execution **gated** behind the autonomy control. See
+  `docs/rollouts/2026-06-20-r1-r5-audit-and-safety-banner.md`.
 - 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `trading.jays.services` (`03bfc38`).**
   Robinhood now connects via its MCP (root cause of the long OAuth failure: the redirect URI must be a
   `http://localhost` loopback, NOT the public Cloudflare-fronted `.services` URL — see memory
