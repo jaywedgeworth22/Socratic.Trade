@@ -28,7 +28,18 @@ export interface ScoringWeights {
 }
 
 /** US tax-mitigation settings (estimates only — not tax advice). */
+/**
+ * Tax treatment of an account. IRAs (Roth/Traditional) are tax-sheltered: there is no annual
+ * capital-gains tax, and the IRC §1091 wash-sale lockout does not apply WITHIN a single IRA
+ * (a wash sale has no benefit there). A loss realized in a TAXABLE account, however, still locks
+ * rebuys of that symbol across ALL of the user's accounts — including the IRAs — for 30 days,
+ * because buying the replacement in the IRA permanently destroys the disallowed basis.
+ */
+export type TaxationType = "taxable" | "roth_ira" | "traditional_ira";
+
 export interface TaxSettings {
+  /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
+  taxationType?: TaxationType;
   /** Block the agent from rebuying a symbol it closed at a loss within 30 days (IRC §1091). */
   washSaleGuard: boolean;
   /** Marginal rate applied to short-term realized gains (ordinary income), e.g. 24. */
@@ -77,6 +88,8 @@ export interface ConnectedAccount {
   userId: string;
   broker: "alpaca" | "robinhood" | "test";
   environment: "paper" | "live";
+  /** Tax treatment of this account (taxable vs Roth/Traditional IRA). Defaults to "taxable". */
+  taxationType?: TaxationType;
   accountNumber?: string;
   label: string;
   apiKey?: string;
@@ -150,6 +163,10 @@ export interface TradingPolicy {
   maxOrderNotional?: number;
   maxOrderPctOfNav?: number;
   maxDailyNotional?: number;
+  /** Hard ceiling on total order notional executed within any rolling 60-minute window. On breach the account auto-reverts strategyAuthority to "propose" and the order is rejected. */
+  maxHourlyNotional?: number;
+  /** Allow synthetic trailing-stop monitoring to act during extended hours. Default false (regular hours only). */
+  allowExtendedHoursSyntheticStops?: boolean;
   maxDailyPctOfNav?: number;
   maxSymbolExposurePct?: number;
   maxSymbolExposureNotional?: number;
@@ -493,6 +510,7 @@ export interface StrategyTuningPatch {
       TradingPolicy,
       | "maxOrderNotional"
       | "maxDailyNotional"
+      | "maxHourlyNotional"
       | "maxSymbolExposurePct"
       | "maxDailyOrders"
       | "maxProposalsPerRun"

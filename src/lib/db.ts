@@ -156,11 +156,34 @@ function migrate(database: Database.Database): void {
       label TEXT NOT NULL,
       api_key TEXT,
       api_secret TEXT,
+      taxation_type TEXT,
       is_active INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_connected_accounts_user ON connected_accounts (user_id);
+
+    -- Synthetic trailing-stop registry (R2). Tracks the high/low watermark + trail settings for
+    -- positions whose broker can't host a native trailing stop (e.g. Robinhood MCP). The monitor
+    -- computes triggers from this; placing the exit order is a separate, gated step.
+    CREATE TABLE IF NOT EXISTS synthetic_trailing_stops (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      quantity REAL NOT NULL,
+      entry_price REAL NOT NULL,
+      extreme_price REAL NOT NULL,
+      trail_percent REAL,
+      trail_amount REAL,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_price REAL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, account_number, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
 
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
@@ -258,6 +281,11 @@ function migrate(database: Database.Database): void {
   if (!columns.some((column) => column.name === "trade_thesis_tag")) {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN trade_thesis_tag TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN entry_market_regime TEXT");
+  }
+  // R3: per-account tax treatment (taxable vs Roth/Traditional IRA) on existing DBs.
+  const connectedAccountColumns = database.prepare("PRAGMA table_info(connected_accounts)").all() as Array<{ name: string }>;
+  if (!connectedAccountColumns.some((column) => column.name === "taxation_type")) {
+    database.exec("ALTER TABLE connected_accounts ADD COLUMN taxation_type TEXT");
   }
   // Rename: legacy "dry_run" proposal status is now "paper".
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
@@ -901,6 +929,31 @@ export function dailyExecutionStats(accountNumber: string, now = new Date(), use
         ? (row.estimated_notional != null
             ? row.estimated_notional
             : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
+        : 0;
+      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+    },
+    { orderCount: 0, notional: 0 }
+  );
+}
+
+/**
+ * Order notional executed within a rolling window of `minutes` (R1 hourly cap). Mirrors
+ * dailyExecutionStats but on an arbitrary lookback rather than the calendar day.
+ */
+export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
+  const cutoff = new Date(now.getTime() - minutes * 60_000);
+  const rows = getDb()
+    .prepare(
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
+    )
+    .all(cutoff.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+
+  return rows.reduce(
+    (acc, row) => {
+      const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
+      const isBuy = proposal.side === "buy" || proposal.side === "short";
+      const notional = isBuy
+        ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
       return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
     },
@@ -1671,6 +1724,7 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
     environment: String(r.environment) as "live" | "paper",
     accountNumber: r.account_number != null ? String(r.account_number) : undefined,
     label: String(r.label),
+    taxationType: r.taxation_type != null ? (String(r.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
     isActive: r.is_active === 1,
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
@@ -1706,6 +1760,7 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
     environment: String(row.environment) as "live" | "paper",
     accountNumber: row.account_number != null ? String(row.account_number) : undefined,
     label: String(row.label),
+    taxationType: row.taxation_type != null ? (String(row.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
     apiKey: row.api_key ? decryptValue(String(row.api_key)) : undefined,
     apiSecret: row.api_secret ? decryptValue(String(row.api_secret)) : undefined,
     isActive: row.is_active === 1,
@@ -1725,8 +1780,8 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
     }
     database
       .prepare(
-        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, taxation_type, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           broker = excluded.broker,
           environment = excluded.environment,
@@ -1734,6 +1789,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           label = excluded.label,
           api_key = COALESCE(excluded.api_key, connected_accounts.api_key),
           api_secret = COALESCE(excluded.api_secret, connected_accounts.api_secret),
+          taxation_type = COALESCE(excluded.taxation_type, connected_accounts.taxation_type),
           is_active = excluded.is_active,
           updated_at = excluded.updated_at`
       )
@@ -1746,6 +1802,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
         account.label,
         encryptedApiKey,
         encryptedApiSecret,
+        account.taxationType ?? null,
         account.isActive ? 1 : 0,
         now,
         now
@@ -1765,6 +1822,91 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
 
 export function deleteConnectedAccount(id: string, userId: string = "local"): void {
   getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+// ── Synthetic trailing stops (R2 scaffolding) ──────────────────────────────────
+export interface SyntheticTrailingStop {
+  id: string;
+  userId: string;
+  accountNumber: string;
+  symbol: string;
+  side: "long" | "short";
+  quantity: number;
+  entryPrice: number;
+  /** Highest price since entry for a long (lowest for a short) — the trail anchor. */
+  extremePrice: number;
+  trailPercent?: number;
+  trailAmount?: number;
+  status: "active" | "triggered" | "cancelled";
+  lastPrice?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
+  return {
+    id: String(r.id),
+    userId: String(r.user_id),
+    accountNumber: String(r.account_number),
+    symbol: String(r.symbol),
+    side: String(r.side) as "long" | "short",
+    quantity: Number(r.quantity),
+    entryPrice: Number(r.entry_price),
+    extremePrice: Number(r.extreme_price),
+    trailPercent: r.trail_percent != null ? Number(r.trail_percent) : undefined,
+    trailAmount: r.trail_amount != null ? Number(r.trail_amount) : undefined,
+    status: String(r.status) as SyntheticTrailingStop["status"],
+    lastPrice: r.last_price != null ? Number(r.last_price) : undefined,
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at)
+  };
+}
+
+export function upsertSyntheticStop(stop: Omit<SyntheticTrailingStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
+        side = excluded.side,
+        quantity = excluded.quantity,
+        entry_price = excluded.entry_price,
+        extreme_price = excluded.extreme_price,
+        trail_percent = excluded.trail_percent,
+        trail_amount = excluded.trail_amount,
+        status = excluded.status,
+        last_price = excluded.last_price,
+        updated_at = excluded.updated_at`
+    )
+    .run(
+      stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
+      stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
+      stop.status, stop.lastPrice ?? null, stop.createdAt ?? now, now
+    );
+}
+
+export function listSyntheticStops(accountNumber: string, userId: string = "local", status: SyntheticTrailingStop["status"] = "active"): SyntheticTrailingStop[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM synthetic_trailing_stops WHERE user_id = ? AND account_number = ? AND status = ? ORDER BY created_at ASC")
+    .all(userId, accountNumber, status) as Record<string, unknown>[];
+  return rows.map(mapSyntheticStop);
+}
+
+export function deleteSyntheticStop(id: string, userId: string = "local"): void {
+  getDb().prepare("DELETE FROM synthetic_trailing_stops WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+/** Purge stops whose position no longer exists (size hit 0). `liveSymbols` must be upper-cased. */
+export function purgeSyntheticStops(accountNumber: string, liveSymbols: Set<string>, userId: string = "local"): number {
+  let purged = 0;
+  for (const stop of listSyntheticStops(accountNumber, userId)) {
+    if (!liveSymbols.has(stop.symbol.toUpperCase())) {
+      deleteSyntheticStop(stop.id, userId);
+      purged++;
+    }
+  }
+  return purged;
 }
 
 export function resolveApiKeyWithSource(service: string, userId?: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {

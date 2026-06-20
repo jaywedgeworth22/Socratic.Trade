@@ -12,7 +12,8 @@ import {
   listStrategyRuns,
   listFillEvents,
   listConnectedAccounts,
-  ensureTestAccount
+  ensureTestAccount,
+  getActiveConnectedAccount
 } from "./db";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
@@ -89,7 +90,10 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const scorecardSource = policy.paperMode ? "paper" : "live";
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
-  const tax = accountNumber ? getTaxSummary(accountNumber, scorecardSource, currentPrices, policy.taxSettings, new Date(), userId) : undefined;
+  const activeAccountForTax = getActiveConnectedAccount(userId);
+  const tax = accountNumber
+    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccountForTax?.taxationType }, new Date(), userId)
+    : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
   const notifications = listNotificationEvents(userId, 50);

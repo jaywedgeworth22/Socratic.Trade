@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { getTaxSummary, getWashSaleLockedSymbols } from "../src/lib/tax";
+import { getTaxSummary, getWashSaleLockedSymbols, getWashSaleLockedSymbolsForUser } from "../src/lib/tax";
 import type { FillEvent } from "../src/lib/types";
 
 beforeAll(() => {
@@ -75,5 +75,55 @@ describe("tax", () => {
     const tax = getTaxSummary(a, "paper", { NVDA: 90 }, undefined, NOW); // marked down 10/share
     const cand = tax.harvestCandidates.find((c) => c.symbol === "NVDA");
     expect(cand?.unrealizedLoss).toBeCloseTo(-20);
+  });
+
+  it("treats an IRA as tax-sheltered: 0% rates, no estimated tax, and no own-account wash-sale lockout", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "IRA1";
+    // A short-term gain that WOULD be taxed in a taxable account (+$30).
+    insertFillEvent(fill({ id: "i1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "AMD", filledAt: daysAgo(20) }));
+    insertFillEvent(fill({ id: "i2", side: "sell", quantity: 1, price: 130, notional: 130, accountNumber: a, symbol: "AMD", filledAt: daysAgo(5) }));
+    // A loss sale within 30 days that WOULD lock in a taxable account.
+    insertFillEvent(fill({ id: "i3", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "INTC", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "i4", side: "sell", quantity: 1, price: 90, notional: 90, accountNumber: a, symbol: "INTC", filledAt: daysAgo(10) }));
+
+    const tax = getTaxSummary(a, "paper", {}, { taxationType: "roth_ira" }, NOW);
+    expect(tax.settings.shortTermRatePct).toBe(0);
+    expect(tax.settings.longTermRatePct).toBe(0);
+    expect(tax.settings.washSaleGuard).toBe(false);
+    expect(tax.estimatedTaxLiability).toBeCloseTo(0);
+    // IRA bypasses its own wash-sale lockout (a wash sale has no benefit inside the IRA).
+    expect(tax.lockedSymbols).not.toContain("INTC");
+  });
+
+  it("locks a symbol across ALL accounts (incl. IRA) when the loss is realized in a TAXABLE account", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const taxable = "XACCT-TAXABLE";
+    const ira = "XACCT-IRA";
+    insertFillEvent(fill({ id: "x1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: taxable, symbol: "TSLA", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "x2", side: "sell", quantity: 1, price: 90, notional: 90, accountNumber: taxable, symbol: "TSLA", filledAt: daysAgo(8) }));
+
+    const locked = getWashSaleLockedSymbolsForUser(
+      [
+        { accountNumber: taxable, source: "paper", taxationType: "taxable" },
+        { accountNumber: ira, source: "paper", taxationType: "roth_ira" }
+      ],
+      NOW
+    );
+    // The taxable-account loss locks TSLA rebuys everywhere, including the IRA (Rev. Rul. 2008-5).
+    expect(locked.has("TSLA")).toBe(true);
+  });
+
+  it("does NOT create a cross-account lockout from a loss realized inside an IRA", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const ira = "IRA-ONLYLOSS";
+    insertFillEvent(fill({ id: "y1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: ira, symbol: "BABA", filledAt: daysAgo(40) }));
+    insertFillEvent(fill({ id: "y2", side: "sell", quantity: 1, price: 90, notional: 90, accountNumber: ira, symbol: "BABA", filledAt: daysAgo(8) }));
+
+    const locked = getWashSaleLockedSymbolsForUser(
+      [{ accountNumber: ira, source: "paper", taxationType: "traditional_ira" }],
+      NOW
+    );
+    expect(locked.has("BABA")).toBe(false);
   });
 });

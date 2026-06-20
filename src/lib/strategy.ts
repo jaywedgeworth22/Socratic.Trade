@@ -40,7 +40,7 @@ import {
   recordPortfolioSnapshot
 } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
-import { getTaxSummary, getWashSaleLockedSymbols } from "./tax";
+import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
@@ -102,7 +102,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const washSaleLockedSymbols = getWashSaleLockedSymbols(policy.accountNumber, executionState.usesLocalSimulation ? "paper" : "live", new Date(), userId);
+    const washSaleLockedSymbols = getUserWashSaleLockedSymbols(userId, new Date());
 
     // In Test mode, decisions run against the standalone local account
     // (starting cash + prior simulated fills, marked to live prices).
@@ -512,7 +512,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     dailyOrderCount: daily.orderCount,
     estimatedNotional: review.estimatedNotional,
     marketScan: approvalScan,
-    washSaleLockedSymbols: getWashSaleLockedSymbols(policy.accountNumber, executionState.usesLocalSimulation ? "paper" : "live", new Date(), userId)
+    washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date())
   });
 
   if (!decision.approved) {

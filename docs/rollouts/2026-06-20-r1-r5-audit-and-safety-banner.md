@@ -64,6 +64,27 @@ risk** and was genuinely missing.
 - **R5 polish (optional)** — cache-control ephemeral headers when scan cadence > 5 min; payload key
   abbreviation. Cost optimization only.
 
+## Update — Wave 1 (foundation) + Wave 2 (R3 IRA taxation) implemented
+User authorized all three SAFE items + building H1–H4 **gated so no order can fire until the system
+is deliberately started running** (linked account is $0, so low residual risk during dev).
+
+- **Wave 1 — schema/types foundation** (`src/lib/types.ts`, `src/lib/db.ts`): `TaxationType`
+  (`taxable|roth_ira|traditional_ira`) on `ConnectedAccount` + `TaxSettings`; `maxHourlyNotional` +
+  `allowExtendedHoursSyntheticStops` on `TradingPolicy` (+ `maxHourlyNotional` in the tuning patch);
+  `connected_accounts.taxation_type` column (CREATE + idempotent ALTER migration), mapped in
+  `listConnectedAccounts`/`getActiveConnectedAccount`, persisted in `upsertConnectedAccount`;
+  `synthetic_trailing_stops` table + accessors (`upsert/list/delete/purgeSyntheticStops`); and
+  `notionalInLastMinutes()` (rolling-window notional for the R1 hourly cap).
+- **Wave 2 — R3 IRA taxation** (`src/lib/tax.ts`, `strategy.ts`, `dashboard.ts`): `resolveTaxSettings`
+  forces IRA → 0% rates + `washSaleGuard:false`; `getTaxSummary` honors `taxationType` (IRA ⇒ 0 tax,
+  no own-account lockout); new `getWashSaleLockedSymbolsForUser` / `getUserWashSaleLockedSymbols`
+  implement the **cross-account** lockout (a TAXABLE-account loss locks rebuys across ALL accounts incl.
+  IRAs; an IRA's own loss locks nothing). `strategy.ts` now feeds the **cross-account** set to the policy
+  guard at both the run-loop and approval paths. +3 tests in `test/tax.test.ts`. **276 tests green.**
+- Still TODO (next): tax-type **picker UI** + connect-route field (so users can set IRA); R1 hourly-cap
+  enforcement + auto-revert; the autonomy/Run/Resume **control-group gate** (the user's #1 ask); R2
+  detection loop; H3/H4 execution behind the gate.
+
 ## Follow-ups / notes
 - The 6-agent audit over-reported by reading the blueprint's illustrative snippets as code. Lesson:
   verify each finding against the actual file before implementing (done here).

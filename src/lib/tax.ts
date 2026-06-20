@@ -1,8 +1,8 @@
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
-import { listFillEvents } from "./db";
+import { listConnectedAccounts, listFillEvents } from "./db";
 import { normalizeSymbol } from "./money";
 import { getClosedLotsDetailed, getOpenLots, type ClosedLot } from "./performance";
-import type { FillEvent, FillSource, TaxSettings } from "./types";
+import type { FillEvent, FillSource, TaxSettings, TaxationType } from "./types";
 
 const MS_PER_DAY = 86_400_000;
 const WASH_WINDOW_DAYS = 30;
@@ -46,8 +46,16 @@ export interface TaxSummary {
   settings: TaxSettings;
 }
 
-export function resolveTaxSettings(settings?: TaxSettings): TaxSettings {
-  return { ...DEFAULT_TAX_SETTINGS, ...(settings ?? {}) };
+export function resolveTaxSettings(settings?: Partial<TaxSettings>): TaxSettings {
+  const merged = { ...DEFAULT_TAX_SETTINGS, ...(settings ?? {}) };
+  // Tax-sheltered IRAs: no annual capital-gains tax, and the IRC §1091 wash-sale lockout has no
+  // benefit within the account — so zero the rates and disable the per-account guard. (A loss in a
+  // TAXABLE account still locks rebuys across all accounts; that is enforced separately via
+  // getWashSaleLockedSymbolsForUser, not this per-account flag.)
+  if (merged.taxationType === "roth_ira" || merged.taxationType === "traditional_ira") {
+    return { ...merged, washSaleGuard: false, shortTermRatePct: 0, longTermRatePct: 0 };
+  }
+  return merged;
 }
 
 function holdingDays(entryAt: string | undefined, exitAt: string | undefined): number {
@@ -71,6 +79,39 @@ export function getWashSaleLockedSymbols(accountNumber: string, source: FillSour
     if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) locked.add(normalizeSymbol(lot.symbol));
   }
   return locked;
+}
+
+export interface AccountTaxContext {
+  accountNumber: string;
+  source: FillSource;
+  taxationType?: TaxationType;
+}
+
+/**
+ * Cross-account wash-sale lockout (IRC §1091 + Rev. Rul. 2008-5): a LOSS realized in a TAXABLE
+ * account locks rebuys of that symbol across ALL of the user's accounts — including the IRAs —
+ * for 30 days, because buying the replacement inside an IRA permanently destroys the disallowed
+ * basis. Losses realized INSIDE an IRA create no lockout (a wash sale has no benefit there).
+ * Returns the union of locked symbols contributed by the user's taxable accounts.
+ */
+export function getWashSaleLockedSymbolsForUser(accounts: AccountTaxContext[], now = new Date(), userId: string = "local"): Set<string> {
+  const locked = new Set<string>();
+  for (const acct of accounts) {
+    if (acct.taxationType === "roth_ira" || acct.taxationType === "traditional_ira") continue;
+    if (!acct.accountNumber) continue;
+    for (const sym of getWashSaleLockedSymbols(acct.accountNumber, acct.source, now, userId)) locked.add(sym);
+  }
+  return locked;
+}
+
+/** Convenience: resolve the user's connected accounts and compute the cross-account lockout. */
+export function getUserWashSaleLockedSymbols(userId: string = "local", now = new Date()): Set<string> {
+  const accounts: AccountTaxContext[] = listConnectedAccounts(userId).map((a) => ({
+    accountNumber: a.accountNumber ?? "",
+    source: (a.broker === "test" || a.environment === "paper" ? "paper" : "live") as FillSource,
+    taxationType: a.taxationType
+  }));
+  return getWashSaleLockedSymbolsForUser(accounts, now, userId);
 }
 
 /**
@@ -109,7 +150,7 @@ export function getTaxSummary(
   accountNumber: string,
   source: FillSource,
   currentPrices: Record<string, number> = {},
-  settings?: TaxSettings,
+  settings?: Partial<TaxSettings>,
   now = new Date(),
   userId: string = "local"
 ): TaxSummary {
@@ -178,7 +219,7 @@ export function getTaxSummary(
     estimatedLongTermTax: Number(estimatedLongTermTax.toFixed(2)),
     estimatedTaxLiability: Number((estimatedShortTermTax + estimatedLongTermTax).toFixed(2)),
     washSales,
-    lockedSymbols: Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId)),
+    lockedSymbols: tax.washSaleGuard ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId)) : [],
     openLots,
     harvestCandidates,
     settings: tax
