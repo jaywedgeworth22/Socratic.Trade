@@ -35,6 +35,14 @@ steps materially change.
   relocation + the `robinhood-agentic-dashboard`→`agentic-trading-dashboard` rename). `main` is
   ahead of `origin/main` pending a push. See
   `docs/rollouts/2026-06-20-cursor-integration-role-and-rules.md`.
+- 2026-06-20 (`cursor/setup-dev-environment`): **Cursor Cloud dev environment
+  setup.** Installed deps and verified the run/test/build flow in the Cloud VM
+  (`npx tsc --noEmit` clean, `npm test` 283 tests, `npm run build` green, `npm
+  run dev` on :3000 with a watchlist-config hello-world in Test mode). Added a
+  `## Cursor Cloud specific instructions` section to `AGENTS.md` clarifying that
+  the host worktree/PM2/port-4100 setup does not apply to the single
+  `/workspace` Cloud checkout. No source code changed. See
+  `docs/rollouts/2026-06-20-cursor-cloud-env-setup.md`.
 - 2026-06-21: **vector-db userId sanitization + timestamp parsing hardening.**
   `getClients()` now sanitizes `userId` before resolving Pinecone/Voyage keys so
   key-lookup identity matches the Pinecone filter identity (multi-tenant
