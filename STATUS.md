@@ -24,6 +24,17 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Deferred backlog continuation (multi-agent, autonomous).** Worked
+  the remaining panel backlog in the isolated `~/apps/trading-claude` worktree using background
+  agents (sonnet) on disjoint files + inline money-path work, committing + ff-merging each chunk to
+  `main` (now at `82041ff`). Landed: macro Unknown-regime, not-advice disclaimers (chat + Decision
+  surface), real SEC EDGAR UA, pinned Score column, **factor orthogonalization** (tanh momentum +
+  less double-counting), **clientOrderId broker-truth reconcile** (recovers a crashed-mid-placement
+  order from the broker — completes the atomic-placement loop), **evidence-floor sizing** (unproven
+  theses sized at the floor, not 28%), and a **per-tick pending-fill reconciler** (Robinhood). tsc
+  clean, **456 tests**. Remaining (next session): run-lock approval path, native Alpaca brackets,
+  PDT/Reg-T gate, migration ledger, db.ts split, Litestream, Robinhood fundamentals. See
+  `docs/rollouts/2026-06-21-deferred-continuation-multiagent.md`.
 - 2026-06-21 (`agent/claude`): **Deferred-task sweep — P0 safety re-application + IC backtest +
   buying-power gate.** Worked the financial-expert-panel backlog in the ISOLATED
   `~/apps/trading-claude` worktree (the prior P0 work was wiped twice from the co-edited main
