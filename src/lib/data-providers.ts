@@ -10,8 +10,65 @@
 // the final real tier — no API key required, uses session crumb auth.
 
 import { normalizeSymbol } from "./money";
-import { resolveApiKey } from "./db";
+import { resolveApiKey, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { getStreamedHeadlines } from "./streams/news-store";
+
+// ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
+// Data fetched with a user's own stored key is scoped to that user (private) or
+// shared into the reciprocal data pool (pool) when they consent.  Data from an
+// operator/env key or a free source is globally shared (shared), preserving the
+// original behaviour and benefiting all users without consent implications.
+
+type CacheScope = "shared" | "private" | "pool";
+
+function cacheScopeForKeySource(source: ApiKeySource, userId: string | undefined): CacheScope {
+  if (source !== "user") return "shared";
+  if (shareUserKeyedEnrichment()) return "shared";
+  if (hasDataPoolConsent(userId ?? "local")) return "pool";
+  return "private";
+}
+
+function shareUserKeyedEnrichment(): boolean {
+  const value = (process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY ?? "off").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function enrichmentCacheKey(prefix: string, symbol: string, scope: CacheScope, userId: string | undefined): string {
+  if (scope === "private") return `user:${userId ?? "local"}:${prefix}:${symbol}`;
+  if (scope === "pool") return `pool:${prefix}:${symbol}`;
+  return `${prefix}:${symbol}`;
+}
+
+/** Read a cached enrichment entry respecting private → pool (if consented) → shared order. */
+function readEnrichmentCache(
+  prefix: string,
+  symbol: string,
+  userId: string | undefined,
+  consented: boolean,
+  now: number
+): { expiresAt: number; data: SymbolEnrichment } | undefined {
+  const privateHit = cache.get(enrichmentCacheKey(prefix, symbol, "private", userId));
+  if (privateHit && privateHit.expiresAt > now) return privateHit;
+  if (consented) {
+    const poolHit = cache.get(enrichmentCacheKey(prefix, symbol, "pool", userId));
+    if (poolHit && poolHit.expiresAt > now) return poolHit;
+  }
+  const sharedHit = cache.get(enrichmentCacheKey(prefix, symbol, "shared", userId));
+  if (sharedHit && sharedHit.expiresAt > now) return sharedHit;
+  return undefined;
+}
+
+/** Write a cached enrichment entry under the correct scope key. */
+function writeEnrichmentCache(
+  prefix: string,
+  symbol: string,
+  scope: CacheScope,
+  userId: string | undefined,
+  data: SymbolEnrichment,
+  expiresAt: number
+): void {
+  cache.set(enrichmentCacheKey(prefix, symbol, scope, userId), { expiresAt, data });
+}
 
 // Per-source analyst breakdown so the Rating column can blend across providers and
 // the tooltip can show each provider's individual read.
@@ -206,24 +263,24 @@ async function fetchWithRetry(
 
 export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
-  const finnhubKey = resolveApiKey("finnhub", userId);
-  const alphaVantageKey = resolveApiKey("alphavantage", userId);
-  const fmpKey = resolveApiKey("fmp", userId);
-  const fintechKey = resolveApiKey("fintechstudios", userId);
-  const alpacaNewsKey = resolveApiKey("alpaca_paper_api_key", userId);
-  const alpacaNewsSecret = resolveApiKey("alpaca_paper_secret_key", userId);
+  const finnhub = resolveApiKeyWithSource("finnhub", userId);
+  const alphaVantage = resolveApiKeyWithSource("alphavantage", userId);
+  const fmp = resolveApiKeyWithSource("fmp", userId);
+  const fintech = resolveApiKeyWithSource("fintechstudios", userId);
+  const alpacaKey = resolveApiKeyWithSource("alpaca_paper_api_key", userId);
+  const alpacaSecret = resolveApiKey("alpaca_paper_secret_key", userId);
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
   // AND ROBINHOOD_ENRICHMENT_ENABLED, because the broker field set/units should be verified
   // against /api/admin/robinhood-probe before trusting them next to other real numbers.
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider());
-  if (fintechKey) providers.push(new FintechStudiosEnrichmentProvider(fintechKey));
-  if (finnhubKey) providers.push(new FinnhubEnrichmentProvider(finnhubKey));
+  if (fintech.key) providers.push(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId));
+  if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
-  if (alpacaNewsKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaNewsKey, alpacaNewsSecret || undefined));
-  if (alphaVantageKey) providers.push(new AlphaVantageEnrichmentProvider(alphaVantageKey));
-  if (fmpKey) providers.push(new FmpEnrichmentProvider(fmpKey));
+  if (alpacaKey.key) providers.push(new AlpacaNewsEnrichmentProvider(alpacaKey.key, alpacaSecret || undefined, alpacaKey.source, userId));
+  if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
+  if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
   providers.push(new YahooFinanceEnrichmentProvider());
   // Always wrap in the cascade — even for a single provider — so per-field source
   // stamping and analyst blending happen uniformly.
@@ -458,6 +515,7 @@ export class WebullUnofficialEnrichmentProvider implements MarketEnrichmentProvi
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
+      // Webull unofficial uses no user-stored API key — always shared scope.
       const cached = cache.get(`${this.name}:${symbol}`);
       if (cached && cached.expiresAt > now) result[symbol] = cached.data;
       else misses.push(symbol);
@@ -572,19 +630,28 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpaca-news";
   readonly configured = true;
   private readonly base = "https://data.alpaca.markets/v1beta1/news";
+  private readonly scope: CacheScope;
 
-  constructor(private readonly apiKey: string, private readonly apiSecret?: string) {}
+  constructor(
+    private readonly apiKey: string,
+    private readonly apiSecret?: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
     const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = cache.get(`alpaca-news:${symbol}`);
-      if (cached && cached.expiresAt > now) {
+      const cached = readEnrichmentCache("alpaca-news", symbol, this.userId, consented, now);
+      if (cached) {
         result[symbol] = cached.data;
         continue;
       }
@@ -593,7 +660,8 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
       const streamed = getStreamedHeadlines(symbol, ttlMs());
       if (streamed && streamed.length > 0) {
         const data: SymbolEnrichment = { headlines: streamed, sentiment: scoreHeadlines(streamed) };
-        cache.set(`alpaca-news:${symbol}`, { expiresAt: now + ttlMs(), data });
+        // Streamed headlines come from a shared websocket feed — always shared scope.
+        writeEnrichmentCache("alpaca-news", symbol, "shared", this.userId, data, now + ttlMs());
         result[symbol] = data;
         continue;
       }
@@ -645,7 +713,9 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
       for (const symbol of misses) {
         const headlines = headlinesBySymbol.get(symbol) ?? [];
         const data: SymbolEnrichment = headlines.length > 0 ? { headlines, sentiment: scoreHeadlines(headlines) } : {};
-        cache.set(`alpaca-news:${symbol}`, { expiresAt: now + ttlMs(), data });
+        if (headlines.length > 0) {
+          writeEnrichmentCache("alpaca-news", symbol, this.scope, this.userId, data, now + ttlMs());
+        }
         result[symbol] = data;
       }
     } catch {
@@ -676,6 +746,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
+      // Yahoo Finance uses no user-stored API key — always shared scope.
       const cached = cache.get(`yf:${symbol}`);
       if (cached && cached.expiresAt > now) result[symbol] = cached.data;
       else misses.push(symbol);
@@ -825,19 +896,27 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "finnhub";
   readonly configured = true;
   private readonly base = "https://finnhub.io/api/v1";
+  private readonly scope: CacheScope;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
     const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = cache.get(`finnhub:${symbol}`);
-      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      const cached = readEnrichmentCache("finnhub", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
       else misses.push(symbol);
     }
 
@@ -947,7 +1026,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
                 `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
               );
             } else {
-              cache.set(`finnhub:${symbol}`, { expiresAt: now + ttlMs(), data });
+              writeEnrichmentCache("finnhub", symbol, this.scope, this.userId, data, now + ttlMs());
             }
             result[symbol] = data;
           } catch {
@@ -980,19 +1059,27 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp";
   readonly configured = true;
   private readonly base = "https://financialmodelingprep.com/stable";
+  private readonly scope: CacheScope;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
     const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = cache.get(`fmp:${symbol}`);
-      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      const cached = readEnrichmentCache("fmp", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
       else misses.push(symbol);
     }
 
@@ -1082,7 +1169,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
               `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
             );
           } else {
-            cache.set(`fmp:${symbol}`, { expiresAt: now + ttlMs(), data });
+            writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + ttlMs());
           }
           result[symbol] = data;
         })
@@ -1110,19 +1197,27 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
   readonly name = "alpha-vantage";
   readonly configured = true;
   private readonly base = "https://www.alphavantage.co/query";
+  private readonly scope: CacheScope;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
     const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = cache.get(`alphavantage:${symbol}`);
-      if (cached && cached.expiresAt > now) result[symbol] = cached.data;
+      const cached = readEnrichmentCache("alphavantage", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
       else misses.push(symbol);
     }
 
@@ -1188,7 +1283,8 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               ...(headlines.length > 0 && { headlines })
             };
 
-            cache.set(`alphavantage:${symbol}`, { expiresAt: now + ttlMs(), data });
+            // AV only writes to cache on a valid feed (warning/error detection above throws).
+            writeEnrichmentCache("alphavantage", symbol, this.scope, this.userId, data, now + ttlMs());
             result[symbol] = data;
           } catch {
             result[symbol] = {};
@@ -1261,9 +1357,15 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
   readonly name = "fintechstudios";
   readonly configured = true;
   private readonly base: string;
+  private readonly scope: CacheScope;
 
-  constructor(private readonly apiKey: string) {
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
     this.base = process.env.FINTECH_STUDIOS_BASE_URL ?? "https://studio.fintechstudios.com/api/v1";
+    this.scope = cacheScopeForKeySource(keySource, userId);
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1271,11 +1373,12 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
     if (normalized.length === 0) return {};
 
     const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = cache.get(`fintechstudios:${symbol}`);
-      if (cached && cached.expiresAt > now) {
+      const cached = readEnrichmentCache("fintechstudios", symbol, this.userId, consented, now);
+      if (cached) {
         result[symbol] = cached.data;
       } else {
         misses.push(symbol);
@@ -1339,7 +1442,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
             };
 
             if (headlines.length > 0) {
-              cache.set(`fintechstudios:${symbol}`, { expiresAt: now + ttlMs(), data });
+              writeEnrichmentCache("fintechstudios", symbol, this.scope, this.userId, data, now + ttlMs());
             }
             result[symbol] = data;
           } catch (err) {
