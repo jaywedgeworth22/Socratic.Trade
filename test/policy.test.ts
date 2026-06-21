@@ -339,6 +339,86 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain('Order side "cover" is not supported');
   });
+
+  // T1 — maxSymbolExposureNotional must be side-aware (regression for the side-blind cap
+  // that could block automated de-risking exits).
+  it("maxSymbolExposureNotional blocks an opening buy that pushes symbol notional over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "buy", dollarAmount: 500 },
+      { ...context(500), policy: { ...enabledPolicy, maxSymbolExposureNotional: 1200 } }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("notional exposure");
+  });
+
+  it("maxSymbolExposureNotional does NOT block a risk-reducing sell", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 2, dollarAmount: undefined, type: "market" },
+      { ...context(500), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
+  it("maxSymbolExposureNotional does NOT block a full-position exit sell", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(1000), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
+  // T7 — enabled-path short/cover guardrails.
+  it("short without a mandatory stop-loss is rejected when short selling is enabled", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "VOO", side: "short", dollarAmount: 1000 },
+      { ...context(1000), policy: { ...enabledPolicy, shortSellingEnabled: true, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 0 } } }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("mandatory stop-loss");
+  });
+
+  it("short over maxShortOrderNotional is rejected", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "VOO", side: "short", dollarAmount: 5000 },
+      { ...context(5000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortOrderNotional: 1000, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } } }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("max short order limit");
+  });
+
+  it("opening short over maxShortExposurePct is rejected", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "VOO", side: "short", dollarAmount: 6000 },
+      { ...context(6000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortExposurePct: 50, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } } }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("short exposure");
+  });
+
+  it("cover exceeding the held short is rejected", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 3, dollarAmount: undefined, type: "market" },
+      {
+        ...context(100),
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "VOO", "TSLA"] },
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("exceeds current TSLA short");
+  });
+
+  it("a valid in-range cover is approved", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, type: "market" },
+      {
+        ...context(1000),
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "VOO", "TSLA"] },
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
 });
 
 function context(estimatedNotional = 10) {

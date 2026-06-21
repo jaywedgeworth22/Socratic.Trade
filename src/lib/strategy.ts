@@ -1382,44 +1382,52 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
       const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
       if (!matched) continue;
 
+      const execQty = matched.filledQuantity ?? 0;
+      const execPrice = matched.averagePrice ?? fill.price;
+      // Book the executed portion of an order. Idempotent: reconcile UPDATES the
+      // existing fill record (by fill.id), so a later poll overwriting with a larger
+      // executed quantity never double counts; the realtime trade_updates stream funnels
+      // into the same record too.
+      const bookExecuted = (auditStatus: string) => {
+        updateFillEvent(fill.id, {
+          status: "filled",
+          price: execPrice,
+          quantity: execQty,
+          notional: execPrice * execQty,
+          filledAt: matched.updatedAt ?? new Date().toISOString(),
+          raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
+        }, userId);
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId);
+      };
+
       if (matched.state === "filled") {
         const price = matched.averagePrice ?? fill.price;
         const qty = matched.filledQuantity ?? fill.quantity;
-        const notional = price * qty;
-        
         updateFillEvent(fill.id, {
           status: "filled",
           price,
           quantity: qty,
-          notional,
+          notional: price * qty,
           filledAt: matched.updatedAt ?? new Date().toISOString(),
-          raw: {
-            ...((fill.raw as Record<string, unknown>) ?? {}),
-            reconciliation: matched
-          }
+          raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
-        
-        audit("fill_reconciled", {
-          fillId: fill.id,
-          symbol: fill.symbol,
-          status: "filled",
-          price,
-          quantity: qty
-        }, userId);
-      } else if (["cancelled", "rejected", "failed"].includes(matched.state)) {
-        updateFillEvent(fill.id, {
-          status: matched.state,
-          raw: {
-            ...((fill.raw as Record<string, unknown>) ?? {}),
-            reconciliation: matched
-          }
-        }, userId);
-        
-        audit("fill_reconciled", {
-          fillId: fill.id,
-          symbol: fill.symbol,
-          status: matched.state
-        }, userId);
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId);
+      } else if (matched.state === "partially_filled") {
+        // A live order that has executed some-but-not-all shares: book the executed
+        // portion now so it enters P&L/exposure instead of being silently dropped.
+        if (execQty > 0) bookExecuted("partially_filled");
+      } else if (["cancelled", "canceled", "rejected", "failed"].includes(matched.state)) {
+        if (execQty > 0) {
+          // Order terminated AFTER a partial execution — book the executed shares
+          // rather than marking the whole fill cancelled and losing them.
+          bookExecuted(`${matched.state}_partial`);
+        } else {
+          updateFillEvent(fill.id, {
+            status: matched.state,
+            raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
+          }, userId);
+          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId);
+        }
       }
     }
   } catch (error) {
@@ -1435,34 +1443,53 @@ export function generateProactiveRiskProposals(
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
   const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
+  const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
 
-  if (stopLossPct > 0 || takeProfitPct > 0) {
-    for (const pos of positions) {
-      if (pos.quantity <= 0.000001 || pos.averageCost <= 0) continue;
-      const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
-      if (!currentPrice || currentPrice <= 0) continue;
+  if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
 
+  for (const pos of positions) {
+    if (Math.abs(pos.quantity) <= 0.000001 || pos.averageCost <= 0) continue;
+    const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
+    if (!currentPrice || currentPrice <= 0) continue;
+
+    let reason = "";
+    let exitSide: "sell" | "cover" = "sell";
+
+    if (pos.quantity > 0) {
+      // Long: profit when price rises; exit a breach with a SELL.
       const returnPct = ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
-
-      let reason = "";
       if (stopLossPct > 0 && returnPct <= -stopLossPct) {
         reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${stopLossPct}% limit.`;
       } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
         reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
-      if (reason) {
-        proactiveProposals.push({
-          symbol: normalizeSymbol(pos.symbol),
-          side: "sell",
-          type: "market",
-          quantity: pos.quantity,
-          timeInForce: "gfd",
-          marketHours: "regular_hours",
-          rationale: reason,
-          tradeThesisTag: "Risk-Exit",
-          entryMarketRegime: "Active Risk Check"
-        });
+      exitSide = "sell";
+    } else {
+      // Short: profit when price FALLS; exit a breach with a COVER. Only managed when
+      // short selling is enabled (the only path that can open a short in the first place).
+      if (!policy.shortSellingEnabled) continue;
+      const returnPct = ((pos.averageCost - currentPrice) / pos.averageCost) * 100;
+      const effShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
+      if (effShortStop > 0 && returnPct <= -effShortStop) {
+        reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop}% limit.`;
+      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
+        reason = `Proactive short take-profit cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
+      exitSide = "cover";
+    }
+
+    if (reason) {
+      proactiveProposals.push({
+        symbol: normalizeSymbol(pos.symbol),
+        side: exitSide,
+        type: "market",
+        quantity: Math.abs(pos.quantity),
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: reason,
+        tradeThesisTag: "Risk-Exit",
+        entryMarketRegime: "Active Risk Check"
+      });
     }
   }
   return proactiveProposals;

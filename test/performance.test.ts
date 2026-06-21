@@ -17,7 +17,7 @@ import {
   getThesisScorecard,
   recordFillFromProposal
 } from "../src/lib/performance";
-import type { FillEvent, MarketScan } from "../src/lib/types";
+import type { FillEvent, MarketScan, OrderSide } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-performance-${randomUUID()}.db`)}`;
@@ -371,7 +371,68 @@ describe("getThesisScorecard", () => {
   });
 });
 
-function fill(input: Partial<FillEvent> & { id: string; side: "buy" | "sell"; quantity: number; price: number; notional: number; userId?: string }): FillEvent {
+describe("calculatePnl — short/cover", () => {
+  it("short then cover at a lower price realizes a profit (price fell)", () => {
+    const fills: FillEvent[] = [
+      fill({ id: "sh1", side: "short", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "cv1", side: "cover", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(20);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.openLots).toHaveLength(0);
+  });
+
+  it("short then cover at a higher price realizes a loss (price rose)", () => {
+    const fills: FillEvent[] = [
+      fill({ id: "sh2", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "cv2", side: "cover", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    expect(calculatePnl(fills).realized).toBeCloseTo(-30);
+  });
+
+  it("marks an open short to market with the short sign (profit when below entry)", () => {
+    const pnl = calculatePnl(
+      [fill({ id: "sh3", side: "short", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T00:00:01.000Z" })],
+      { AAPL: 100 }
+    );
+    expect(pnl.unrealized).toBeCloseTo(20);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("short");
+  });
+
+  it("a sell skips a leading short lot and realizes against the long lot (no $0 erasure)", () => {
+    const fills: FillEvent[] = [
+      fill({ id: "x-sh", side: "short", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "x-b", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:02.000Z" }),
+      fill({ id: "x-s", side: "sell", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:03.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    // The sell closes the LONG lot (+30); the short lot is NOT consumed at $0.
+    expect(pnl.realized).toBeCloseTo(30);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("long");
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("short");
+  });
+
+  it("a cover skips a leading long lot and realizes against the short lot", () => {
+    const fills: FillEvent[] = [
+      fill({ id: "y-b", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "y-sh", side: "short", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T00:00:02.000Z" }),
+      fill({ id: "y-cv", side: "cover", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:03.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(20);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("long");
+  });
+});
+
+function fill(input: Partial<FillEvent> & { id: string; side: OrderSide; quantity: number; price: number; notional: number; userId?: string }): FillEvent {
   return {
     proposalId: "p1",
     runId: "r1",

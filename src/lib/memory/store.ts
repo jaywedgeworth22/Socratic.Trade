@@ -2,7 +2,7 @@
 // backed by the user_memory SQLite table. Hard constraints are always surfaced first on retrieve.
 // Ported from reference/atlas-public-src/bff/memory/store.mjs (Map -> SQLite).
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 import {
   audit,
   deleteMemory,
