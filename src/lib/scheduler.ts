@@ -7,6 +7,7 @@
 import { checkAllUserPriceAlerts } from "./alerts";
 import { getPolicy, listUsers } from "./db";
 import { isRunAllowedNow } from "./market-hours";
+import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
 import { runStrategyOnce } from "./strategy";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
@@ -68,6 +69,13 @@ async function tick(): Promise<void> {
       const schedule = userSchedules[userId];
 
       const policy = getPolicy(userId);
+
+      // Deterministic proposal expiry runs independently of the trading cadence so a stale
+      // approval queue self-clears even while the system is halted or the market is closed.
+      if (policy.accountNumber) {
+        void expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
+          .catch((err) => console.error("[scheduler] proposal-expiry error:", err));
+      }
 
       if (policy.systemState !== "active" || !policy.accountNumber) {
         schedule.nextRunAt = null;
