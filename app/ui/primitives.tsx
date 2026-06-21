@@ -168,7 +168,7 @@ export function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: Array<{ value: T; label: string; tone?: Tone }>;
+  options: Array<{ value: T; label: string; tone?: Tone; title?: string }>;
 }) {
   return (
     <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5">
@@ -180,6 +180,7 @@ export function Segmented<T extends string>({
           <button
             key={opt.value}
             type="button"
+            title={opt.title}
             onClick={() => onChange(opt.value)}
             className={cn(
               "rounded-md px-3 py-1 text-xs font-semibold transition-colors",
