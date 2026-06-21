@@ -80,6 +80,20 @@ steps materially change.
   `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
   build green. See
   `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
+- 2026-06-21 (`chore/safety-quick-wins`): **Failure-mode review + first safety quick-wins.**
+  A 12-agent failure-mode brainstorm (114 findings → ~70 distinct) plus a 5-agent
+  adversarial verification of the Top 5 (4 confirmed, 1 — "synthetic stops are an
+  ungated real-trade cannon" — substantially overstated, crit→low). Full writeup:
+  `docs/reviews/2026-06-20-failure-mode-brainstorm.md`. Landed the first quick-win
+  batch (no behavior change to the money path): SQLite `busy_timeout=5000` +
+  `synchronous=NORMAL` PRAGMAs, bull/bear `JSON.parse` guards (degrade instead of
+  crashing the run), `bearSystemPrompt` `\n` join fix, `confidenceScore` clamp +
+  schema bounds, and **CI activation** (`ci-pending/*.yml` → `.github/workflows/`).
+  tsc clean, 390 tests, build green. NOTE: pushing the CI workflows needs the
+  GitHub token re-scoped (`gh auth refresh -h github.com -s workflow`). Deep fixes
+  still open: auth layer (T1), execution-section CAS/atomicity (T4/T5), portfolio
+  circuit breaker (#7), boot-time autonomy interlock (T3). See
+  `docs/rollouts/2026-06-21-safety-quick-wins.md`.
 - 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
 - 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
 - 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
