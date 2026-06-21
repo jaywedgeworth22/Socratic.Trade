@@ -494,6 +494,41 @@ export function setUserSetting(userId: string, key: string, value: unknown): voi
   audit("policy_change", { userId, key, value }, userId);
 }
 
+// ── Shared market-data pool consent ───────────────────────────────────────────
+// A user may opt into a reciprocal market-data pool: GENERAL market data (quotes, fundamentals,
+// OHLC, news) pulled via THEIR provider keys / broker MCP is contributed to a shared cache that
+// other consenting users can read, and in exchange they read data others contributed. This pools
+// API spend and enriches everyone's data. SCOPE BOUNDARY: only general market data is pooled —
+// a user's PERSONAL account data (positions, orders, balances, P&L, credentials) is NEVER pooled.
+export interface DataPoolConsent {
+  accepted: boolean;
+  acceptedAt: string | null;
+  version: number;
+}
+/** Bump when the consent terms materially change so prior acceptances must be re-confirmed. */
+export const DATA_POOL_CONSENT_VERSION = 1;
+
+export function getDataPoolConsent(userId: string = "local"): DataPoolConsent {
+  return getUserSetting<DataPoolConsent>(userId, "data_pool_consent", { accepted: false, acceptedAt: null, version: 0 });
+}
+
+export function setDataPoolConsent(userId: string, accepted: boolean): DataPoolConsent {
+  const record: DataPoolConsent = {
+    accepted,
+    acceptedAt: accepted ? new Date().toISOString() : null,
+    version: DATA_POOL_CONSENT_VERSION
+  };
+  setUserSetting(userId, "data_pool_consent", record);
+  audit("data_pool_consent", { userId, accepted, version: DATA_POOL_CONSENT_VERSION }, userId);
+  return record;
+}
+
+/** True only when the user has accepted the CURRENT consent version (re-prompt on a version bump). */
+export function hasDataPoolConsent(userId: string = "local"): boolean {
+  const c = getDataPoolConsent(userId);
+  return c.accepted === true && (c.version ?? 0) >= DATA_POOL_CONSENT_VERSION;
+}
+
 export function getSetting<T>(key: string, fallback: T): T {
   const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
   if (!row) return fallback;

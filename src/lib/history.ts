@@ -10,7 +10,7 @@
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { fulfillMarketDataDemand, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
@@ -19,7 +19,7 @@ import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
 const cache = new Map<string, { expiresAt: number; bars: OHLCBar[] }>();
 const KEYED_HISTORY_SERVICES = ["massive", "tradier", "marketstack"] as const;
-type CacheScope = "shared" | "private";
+type CacheScope = "shared" | "private" | "pool";
 
 interface YahooChartResponse {
   chart?: {
@@ -62,9 +62,17 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     marketstack: resolveApiKeyWithSource("marketstack", userId)
   };
   const privateCacheKey = historyCacheKey(symbol, userId, "private");
+  const poolCacheKey = historyCacheKey(symbol, userId, "pool");
   const sharedCacheKey = historyCacheKey(symbol, userId, "shared");
+  const consented = hasDataPoolConsent(userId ?? "local");
   const privateHit = cache.get(privateCacheKey);
   if (privateHit && privateHit.expiresAt > now) return privateHit.bars;
+  // The reciprocal pool is read ONLY by consenting users (they also contribute their keyed pulls
+  // to it). Non-consenting users skip it entirely and fall through to the public/free shared tier.
+  if (consented) {
+    const poolHit = cache.get(poolCacheKey);
+    if (poolHit && poolHit.expiresAt > now) return poolHit.bars;
+  }
   const sharedHit = cache.get(sharedCacheKey);
   if (sharedHit && sharedHit.expiresAt > now) return sharedHit.bars;
 
@@ -72,9 +80,9 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
-    { scope: cacheScopeForKeySource(keySources.massive.source), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
-    { scope: cacheScopeForKeySource(keySources.tradier.source), fetch: () => fetchTradier(symbol, startDate, keySources.tradier.key) },
-    { scope: cacheScopeForKeySource(keySources.marketstack.source), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
+    { scope: cacheScopeForKeySource(keySources.massive.source, userId), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
+    { scope: cacheScopeForKeySource(keySources.tradier.source, userId), fetch: () => fetchTradier(symbol, startDate, keySources.tradier.key) },
+    { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
     // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
     { scope: "private", fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year" }) },
     { scope: "shared", fetch: () => fetchYahoo(symbol) },
@@ -84,7 +92,8 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   for (const source of sources) {
     const bars = await source.fetch();
     if (bars && bars.length >= 2) {
-      cache.set(source.scope === "private" ? privateCacheKey : sharedCacheKey, { expiresAt: now + historyTtlMs(), bars });
+      const cacheKey = source.scope === "private" ? privateCacheKey : source.scope === "pool" ? poolCacheKey : sharedCacheKey;
+      cache.set(cacheKey, { expiresAt: now + historyTtlMs(), bars });
       if (source.scope === "shared") emitHistoryDemandFilled(symbol, now);
       return bars;
     }
@@ -95,12 +104,17 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
 
 function historyCacheKey(symbol: string, userId: string | undefined, scope: CacheScope): string {
   if (scope === "private") return `user:${userId ?? "local"}:${symbol}`;
+  if (scope === "pool") return `pool:${symbol}`;
   return `shared:${symbol}`;
 }
 
-function cacheScopeForKeySource(source: ApiKeySource): CacheScope {
-  if (source === "user" && !shareUserKeyedHistory()) return "private";
-  return "shared";
+function cacheScopeForKeySource(source: ApiKeySource, userId: string | undefined): CacheScope {
+  if (source !== "user") return "shared"; // env-key / free providers are public — everyone benefits.
+  // A user's OWN provider key: shared globally if the env override is on; otherwise contributed to
+  // the reciprocal POOL when the user has consented; otherwise kept private to that user.
+  if (shareUserKeyedHistory()) return "shared";
+  if (hasDataPoolConsent(userId ?? "local")) return "pool";
+  return "private";
 }
 
 function shareUserKeyedHistory(): boolean {

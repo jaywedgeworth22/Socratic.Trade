@@ -618,186 +618,201 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   if (row.status !== "proposed") throw new Error(`Proposal is already ${row.status}.`);
 
   const proposal = row.proposal;
-  const gateway = getBrokerGateway(policy, userId);
 
-  const [portfolio, positions] = await Promise.all([
-    gateway.getPortfolio(policy.accountNumber),
-    gateway.getEquityPositions(policy.accountNumber)
-  ]);
-  const allowedSymbols = allowedSymbolsForPolicy(policy);
-  const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId);
-  const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
-  const approvalScan = mergeQuoteData(
-    approvalScanBase,
-    await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
-  );
+  // TOCTOU guard on notional/order caps: the daily/hourly cap check reads the
+  // trade_proposals table BEFORE inserting the new row. Without this lock, a
+  // concurrent autonomous run (which holds acquireStrategyLock) and a manual
+  // Approve can each read the same pre-cap totals and both place — jointly
+  // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
+  // the same lock here serialises approval execution against the strategy loop.
+  if (!acquireStrategyLock(userId)) {
+    return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
+  }
 
-  // In Test mode, evaluate the approval against the standalone local account.
-  const currentPrices = currentPricesFromScan(approvalScan);
-  const account = executionState.usesLocalSimulation
-    ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-    : { portfolio, positions };
+  try {
+    const gateway = getBrokerGateway(policy, userId);
 
-  const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
-  if (!tradability[proposal.symbol]?.tradable) {
-    const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
-    updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId);
-    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
-    await sendNotification(
-      {
-        type: "block",
-        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-        payload: { proposalId, reason, proposal }
-      },
-      { policy, userId }
+    const [portfolio, positions] = await Promise.all([
+      gateway.getPortfolio(policy.accountNumber),
+      gateway.getEquityPositions(policy.accountNumber)
+    ]);
+    const allowedSymbols = allowedSymbolsForPolicy(policy);
+    const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId);
+    const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
+    const approvalScan = mergeQuoteData(
+      approvalScanBase,
+      await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
     );
-    return { status: "blocked", reasons: [reason] };
-  }
 
-  const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
-  const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-  const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-  const isLiveExecution = !executionState.usesLocalSimulation && executionState.environment === "live";
-  const decision = evaluateTradeProposal(proposal, {
-    policy,
-    portfolio: account.portfolio,
-    positions: account.positions,
-    dailyNotionalUsed: daily.notional,
-    hourlyNotionalUsed: hourly.notional,
-    dailyOrderCount: daily.orderCount,
-    estimatedNotional: review.estimatedNotional,
-    marketScan: approvalScan,
-    washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
-    accountCapabilities: activeAccount?.capabilities,
-    isLiveExecution,
-    // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
-    priorDayTradeCount: isLiveExecution
-      ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
-      : 0
-  });
+    // In Test mode, evaluate the approval against the standalone local account.
+    const currentPrices = currentPricesFromScan(approvalScan);
+    const account = executionState.usesLocalSimulation
+      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
+      : { portfolio, positions };
 
-  if (!decision.approved) {
-    updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId);
-    audit("proposal_approved", {
-      proposalId,
-      symbol: proposal.symbol,
-      side: proposal.side,
-      action: "approval",
-      result: "blocked",
-      reasons: decision.reasons
-    }, userId);
-    await sendNotification(
-      {
-        type: "block",
-        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-        payload: { proposalId, decision, review, proposal }
-      },
-      { policy, userId }
-    );
-    autoRevertOnCapBreach(decision.reasons, policy, userId);
-    return { status: "blocked", reasons: decision.reasons };
-  }
+    const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
+    if (!tradability[proposal.symbol]?.tradable) {
+      const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
+      updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId);
+      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
+      await sendNotification(
+        {
+          type: "block",
+          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
+          payload: { proposalId, reason, proposal }
+        },
+        { policy, userId }
+      );
+      return { status: "blocked", reasons: [reason] };
+    }
 
-  // Re-assert the proposal is still pending immediately before we act on it. The awaits above
-  // (scan, broker review) take time, during which deterministic expiry (scheduler tick) or a
-  // concurrent run's LLM re-validation could have retired this proposal to expired/withdrawn —
-  // we must not place an order for an idea the system already pulled from the queue.
-  const stillPending = getProposal(proposalId, userId);
-  if (!stillPending || stillPending.status !== "proposed") {
-    const current = stillPending?.status ?? "removed";
-    return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-  }
+    const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+    const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+    const isLiveExecution = !executionState.usesLocalSimulation && executionState.environment === "live";
+    const decision = evaluateTradeProposal(proposal, {
+      policy,
+      portfolio: account.portfolio,
+      positions: account.positions,
+      dailyNotionalUsed: daily.notional,
+      hourlyNotionalUsed: hourly.notional,
+      dailyOrderCount: daily.orderCount,
+      estimatedNotional: review.estimatedNotional,
+      marketScan: approvalScan,
+      washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
+      accountCapabilities: activeAccount?.capabilities,
+      isLiveExecution,
+      // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
+      priorDayTradeCount: isLiveExecution
+        ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
+        : 0
+    });
 
-  if (executionState.usesLocalSimulation) {
-    updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional, userId);
+    if (!decision.approved) {
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId);
+      audit("proposal_approved", {
+        proposalId,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        action: "approval",
+        result: "blocked",
+        reasons: decision.reasons
+      }, userId);
+      await sendNotification(
+        {
+          type: "block",
+          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
+          payload: { proposalId, decision, review, proposal }
+        },
+        { policy, userId }
+      );
+      autoRevertOnCapBreach(decision.reasons, policy, userId);
+      return { status: "blocked", reasons: decision.reasons };
+    }
+
+    // Re-assert the proposal is still pending immediately before we act on it. The awaits above
+    // (scan, broker review) take time, during which deterministic expiry (scheduler tick) or a
+    // concurrent run's LLM re-validation could have retired this proposal to expired/withdrawn —
+    // we must not place an order for an idea the system already pulled from the queue.
+    const stillPending = getProposal(proposalId, userId);
+    if (!stillPending || stillPending.status !== "proposed") {
+      const current = stillPending?.status ?? "removed";
+      return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+    }
+
+    if (executionState.usesLocalSimulation) {
+      updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional, userId);
+      const fill = recordFillFromProposal({
+        userId,
+        accountNumber: row.accountNumber,
+        proposalId,
+        runId: row.runId,
+        source: "paper",
+        proposal,
+        review,
+        marketScan: approvalScan,
+        status: "filled"
+      });
+      const paperProjection = getPaperPortfolioProjection({
+        accountNumber: row.accountNumber,
+        startingCash: policy.paperStartingCash,
+        currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) },
+        userId
+      });
+      recordPortfolioSnapshot({
+        userId,
+        runId: row.runId,
+        accountNumber: row.accountNumber,
+        source: "paper",
+        portfolio: paperProjection.portfolio,
+        positions: paperProjection.positions
+      });
+      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" }, userId);
+      await sendNotification(
+        {
+          type: "fill",
+          title: `${proposal.symbol} Test ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
+          payload: { proposalId, fill }
+        },
+        { policy, userId }
+      );
+      return { status: "paper" };
+    }
+
+    // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
+    // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
+    // lost broker response can't leave an untracked real order.
+    const refId = crypto.randomUUID();
+    updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, refId);
+    let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+    try {
+      execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
+    } catch (placeError) {
+      const message = placeError instanceof Error ? placeError.message : String(placeError);
+      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+      await sendNotification(
+        { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
+        { policy, userId }
+      );
+      return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
+    }
+    updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
     const fill = recordFillFromProposal({
       userId,
       accountNumber: row.accountNumber,
       proposalId,
       runId: row.runId,
-      source: "paper",
+      source: "live",
       proposal,
       review,
+      execution,
       marketScan: approvalScan,
-      status: "filled"
+      status: execution.state === "filled" ? "filled" : "pending_reconciliation"
     });
-    const paperProjection = getPaperPortfolioProjection({
-      accountNumber: row.accountNumber,
-      startingCash: policy.paperStartingCash,
-      currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) },
-      userId
-    });
-    recordPortfolioSnapshot({
-      userId,
-      runId: row.runId,
-      accountNumber: row.accountNumber,
-      source: "paper",
-      portfolio: paperProjection.portfolio,
-      positions: paperProjection.positions
-    });
-    audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" }, userId);
+    audit("proposal_approved", {
+      proposalId,
+      symbol: proposal.symbol,
+      side: proposal.side,
+      action: "approval",
+      result: "placed",
+      orderId: execution.orderId
+    }, userId);
     await sendNotification(
       {
         type: "fill",
-        title: `${proposal.symbol} Test ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
+        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
         payload: { proposalId, fill }
       },
       { policy, userId }
     );
-    return { status: "paper" };
+    // Push so other open dashboards refresh immediately (the approving client refreshes via its
+    // own response).
+    emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
+    return { status: "placed", orderId: execution.orderId };
+  } finally {
+    releaseStrategyLock(userId);
   }
-
-  // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
-  // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
-  // lost broker response can't leave an untracked real order.
-  const refId = crypto.randomUUID();
-  updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, refId);
-  let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
-  try {
-    execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
-  } catch (placeError) {
-    const message = placeError instanceof Error ? placeError.message : String(placeError);
-    updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
-    audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
-    await sendNotification(
-      { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
-      { policy, userId }
-    );
-    return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
-  }
-  updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-  const fill = recordFillFromProposal({
-    userId,
-    accountNumber: row.accountNumber,
-    proposalId,
-    runId: row.runId,
-    source: "live",
-    proposal,
-    review,
-    execution,
-    marketScan: approvalScan,
-    status: execution.state === "filled" ? "filled" : "pending_reconciliation"
-  });
-  audit("proposal_approved", {
-    proposalId,
-    symbol: proposal.symbol,
-    side: proposal.side,
-    action: "approval",
-    result: "placed",
-    orderId: execution.orderId
-  }, userId);
-  await sendNotification(
-    {
-      type: "fill",
-      title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
-      payload: { proposalId, fill }
-    },
-    { policy, userId }
-  );
-  // Push so other open dashboards refresh immediately (the approving client refreshes via its
-  // own response).
-  emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
-  return { status: "placed", orderId: execution.orderId };
 }
 
 export function rejectProposal(proposalId: string, userId: string = "local"): void {

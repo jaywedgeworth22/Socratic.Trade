@@ -191,6 +191,98 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
+// ── Shared market-data pool consent gate ─────────────────────────────────
+
+type ConsentGateState = "loading" | "needed" | "done";
+
+function ConsentGate({ onResolved }: { onResolved: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+
+  async function respond(accepted: boolean) {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await fetch("/api/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accepted })
+      });
+    } catch {
+      /* best-effort — proceed regardless of network error */
+    }
+    onResolved();
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consent-title"
+      aria-describedby="consent-body"
+      className="fixed inset-0 z-[2000] flex items-center justify-center p-4"
+    >
+      {/* Opaque backdrop — blocks all interaction beneath */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[3px]" />
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <Network size={18} />
+          </span>
+          <div>
+            <h2 id="consent-title" className="text-base font-semibold text-fg">
+              Shared market-data pool
+            </h2>
+            <p className="mt-0.5 text-xs text-muted">One-time choice — can be changed later in Settings</p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div id="consent-body" className="space-y-3 text-sm leading-relaxed text-muted">
+          <p>
+            When enabled, general market data you pull through your own API keys or broker MCP —
+            quotes, fundamentals, price history, and news — is contributed to a shared cache
+            that other consenting users can read. In return, you read data others have contributed,
+            reducing API spend and enriching everyone&apos;s market view.
+          </p>
+          <p>
+            <strong className="font-semibold text-fg">Your personal account data is never shared.</strong>{" "}
+            Positions, orders, balances, P&amp;L, and credentials remain strictly private and never
+            leave your device.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void respond(false)}
+            className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            Decline
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void respond(true)}
+            className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50"
+          >
+            {submitting ? "Saving…" : "Agree & Continue"}
+          </button>
+        </div>
+
+        {/* Muted reassurance */}
+        <p className="text-[11px] text-faint text-center">
+          You can enable or disable pooling at any time under Settings → Data.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
@@ -202,6 +294,23 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Consent gate: "loading" → fetch in progress; "needed" → show modal; "done" → clear
+  const [consentGate, setConsentGate] = useState<ConsentGateState>("loading");
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/consent")
+      .then((r) => (r.ok ? (r.json() as Promise<{ needsConsent: boolean }>) : null))
+      .then((data) => {
+        if (cancelled) return;
+        setConsentGate(data?.needsConsent === true ? "needed" : "done");
+      })
+      .catch(() => {
+        // Network error: don't block the app — skip the gate
+        if (!cancelled) setConsentGate("done");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const [killConfirm, setKillConfirm] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
@@ -499,6 +608,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const safetyBanner = executionBanner(executionState);
   return (
     <div className="flex min-h-dvh flex-col overflow-x-hidden lg:h-dvh lg:overflow-hidden">
+      {/* ── Shared market-data pool consent gate (blocking until answered) ── */}
+      {consentGate === "needed" && (
+        <ConsentGate onResolved={() => setConsentGate("done")} />
+      )}
       {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
         className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
