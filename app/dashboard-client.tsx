@@ -2792,23 +2792,14 @@ type ApiKeyStatus = {
 function LogoSourceField() {
   const source = useLogoSource();
   return (
-    <Field
-      label="Logo source"
-      hint={
-        source === "logodev"
-          ? "logo.dev active — CDN-hosted logos with monogram fallback, GitHub as backup"
-          : source === "github"
-            ? "GitHub only — logo.dev skipped even when a token is configured"
-            : "Auto — GitHub first (free, no key), logo.dev when GitHub has no match"
-      }
-    >
+    <Field label="Logo source">
       <Segmented<LogoSource>
         value={source}
         onChange={setLogoSourcePref}
         options={[
           { value: "auto", label: "Auto" },
-          { value: "github", label: "GitHub" },
-          { value: "logodev", label: "logo.dev" }
+          { value: "github", label: "Option 1", title: "GitHub — davidepalazzo/ticker-logos" },
+          { value: "logodev", label: "Option 2", title: "logo.dev — by ticker, with monogram fallback" }
         ]}
       />
     </Field>
