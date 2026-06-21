@@ -202,16 +202,10 @@ export interface TradingPolicy {
    */
   proposalExpiryMinutes?: number;
   /**
-   * When true (default), strategy runs also re-check still-pending proposals against the
-   * fresh scan via the LLM ("does this still stand?"), withdrawing the ones it no longer
-   * advises and stamping the survivors. Re-checks happen during regular market hours only.
-   */
-  revalidatePendingOnRun?: boolean;
-  /**
-   * How often (in hours) each still-pending proposal is re-validated during regular market
-   * hours (default 3). A proposal is re-checked when this many hours have elapsed since it
-   * was created or last re-checked — so it is re-checked a few times across a trading day,
-   * never overnight when the market is closed. 0 disables the LLM re-check.
+   * How often each still-pending proposal is re-validated by the LLM, as the minimum hours
+   * between re-checks for a given proposal. Re-checks ride on strategy runs and happen during
+   * regular market hours only (never overnight). 0 = every run; 24 = once per day; 120 = every
+   * 5 days. Default 0 (every run).
    */
   proposalRevalidateCadenceHours?: number;
   permittedOrderTypes: OrderType[];

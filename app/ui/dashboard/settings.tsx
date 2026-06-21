@@ -228,22 +228,15 @@ export function SettingsContent({
           <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
           <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
-          <Field label="Re-check pending (market hours)">
+          <Field label="Re-check pending proposals">
             <select
               className={inputClass}
-              value={policy.revalidatePendingOnRun === false ? "off" : String(policy.proposalRevalidateCadenceHours ?? 3)}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "off") updatePolicy({ revalidatePendingOnRun: false });
-                else updatePolicy({ revalidatePendingOnRun: true, proposalRevalidateCadenceHours: Number(v) });
-              }}
+              value={String(policy.proposalRevalidateCadenceHours ?? 0)}
+              onChange={(e) => updatePolicy({ proposalRevalidateCadenceHours: Number(e.target.value) })}
             >
-              <option value="off">Off — don&apos;t re-check</option>
-              <option value="1">Every 1 hour</option>
-              <option value="2">Every 2 hours</option>
-              <option value="3">Every 3 hours</option>
-              <option value="4">Every 4 hours</option>
-              <option value="6">Every 6 hours</option>
+              <option value="0">Every run</option>
+              <option value="24">Once per day</option>
+              <option value="120">Every 5 days</option>
             </select>
           </Field>
           <Field label="Pending proposals expire after">
@@ -263,7 +256,7 @@ export function SettingsContent({
             </select>
           </Field>
           <p className="text-xs leading-relaxed text-faint sm:col-span-2">
-            Proposals sit in the approval queue until you act on them. <span className="text-muted">Re-check</span> has each strategy run ask the LLM whether every still-pending proposal still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors &ldquo;re-checked&rdquo;. It runs only during regular market hours (no overnight checks) and re-checks each proposal on the cadence above. <span className="text-muted">Expire after</span> is a deterministic backstop: anything pending longer than that is auto-expired regardless.
+            Proposals sit in the approval queue until you act on them. <span className="text-muted">Re-check</span> has the strategy ask the LLM whether each still-pending proposal still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors &ldquo;re-checked&rdquo;. It only happens when the strategy runs, during regular market hours (never overnight), at most this often per proposal. <span className="text-muted">Expire after</span> is a deterministic backstop: anything pending longer than that is auto-expired regardless.
           </p>
           <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
           <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />

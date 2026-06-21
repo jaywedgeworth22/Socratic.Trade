@@ -100,7 +100,7 @@ describe("revalidatePendingProposals", () => {
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-LLM";
     process.env.OPENAI_API_KEY = "test-key";
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 1 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalRevalidateCadenceHours: 0 };
     setPolicy(policy);
     await seedPending(account, "keep-1", { symbol: "MSFT" });
     await seedPending(account, "drop-1", { symbol: "TSLA" });
@@ -137,7 +137,7 @@ describe("revalidatePendingProposals", () => {
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-NOKEY";
     delete process.env.OPENAI_API_KEY;
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 1 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalRevalidateCadenceHours: 0 };
     setPolicy(policy);
     await seedPending(account, "nokey-1");
 
@@ -152,13 +152,13 @@ describe("revalidatePendingProposals", () => {
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-YOUNG";
     process.env.OPENAI_API_KEY = "test-key";
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 3 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalRevalidateCadenceHours: 24 };
     setPolicy(policy);
     await seedPending(account, "young-1");
 
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-    // Just inserted ⇒ ~0 min old, well under the 3h cadence ⇒ not due for a re-check.
+    // Just inserted ⇒ ~0 min old, well under the once-per-day cadence ⇒ not due for a re-check.
     const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now(), marketOpen: true });
     expect(res).toMatchObject({ checked: 0, withdrawn: 0, reaffirmed: 0 });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -170,7 +170,7 @@ describe("revalidatePendingProposals", () => {
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-CLOSED";
     process.env.OPENAI_API_KEY = "test-key";
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 1 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalRevalidateCadenceHours: 0 };
     setPolicy(policy);
     await seedPending(account, "closed-1");
 

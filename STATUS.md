@@ -32,10 +32,10 @@ steps materially change.
   → `min-h-16`). (Part 2, backend) New `src/lib/proposal-revalidation.ts`:
   **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 2880 =
   2 days; runs at run-start AND every scheduler tick → status `expired`) and a
-  **cadence-gated on-run LLM re-check** (`policy.revalidatePendingOnRun` default
-  on, `proposalRevalidateCadenceHours` default 3) that, inside `runStrategyOnce`,
-  asks the LLM whether each *due* still-pending proposal still stands — **regular
-  market hours only** (no overnight checks), each one re-checked every N hours.
+  **cadence-gated on-run LLM re-check** (`proposalRevalidateCadenceHours`, default
+  0 = every run; not optional) that, inside `runStrategyOnce`, asks the LLM whether
+  each *due* still-pending proposal still stands — **regular market hours only** (no
+  overnight checks). Dropdown: Every run / Once per day / Every 5 days.
   `reaffirm` stamps `last_revalidated_at` (UI: "Re-checked X ago — still
   advised"), `withdraw` → status `withdrawn` + `proposal_withdrawn` notification.
   Safe-by-default: ambiguous LLM output keeps the proposal; market closed / no

@@ -6,12 +6,12 @@
 //   1. expireStalePendingProposals — deterministic hard TTL (policy.proposalExpiryMinutes).
 //      Runs on every scheduler tick AND at the start of each strategy run, so stale
 //      proposals get cleared even when no full run happens (halted / market closed).
-//   2. revalidatePendingProposals — a supplemental LLM task on each run that re-checks
-//      pending proposals against the fresh scan ("does this still stand?"), withdrawing the
-//      ones it no longer advises and stamping the survivors. It only runs during regular
-//      market hours and only re-checks a proposal once policy.proposalRevalidateCadenceHours
-//      have elapsed since it was created/last re-checked — so each is re-validated a few
-//      times across a trading day, never overnight when nothing can be acted on.
+//   2. revalidatePendingProposals — a supplemental LLM task on each strategy run that
+//      re-checks pending proposals against the fresh scan ("does this still stand?"),
+//      withdrawing the ones it no longer advises and stamping the survivors. It rides on
+//      runs only, runs during regular market hours only, and re-checks a given proposal at
+//      most once per policy.proposalRevalidateCadenceHours (0 = every run; 24 = once per day;
+//      120 = every 5 days) — so it never re-checks overnight when nothing can be acted on.
 //
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
@@ -27,7 +27,7 @@ import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketScan, PendingProposal, TradingPolicy } from "./types";
 
-const DEFAULT_REVALIDATE_CADENCE_HOURS = 3;
+const DEFAULT_REVALIDATE_CADENCE_HOURS = 0; // 0 = re-check on every run
 
 export interface RevalidationAssessment {
   proposalId: string;
@@ -169,10 +169,9 @@ export async function revalidatePendingProposals(input: {
   const { userId, policy } = input;
   const accountNumber = input.accountNumber ?? policy.accountNumber;
   const now = input.now ?? Date.now();
-  const cadenceHours = policy.proposalRevalidateCadenceHours ?? DEFAULT_REVALIDATE_CADENCE_HOURS;
+  const cadenceHours = Math.max(0, policy.proposalRevalidateCadenceHours ?? DEFAULT_REVALIDATE_CADENCE_HOURS);
 
-  // Default ON: the explicit `false` or a 0 cadence disables the LLM re-check.
-  if (policy.revalidatePendingOnRun === false || !(cadenceHours > 0) || !accountNumber) {
+  if (!accountNumber) {
     return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: true };
   }
 

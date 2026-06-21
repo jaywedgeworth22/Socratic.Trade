@@ -82,21 +82,20 @@ each old, still-pending proposal *still stands*.
    closed), so the queue self-clears regardless of run cadence. Exposed as a
    **dropdown** (3h / 6h / 12h / 1d / 2d / 5d / 10d / Never).
 2. **On-run LLM re-validation, cadence-gated to market hours**
-   (`policy.revalidatePendingOnRun`, default **on**;
-   `policy.proposalRevalidateCadenceHours`, default **3**). As a supplemental step
-   inside `runStrategyOnce`, each still-pending proposal that is **due** — i.e.
-   ≥ cadence hours since it was created or last re-checked — is sent to the LLM in
-   one batched call against the fresh scan + current regime. It runs **only during
-   the regular US session** (`currentMarketSession === "regular"`), so a proposal
-   is re-checked a few times across a trading day and **never overnight** when
-   nothing can be acted on. Verdict per proposal: `reaffirm` → stamped
-   `last_revalidated_at` + note (UI shows "Re-checked X ago — still advised", and
-   the staleness clock resets); `withdraw` → status `withdrawn` + notification +
-   SSE. Missing/unknown/garbled output defaults to *keep* (never silently drops an
-   idea). Skips (deterministic expiry still applies) when the market is closed,
-   `OPENAI_API_KEY` is absent, or the call fails. Exposed as a **dropdown**
-   (Off / every 1h / 2h / 3h / 4h / 6h). The run summary gains "Expired N stale…
-   Re-checked N pending: kept X, withdrew Y."
+   (`policy.proposalRevalidateCadenceHours`, default **0** = every run). It is **not
+   optional** (no on/off switch) — it rides on strategy runs and is a supplemental
+   step inside `runStrategyOnce`. Each still-pending proposal that is **due** — i.e.
+   ≥ cadence hours since it was created or last re-checked (0 = always) — is sent to
+   the LLM in one batched call against the fresh scan + current regime. It runs
+   **only during the regular US session** (`currentMarketSession === "regular"`), so
+   it **never re-checks overnight** when nothing can be acted on. Verdict per
+   proposal: `reaffirm` → stamped `last_revalidated_at` + note (UI shows "Re-checked
+   X ago — still advised", and the staleness clock resets); `withdraw` → status
+   `withdrawn` + notification + SSE. Missing/unknown/garbled output defaults to
+   *keep* (never silently drops an idea). Skips (deterministic expiry still applies)
+   when the market is closed, `OPENAI_API_KEY` is absent, or the call fails. Exposed
+   as a **dropdown** (Every run / Once per day / Every 5 days). The run summary gains
+   "Expired N stale… Re-checked N pending: kept X, withdrew Y."
 
 ## Why
 
