@@ -9,8 +9,13 @@ const EVENT_CANDIDATE_RESERVE = Number(process.env.MARKET_SCAN_EVENT_RESERVE ?? 
 /** A web signal worth pulling a below-cutoff name into the candidate set for. */
 export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
   if (!sig) return false;
+  // Congress: require at least 2 distinct members buying AND net >= 2 (more buys than sells).
+  // Single-member disclosures are too thin to justify overriding the scan score cutoff.
+  const congressNotable =
+    (sig.congress?.buyCount ?? 0) >= 2 &&
+    (sig.congress?.netSignal ?? 0) >= 2;
   return (
-    (sig.congress?.netSignal ?? 0) > 0 || // net congressional buying
+    congressNotable ||
     (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) || // insider buying
     (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) || // elevated short pressure
     (sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70) // strong bullish technical
