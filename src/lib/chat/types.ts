@@ -20,6 +20,8 @@ export interface KbChunk {
   doc_id?: string;
   title?: string;
   section?: string;
+  score?: number;
+  url?: string;
 }
 
 /** A draft order ticket. `executed` is always false — the chat assistant has no execution path. */
@@ -42,6 +44,7 @@ export interface Citation {
   source: string;
   chunk_id?: string;
   as_of?: string;
+  url?: string;
 }
 
 export interface ToolCall {

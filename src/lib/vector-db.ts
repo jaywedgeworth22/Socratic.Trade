@@ -406,16 +406,46 @@ export async function getVectorStoreStats(userId: string = "local"): Promise<Vec
   }
 }
 
+export interface RetrievedChunk {
+  /** Real Pinecone vector id (NOT a fabricated `<SYMBOL>#i`). */
+  id: string;
+  text: string;
+  score: number;
+  source?: string;
+  /** The chunk's own acceptance_datetime/timestamp (NOT the query's as_of). */
+  as_of?: string;
+  doc_type?: string;
+  section?: string;
+  url?: string;
+}
+
+/** Map a raw Pinecone match to a chunk carrying REAL provenance (id, score, acceptance date, url). */
+export function matchToChunk(match: any): RetrievedChunk {
+  const md = (match?.metadata ?? {}) as Record<string, unknown>;
+  const asOf = md.acceptance_datetime ?? md.as_of ?? md.timestamp;
+  return {
+    id: String(match?.id ?? ""),
+    text: typeof md.text === "string" ? md.text : "",
+    score: typeof match?.score === "number" ? match.score : 0,
+    source: typeof md.source === "string" ? md.source : undefined,
+    as_of: asOf != null ? String(asOf) : undefined,
+    doc_type: typeof md.doc_type === "string" ? md.doc_type : undefined,
+    section: typeof md.section === "string" ? md.section : undefined,
+    url: typeof md.url === "string" ? md.url : undefined
+  };
+}
+
 /**
- * Retrieve relevant documents from Pinecone for a given query and symbol.
+ * Retrieve relevant chunks from Pinecone with REAL provenance (id/score/as_of/url) so answers can
+ * be grounded and honestly cited.
  */
-export async function retrieveContext(
+export async function retrieveContextDetailed(
   query: string,
   symbol: string,
   limit: number = 3,
   userId: string = "local",
   options?: { asOf?: string }
-): Promise<string[]> {
+): Promise<RetrievedChunk[]> {
   const sanitizedUserId = sanitizeUserId(userId);
   const { pc, voyage } = getClients(sanitizedUserId);
   if (!pc || !voyage) return [];
@@ -491,10 +521,22 @@ export async function retrieveContext(
       : matches;
     return withinAsOf
       .slice(0, limit)
-      .map((match) => match.metadata?.text as string)
-      .filter(Boolean);
+      .map(matchToChunk)
+      .filter((c) => c.text);
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);
     return [];
   }
+}
+
+/** Back-compat string[] view (used by strategy.ts) — thin wrapper over retrieveContextDetailed. */
+export async function retrieveContext(
+  query: string,
+  symbol: string,
+  limit: number = 3,
+  userId: string = "local",
+  options?: { asOf?: string }
+): Promise<string[]> {
+  const chunks = await retrieveContextDetailed(query, symbol, limit, userId, options);
+  return chunks.map((c) => c.text).filter(Boolean);
 }
