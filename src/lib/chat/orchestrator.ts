@@ -15,6 +15,8 @@ import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
+import { extractLearnedCandidates } from "../memory/salience";
+import { ingestLearned } from "../learned-context/store";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
@@ -37,6 +39,13 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     appendTurn(userId, { role: "user", text: message });
 
     const mem = ingestMessage(userId, message);
+    // Parallel learned-context producer: durable pattern/decision FACTS route through ingestLearned
+    // (NOT user_memory). The fail-closed classifier hard-caps chat at 'fact'; risk-adjacent prose is
+    // dropped+audited, never written. This keeps chat structurally write-isolated from the brain's
+    // risk knobs while letting it contribute advisory facts.
+    for (const candidate of extractLearnedCandidates(message)) {
+      ingestLearned(userId, candidate, "chat");
+    }
     const memories = retrieve(userId);
     const memorySummary = memories.map((m) => `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`).join("\n");
 

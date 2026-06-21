@@ -1,5 +1,7 @@
 import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey, upsertFillExcursionsByKey } from "./db";
 import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
+import { ingestLearned } from "./learned-context/store";
+import type { ThesisStat } from "./performance";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
@@ -158,6 +160,13 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         timingByThesis
       }, userId);
     }
+
+    // Structured learned-context sink — runs IN PARALLEL with (does NOT gate or replace) the
+    // reflection_summary write above, converting the opaque blob into per-row, attributable,
+    // erasable FACTS over time. We emit only durable QUALITATIVE track-record facts (directional,
+    // no numeric percent/size) for well-sampled theses; the fail-closed classifier drops anything
+    // it deems risk-adjacent, and risk/sizing inferences are never written in this slice.
+    writeThesisTrackRecordFacts(outcomesByThesis, userId);
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
@@ -196,4 +205,41 @@ function persistExcursionsBackground(
 function truncate(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
   return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+// Minimum closed lots before a thesis's realized record is durable enough to record as a fact.
+const MIN_LOTS_FOR_TRACK_RECORD_FACT = 5;
+
+/**
+ * Emit durable, QUALITATIVE track-record facts per well-sampled thesis into learned_context
+ * (origin='autonomous'). The phrasing is deliberately directional and carries NO numeric
+ * percent/size token, so the fail-closed classifier admits it as a fact rather than dropping it
+ * as a risk-adjacent (numeric) candidate. Untagged buckets are skipped. Best-effort: a failure
+ * here never affects the reflection write or any trading path.
+ */
+function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userId: string): void {
+  for (const stat of outcomesByThesis) {
+    if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
+    if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
+    const verdict = stat.shrunkAvgReturnPct > 0.5
+      ? "has a positive realized track record"
+      : stat.shrunkAvgReturnPct < -0.5
+        ? "has repeatedly lost on a realized basis"
+        : "has a roughly break-even realized track record";
+    try {
+      ingestLearned(
+        userId,
+        {
+          kind: "pattern",
+          subject: `track_record:${stat.thesisTag}`,
+          value: `The "${stat.thesisTag}" thesis ${verdict} across closed trades for this account.`,
+          source: "inferred",
+          confidence: 0.6
+        },
+        "autonomous"
+      );
+    } catch (error) {
+      console.error("Failed to write thesis track-record fact:", error);
+    }
+  }
 }
