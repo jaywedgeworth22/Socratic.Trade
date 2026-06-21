@@ -74,7 +74,7 @@ import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
-import { TickerLogo, useLogoSource, setLogoSourcePref, type LogoSource } from "./ui/ticker-logo";
+import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import {
   Button,
@@ -690,6 +690,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 reject={rejectProposal}
                 scan={drilldownScan}
                 onDrilldown={setDrilldownSymbol}
+                tickerLogoDisplay={tickerLogoDisplay}
               />
             )}
             {workspaceTab === "assistant" && (
@@ -698,12 +699,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             {workspaceTab === "market" && (
               <div className="space-y-3">
                 <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} tickerLogoDisplay={tickerLogoDisplay} />
-                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
+                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
             {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
-            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
+            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "strategy" && (
               <StrategyView
                 snapshot={snapshot}
@@ -1061,7 +1062,8 @@ function DecisionView({
   approve,
   reject,
   scan,
-  onDrilldown
+  onDrilldown,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
@@ -1070,6 +1072,7 @@ function DecisionView({
   reject: (id: string) => void;
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const decision = snapshot.latestStrategyRun;
   const pending = snapshot.pendingProposals;
@@ -1083,7 +1086,7 @@ function DecisionView({
               <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
                 <div className="flex items-center gap-2">
                   <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
-                  <SymbolButton symbol={p.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)} />
+                  <SymbolButton symbol={p.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
@@ -1124,7 +1127,7 @@ function DecisionView({
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
                   <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
-                  <SymbolButton symbol={item.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)} />
+                  <SymbolButton symbol={item.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
                   {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
                 </div>
@@ -1474,7 +1477,7 @@ function freshness(fetchedAt?: string): string {
 
 /** Surfaces the full scraped congressional + insider datasets (the scan's Congress column
  *  only shows symbols that overlap the scan; this shows everything recently disclosed). */
-function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void }) {
+function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void; tickerLogoDisplay: TickerLogoDisplay }) {
   const sm = snapshot.smartMoney;
   const ws = snapshot.webSources;
   const congress = sm?.congress ?? [];
@@ -1494,7 +1497,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
             {congress.map((t, i) => (
               <div key={`${t.symbol}-${t.member}-${t.tradedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                 <Chip tone={t.side === "buy" ? "up" : "down"}>{t.side === "buy" ? "BUY" : "SELL"}</Chip>
-                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} />
+                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} logoDisplay={tickerLogoDisplay} showLogo />
                 <span className="truncate text-muted" title={`${t.member} (${t.chamber})`}>{t.member}</span>
                 <span className="ml-auto whitespace-nowrap text-faint">{t.tradedAt}</span>
               </div>
@@ -1518,7 +1521,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
               return (
                 <div key={`${f.symbol}-${f.owner}-${f.filedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                   <Chip tone={net > 0 ? "up" : net < 0 ? "down" : "neutral"}>{net > 0 ? "BUY" : net < 0 ? "SELL" : "MIXED"}</Chip>
-                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} />
+                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="truncate text-muted" title={f.owner}>{f.owner}</span>
                   <span className="ml-auto whitespace-nowrap text-faint">{f.filedAt}</span>
                 </div>
@@ -1615,12 +1618,14 @@ function TaxView({
   snapshot,
   symbolMetaBySymbol,
   scan,
-  onDrilldown
+  onDrilldown,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const tax = snapshot.tax;
   if (!tax) {
@@ -1667,7 +1672,7 @@ function TaxView({
               <span className="text-xs font-medium text-muted">Wash sales detected this year</span>
               {tax.washSales.slice(0, 6).map((w, i) => (
                 <div key={`${w.symbol}-${i}`} className="flex items-center justify-between text-[13px]">
-                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} />
+                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="tnum text-faint">{new Date(w.soldAt).toLocaleDateString()} · {money(w.disallowedLoss)} disallowed</span>
                 </div>
               ))}
@@ -1686,7 +1691,7 @@ function TaxView({
               <tbody>
                 {tax.harvestCandidates.map((h) => (
                   <tr key={h.symbol} className="border-b border-line/50">
-                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} /></td>
+                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo /></td>
                     <td className="py-1.5 text-right tnum text-muted">{formatShareQuantity(h.quantity, h.symbol)} sh</td>
                     <td className="py-1.5 text-right tnum text-down">{signedMoney(h.unrealizedLoss)}</td>
                   </tr>
@@ -1716,7 +1721,7 @@ function TaxView({
               <tbody>
                 {tax.openLots.map((lot, i) => (
                   <tr key={`${lot.symbol}-${i}`} className="border-b border-line/50">
-                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} /></td>
+                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo /></td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{formatShareQuantity(lot.quantity, lot.symbol)}</td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{lot.daysHeld}</td>
                     <td className="px-2 py-1.5">
@@ -2435,24 +2440,16 @@ function SettingsContent({
 
         {section === "display" && (
           <div className="space-y-3">
-            <Field label="Ticker logos" hint="Applies to portfolio symbols, Market Scan rows, and symbol intelligence headers">
-              <div className="space-y-2">
-                <Segmented<TickerLogoDisplay>
-                  value={tickerLogoDisplay}
-                  onChange={setTickerLogoDisplay}
-                  options={[
-                    { value: "tile", label: "Tile" },
-                    { value: "transparent", label: "Transparent" },
-                    { value: "off", label: "Off" }
-                  ]}
-                />
-                {tickerLogoDisplay === "tile" && (
-                  <div className="flex items-center gap-2 pl-0.5">
-                    <span className="text-xs text-faint">Source</span>
-                    <LogoSourceSegmented />
-                  </div>
-                )}
-              </div>
+            <Field label="Ticker logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
+              <Segmented<TickerLogoDisplay>
+                value={tickerLogoDisplay}
+                onChange={setTickerLogoDisplay}
+                options={[
+                  { value: "tile", label: "Tile" },
+                  { value: "transparent", label: "Transparent" },
+                  { value: "off", label: "Off" }
+                ]}
+              />
             </Field>
             {tickerLogoDisplay !== "off" && (
               <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
@@ -2797,20 +2794,6 @@ type ApiKeyStatus = {
   source: "user" | "env" | "none";
   updatedAt?: string;
 };
-
-function LogoSourceSegmented() {
-  const source = useLogoSource();
-  return (
-    <Segmented<LogoSource>
-      value={source}
-      onChange={setLogoSourcePref}
-      options={[
-        { value: "github", label: "Option 1", title: "GitHub — davidepalazzo/ticker-logos" },
-        { value: "logodev", label: "Option 2", title: "logo.dev — colored tile icons with monogram fallback" }
-      ]}
-    />
-  );
-}
 
 function ApiKeysSection() {
   const [keys, setKeys] = useState<ApiKeyStatus[]>([]);

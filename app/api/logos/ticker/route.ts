@@ -40,10 +40,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "symbol is required" }, { status: 400 });
   }
 
-  // source=github (default/auto): GitHub first → logo.dev fallback
-  // source=logodev: logo.dev first → GitHub fallback
-  const source = searchParams.get("source") ?? "github";
-
   const logoDevToken = process.env.LOGO_DEV_TOKEN;
   const baseSymbol = normalizeTickerLogoSymbol(rawSymbol);
   const rawTheme = searchParams.get("theme");
@@ -79,9 +75,7 @@ export async function GET(request: Request) {
     });
   }
 
-  const result = source === "logodev"
-    ? (await tryLogoDev()) ?? (await tryGitHub())
-    : (await tryGitHub()) ?? (await tryLogoDev());
+  const result = (await tryGitHub()) ?? (await tryLogoDev());
 
   return result ?? new NextResponse(null, {
     status: 404,
