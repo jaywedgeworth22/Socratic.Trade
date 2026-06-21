@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`feat/account-capabilities`): **AccountCapabilities classifier + two-layer short gate.**
+  New `AccountCapabilities` interface (equity, shortSelling, options + level, futures, crypto, margin +
+  `marginMinimumEquity`/`maintenanceMarginPct`, `accountType` brokerage/IRA/crypto_exchange). Wired through
+  the Robinhood + Alpaca gateways, DB persistence (JSON `capabilities` column + migration), the policy
+  two-layer short gate, strategy context passthrough, and coloured capability badges on account cards.
+  Robinhood MCP confirmed shortSelling=false. **Rescued** as a clean, additive feature rebuilt on current
+  `main` from the abandoned `safety-quick-wins` WIP (which was based on a pre-proposal-revalidation `main`);
+  proposal-revalidation left intact, safety quick-wins live separately in PR #13, CI/UI-overhaul excluded.
+  Needs owner review (extracted, not originally authored here). tsc clean · build OK. See
+  `docs/rollouts/2026-06-21-account-capabilities.md`.
 - 2026-06-21: **Chat/RAG/learning advisory — HYBRID decision + issue log + roadmap.** A 5-agent expert
   panel (RAG, NL-finance-chat, onboarding, prompt/tools, LLM-learning) reviewed the chat assistant and
   unanimously landed on **HYBRID**: ISOLATE write surfaces (execution, strategy weight/risk tuning,

@@ -3079,7 +3079,7 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
           {accounts.map(acc => (
             <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-fg">{acc.label || acc.broker}</span>
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${acc.environment === "live" ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"}`}>
                     {acc.environment}
@@ -3088,6 +3088,32 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
                 </div>
                 <div className="mt-1 text-xs text-faint capitalize">
                   {acc.broker} &middot; {acc.accountNumber || "No account number"}
+                  {acc.capabilities && (
+                    <span className="ml-2 not-capitalize">
+                      {acc.capabilities.accountType !== "brokerage" && (
+                        <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400 uppercase">
+                          {acc.capabilities.accountType === "roth_ira" ? "Roth IRA" : "Trad IRA"}
+                        </span>
+                      )}
+                      {acc.capabilities.marginEnabled && (
+                        <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400 uppercase">Margin</span>
+                      )}
+                      {acc.capabilities.shortSelling && (
+                        <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400 uppercase">Short</span>
+                      )}
+                      {acc.capabilities.optionsTrading && (
+                        <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400 uppercase">
+                          Options{acc.capabilities.optionsLevel !== undefined ? ` L${acc.capabilities.optionsLevel}` : ""}
+                        </span>
+                      )}
+                      {acc.capabilities.cryptoTrading && (
+                        <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400 uppercase">Crypto</span>
+                      )}
+                      {acc.capabilities.futuresTrading && (
+                        <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400 uppercase">Futures</span>
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1">
