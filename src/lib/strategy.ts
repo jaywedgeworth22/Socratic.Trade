@@ -1,6 +1,7 @@
 import {
   acquireStrategyLock,
   audit,
+  claimProposalForExecution,
   countDayTradesInLastBusinessDays,
   dailyExecutionStats,
   finishStrategyRun,
@@ -721,7 +722,13 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     }
 
     if (executionState.usesLocalSimulation) {
-      updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional, userId);
+      // Atomic claim: only the caller that flips this proposal proposed -> paper records the
+      // fill, so two concurrent approvals can't double-book the same Test trade (defense in depth
+      // alongside the per-user run-lock held for this critical section).
+      if (!claimProposalForExecution(proposalId, "paper", userId, { review, estimatedNotional: review.estimatedNotional })) {
+        const current = getProposal(proposalId, userId)?.status ?? "removed";
+        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+      }
       const fill = recordFillFromProposal({
         userId,
         accountNumber: row.accountNumber,
@@ -763,7 +770,13 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
     // lost broker response can't leave an untracked real order.
     const refId = crypto.randomUUID();
-    updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, refId);
+    // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
+    // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
+    // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId })) {
+      const current = getProposal(proposalId, userId)?.status ?? "removed";
+      return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+    }
     let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
     try {
       execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });

@@ -1408,6 +1408,36 @@ export function updateProposalStatus(id: string, status: string, orderId?: strin
 }
 
 /**
+ * Atomic compare-and-swap claim of a still-pending proposal for execution.
+ * Transitions status 'proposed' -> `toStatus` in a single synchronous UPDATE and
+ * returns true ONLY for the caller that won the race. This is the guard that
+ * prevents two concurrent approvals (double-click, two tabs, the from-draft flow,
+ * or a scheduled run racing a manual approve) from both reaching placeEquityOrder
+ * and doubling a real position. better-sqlite3 statements are synchronous and
+ * atomic, so exactly one concurrent caller sees `changes === 1`.
+ */
+export function claimProposalForExecution(
+  id: string,
+  toStatus: string,
+  userId: string = "local",
+  opts: { review?: ReviewedOrder; estimatedNotional?: number; refId?: string } = {}
+): boolean {
+  const info = getDb()
+    .prepare(
+      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+    )
+    .run(
+      toStatus,
+      opts.review ? JSON.stringify(opts.review) : null,
+      opts.estimatedNotional ?? null,
+      opts.refId ?? null,
+      id,
+      userId
+    );
+  return info.changes === 1;
+}
+
+/**
  * Crash-recovery support: "placing" rows older than the cutoff. A "placing" row is an
  * order-placement INTENT written just before the broker call; it normally flips to "placed"
  * (or "placing_failed") synchronously. One that lingers means a prior run died mid-placement,
@@ -2278,6 +2308,27 @@ export function listSyntheticStops(accountNumber: string, userId: string = "loca
 
 export function deleteSyntheticStop(id: string, userId: string = "local"): void {
   getDb().prepare("DELETE FROM synthetic_trailing_stops WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+/**
+ * Atomic compare-and-swap claim of an active synthetic stop. Flips status
+ * 'active' -> 'triggered' in a single synchronous UPDATE; returns true only for
+ * the caller that won. Prevents an overlapping monitor run (a slow broker call
+ * spanning the next 60s tick) from firing the same protective exit twice.
+ * Pair with `revertSyntheticStopClaim` if the subsequent broker placement fails.
+ */
+export function claimSyntheticStop(id: string, userId: string = "local"): boolean {
+  const info = getDb()
+    .prepare("UPDATE synthetic_trailing_stops SET status = 'triggered', updated_at = ? WHERE id = ? AND user_id = ? AND status = 'active'")
+    .run(new Date().toISOString(), id, userId);
+  return info.changes === 1;
+}
+
+/** Re-arm a claimed stop after a failed placement so it can retry on a later tick. */
+export function revertSyntheticStopClaim(id: string, userId: string = "local"): void {
+  getDb()
+    .prepare("UPDATE synthetic_trailing_stops SET status = 'active', updated_at = ? WHERE id = ? AND user_id = ? AND status = 'triggered'")
+    .run(new Date().toISOString(), id, userId);
 }
 
 /** Purge stops whose position no longer exists (size hit 0). `liveSymbols` must be upper-cased. */
