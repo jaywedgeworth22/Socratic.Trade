@@ -34,6 +34,7 @@ export interface StrategyDecision {
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
+  accountNumber?: string;
 }
 
 export interface DashboardSnapshot {

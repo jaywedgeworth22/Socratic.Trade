@@ -20,6 +20,39 @@ function useDarkMode(): "dark" | "light" {
   return theme;
 }
 
+export type LogoSource = "auto" | "github" | "logodev";
+
+const LOGO_SOURCE_KEY = "ticker-logo-source";
+const LOGO_SOURCE_EVENT = "ticker-logo-source-change";
+
+export function setLogoSourcePref(source: LogoSource): void {
+  try {
+    localStorage.setItem(LOGO_SOURCE_KEY, source);
+    window.dispatchEvent(new CustomEvent(LOGO_SOURCE_EVENT));
+  } catch { /* ignore storage failures */ }
+}
+
+export function getLogoSourcePref(): LogoSource {
+  try {
+    const v = localStorage.getItem(LOGO_SOURCE_KEY);
+    if (v === "github" || v === "logodev") return v;
+  } catch { /* ignore */ }
+  return "auto";
+}
+
+export function useLogoSource(): LogoSource {
+  const [source, setSource] = useState<LogoSource>("auto");
+
+  useEffect(() => {
+    const read = () => setSource(getLogoSourcePref());
+    read();
+    window.addEventListener(LOGO_SOURCE_EVENT, read);
+    return () => window.removeEventListener(LOGO_SOURCE_EVENT, read);
+  }, []);
+
+  return source;
+}
+
 type TickerLogoSize = "sm" | "md" | "lg";
 
 const sizeClass: Record<TickerLogoSize, string> = {
@@ -46,6 +79,7 @@ export function TickerLogo({
   const normalized = useMemo(() => normalizeTickerLogoSymbol(symbol), [symbol]);
   const [failed, setFailed] = useState(false);
   const theme = useDarkMode();
+  const source = useLogoSource();
 
   if (!normalized || display === "off" || failed) {
     return fallback ? <>{fallback}</> : null;
@@ -65,7 +99,7 @@ export function TickerLogo({
       aria-hidden="true"
     >
       <img
-        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}`}
+        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}&source=${source}`}
         alt=""
         className="h-full w-full object-contain"
         loading="lazy"

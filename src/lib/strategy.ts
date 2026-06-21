@@ -69,6 +69,7 @@ export interface StrategyResult {
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
+  accountNumber?: string | null;
 }
 
 export async function runStrategyOnce(userId: string = "local"): Promise<StrategyResult> {
@@ -399,7 +400,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         positions: paperProjection.positions
       });
     }
-    result = { runId, status: "completed", summary, proposals: results, marketScan };
+    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber };
     
     // Phase 7: Async trigger post-mortem reflection
     generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
@@ -407,8 +408,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     finishStrategyRun(runId, "failed", summary, userId);
-    result = { runId, status: "failed", summary, proposals: [] };
     const policy = getPolicy(userId);
+    result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
     } else {

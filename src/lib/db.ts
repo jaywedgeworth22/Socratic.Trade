@@ -1204,10 +1204,11 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     review: string | null;
     last_revalidated_at: string | null;
     revalidation_note: string | null;
+    account_number: string;
   };
   const rows = getDb()
     .prepare(
-      "SELECT id, created_at, proposal, decision, review, last_revalidated_at, revalidation_note FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
+      "SELECT id, created_at, proposal, decision, review, last_revalidated_at, revalidation_note, account_number FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
     )
     .all(scopeAccount(accountNumber), userId) as RawRow[];
 
@@ -1218,7 +1219,8 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     decision: JSON.parse(r.decision) as PolicyDecision,
     review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined,
     lastRevalidatedAt: r.last_revalidated_at ?? undefined,
-    revalidationNote: r.revalidation_note ?? undefined
+    revalidationNote: r.revalidation_note ?? undefined,
+    accountNumber: r.account_number
   }));
 }
 
