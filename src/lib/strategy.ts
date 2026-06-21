@@ -1,6 +1,7 @@
 import {
   acquireStrategyLock,
   audit,
+  countDayTradesInLastBusinessDays,
   dailyExecutionStats,
   finishStrategyRun,
   getActiveConnectedAccount,
@@ -252,6 +253,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+      const isLiveExecution = learningSource === "live";
       const decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
@@ -262,7 +264,12 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         estimatedNotional: review.estimatedNotional,
         marketScan,
         washSaleLockedSymbols,
-        accountCapabilities: selected?.capabilities
+        accountCapabilities: selected?.capabilities,
+        isLiveExecution,
+        // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
+        priorDayTradeCount: isLiveExecution
+          ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
+          : 0
       });
 
       if (!decision.approved) {
@@ -649,6 +656,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
   const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
   const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+  const isLiveExecution = !executionState.usesLocalSimulation && executionState.environment === "live";
   const decision = evaluateTradeProposal(proposal, {
     policy,
     portfolio: account.portfolio,
@@ -659,7 +667,12 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     estimatedNotional: review.estimatedNotional,
     marketScan: approvalScan,
     washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
-    accountCapabilities: activeAccount?.capabilities
+    accountCapabilities: activeAccount?.capabilities,
+    isLiveExecution,
+    // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
+    priorDayTradeCount: isLiveExecution
+      ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
+      : 0
   });
 
   if (!decision.approved) {

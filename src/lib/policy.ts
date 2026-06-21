@@ -16,8 +16,28 @@ export interface PolicyContext {
   washSaleLockedSymbols?: Set<string>;
   /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
   accountCapabilities?: AccountCapabilities;
+  /**
+   * True only for real-capital brokerage (LIVE) execution. Test/local simulation and broker-Paper
+   * accounts are NOT live and can never violate the Pattern-Day-Trader rule, so the PDT gate below
+   * is skipped unless this is explicitly true. Absent/false ⇒ never PDT-gated (safe default).
+   */
+  isLiveExecution?: boolean;
+  /**
+   * Day-trades already executed on this account over the rolling 5-business-day PDT window
+   * (FINRA Rule 4210). Computed by db.countDayTradesInLastBusinessDays and threaded in like the
+   * other precomputed counts (dailyOrderCount/dailyNotionalUsed). Absent ⇒ treated as 0.
+   */
+  priorDayTradeCount?: number;
   now?: Date;
 }
+
+/** $25,000 minimum equity a LIVE account must hold to day-trade without tripping the PDT rule. */
+export const PDT_EQUITY_THRESHOLD = 25_000;
+/**
+ * A LIVE account under the equity threshold may make at most this many day-trades in a rolling
+ * 5-business-day window; the order that would enable one MORE (the 4th) is blocked.
+ */
+export const PDT_MAX_DAY_TRADES = 3;
 
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
@@ -67,6 +87,27 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
   
   const isOpening = proposal.side === "buy" || proposal.side === "short";
+
+  // PATTERN-DAY-TRADER GATE (FINRA Rule 4210). A "day-trade" is a same-symbol round-trip opened
+  // and closed on the same calendar day. An account flagged as a pattern day trader — 4+ day-trades
+  // in a rolling 5 business days — must keep ≥ $25,000 in equity. Scope: LIVE/real-capital execution
+  // ONLY; Test/local simulation and broker-Paper accounts can never violate PDT and are never gated.
+  // We block the OPENING leg that would ENABLE a 4th day-trade (priorDayTradeCount ≥ 3) when the live
+  // account's equity (Portfolio.totalMarketValue) is below the threshold. Closing legs (sell/cover) are
+  // never blocked here — exiting a position can only reduce, never create, PDT exposure.
+  if (
+    isOpening &&
+    context.isLiveExecution === true &&
+    context.portfolio.totalMarketValue < PDT_EQUITY_THRESHOLD &&
+    (context.priorDayTradeCount ?? 0) >= PDT_MAX_DAY_TRADES
+  ) {
+    reasons.push(
+      `pdt_rule: Pattern-Day-Trader block — this account has ${context.priorDayTradeCount} day-trades in the last 5 business days ` +
+        `and equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the $${PDT_EQUITY_THRESHOLD.toLocaleString("en-US")} minimum; ` +
+        `opening ${symbol} would enable a 4th day-trade.`
+    );
+  }
+
   const effectiveMaxOrderNotional = Math.min(
     context.policy.maxOrderNotional ?? Infinity,
     context.policy.maxOrderPctOfNav ? (context.policy.maxOrderPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity

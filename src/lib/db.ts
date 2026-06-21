@@ -1095,6 +1095,74 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
   );
 }
 
+/**
+ * Count day-trades for an account over a rolling N-business-day window ending at `asOf` (PDT gate).
+ *
+ * Regulatory definition (FINRA Rule 4210 pattern-day-trader): a day-trade is a same-symbol
+ * round-trip OPENED and CLOSED on the same calendar day. We detect this from `fill_events`:
+ * group fills by symbol + market-calendar day (the America/New_York day, matching the
+ * daily-notional boundary), and count a day-trade when that symbol+day has BOTH an opening fill
+ * (side buy or short) AND a closing fill (side sell or cover). The PDT rule counts at most one
+ * day-trade per symbol per day for this purpose, so each qualifying symbol+day bucket contributes
+ * exactly one. The window is the last `businessDays` market days (weekdays) ending at `asOf`'s
+ * market day, inclusive; weekend days carry no fills and are skipped.
+ *
+ * Scoped with scopeAccount() like the sibling count queries. LIVE/paper gating is the caller's
+ * concern — this is a pure count over whatever fills exist for the account/user.
+ */
+export function countDayTradesInLastBusinessDays(
+  accountNumber: string,
+  businessDays: number,
+  asOf: Date = new Date(),
+  userId: string = "local",
+  timeZone: string = DAILY_RESET_TIME_ZONE
+): number {
+  if (businessDays <= 0) return 0;
+  // Walk back from asOf's market day, collecting business days (Mon–Fri) until we have N of them.
+  // The earliest collected day's civil-midnight is the inclusive lower bound of the lookback window.
+  const dayMs = 24 * 60 * 60 * 1000;
+  let cursor = startOfDayInTimeZone(asOf, timeZone);
+  let collected = 0;
+  let windowStart = cursor;
+  while (collected < businessDays) {
+    // getUTCDay() on a civil-midnight instant identifies the market day's weekday: 0=Sun, 6=Sat.
+    const weekday = startOfDayInTimeZone(cursor, timeZone).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) {
+      collected += 1;
+      windowStart = cursor;
+    }
+    // Step back ~one day, then re-snap to the market-day boundary to stay DST-safe.
+    cursor = startOfDayInTimeZone(new Date(cursor.getTime() - dayMs), timeZone);
+  }
+
+  const rows = getDb()
+    .prepare(
+      "SELECT symbol, side, filled_at FROM fill_events WHERE filled_at >= ? AND filled_at <= ? AND account_number = ? AND user_id = ?"
+    )
+    .all(windowStart.toISOString(), asOf.toISOString(), scopeAccount(accountNumber), userId) as Array<{
+    symbol: string;
+    side: string;
+    filled_at: string;
+  }>;
+
+  // Bucket by symbol + market-calendar day; track whether each bucket saw an open and a close.
+  const buckets = new Map<string, { opened: boolean; closed: boolean }>();
+  for (const row of rows) {
+    const marketDay = startOfDayInTimeZone(new Date(row.filled_at), timeZone).toISOString();
+    const key = `${row.symbol}__${marketDay}`;
+    const bucket = buckets.get(key) ?? { opened: false, closed: false };
+    if (row.side === "buy" || row.side === "short") bucket.opened = true;
+    if (row.side === "sell" || row.side === "cover") bucket.closed = true;
+    buckets.set(key, bucket);
+  }
+
+  let dayTrades = 0;
+  for (const bucket of buckets.values()) {
+    if (bucket.opened && bucket.closed) dayTrades += 1;
+  }
+  return dayTrades;
+}
+
 // ── Run lock ──────────────────────────────────────────────────────────────────
 // Uses a direct prepared statement (not setSetting) to avoid noisy policy_change
 // audit events.
