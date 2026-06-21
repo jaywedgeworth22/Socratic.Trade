@@ -7,6 +7,8 @@ import type { MarketQuoteSummary, TradeProposal } from "./types";
 
 export interface RedTeamDebateResult {
   rejected: boolean;
+  /** True only when the debate actually ran and returned a verdict (vs skipped / failed-open). */
+  available: boolean;
   reason: string;
 }
 
@@ -20,7 +22,7 @@ export async function debateProposal(
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
   const openaiKey = resolveApiKey("openai", userId);
-  if (!openaiKey) return { rejected: false, reason: "Red Team debate skipped because OpenAI is not configured." };
+  if (!openaiKey) return { rejected: false, available: false, reason: "Red Team debate skipped because OpenAI is not configured." };
   
   const systemPrompt = `You are the Red Team Risk Agent. Your job is to rigorously critique the strategy's high-conviction trade proposals.
   
@@ -118,7 +120,7 @@ Respond with a JSON object containing:
           console.warn("Red Team LLM call failed", await response.text());
           return {
             text: undefined,
-            debate: { rejected: false, reason: "Red Team debate failed to execute." }
+            debate: { rejected: false, available: false, reason: "Red Team debate failed to execute." }
           };
         }
 
@@ -133,6 +135,7 @@ Respond with a JSON object containing:
             text,
             debate: {
               rejected: !!parsed.rejected,
+              available: true,
               reason: parsed.reason || "No reason provided."
             }
           };
@@ -140,7 +143,7 @@ Respond with a JSON object containing:
 
         return {
           text: undefined,
-          debate: { rejected: false, reason: "Red Team evaluation returned no response." }
+          debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response." }
         };
       }
     );
@@ -149,5 +152,5 @@ Respond with a JSON object containing:
     console.error("Failed to debate proposal:", error);
   }
 
-  return { rejected: false, reason: "Red Team evaluation errored out." };
+  return { rejected: false, available: false, reason: "Red Team evaluation errored out." };
 }
