@@ -33,6 +33,14 @@ steps materially change.
   `test/deterministic-bear.test.ts`. tsc clean · **580 tests** · live VWAP verified · see
   `docs/rollouts/2026-06-21-scan-default-columns-alpaca-vwap.md`.
 - 2026-06-21 (`agent/claude`): **P1 edge quality — congress disclosedAt windowing + scorecard noise floor + deterministic Bear veto.** Three financial-expert-panel P1 items: (1) `aggregateCongressSignals` now windows on `disclosedAt` (not `tradedAt`) so only market-visible disclosures count; (2) LLM scorecard filters raised ≥2→≥5 trades; (3) `deterministicBearFilter` (sync, no LLM) runs before Bear: hard-vetos phantom exits + below-median buys in crisis regime, flags momentum overextension. tsc clean, 573 tests (+16). Commit: `61b560e`. See `docs/rollouts/2026-06-21-p1-edge-quality.md`.
+- 2026-06-21 (`agent/claude-ui`, PR pending): **UI/UX deferred-fix pass.** Cleared a batch from
+  the issue register: Strategy-Flow rework (REL-6), safe-area insets (IPH-9/IOS-1), dark-mode
+  danger contrast (A11Y-7), scoped chart gradient (MISC-1), deleted dead `app/ui/dashboard/*`
+  (DUP-1, also closing CPY-7/VIS-2), safety-banner casing (CPY-9), Activity aria (A11Y-5),
+  pill-label sizes (A11Y-8), scan-table overscan (SCN-2). Done in an isolated worktree off `main`
+  to avoid racing the live `agent/claude` session. tsc clean · **557 tests** · build clean · see
+  `docs/rollouts/2026-06-21-ui-ux-deferred-fixes.md`.
+
 - 2026-06-21 (`agent/claude`, PR #32): **PDT-rule repeal + Alpaca scan data + consent UI.**
   FINRA Notice 26-10 retired the Pattern-Day-Trader rule ($25k / 4-trades-in-5-days) → replaced
   the `policy.ts` PDT gate with a `MARGIN_MINIMUM_EQUITY` ($2,000) margin-account gate (LIVE +

@@ -36,6 +36,8 @@ const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonl
 
 type RawNasdaqRow = Record<string, unknown>;
 
+// Nasdaq screener is a public, unauthenticated endpoint — no user API key is
+// consumed, so this single shared cache is safe to serve to all users.
 let screenerCache:
   | {
       expiresAt: number;

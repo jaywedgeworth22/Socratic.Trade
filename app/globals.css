@@ -21,6 +21,7 @@
   --accent-fg: #ffffff;
   --up: #0e9f6e;
   --down: #e11d48;
+  --down-fg: #ffffff;
   --warn: #c2740a;
   --info: #2563eb;
   --ring: rgba(14, 159, 110, 0.45);
@@ -43,6 +44,7 @@
   --accent-fg: #04130d;
   --up: #34d399;
   --down: #fb5e74;
+  --down-fg: #2b0a10;
   --warn: #fbbf24;
   --info: #60a5fa;
   --ring: rgba(16, 185, 129, 0.5);
@@ -65,6 +67,7 @@
   --color-accent-fg: var(--accent-fg);
   --color-up: var(--up);
   --color-down: var(--down);
+  --color-down-fg: var(--down-fg);
   --color-warn: var(--warn);
   --color-info: var(--info);
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
@@ -212,5 +215,16 @@ body::after {
   textarea,
   select {
     font-size: 16px;
+  }
+}
+
+/* Safe-area insets: paired with viewport-fit=cover (app/layout.tsx) so content
+   clears the notch / home indicator in landscape on notched devices. env() is
+   0 on devices without insets, so desktop and portrait are unaffected. */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
