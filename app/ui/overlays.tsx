@@ -243,8 +243,8 @@ export function ConfirmModal({
           <button
             onClick={onConfirm}
             className={cn(
-              "h-9 rounded-lg px-4 text-sm font-medium text-white",
-              tone === "danger" ? "bg-down hover:brightness-110" : "bg-accent text-accent-fg hover:brightness-110"
+              "h-9 rounded-lg px-4 text-sm font-medium",
+              tone === "danger" ? "bg-down text-down-fg hover:brightness-110" : "bg-accent text-accent-fg hover:brightness-110"
             )}
           >
             {confirmLabel}

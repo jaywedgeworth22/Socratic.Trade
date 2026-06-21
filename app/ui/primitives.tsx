@@ -11,7 +11,7 @@ const buttonBase =
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-fg hover:brightness-110 shadow-sm",
-  danger: "bg-down text-white hover:brightness-110 shadow-sm",
+  danger: "bg-down text-down-fg hover:brightness-110 shadow-sm",
   ghost: "border border-line bg-surface text-fg hover:bg-surface-2",
   subtle: "bg-surface-2 text-fg hover:bg-surface-3",
   accentSoft: "bg-accent/12 text-accent hover:bg-accent/20 border border-accent/20"
