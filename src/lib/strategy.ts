@@ -122,7 +122,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their
     //       cadence (regular market hours only) against this run's fresh scan — withdrawing
     //       what no longer holds, stamping the survivors as re-validated.
-    const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber });
+    const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
+      .catch((e) => {
+        console.error("[expiry] run error:", e);
+        return { expired: 0 };
+      });
     const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
       .catch((e) => {
         console.error("[revalidation] run error:", e);
