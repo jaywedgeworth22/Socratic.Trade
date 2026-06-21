@@ -15,6 +15,7 @@ import {
     BrainCircuit,
     Check,
     CheckCircle,
+    Clock,
     Gauge,
     Hourglass,
     Landmark,
@@ -46,7 +47,7 @@ import {
 } from "../../ui/primitives";
 import { EditableParam, EquityCurve, NumberField, ScorecardBars, SymbolButton } from "./components";
 import { TuningCard } from "./settings";
-import { DEFAULT_SCAN_COLS, SCAN_COLS_KEY, SCAN_COLUMNS, compare, displayStatus, formatSectorCaps, formatSources, freshness, parseSectorCaps, proposalSize, renderActionTitle, scanSortValue, statusTone } from "./utils";
+import { DEFAULT_SCAN_COLS, SCAN_COLS_KEY, SCAN_COLUMNS, compare, displayStatus, formatSectorCaps, formatSources, freshness, parseSectorCaps, proposalAge, proposalSize, renderActionTitle, scanSortValue, statusTone } from "./utils";
 
 export function DecisionView({
   snapshot,
@@ -81,6 +82,39 @@ export function DecisionView({
                   <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                {(() => {
+                  const age = proposalAge(p.createdAt);
+                  if (!age) return null;
+                  const stale = age.staleness !== "fresh";
+                  return (
+                    <div className="mt-2 space-y-1">
+                      <div
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]",
+                          age.staleness === "stale"
+                            ? "bg-down/10 text-down"
+                            : age.staleness === "aging"
+                              ? "bg-warn/10 text-warn"
+                              : "text-faint"
+                        )}
+                        title={`Proposed ${age.absolute}`}
+                      >
+                        <Clock size={11} className="shrink-0" />
+                        <span>Proposed {age.absolute} · {age.relative}</span>
+                        {stale && (
+                          <span className="ml-auto font-semibold uppercase tracking-wide">
+                            {age.staleness === "stale" ? "Stale" : "Aging"}
+                          </span>
+                        )}
+                      </div>
+                      {stale && (
+                        <p className="text-[11px] leading-snug text-faint">
+                          Prices and conditions may have changed since this was proposed — re-run the strategy before approving.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="mt-3 flex gap-2">
                   <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
                     <Check size={14} /> Approve

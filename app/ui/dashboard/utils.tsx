@@ -54,6 +54,50 @@ export function freshness(fetchedAt?: string): string {
   return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
 }
 
+// ── Pending-proposal age + staleness ───────────────────────────────────────
+// Proposals sit in the approval queue until a human acts on them, so an old one
+// keeps looking "current" long after the scan and market conditions that produced
+// it have moved on. We always show the exact proposal time, and escalate a
+// staleness level so nobody approves a stale idea thinking the agent just made it.
+export const PROPOSAL_STALE_AFTER_MS = 60 * 60 * 1000; // 1h → "Aging"
+export const PROPOSAL_VERY_STALE_AFTER_MS = 24 * 60 * 60 * 1000; // 24h → "Stale"
+
+export type ProposalAge = {
+  absolute: string;
+  relative: string;
+  staleness: "fresh" | "aging" | "stale";
+};
+
+function relativeAge(ms: number): string {
+  const min = Math.round(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return `${Math.floor(day / 7)}w ago`;
+}
+
+export function proposalAge(createdAt?: string, now: number = Date.now()): ProposalAge | null {
+  if (!createdAt) return null;
+  const t = new Date(createdAt).getTime();
+  if (Number.isNaN(t)) return null;
+  const ageMs = Math.max(0, now - t);
+  const staleness =
+    ageMs >= PROPOSAL_VERY_STALE_AFTER_MS ? "stale" : ageMs >= PROPOSAL_STALE_AFTER_MS ? "aging" : "fresh";
+  return {
+    absolute: new Date(t).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    }),
+    relative: relativeAge(ageMs),
+    staleness
+  };
+}
+
 export function marketStatusFor(session?: string): { tone: "up" | "warn" | "neutral"; label: string } {
   switch (session) {
     case "regular":

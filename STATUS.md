@@ -24,6 +24,19 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal timestamps +
+  staleness, and command-bar status cleanup.** Pending-approval cards now show
+  `Proposed <date, time> · <relative age>` and escalate a staleness state
+  (`≥1h` → amber "Aging", `≥24h` → red "Stale") with a "re-run before approving"
+  caution, so an old queued proposal no longer reads as freshly generated.
+  Removed the redundant "Test Mode" status line from the brand block (the top
+  tri-state safety banner already states the mode) and the now-dead
+  `executionTone()`. Fixed the command bar looking "too thin"/clipped by moving
+  it off a fixed `xl:h-14`/`xl:py-0` to a flexible `min-h-16`. The **Flow** button
+  was a question, not a change request — it's a static React Flow pipeline
+  visualizer (`app/ui/strategy-flow.tsx`) with hardcoded illustrative nodes; left
+  in place. tsc clean, 307 tests, build green. See
+  `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
 - 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
   Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus
   the three agent worktree branches. Deleted (tip SHAs in the rollout note for recovery):
