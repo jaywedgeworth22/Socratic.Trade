@@ -690,7 +690,7 @@ export function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
           ? "border-l-info"
           : group.status === "filled"
             ? "border-l-up"
-            : group.status === "blocked" || group.status === "rejected"
+            : group.status === "blocked" || group.status === "rejected" || group.status === "expired" || group.status === "withdrawn"
               ? "border-l-down"
               : group.status === "pending_approval" || group.status === "pending"
                 ? "border-l-warn"

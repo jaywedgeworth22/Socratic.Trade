@@ -212,6 +212,7 @@ export async function revalidatePendingProposals(input: {
     "For EACH one, decide whether it STILL STANDS given the CURRENT market data, or should be WITHDRAWN.",
     "Reaffirm only if the original thesis is still valid right now. Withdraw if the move already played out, the price gapped away from a sensible entry, the setup broke, the catalyst is stale, or the current regime no longer supports it.",
     "Be conservative: when the current data clearly no longer supports the idea, withdraw it; otherwise reaffirm.",
+    "If a proposal has no `currentMarketData` (its symbol is absent from today's scan), that is insufficient evidence to withdraw — reaffirm it and say data was unavailable.",
     `Today's deterministic market regime is "${currentMarketRegime}". The original proposal's entryMarketRegime is provided for comparison.`,
     "Return strict JSON only: { \"assessments\": [ { \"proposalId\": string, \"verdict\": \"reaffirm\" | \"withdraw\", \"confidence\": number (0-100), \"note\": string (one concise sentence) } ] }.",
     "Echo back each proposalId exactly. Include every proposal exactly once. No markdown, no text outside the JSON."

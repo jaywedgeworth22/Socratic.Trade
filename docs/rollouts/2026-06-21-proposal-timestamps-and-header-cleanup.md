@@ -132,6 +132,25 @@ proposal still stands."
 - `npm test` — 41 files, **313 tests** passing (+6).
 - `npm run build` — green.
 
+## Review hardening (multi-agent self-review)
+
+A parallel code-review + integration audit surfaced several issues, fixed here:
+
+- **TOCTOU bug (real):** `executeProposal` checked `status === "proposed"` up front,
+  then awaited scan/broker review before placing the order. Deterministic expiry
+  (scheduler tick) or a concurrent run's re-validation could retire the proposal
+  in that window, so an order could be placed for an idea the system already
+  pulled. Added a re-assert of `status === "proposed"` immediately before acting;
+  if it's no longer pending, the approval aborts with a clear reason.
+- **New statuses surfaced consistently:** `statusTone` and the Activity-feed accent
+  border now map `expired`/`withdrawn` to the "down" tone (were falling through to
+  neutral). Added a Discord formatter case for the `proposal_withdrawn` event
+  (amber, with symbol/side/outcome/reason) — it previously fell through to the
+  default dark-red with no fields.
+- **Prompt robustness:** the re-validation prompt now tells the model that a
+  proposal with no `currentMarketData` (symbol fell out of today's scan) is
+  insufficient evidence to withdraw — reaffirm it.
+
 ## Follow-ups
 
 - Thresholds are policy-configurable; the per-run re-check is one batched LLM
@@ -139,3 +158,8 @@ proposal still stands."
   proposals are re-validated per run.
 - `expired`/`withdrawn` are distinct statuses (vs `rejected`) so a future
   Activity/Runs filter could surface them separately.
+- **Out of scope (noted for a separate change):** the scout agent flagged a
+  possible CLAUDE.md violation in `src/lib/data-providers.ts` (`getFallbackMetrics`
+  / `MOCK_METRICS` may fabricate user-facing numbers on a total provider miss) and
+  an unused `fallbackProvider` export. Left untouched here to keep this PR focused;
+  worth a dedicated investigation.

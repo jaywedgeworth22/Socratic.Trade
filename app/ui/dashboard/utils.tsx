@@ -113,7 +113,7 @@ export function marketStatusFor(session?: string): { tone: "up" | "warn" | "neut
 
 export function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
   if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
-  if (status === "blocked" || status === "rejected" || status === "failed") return "down";
+  if (status === "blocked" || status === "rejected" || status === "failed" || status === "expired" || status === "withdrawn") return "down";
   if (status === "pending_approval" || status === "pending" || status === "proposed") return "warn";
   return "neutral";
 }

@@ -578,6 +578,16 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     return { status: "blocked", reasons: decision.reasons };
   }
 
+  // Re-assert the proposal is still pending immediately before we act on it. The awaits above
+  // (scan, broker review) take time, during which deterministic expiry (scheduler tick) or a
+  // concurrent run's LLM re-validation could have retired this proposal to expired/withdrawn —
+  // we must not place an order for an idea the system already pulled from the queue.
+  const stillPending = getProposal(proposalId, userId);
+  if (!stillPending || stillPending.status !== "proposed") {
+    const current = stillPending?.status ?? "removed";
+    return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+  }
+
   if (executionState.usesLocalSimulation) {
     updateProposalStatus(proposalId, "paper", undefined, review, review.estimatedNotional, userId);
     const fill = recordFillFromProposal({
