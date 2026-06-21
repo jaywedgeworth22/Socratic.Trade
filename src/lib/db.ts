@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import crypto from "crypto";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
@@ -1678,11 +1678,9 @@ function setSettingDirect(userId: string, key: string, value: unknown, updatedAt
 // Load .env.local if not already loaded (e.g. at early boot time before Next.js loads env)
 if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV !== "test" && !process.env.VITEST) {
   try {
-    const fs = await import("fs");
-    const path = await import("path");
-    const envPath = path.resolve(process.cwd(), ".env.local");
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, "utf8");
+    const envPath = resolve(process.cwd(), ".env.local");
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, "utf8");
       for (const line of content.split("\n")) {
         const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
         if (match) {
