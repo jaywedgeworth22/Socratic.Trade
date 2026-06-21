@@ -9,6 +9,20 @@ Format: `### Qn — <short title>` · **Context** · **Options** · **My default
 
 ---
 
+### Q0 — ⚠️ Worktree collision: where should I keep working? (BLOCKER)
+**Context:** This session works in the `main` integration worktree (`~/Code/Agentic Trading`), but a
+concurrent agent is actively editing core files here (`strategy.ts`, `db.ts`, `policy.ts`, `types.ts`,
+`red-team.ts` + a new `risk-breaker.ts`) — a drawdown/risk-breaker feature, currently in a broken
+intermediate state. That blocks my verify gate (`tsc`/`build` fail on their WIP) and the NEXT-tranche
+items would touch shared files (`db.ts`, `vector-db.ts`). The repo's own model is one agent per worktree
+(Claude → `~/apps/trading-claude`).
+**Options:** (a) I move to my own worktree `~/apps/trading-claude` (branch `agent/claude`), sync `main`,
+and continue there isolated + verifiable, landing via merge · (b) you enforce one-agent-per-worktree and
+I stay here · (c) I pause until their WIP lands.
+**My default (chosen):** Paused further file-editing here; the full NOW tranche is committed + pushed and
+unaffected. Tell me (a)/(b)/(c) and I'll resume.
+**Blocks:** all further autonomous code work.
+
 ### Q1 — LLM provider provisioning & which to ship first
 **Context:** The chat is provider-agnostic (`ChatLLM`); today only `AnthropicLLM` + `MockLLM` exist.
 You want users to choose between multiple frontier LLMs.
