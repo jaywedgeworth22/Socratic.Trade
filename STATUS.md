@@ -32,6 +32,17 @@ steps materially change.
   harness default of opening PRs as drafts. Docs-only; new "## Pull requests"
   section in `AGENTS.md`. See
   `docs/rollouts/2026-06-21-pr-ready-by-default-convention.md`.
+- 2026-06-21 (`agent/claude`): **Deferred backlog continuation (multi-agent, autonomous).** Worked
+  the remaining panel backlog in the isolated `~/apps/trading-claude` worktree using background
+  agents (sonnet) on disjoint files + inline money-path work, committing + ff-merging each chunk to
+  `main` (now at `82041ff`). Landed: macro Unknown-regime, not-advice disclaimers (chat + Decision
+  surface), real SEC EDGAR UA, pinned Score column, **factor orthogonalization** (tanh momentum +
+  less double-counting), **clientOrderId broker-truth reconcile** (recovers a crashed-mid-placement
+  order from the broker — completes the atomic-placement loop), **evidence-floor sizing** (unproven
+  theses sized at the floor, not 28%), and a **per-tick pending-fill reconciler** (Robinhood). tsc
+  clean, **456 tests**. Remaining (next session): run-lock approval path, native Alpaca brackets,
+  PDT/Reg-T gate, migration ledger, db.ts split, Litestream, Robinhood fundamentals. See
+  `docs/rollouts/2026-06-21-deferred-continuation-multiagent.md`.
 - 2026-06-21: **Short/cover broker-side translation (money-path).** Broker adapters forwarded our
   4-value `OrderSide` raw to buy/sell-only broker APIs, so a live `short`/`cover` was invalid (and the
   synthetic-stops engine emits `cover` outside the policy gate). New `src/lib/broker-side.ts`

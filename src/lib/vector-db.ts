@@ -5,6 +5,11 @@ import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
+/** Scope values written into vector metadata. New vectors carry this; legacy vectors lack it. */
+export const SHARED_SCOPE = "shared" as const;
+export const PRIVATE_SCOPE = "private" as const;
+export type VectorScope = typeof SHARED_SCOPE | typeof PRIVATE_SCOPE;
+
 export interface StoreContextsResult {
   /** Documents handed in (after trimming/empty-filter). */
   attempted: number;
@@ -148,9 +153,13 @@ async function indexExists(pc: Pinecone): Promise<boolean> {
 }
 
 function cleanMetadata(metadata: ContextDocument["metadata"], text: string, userId: string): RecordMetadata {
-  const out: Record<string, string | number | boolean | string[]> = { text, userId };
+  // Derive scope from the userId sentinel used to signal the shared/public tier.
+  // New vectors carry an explicit `scope` field; legacy vectors written before this change
+  // do NOT have it (backward-compat: they are still matched via the userId filter).
+  const scope: VectorScope = userId === "local" ? SHARED_SCOPE : PRIVATE_SCOPE;
+  const out: Record<string, string | number | boolean | string[]> = { text, userId, scope };
   for (const [key, value] of Object.entries(metadata)) {
-    if (key === "text" || key === "userId") continue;
+    if (key === "text" || key === "userId" || key === "scope") continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
@@ -417,12 +426,17 @@ export interface RetrievedChunk {
   doc_type?: string;
   section?: string;
   url?: string;
+  /** 'shared' for public/shared-tier docs, 'private' for user-private docs. Undefined for legacy pre-scope vectors. */
+  scope?: VectorScope;
 }
 
 /** Map a raw Pinecone match to a chunk carrying REAL provenance (id, score, acceptance date, url). */
 export function matchToChunk(match: any): RetrievedChunk {
   const md = (match?.metadata ?? {}) as Record<string, unknown>;
   const asOf = md.acceptance_datetime ?? md.as_of ?? md.timestamp;
+  const rawScope = md.scope;
+  const scope: VectorScope | undefined =
+    rawScope === SHARED_SCOPE || rawScope === PRIVATE_SCOPE ? rawScope : undefined;
   return {
     id: String(match?.id ?? ""),
     text: typeof md.text === "string" ? md.text : "",
@@ -431,7 +445,8 @@ export function matchToChunk(match: any): RetrievedChunk {
     as_of: asOf != null ? String(asOf) : undefined,
     doc_type: typeof md.doc_type === "string" ? md.doc_type : undefined,
     section: typeof md.section === "string" ? md.section : undefined,
-    url: typeof md.url === "string" ? md.url : undefined
+    url: typeof md.url === "string" ? md.url : undefined,
+    scope
   };
 }
 
@@ -465,14 +480,22 @@ export async function retrieveContextDetailed(
 
     let matches: any[] = [];
 
+    // The shared-tier filter uses $or to match BOTH new vectors (scope=='shared') and legacy
+    // pre-scope vectors (userId=='local'). This is the backward-compat coexistence strategy:
+    // scope is authoritative for new vectors; userId is the fallback for old ones.
+    const sharedTierFilter = {
+      symbol: { $eq: symbol },
+      $or: [
+        { scope: { $eq: SHARED_SCOPE } },
+        { userId: { $eq: "local" } }
+      ]
+    };
+
     if (sanitizedUserId === "local") {
       const results = await index.query({
         vector: embedding,
         topK: fetchK,
-        filter: {
-          symbol: { $eq: symbol },
-          userId: { $eq: "local" }
-        },
+        filter: sharedTierFilter,
         includeMetadata: true,
       });
       matches = results.matches || [];
@@ -490,10 +513,7 @@ export async function retrieveContextDetailed(
         index.query({
           vector: embedding,
           topK: fetchK,
-          filter: {
-            symbol: { $eq: symbol },
-            userId: { $eq: "local" }
-          },
+          filter: sharedTierFilter,
           includeMetadata: true,
         })
       ]);

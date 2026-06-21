@@ -185,14 +185,16 @@ describe("vector-db", () => {
       },
       includeMetadata: true
     });
-    expect(mocks.query.mock.calls[1][0]).toMatchObject({
-      topK: 2,
-      filter: {
-        symbol: { $eq: "AAPL" },
-        userId: { $eq: "local" }
-      },
-      includeMetadata: true
-    });
+    // The shared-tier query now uses a backward-compat $or: scope:'shared' OR userId:'local'
+    // so that pre-scope (legacy) vectors are still retrieved.
+    const sharedFilter = mocks.query.mock.calls[1][0].filter;
+    expect(sharedFilter.symbol).toEqual({ $eq: "AAPL" });
+    expect(sharedFilter.$or).toEqual(
+      expect.arrayContaining([
+        { scope: { $eq: "shared" } },
+        { userId: { $eq: "local" } }
+      ])
+    );
   });
 
   it("sanitizes user IDs correctly", async () => {

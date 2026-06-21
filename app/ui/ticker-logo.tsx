@@ -20,43 +20,6 @@ function useDarkMode(): "dark" | "light" {
   return theme;
 }
 
-// ── Logo source preference ────────────────────────────────────────────────────
-// Stored in localStorage; a custom event propagates changes to every
-// TickerLogo instance on the page without prop-threading.
-
-export type LogoSource = "github" | "logodev";
-
-const LOGO_SOURCE_KEY = "ticker-logo-source";
-const LOGO_SOURCE_EVENT = "ticker-logo-source-change";
-
-export function setLogoSourcePref(source: LogoSource): void {
-  try {
-    localStorage.setItem(LOGO_SOURCE_KEY, source);
-    window.dispatchEvent(new CustomEvent(LOGO_SOURCE_EVENT));
-  } catch { /* ignore storage failures */ }
-}
-
-export function getLogoSourcePref(): LogoSource {
-  try {
-    const v = localStorage.getItem(LOGO_SOURCE_KEY);
-    if (v === "logodev") return "logodev";
-  } catch { /* ignore */ }
-  return "github"; // default; also covers old "auto" stored value
-}
-
-export function useLogoSource(): LogoSource {
-  const [source, setSource] = useState<LogoSource>("github");
-
-  useEffect(() => {
-    const read = () => setSource(getLogoSourcePref());
-    read();
-    window.addEventListener(LOGO_SOURCE_EVENT, read);
-    return () => window.removeEventListener(LOGO_SOURCE_EVENT, read);
-  }, []);
-
-  return source;
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 type TickerLogoSize = "sm" | "md" | "lg";
@@ -85,13 +48,8 @@ export function TickerLogo({
   const normalized = useMemo(() => normalizeTickerLogoSymbol(symbol), [symbol]);
   const [failed, setFailed] = useState(false);
   const theme = useDarkMode();
-  const source = useLogoSource();
 
-  // Reset failed so switching source retries the new provider
-  useEffect(() => { setFailed(false); }, [source, normalized]);
-
-  // Transparent mode always uses GitHub (transparent PNGs); source picker is hidden in that mode
-  const effectiveSource = display === "transparent" ? "github" : source;
+  useEffect(() => { setFailed(false); }, [normalized]);
 
   if (!normalized || display === "off" || failed) {
     return fallback ? <>{fallback}</> : null;
@@ -111,7 +69,7 @@ export function TickerLogo({
       aria-hidden="true"
     >
       <img
-        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}&source=${effectiveSource}&v=2`}
+        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}`}
         alt=""
         className="h-full w-full object-contain"
         loading="lazy"

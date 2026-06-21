@@ -9,7 +9,8 @@ import { getPolicy, listUsers, setInternalSetting } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
-import { runStrategyOnce } from "./strategy";
+import { getBrokerGateway } from "./broker";
+import { reconcilePendingFills, runStrategyOnce } from "./strategy";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { refreshDueWebSources } from "./web-sources";
@@ -95,6 +96,15 @@ async function tick(): Promise<void> {
       // of the strategy-run cadence (a trail needs frequent checking). We only reach here when
       // systemState === "active", so the protective market exit is gated behind Start.
       void runSyntheticStopMonitor(userId, policy, true).catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err));
+
+      // Reconcile pending live fills every tick (independent of the strategy cadence) so a broker
+      // order that returned non-filled — common on Robinhood, which has no realtime fill stream —
+      // doesn't sit pending_reconciliation (invisible to P&L/exposure) until the next, up-to-60-min,
+      // strategy run. No-op for Test/paper (no live fills) and gated to broker-backed accounts.
+      if (!policy.paperMode && policy.accountNumber) {
+        void reconcilePendingFills(getBrokerGateway(policy, userId), policy.accountNumber, userId)
+          .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
+      }
 
       // Event-only mode: the trigger engine drives runs; skip the fixed-interval cadence.
       // (Default — engine off or mode interval/both — leaves the interval lane unchanged.)
