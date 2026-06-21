@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
 - 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
   side-aware notional/exposure caps (T1/T10), partial-fill reconciliation (T2), FIFO lot matcher (T3),
   paper-projection guards (T5), db notional tests (T6), short exits (T8), recordFill tests (T9),
