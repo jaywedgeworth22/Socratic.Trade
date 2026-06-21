@@ -24,6 +24,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **Auth hardening — strip client identity headers on public routes.** The
+  `middleware.ts` PUBLIC_PREFIXES branch (`/api/health`, `/api/webhooks`) forwarded requests unchanged,
+  so a forged `x-authenticated-user-email`/`x-user-id` could pass to a public handler. New edge-safe
+  `src/lib/auth/strip-identity.ts` (`stripClientIdentityHeaders`); both middleware branches now strip
+  identity before forwarding (public stays unauthenticated — webhooks unaffected). Not exploitable
+  today; closes the latent footgun. 459 tests (new `test/strip-identity.test.ts`), tsc + build clean.
+  Isolated worktree off clean `main`; landing via PR. Rollout:
+  `docs/rollouts/2026-06-21-strip-identity-public-routes.md`.
 - 2026-06-21: **Git author identity rule (GitHub email privacy).** Codified in `AGENTS.md`: all
   commits/pushes use the owner's GitHub noreply email
   (`12656028+jaywedgeworth22@users.noreply.github.com`), never the real email. Repo-local
