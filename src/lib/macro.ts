@@ -61,7 +61,10 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
   const apiKey = resolveApiKey("fred", userId);
   if (!apiKey) {
-    return DEFAULT_MACRO;
+    // No FRED key: the constants are NOT live data. Stamp asOf as "unavailable" so the regime
+    // classifier (and any consumer) can tell this is unsourced rather than fabricating a fresh
+    // date — otherwise a real crisis is silently classified as the static 2023-era regime.
+    return { ...DEFAULT_MACRO, asOf: "unavailable" };
   }
 
   try {
@@ -121,7 +124,8 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
     return data;
   } catch (error) {
     console.error("[macro] failed to fetch macroeconomic data:", error);
-    return DEFAULT_MACRO;
+    // Fetch failed — same as unsourced: flag it so the regime classifier stays Unknown.
+    return { ...DEFAULT_MACRO, asOf: "unavailable" };
   }
 }
 
@@ -159,6 +163,9 @@ export function pruneMacro(
  * dense enough to learn from. Richer macro detail still reaches the LLM via the prompt.
  */
 export function determineMarketRegime(macro: MacroData): string {
+  // Unsourced macro (no FRED key) carries asOf "unavailable". Don't assert a confident regime off
+  // fabricated constants — return an explicit Unknown so downstream conditioning/caps stay neutral.
+  if (macro.asOf === "unavailable") return "Unknown (no macro feed)";
   const vix = parseFloat(macro.vix);
   const fedFunds = parseFloat(macro.fedFundsRate);
   const dgs10 = parseFloat(macro.dgs10Treasury);

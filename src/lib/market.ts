@@ -515,17 +515,44 @@ export function pricePosition52w(quote: MarketQuote): number | undefined {
   return Math.round(clamp(((price - lo) / (hi - lo)) * 100));
 }
 
+/**
+ * Intraday momentum: map intradayChangePct onto [0,100] using tanh over a ±20% range
+ * instead of the prior saturating linear ±5% window. The old formula
+ * `((pct + 5) / 10) * 100` capped at 100 for anything ≥ +5%, making a +6% gap-up
+ * and a +25% short-squeeze indistinguishable. tanh(x/10) (where x is the pct value)
+ * stays sensitive well past ±10%: +5%→73, +10%→88, +20%→97 — preserving meaningful
+ * differentiation across the full realistic intraday range.
+ */
+function intradayMomentum(pct: number): number {
+  // tanh maps ℝ → (-1, 1); shift+scale to [0, 100].
+  return (Math.tanh(pct / 10) + 1) * 50;
+}
+
 function momentumScore(quote: MarketQuote): number {
-  const intraday = ((quote.intradayChangePct + 5) / 10) * 100;
+  const intraday = intradayMomentum(quote.intradayChangePct);
+
   // Blend in the 52-week price position when available: near the high reflects
   // sustained strength/breakout; near the low reflects weakness (or mean-reversion).
+  // DE-COLLINEARIZATION: when technicalScore IS present, it already encodes the
+  // RSI/MACD/SMA-stack signals that are themselves functions of "price near its highs"
+  // — the same information expressed by the 52-week position. Keeping the 52w weight
+  // at 0.4 in that case would triple-count trend (intraday + 52w + technical). Instead
+  // we reduce it to 0.15 when technicalScore is available, preserving a small
+  // breakout/breakdown signal while removing the bulk of the redundancy.
   const pos = pricePosition52w(quote);
-  const base = typeof pos === "number" ? intraday * 0.6 + pos * 0.4 : intraday;
+  const hasTech = typeof quote.technicalScore === "number";
+  const w52 = hasTech ? 0.15 : 0.4;
+  const base = typeof pos === "number"
+    ? intraday * (1 - w52) + pos * w52
+    : intraday;
+
   // Blend in the bar-based technical read when present (RSI/MACD/MA crossovers from a
   // real price-history series — the one momentum input the snapshot screener lacks).
-  // Weighted to half so it informs but doesn't dominate the intraday/52w signal.
-  if (typeof quote.technicalScore === "number") {
-    return clamp(base * 0.5 + quote.technicalScore * 0.5);
+  // Reduced from 0.5 to 0.4 (technical is informative but already subsumes much of the
+  // 52-week-position signal above; keeping it at 0.5 was an implicit double-weight on
+  // trend relative to the fresh intraday signal).
+  if (hasTech) {
+    return clamp(base * 0.6 + quote.technicalScore! * 0.4);
   }
   return clamp(base);
 }

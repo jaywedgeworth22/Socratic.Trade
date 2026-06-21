@@ -233,6 +233,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         averagePrice: optionalNumber(o.filled_avg_price),
         createdAt: String(o.created_at),
         updatedAt: o.updated_at ? String(o.updated_at) : undefined,
+        clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
         placedAgent: "alpaca"
       }));
     }).then((res: any) => {
@@ -249,6 +250,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           averagePrice: optionalNumber(o.filled_avg_price),
           createdAt: String(o.created_at),
           updatedAt: o.updated_at ? String(o.updated_at) : undefined,
+          clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
           placedAgent: "alpaca"
         }));
       }

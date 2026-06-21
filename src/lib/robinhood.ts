@@ -158,6 +158,7 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
       averagePrice: optionalNumber(item.average_price ?? item.averagePrice),
       createdAt: String(item.created_at ?? item.createdAt ?? ""),
       updatedAt: optionalString(item.last_transaction_at ?? item.updated_at ?? item.updatedAt),
+      clientOrderId: optionalString(item.ref_id ?? item.client_order_id ?? item.clientOrderId),
       placedAgent: optionalString(item.placed_agent ?? item.placedAgent)
     }));
   }
