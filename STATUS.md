@@ -24,6 +24,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **Short/cover broker-side translation (money-path).** Broker adapters forwarded our
+  4-value `OrderSide` raw to buy/sell-only broker APIs, so a live `short`/`cover` was invalid (and the
+  synthetic-stops engine emits `cover` outside the policy gate). New `src/lib/broker-side.ts`
+  (`toBrokerSide`: short→sell, cover→buy); `alpaca.ts` translates on both order paths (Alpaca supports
+  shorting, still gated by `shortSellingEnabled`); `robinhood.ts` `toMcpOrder` fails closed (throws on
+  short/cover — no equity shorting). 423 tests (new `test/broker-side.test.ts`, incl. Alpaca SDK-mocked
+  end-to-end), tsc + build clean. Built in isolated worktree off clean `main`; landing via PR. Rollout:
+  `docs/rollouts/2026-06-21-short-cover-broker-side-translation.md`.
 - 2026-06-21: **Auth hardening — strip client identity headers on public routes.** The
   `middleware.ts` PUBLIC_PREFIXES branch (`/api/health`, `/api/webhooks`) forwarded requests unchanged,
   so a forged `x-authenticated-user-email`/`x-user-id` could pass to a public handler. New edge-safe
