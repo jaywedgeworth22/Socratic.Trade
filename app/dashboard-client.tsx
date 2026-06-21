@@ -2544,23 +2544,15 @@ function SettingsContent({
         {section === "display" && (
           <div className="space-y-3">
             <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
-              <div className="space-y-2">
-                <Segmented<TickerLogoDisplay>
-                  value={tickerLogoDisplay}
-                  onChange={setTickerLogoDisplay}
-                  options={[
-                    { value: "tile", label: "Small Tile" },
-                    { value: "transparent", label: "Medium" },
-                    { value: "off", label: "Off" }
-                  ]}
-                />
-                {tickerLogoDisplay === "tile" && (
-                  <div className="flex items-center gap-2 pl-0.5">
-                    <span className="text-xs text-faint">Source</span>
-                    <LogoSourceSegmented />
-                  </div>
-                )}
-              </div>
+              <Segmented<TickerLogoDisplay>
+                value={tickerLogoDisplay}
+                onChange={setTickerLogoDisplay}
+                options={[
+                  { value: "tile", label: "Small Tile" },
+                  { value: "transparent", label: "Medium" },
+                  { value: "off", label: "Off" }
+                ]}
+              />
             </Field>
             {tickerLogoDisplay !== "off" && (
               <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
