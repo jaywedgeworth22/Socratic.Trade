@@ -2050,8 +2050,9 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
   })();
 }
 
-export function deleteConnectedAccount(id: string, userId: string = "local"): void {
-  getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+export function deleteConnectedAccount(id: string, userId: string = "local"): boolean {
+  const result = getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+  return result.changes > 0;
 }
 
 // ── Synthetic trailing stops (R2 scaffolding) ──────────────────────────────────
