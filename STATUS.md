@@ -24,6 +24,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`, PR pending): **refactor(db): split 2330-line db.ts into 8 focused modules.**
+  `db.ts` reduced from 2330 → ~500 lines (barrel + core). Eight new files extracted: `db-settings.ts`,
+  `db-learning.ts`, `db-profiles.ts`, `db-execution.ts`, `db-proposals.ts`, `db-fills.ts`,
+  `db-notifications.ts`, `db-api-keys.ts`. All consumers import from `"src/lib/db"` as before (re-export
+  barrel unchanged). tsc clean · **607 tests** · build clean.
+
+
 - 2026-06-21 (`agent/claude`): **P0-3/P1-2/P1-7 — VIX Yahoo fallback + congress floor + exposure defaults.** Live ^VIX from Yahoo Finance (key-free) replaces "Unknown regime" when no FRED key is configured; `hasNotableWebSignal` now requires buyCount≥2 AND netSignal≥2 (single-member disclosures no longer trigger rank-lift); `maxGrossExposurePct`/`maxNetExposurePct` defaults tightened 100→80 to enforce a 20% cash buffer. tsc clean, 593 tests all pass (+20). See `docs/rollouts/2026-06-21-p1-macro-signal-exposure.md`.
 - 2026-06-21 (`agent/claude`): **P1-4/5/6 — congress disclosedAt windowing + scorecard floor + deterministic Bear veto.** PR #35.
 - 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**
