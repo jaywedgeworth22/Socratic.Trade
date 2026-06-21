@@ -401,7 +401,7 @@ export function ApiKeysSection() {
   const loadKeys = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/keys?userId=local", { cache: "no-store" });
+      const res = await fetch("/api/keys", { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       const body = (await res.json()) as { keys?: ApiKeyStatus[] };
       setKeys(body.keys ?? []);
@@ -440,7 +440,7 @@ export function ApiKeysSection() {
   async function clearKey(row: ApiKeyStatus) {
     setBusyService(row.service);
     try {
-      const res = await fetch(`/api/keys?userId=local&service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
+      const res = await fetch(`/api/keys?service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(await res.text());
       toast.success(`${row.label} saved key cleared.`);
       await loadKeys();
