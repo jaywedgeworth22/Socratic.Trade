@@ -10,6 +10,8 @@ import {
 const ONE_DAY_SECONDS = 86_400;
 const ONE_WEEK_SECONDS = 604_800;
 
+const FETCH_TIMEOUT_MS = 5_000;
+
 async function fetchImage(
   url: string,
   revalidate: number,
@@ -19,9 +21,11 @@ async function fetchImage(
   try {
     res = await fetch(url, {
       next: { revalidate },
-      headers: extraHeaders
+      headers: extraHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
   } catch {
+    // Covers network errors, DNS failures, and AbortError from the timeout.
     return null;
   }
   if (!res.ok) return null;
