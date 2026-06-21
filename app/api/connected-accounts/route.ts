@@ -53,22 +53,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
     }
 
-    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, the API KEY
-    // PREFIX is authoritative for paper vs brokerage — "PK…" = Paper (paper-api),
-    // "AK…" = Brokerage (live api). That prefix is what actually decides which Alpaca
-    // endpoint the key works against, so it overrides whichever button was clicked.
-    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
-    let environment: "paper" | "live" = body.environment === "live" ? "live" : "paper";
-    if ((broker === "alpaca" || broker === "alpaca-mcp") && apiKey) {
-      if (apiKey.toUpperCase().startsWith("PK")) environment = "paper";
-      else if (apiKey.toUpperCase().startsWith("AK")) environment = "live";
+    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, the environment
+    // is differentiated strictly by the first 2 letters of the account number:
+    // "PA..." (case-insensitive) represents Paper, otherwise it is Brokerage (live).
+    if ((broker === "alpaca" || broker === "alpaca-mcp") && (!body.accountNumber || !body.accountNumber.trim())) {
+      return new NextResponse("Account number is required for Alpaca", { status: 400 });
     }
+
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+    let environment: "paper" | "live" = "paper";
+    if (broker === "alpaca" || broker === "alpaca-mcp") {
+      const accNum = body.accountNumber.trim();
+      environment = accNum.toUpperCase().startsWith("PA") ? "paper" : "live";
+    } else if (broker === "test") {
+      environment = "paper";
+    } else {
+      environment = body.environment === "live" ? "live" : "paper";
+    }
+
     const defaultLabel =
       broker === "test"
         ? "Test"
         : broker === "alpaca-mcp"
           ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
           : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
+
     upsertConnectedAccount({
       id: body.id || crypto.randomUUID(),
       userId,

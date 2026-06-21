@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **Accounts connection modal and list formatting simplification.** Simplified Alpaca connection buttons to a single "Connect Alpaca Account" and derived Paper vs Brokerage environment dynamically based on `PA` account number prefix. Enforced required account numbers for Alpaca. Reformatted connected accounts listing with custom titles, green `CONNECTED` and red `AUTONOMOUS` status indicators, and localized test account formatting.
 - 2026-06-21: **Alpaca MCP connection & multi-account connection buttons.** Added Alpaca MCP paper/live support, implemented standard JSON-RPC SSE tool call routing with REST client fallback, fixed order type mapping build issues, and ensured all connection buttons remain visible in the dashboard UI for multi-account linking. Verified: tsc clean, 401 tests green, build OK. Rollout note: `docs/rollouts/2026-06-21-alpaca-mcp-integration.md`.
 - 2026-06-21 (`agent/claude`): **Multi-agent coordination — verified + gap-filled; landing via PR.** The
   landing protocol that stops the `main` push-races + Q0 worktree collision was already implemented on
