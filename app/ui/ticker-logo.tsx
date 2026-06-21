@@ -1,9 +1,24 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import { normalizeTickerLogoSymbol } from "@/lib/ticker-logos";
 import { cn } from "./cn";
+
+function useDarkMode(): "dark" | "light" {
+  const [theme, setTheme] = useState<"dark" | "light">("dark"); // default dark for SSR
+
+  useEffect(() => {
+    const el = document.documentElement;
+    const update = () => setTheme(el.classList.contains("dark") ? "dark" : "light");
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return theme;
+}
 
 type TickerLogoSize = "sm" | "md" | "lg";
 
@@ -30,6 +45,7 @@ export function TickerLogo({
 }) {
   const normalized = useMemo(() => normalizeTickerLogoSymbol(symbol), [symbol]);
   const [failed, setFailed] = useState(false);
+  const theme = useDarkMode();
 
   if (!normalized || display === "off" || failed) {
     return fallback ? <>{fallback}</> : null;
@@ -49,7 +65,7 @@ export function TickerLogo({
       aria-hidden="true"
     >
       <img
-        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}`}
+        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}`}
         alt=""
         className="h-full w-full object-contain"
         loading="lazy"
