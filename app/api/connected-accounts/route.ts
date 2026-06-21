@@ -71,9 +71,11 @@ export async function POST(req: Request) {
       label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel,
       apiKey: apiKey || undefined,
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
+      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl.trim() || undefined : undefined,
       taxationType,
       isActive: body.isActive ?? false
     });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     return new NextResponse(err instanceof Error ? err.message : "Error", { status: 400 });

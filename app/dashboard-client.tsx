@@ -2991,6 +2991,10 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
               <Field label="API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
+              <Field label="API Endpoint URL (Optional)">
+                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets" />
+              </Field>
+
             </>
           )}
         </div>

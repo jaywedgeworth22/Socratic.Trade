@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import crypto from "crypto";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
@@ -166,9 +166,11 @@ function migrate(database: Database.Database): void {
       api_key TEXT,
       api_secret TEXT,
       taxation_type TEXT,
+      base_url TEXT,
       is_active INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+
     );
     CREATE INDEX IF NOT EXISTS idx_connected_accounts_user ON connected_accounts (user_id);
 
@@ -361,6 +363,10 @@ function migrate(database: Database.Database): void {
   if (!connectedAccountColumns.some((column) => column.name === "taxation_type")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN taxation_type TEXT");
   }
+  if (!connectedAccountColumns.some((column) => column.name === "base_url")) {
+    database.exec("ALTER TABLE connected_accounts ADD COLUMN base_url TEXT");
+  }
+
   // Rename: legacy "dry_run" proposal status is now "paper".
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
 
@@ -983,16 +989,60 @@ export function latestAuditByKind(kind: string, userId: string = "local"): { id:
   };
 }
 
-export function dailyExecutionStats(accountNumber: string, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
-  const dayStart = new Date(now);
-  dayStart.setHours(0, 0, 0, 0);
+/**
+ * IANA timezone whose civil midnight defines the daily-notional reset boundary. Made explicit so the
+ * daily cap resets deterministically regardless of the server process's local TZ — the old
+ * `setHours(0,0,0,0)` silently used `process.env.TZ`. US equities trade on the NYSE calendar, so the
+ * market day (America/New_York) is the natural boundary. (T13)
+ */
+export const DAILY_RESET_TIME_ZONE = "America/New_York";
+
+/** UTC instant of civil midnight, in `timeZone`, for the calendar day containing `now`. (T13) */
+export function startOfDayInTimeZone(now: Date, timeZone: string = DAILY_RESET_TIME_ZONE): Date {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    })
+      .formatToParts(now)
+      .map((part) => [part.type, part.value])
+  );
+  const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some engines render midnight as "24"
+  const wallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+  const offsetMs = wallAsUTC - now.getTime(); // how far the tz wall-clock leads UTC at `now`
+  const midnightWallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 0, 0, 0);
+  return new Date(midnightWallAsUTC - offsetMs);
+}
+
+/**
+ * Scope key for an account. A missing/blank account number maps to an explicit sentinel so
+ * the "unassigned" bucket is consistent between writes and reads, rather than relying on the
+ * `account_number` column's empty-string DEFAULT (which can silently merge contexts). (T14)
+ */
+function scopeAccount(accountNumber?: string | null): string {
+  return accountNumber && accountNumber.trim() !== "" ? accountNumber : "__unassigned__";
+}
+
+export function dailyExecutionStats(
+  accountNumber: string,
+  now = new Date(),
+  userId: string = "local",
+  timeZone: string = DAILY_RESET_TIME_ZONE
+): { orderCount: number; notional: number } {
+  const dayStart = startOfDayInTimeZone(now, timeZone);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
     .prepare(
       "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(dayStart.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -1020,7 +1070,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
     .prepare(
       "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(cutoff.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -1264,7 +1314,7 @@ export function insertProposal(input: {
       input.id,
       input.userId ?? "local",
       input.runId,
-      input.accountNumber,
+      scopeAccount(input.accountNumber),
       new Date().toISOString(),
       JSON.stringify(input.proposal),
       JSON.stringify(input.decision),
@@ -1658,6 +1708,27 @@ function setSettingDirect(userId: string, key: string, value: unknown, updatedAt
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
+// Load .env.local if not already loaded (e.g. at early boot time before Next.js loads env)
+if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+  try {
+    const envPath = resolve(process.cwd(), ".env.local");
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, "utf8");
+      for (const line of content.split("\n")) {
+        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+        if (match) {
+          let value = match[2] || "";
+          if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+          if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
+          process.env[match[1]] = value;
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore error
+  }
+}
+
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   ? Buffer.from(process.env.ENCRYPTION_KEY, "hex")
   : crypto.randomBytes(32); // Fallback to memory-only key if not set (keys will be lost on restart!)
@@ -1722,7 +1793,9 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   voyage: "VOYAGE_API_KEY",
   alpaca_paper_api_key: "ALPACA_PAPER_API_KEY",
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
-  apify: "APIFY_API_TOKEN"
+  apify: "APIFY_API_TOKEN",
+  fintechstudios: "FINTECH_STUDIOS_API_KEY",
+  powerintell: "FINTECH_STUDIOS_API_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -1734,6 +1807,11 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   marketstack_api_key: "marketstack",
   tradier_api_key: "tradier",
   fred_api_key: "fred",
+  fintech_studios: "fintechstudios",
+  fintech_studios_api_key: "fintechstudios",
+  powerintell_api_key: "fintechstudios",
+  power_intell: "fintechstudios",
+  power_intell_api_key: "fintechstudios",
   sec_edgar: "sec_edgar_user_agent",
   sec_edgar_user_agent: "sec_edgar_user_agent",
   massive_api_key: "massive",
@@ -1833,7 +1911,9 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
     accountNumber: r.account_number != null ? String(r.account_number) : undefined,
     label: String(r.label),
     taxationType: r.taxation_type != null ? (String(r.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
+    baseUrl: r.base_url != null ? String(r.base_url) : undefined,
     isActive: r.is_active === 1,
+
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   }));
@@ -1871,7 +1951,9 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
     taxationType: row.taxation_type != null ? (String(row.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
     apiKey: row.api_key ? decryptValue(String(row.api_key)) : undefined,
     apiSecret: row.api_secret ? decryptValue(String(row.api_secret)) : undefined,
+    baseUrl: row.base_url != null ? String(row.base_url) : undefined,
     isActive: row.is_active === 1,
+
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -1888,8 +1970,8 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
     }
     database
       .prepare(
-        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, taxation_type, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, taxation_type, base_url, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           broker = excluded.broker,
           environment = excluded.environment,
@@ -1898,6 +1980,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           api_key = COALESCE(excluded.api_key, connected_accounts.api_key),
           api_secret = COALESCE(excluded.api_secret, connected_accounts.api_secret),
           taxation_type = COALESCE(excluded.taxation_type, connected_accounts.taxation_type),
+          base_url = COALESCE(excluded.base_url, connected_accounts.base_url),
           is_active = excluded.is_active,
           updated_at = excluded.updated_at`
       )
@@ -1911,10 +1994,12 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
         encryptedApiKey,
         encryptedApiSecret,
         account.taxationType ?? null,
+        account.baseUrl ?? null,
         account.isActive ? 1 : 0,
         now,
         now
       );
+
   })();
 }
 

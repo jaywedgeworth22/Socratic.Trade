@@ -209,6 +209,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const finnhubKey = resolveApiKey("finnhub", userId);
   const alphaVantageKey = resolveApiKey("alphavantage", userId);
   const fmpKey = resolveApiKey("fmp", userId);
+  const fintechKey = resolveApiKey("fintechstudios", userId);
   const alpacaNewsKey = resolveApiKey("alpaca_paper_api_key", userId);
   const alpacaNewsSecret = resolveApiKey("alpaca_paper_secret_key", userId);
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
@@ -216,6 +217,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // AND ROBINHOOD_ENRICHMENT_ENABLED, because the broker field set/units should be verified
   // against /api/admin/robinhood-probe before trusting them next to other real numbers.
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider());
+  if (fintechKey) providers.push(new FintechStudiosEnrichmentProvider(fintechKey));
   if (finnhubKey) providers.push(new FinnhubEnrichmentProvider(finnhubKey));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
@@ -1254,4 +1256,101 @@ export function scoreHeadlines(headlines: string[]): number {
 export function clearEnrichmentCache(): void {
   cache.clear();
   yfCreds = null;
+}
+
+export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "fintechstudios";
+  readonly configured = true;
+  private readonly base: string;
+
+  constructor(private readonly apiKey: string) {
+    this.base = process.env.FINTECH_STUDIOS_BASE_URL ?? "https://studio.fintechstudios.com/api/v1";
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = cache.get(`fintechstudios:${symbol}`);
+      if (cached && cached.expiresAt > now) {
+        result[symbol] = cached.data;
+      } else {
+        misses.push(symbol);
+      }
+    }
+
+    if (misses.length === 0) return result;
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 8000);
+            let headlines: string[] = [];
+            let sentiment: number | undefined;
+
+            try {
+              const url = `${this.base.replace(/\/$/, "")}/search`;
+              const response = await fetchWithRetry(url, {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${this.apiKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  query: `${symbol} stock`,
+                  limit: 5,
+                }),
+                cache: "no-store",
+                signal: controller.signal,
+              });
+
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+
+              const json = (await response.json()) as {
+                data?: {
+                  articles?: Array<{ title?: string }>;
+                };
+              };
+
+              const articles = json.data?.articles || [];
+              headlines = articles
+                .map((a) => (typeof a.title === "string" ? a.title.trim() : ""))
+                .filter(Boolean)
+                .slice(0, 5);
+
+              if (headlines.length > 0) {
+                sentiment = scoreHeadlines(headlines);
+              }
+            } finally {
+              clearTimeout(timeout);
+            }
+
+            const data: SymbolEnrichment = {
+              ...(headlines.length > 0 && { headlines }),
+              ...(sentiment !== undefined && { sentiment }),
+            };
+
+            if (headlines.length > 0) {
+              cache.set(`fintechstudios:${symbol}`, { expiresAt: now + ttlMs(), data });
+            }
+            result[symbol] = data;
+          } catch (err) {
+            console.error(`[data-providers] Fintech Studios error for ${symbol}:`, err);
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+
+    return result;
+  }
 }

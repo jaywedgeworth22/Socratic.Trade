@@ -349,7 +349,9 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     const current = currentPrices[symbol];
     for (const lot of symbolLots) {
       if (Math.abs(lot.quantity) > 0.000001) {
-        openLots.push({ symbol, quantity: lot.quantity, entryPrice: lot.price, side: lot.side, entryAt: lot.entryAt });
+        // Signed quantity: positive for longs, negative for shorts (matches EquityPosition convention)
+        const signedQty = lot.side === "short" ? -lot.quantity : lot.quantity;
+        openLots.push({ symbol, quantity: signedQty, entryPrice: lot.price, side: lot.side, entryAt: lot.entryAt });
       }
       if (!current) continue;
       if (lot.side === "long") {

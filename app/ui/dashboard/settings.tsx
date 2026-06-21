@@ -226,6 +226,8 @@ export function SettingsContent({
           <NumberField label="Max daily notional ($)" value={policy.maxDailyNotional} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
           <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
           <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
+          <NumberField label="Max gross exposure (%)" value={policy.maxGrossExposurePct ?? 0} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v > 0 ? v : undefined })} />
+          <NumberField label="Max net exposure (%)" value={policy.maxNetExposurePct ?? 0} onCommit={(v) => updatePolicy({ maxNetExposurePct: v > 0 ? v : undefined })} />
           <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
           <Field label="Re-check pending proposals">
@@ -656,6 +658,10 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
               <Field label="API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Optional (leave empty for OAuth)" />
               </Field>
+              <Field label="API Endpoint URL (Optional)">
+                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets" />
+              </Field>
+
             </>
           )}
         </div>
@@ -877,6 +883,8 @@ export function StrategyStudio({
             <RangeField label="Max order $" value={policy.maxOrderNotional ?? 0} min={1} max={1000} step={1} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
             <RangeField label="Daily $" value={policy.maxDailyNotional ?? 0} min={10} max={10000} step={10} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
             <RangeField label="Symbol cap %" value={policy.maxSymbolExposurePct ?? 0} min={1} max={100} step={1} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
+            <RangeField label="Gross exp %" value={policy.maxGrossExposurePct ?? 0} min={0} max={300} step={5} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v > 0 ? v : undefined })} />
+            <RangeField label="Net exp %" value={policy.maxNetExposurePct ?? 0} min={0} max={200} step={5} onCommit={(v) => updatePolicy({ maxNetExposurePct: v > 0 ? v : undefined })} />
             <RangeField label="Proposals/run" value={policy.maxProposalsPerRun} min={1} max={10} step={1} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
             <RangeField label="Stop loss %" value={policy.riskRules.stopLossPct ?? 0} min={0} max={50} step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
             <RangeField label="Take profit %" value={policy.riskRules.takeProfitPct ?? 0} min={0} max={100} step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
