@@ -44,6 +44,10 @@ export function getDb(): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
   db = new Database(path);
   db.pragma("journal_mode = WAL");
+  // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
+  // up to 5s for the lock instead. NORMAL durability is the WAL-recommended pairing.
+  db.pragma("busy_timeout = 5000");
+  db.pragma("synchronous = NORMAL");
   migrate(db);
   return db;
 }

@@ -936,7 +936,7 @@ async function proposeTrades(input: {
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            confidenceScore: { type: "number", description: "Conviction score from 1 to 100" }
+            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" }
           }
         }
       }
@@ -1020,8 +1020,15 @@ async function proposeTrades(input: {
         throw new Error("Empty response returned from LLM API.");
       }
 
-      const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
-      return { text, proposals: parsed.proposals ?? [] };
+      try {
+        const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
+        return { text, proposals: parsed.proposals ?? [] };
+      } catch (error) {
+        // A truncated/malformed model response must not crash the whole autonomous
+        // run; degrade to zero proposals for this tick.
+        console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", error);
+        return { text, proposals: [] as TradeProposal[] };
+      }
     }
   );
 
@@ -1041,7 +1048,7 @@ async function proposeTrades(input: {
     `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}).`,
     "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
     "If none survive, return an empty array."
-  ].join("\\n");
+  ].join("\n");
 
   const bearSchema = {
     type: "object",
@@ -1187,8 +1194,15 @@ async function proposeTrades(input: {
         return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
       }
 
-      const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
-      return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
+      try {
+        const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
+        return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
+      } catch (error) {
+        // Don't discard already-valid Bull proposals because the Bear critique came
+        // back as malformed JSON — reuse the existing fall-back-to-Bull path.
+        console.warn("Bear Agent returned unparseable JSON; falling back to Bull proposals", error);
+        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+      }
     }
   );
 
@@ -1352,6 +1366,14 @@ function fallbackProposal(input: {
   ];
 }
 
+// The LLM is told confidenceScore is 1–100, but json_schema strict mode does not
+// reliably enforce numeric bounds, and the value deterministically drives position
+// size. Clamp it before it can reach sizing or the calibration scorecard.
+function clampConfidence(score: number | undefined): number | undefined {
+  if (typeof score !== "number" || Number.isNaN(score)) return undefined;
+  return Math.min(100, Math.max(1, score));
+}
+
 function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
     .filter((proposal) => proposal.symbol && proposal.side && proposal.type)
@@ -1359,6 +1381,7 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
     .map((proposal) => ({
       ...proposal,
       symbol: normalizeSymbol(proposal.symbol),
+      confidenceScore: clampConfidence(proposal.confidenceScore),
       quantity: proposal.quantity ?? undefined,
       dollarAmount: proposal.dollarAmount ?? undefined,
       limitPrice: proposal.limitPrice ?? undefined,
