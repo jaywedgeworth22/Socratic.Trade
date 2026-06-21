@@ -367,6 +367,18 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).not.toContain("notional exposure");
   });
 
+  it("maxSymbolExposureNotional does NOT block a quantity-only market sell when estimatedNotional is zero", () => {
+    // Regression for: a market sell with quantity-only (no price, no dollarAmount) produces
+    // estimatedNotional=0. The old code computed projectedNotional = max(0, existingValue - 0)
+    // = existingValue, which blocked the sell when existingValue > cap. Closing orders are now
+    // unconditionally allowed.
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(0), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
   // T7 — enabled-path short/cover guardrails.
   it("short without a mandatory stop-loss is rejected when short selling is enabled", () => {
     const decision = evaluateTradeProposal(

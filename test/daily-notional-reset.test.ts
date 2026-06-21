@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { dailyExecutionStats, insertProposal, notionalInLastMinutes, startOfDayInTimeZone } from "../src/lib/db";
+import { dailyExecutionStats, insertProposal, listPendingProposals, notionalInLastMinutes, startOfDayInTimeZone } from "../src/lib/db";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-daily-${randomUUID()}.db`)}`;
@@ -78,5 +78,28 @@ describe("daily/hourly notional accounting — T6", () => {
     proposal("t6-fb-qty", a, "buy", undefined, { quantity: 3, limitPrice: 100 });
 
     expect(dailyExecutionStats(a).notional).toBeCloseTo(1000); // 700 (dollarAmount) + 300 (3 * 100)
+  });
+});
+
+describe("listPendingProposals — T14 scopeAccount", () => {
+  it("finds proposals inserted with empty account_number when queried with empty string", () => {
+    // Regression for: insertProposal normalizes '' → '__unassigned__' via scopeAccount,
+    // but listPendingProposals previously passed the raw accountNumber to the WHERE clause,
+    // so querying with '' would never match __unassigned__ rows.
+    const uid = `t14-pend-${randomUUID()}`;
+    insertProposal({
+      id: `t14p-${randomUUID()}`,
+      userId: uid,
+      runId: "r-t14",
+      accountNumber: "", // empty → stored as __unassigned__
+      proposal: { side: "buy", symbol: "AAPL" },
+      decision: { approved: true, reasons: [] },
+      estimatedNotional: 100,
+      status: "proposed"
+    });
+
+    const found = listPendingProposals("", uid);
+    expect(found.length).toBe(1);
+    expect((found[0].proposal as { symbol: string }).symbol).toBe("AAPL");
   });
 });

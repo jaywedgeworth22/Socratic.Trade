@@ -1201,7 +1201,7 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     .prepare(
       "SELECT id, created_at, proposal, decision, review, last_revalidated_at, revalidation_note FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
     )
-    .all(accountNumber, userId) as RawRow[];
+    .all(scopeAccount(accountNumber), userId) as RawRow[];
 
   return rows.map((r) => ({
     id: r.id,
