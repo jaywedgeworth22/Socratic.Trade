@@ -24,6 +24,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`claude/pr-ready-by-default-convention`): **PR convention codified in
+  `AGENTS.md`.** Every branch meant for `main` gets a PR, and PRs open **ready for
+  review by default — not drafts** (this repo has no required CI/branch protection
+  and a sole approver, so a draft only adds a "mark ready" step with no protection).
+  Draft is reserved for genuine WIP, flagged in the PR body. This overrides the
+  harness default of opening PRs as drafts. Docs-only; new "## Pull requests"
+  section in `AGENTS.md`. See
+  `docs/rollouts/2026-06-21-pr-ready-by-default-convention.md`.
 - 2026-06-21 (`agent/claude`): **Deferred backlog continuation (multi-agent, autonomous).** Worked
   the remaining panel backlog in the isolated `~/apps/trading-claude` worktree using background
   agents (sonnet) on disjoint files + inline money-path work, committing + ff-merging each chunk to
