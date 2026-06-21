@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Best-of-each branch reconciliation landed on `main`.** A 7-agent
+  comparison (`docs/reviews/2026-06-21-branch-reconciliation-best-of-each.md`) resolved the parallel
+  agent lanes; the recommended picks were cherry-picked + verified: **tuner missed-opportunity
+  counterfactuals** (`6fa51b5`), **SQLite/LLM safety hardening** (`877bb45`, incl. a `\n` prompt bug),
+  **AccountCapabilities + two-layer short gate + CI workflow activation** (`d014842`), **logo.dev
+  cascade fallback** (`e5dd681`, complementary to main's tile-contrast fix), and **lucide-react 1.21**.
+  The antigravity responsive header was already correctly merged to `main` (no regressions — `lg:`
+  shell / `min-h-16` / aria-labels / Score-col-2 all intact). **Held:** @types/node 26 (tsc break),
+  eslint 10 (peer conflict), zod 4 + next 16 (need migrations). Verified: tsc clean, **404 tests**,
+  build green. See `docs/rollouts/2026-06-21-best-of-each-integration.md`.
 - 2026-06-21: **Chat/RAG/learning advisory — HYBRID decision + issue log + roadmap.** A 5-agent expert
   panel (RAG, NL-finance-chat, onboarding, prompt/tools, LLM-learning) reviewed the chat assistant and
   unanimously landed on **HYBRID**: ISOLATE write surfaces (execution, strategy weight/risk tuning,
