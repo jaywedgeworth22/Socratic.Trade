@@ -1007,6 +1007,15 @@ export function startOfDayInTimeZone(now: Date, timeZone: string = DAILY_RESET_T
   return new Date(midnightWallAsUTC - offsetMs);
 }
 
+/**
+ * Scope key for an account. A missing/blank account number maps to an explicit sentinel so
+ * the "unassigned" bucket is consistent between writes and reads, rather than relying on the
+ * `account_number` column's empty-string DEFAULT (which can silently merge contexts). (T14)
+ */
+function scopeAccount(accountNumber?: string | null): string {
+  return accountNumber && accountNumber.trim() !== "" ? accountNumber : "__unassigned__";
+}
+
 export function dailyExecutionStats(
   accountNumber: string,
   now = new Date(),
@@ -1020,7 +1029,7 @@ export function dailyExecutionStats(
     .prepare(
       "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(dayStart.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -1048,7 +1057,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
     .prepare(
       "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(cutoff.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -1258,7 +1267,7 @@ export function insertProposal(input: {
       input.id,
       input.userId ?? "local",
       input.runId,
-      input.accountNumber,
+      scopeAccount(input.accountNumber),
       new Date().toISOString(),
       JSON.stringify(input.proposal),
       JSON.stringify(input.decision),
