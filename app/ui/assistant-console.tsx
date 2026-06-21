@@ -63,6 +63,18 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+// Router-matched suggested prompts (co-versioned with classifyIntent so a chip never dead-ends).
+// NB: knowledge example says 8-K, not 10-K — only 8-K catalysts are indexed today.
+const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
+  { category: "Ask", prompt: "What is AAPL trading at?" },
+  { category: "Knowledge", prompt: "Any recent 8-K catalysts for TSLA?" },
+  { category: "Portfolio", prompt: "How are my positions doing?" },
+  { category: "Watchlist", prompt: "What's on my watchlist?" },
+  { category: "Alert", prompt: "Alert me if AAPL drops below 180" },
+  { category: "Track", prompt: "Add NVDA to my watchlist" },
+  { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
+];
+
 export function AssistantView({
   executionState,
   approveProposal,
@@ -103,8 +115,8 @@ export function AssistantView({
   const patchDraft = (msgId: string, patch: Partial<DraftState>) =>
     setDrafts((d) => ({ ...d, [msgId]: { ...(d[msgId] ?? { phase: "draft" }), ...patch } as DraftState }));
 
-  const send = useCallback(async () => {
-    const message = input.trim();
+  const send = useCallback(async (override?: string) => {
+    const message = (typeof override === "string" ? override : input).trim();
     if (!message || sending) return;
     setInput("");
     const stamp = Date.now();
@@ -210,11 +222,26 @@ export function AssistantView({
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {messages.length === 0 && (
           <div className="grid h-full place-items-center">
-            <EmptyState
-              icon={<Sparkles size={18} />}
-              title="Ask the assistant"
-              hint='e.g. "AAPL price", "what did AAPL’s 10-K say about supply chain?", or "buy 10 AAPL at 200" — orders come back as a draft you confirm.'
-            />
+            <div className="max-w-xl text-center">
+              <EmptyState
+                icon={<Sparkles size={18} />}
+                title="Ask the assistant"
+                hint="Try one of these — orders always come back as a draft you confirm."
+              />
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s.prompt}
+                    onClick={() => void send(s.prompt)}
+                    disabled={sending}
+                    className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg transition hover:border-accent hover:bg-surface-2 disabled:opacity-50"
+                  >
+                    <span className="text-[10px] uppercase tracking-wide text-muted">{s.category}</span>
+                    <span className="ml-1.5">{s.prompt}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         {messages.map((m) => (
