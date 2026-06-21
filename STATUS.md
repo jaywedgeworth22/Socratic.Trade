@@ -24,6 +24,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`claude/pr-ready-by-default-convention`): **PR convention codified in
+  `AGENTS.md`.** Every branch meant for `main` gets a PR, and PRs open **ready for
+  review by default — not drafts** (this repo has no required CI/branch protection
+  and a sole approver, so a draft only adds a "mark ready" step with no protection).
+  Draft is reserved for genuine WIP, flagged in the PR body. This overrides the
+  harness default of opening PRs as drafts. Docs-only; new "## Pull requests"
+  section in `AGENTS.md`. See
+  `docs/rollouts/2026-06-21-pr-ready-by-default-convention.md`.
 - 2026-06-21: **Short/cover broker-side translation (money-path).** Broker adapters forwarded our
   4-value `OrderSide` raw to buy/sell-only broker APIs, so a live `short`/`cover` was invalid (and the
   synthetic-stops engine emits `cover` outside the policy gate). New `src/lib/broker-side.ts`
