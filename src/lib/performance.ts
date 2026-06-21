@@ -196,23 +196,42 @@ export function getPaperPortfolioProjection(input: {
     if (fill.quantity <= 0 || fill.price <= 0) continue;
     const symbol = normalizeSymbol(fill.symbol);
     const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
+    const q = current.quantity;
     if (fill.side === "buy" || fill.side === "short") {
+      // Opening side: a `buy` increases quantity (+), a `short` decreases it (-). When the fill
+      // lands on an OPPOSITE-side position it closes that position first (and may flip past zero);
+      // it must NOT blend opposite-side cost into averageCost — averageCost is only re-weighted on
+      // a same-side increase, left intact on a partial opposite-side close, and re-based to the fill
+      // price on a flip. (T5: opposite-side averaging guard.)
       const isShort = fill.side === "short";
-      const quantityChange = isShort ? -fill.quantity : fill.quantity;
+      const dir = isShort ? -1 : 1;
       const fillCost = fill.quantity * fill.price;
-      const currentCost = current.averageCost * Math.abs(current.quantity);
-      const nextQuantity = current.quantity + quantityChange;
+      const nextQuantity = q + dir * fill.quantity;
       const nextAbsQuantity = Math.abs(nextQuantity);
-      
-      const nextAverageCost = nextAbsQuantity > 0 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
-      positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
+      const sameSide = q === 0 || Math.sign(q) === dir;
+      let nextAverageCost: number;
+      if (sameSide) {
+        const currentCost = current.averageCost * Math.abs(q);
+        nextAverageCost = nextAbsQuantity > 0.000001 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
+      } else if (nextAbsQuantity <= 0.000001) {
+        nextAverageCost = 0; // fully closed the opposite-side position
+      } else if (Math.sign(nextQuantity) === Math.sign(q)) {
+        nextAverageCost = current.averageCost; // partial close of the opposite side; remaining basis unchanged
+      } else {
+        nextAverageCost = fill.price; // flipped: the excess opens a fresh position at the fill price
+      }
+      if (nextAbsQuantity <= 0.000001) positions.delete(symbol);
+      else positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
       cash += isShort ? fillCost : -fillCost;
     } else {
+      // Closing side: a `sell` may only reduce a LONG, a `cover` only a SHORT. A wrong-sign or flat
+      // close (sell with no long / cover with no short) matches nothing and is skipped — never deepen
+      // the opposite-side position. (T5: wrong-sign/flat close guard.)
       const isCover = fill.side === "cover";
-      const matchedQuantity = Math.min(Math.abs(current.quantity), fill.quantity);
-      const quantityChange = isCover ? matchedQuantity : -matchedQuantity;
-      const nextQuantity = current.quantity + quantityChange;
-      
+      const sameSide = isCover ? q < 0 : q > 0;
+      if (!sameSide) continue;
+      const matchedQuantity = Math.min(Math.abs(q), fill.quantity);
+      const nextQuantity = q + (isCover ? matchedQuantity : -matchedQuantity);
       if (Math.abs(nextQuantity) <= 0.000001) positions.delete(symbol);
       else positions.set(symbol, { ...current, quantity: nextQuantity });
       cash += isCover ? -matchedQuantity * fill.price : matchedQuantity * fill.price;

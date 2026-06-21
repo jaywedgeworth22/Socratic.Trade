@@ -64,7 +64,8 @@ or adjacent to the live order path. These de-risk real/about-to-be-real orders.
 
 ## Follow-ups (remaining plan tasks)
 
-- **T5** — guard `getPaperPortfolioProjection` against wrong-sign/flat closes + opposite-side averaging.
+- **T5** — ✅ DONE 2026-06-20: side-aware `getPaperPortfolioProjection` (wrong-sign/flat close guard +
+  opposite-side averaging guard) + 6 tests. See `docs/rollouts/2026-06-20-money-path-t5-paper-projection.md`.
 - **T6** — db-level notional tests for short/cover + hourly window + tenant isolation; null-`estimated_notional` fallback.
 - **T9** — `recordFillFromProposal` short/cover boundary tests.
 - **T10** — DESIGN DECISION: implement gross/net exposure gates (`maxGrossExposurePct`/`maxNetExposurePct`) or remove the unused fields. Needs sign-off before touching the policy/types/UI surface.
