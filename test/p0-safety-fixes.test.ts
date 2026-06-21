@@ -194,3 +194,34 @@ describe("C. atomic placement support (ref_id persistence + stale 'placing' swee
     expect(listStalePlacingProposals(account, past, "local").some((s) => s.id === id)).toBe(false);
   });
 });
+
+describe("E. buying-power affordability gate (opening orders only)", () => {
+  const buy = (notional: number): TradeProposal => ({
+    symbol: "AAPL", side: "buy", type: "market", dollarAmount: notional,
+    timeInForce: "gfd", marketHours: "regular_hours", rationale: "buy", tradeThesisTag: "Momentum-Breakout", entryMarketRegime: "test"
+  });
+
+  it("blocks an opening buy that exceeds available buying power", () => {
+    const decision = evaluateTradeProposal(buy(8000), { ...baseCtx, portfolio: { ...portfolio, buyingPower: 5000 }, estimatedNotional: 8000 });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("exceeds available buying power"))).toBe(true);
+  });
+
+  it("allows an opening buy within buying power", () => {
+    const decision = evaluateTradeProposal(buy(1000), { ...baseCtx, portfolio: { ...portfolio, buyingPower: 5000 }, estimatedNotional: 1000 });
+    expect(decision.reasons.some((r) => r.includes("buying power"))).toBe(false);
+  });
+
+  it("does not enforce when buyingPower is unknown (<=0)", () => {
+    const decision = evaluateTradeProposal(buy(8000), { ...baseCtx, portfolio: { ...portfolio, buyingPower: 0 }, estimatedNotional: 8000 });
+    expect(decision.reasons.some((r) => r.includes("buying power"))).toBe(false);
+  });
+
+  it("never blocks a closing sell on buying power", () => {
+    const decision = evaluateTradeProposal(
+      { symbol: "AAPL", side: "sell", type: "market", quantity: 5, timeInForce: "gfd", marketHours: "regular_hours", rationale: "exit", tradeThesisTag: "Risk-Exit", entryMarketRegime: "test" },
+      { ...baseCtx, portfolio: { ...portfolio, buyingPower: 1 }, estimatedNotional: 1000 }
+    );
+    expect(decision.reasons.some((r) => r.includes("buying power"))).toBe(false);
+  });
+});

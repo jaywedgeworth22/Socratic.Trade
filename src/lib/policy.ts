@@ -91,6 +91,18 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
     reasons.push("Daily order count limit would be exceeded.");
   }
+  // Affordability: block an opening order the account can't fund rather than outsourcing the
+  // check to the broker's margin rejection. buyingPower is broker-accurate for live/paper
+  // (margin-aware) and cash for Test; a non-positive/non-finite value (a gateway that doesn't
+  // report it) is treated as "unknown" and never blocks, so this can't false-positive.
+  if (
+    isOpening &&
+    Number.isFinite(context.portfolio.buyingPower) &&
+    context.portfolio.buyingPower > 0 &&
+    estimatedNotional > context.portfolio.buyingPower
+  ) {
+    reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds available buying power $${context.portfolio.buyingPower.toFixed(2)}.`);
+  }
   if (proposal.side === "sell" && sellQuantityExceedsHoldings(proposal, context.positions)) {
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
   }
