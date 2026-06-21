@@ -24,6 +24,15 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
+  side-aware notional/exposure caps (T1/T10), partial-fill reconciliation (T2), FIFO lot matcher (T3),
+  paper-projection guards (T5), db notional tests (T6), short exits (T8), recordFill tests (T9),
+  red-team fail-open (T11), tax long-only pin (T12), explicit daily-reset timezone (T13),
+  `account_number → __unassigned__` sentinel (T14-db). 386 tests, tsc clean, build clean.
+  See rollout `docs/rollouts/2026-06-20-money-path-merge-gate.md`.
+- **Pending (user-approved):**
+  - Gross/net exposure caps in Settings UI (user-configurable risk tolerance)
+  - Signed `OpenLot.quantity` for shorts (align with `EquityPosition` convention)
 - 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
   chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
   red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`
