@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**
+  Reordered the enrichment cascade so the real-time `AlpacaSnapshotEnrichmentProvider` wins the
+  price-family fields (price/bid/ask/volume/vwap/intradayChangePct) over delayed providers (it only
+  supplies market data, so fundamentals sourcing is untouched; self-skips without Alpaca keys). Added
+  a shared `dataPointTitle(label, source, asOf)` (+ `derivedTitle`) so hovering ANY Market-Scan cell
+  shows `Source: <provider> · Received HH:MM`, attributed to that field's own `sources[field]`
+  (derived cols → "Computed from <inputs>"; no-provenance cols → time only; never fabricated).
+  `StatTile` carries source/time app-wide; `SOURCE_LABELS` polished (alpaca-snapshot→"Alpaca"). tsc
+  clean · **593 tests** · adversarially verified · see
+  `docs/rollouts/2026-06-21-best-source-and-provenance-tooltips.md`.
 - 2026-06-21 (`agent/claude`): **Scan default columns (expert panel) + Alpaca VWAP/feed.**
   A 4-persona financial-expert panel chose a new 11-column execution-aware default for the Market
   Scan — `symbol·price·Chg·vsVWAP·SecRS·%offHi·$Vol·Spread·Bid·Ask·Score` (bid/ask now default-on

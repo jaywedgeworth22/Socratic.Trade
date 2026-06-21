@@ -839,3 +839,85 @@ describe("AlpacaSnapshotEnrichmentProvider", () => {
     expect(result.TSLA).not.toHaveProperty("ask");
   });
 });
+
+// Freshness-tier ordering: the real-time Alpaca snapshot must win the price-family
+// fields (price/bid/ask/volume) over a DELAYED provider that also returns them, because
+// it is seated FIRST in the cascade. This locks in the reorder in getEnrichmentProvider.
+describe("freshness-tier ordering — real-time Alpaca wins price-family fields", () => {
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalAlpacaKey = process.env.ALPACA_PAPER_API_KEY;
+  const originalAlpacaSecret = process.env.ALPACA_PAPER_SECRET_KEY;
+
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.ALPACA_PAPER_API_KEY = "alpaca-key";
+    process.env.ALPACA_PAPER_SECRET_KEY = "alpaca-secret";
+    process.env.FINNHUB_API_KEY = "finnhub-key";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (originalFinnhubKey) process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    else delete process.env.FINNHUB_API_KEY;
+    if (originalAlpacaKey) process.env.ALPACA_PAPER_API_KEY = originalAlpacaKey;
+    else delete process.env.ALPACA_PAPER_API_KEY;
+    if (originalAlpacaSecret) process.env.ALPACA_PAPER_SECRET_KEY = originalAlpacaSecret;
+    else delete process.env.ALPACA_PAPER_SECRET_KEY;
+  });
+
+  it("seats alpaca-snapshot ahead of the delayed finnhub provider in the cascade", () => {
+    const provider = getEnrichmentProvider();
+    const order = provider.name.split("+");
+    expect(order).toContain("alpaca-snapshot");
+    expect(order).toContain("finnhub");
+    // Real-time tier must resolve before the delayed quote/fundamentals tier.
+    expect(order.indexOf("alpaca-snapshot")).toBeLessThan(order.indexOf("finnhub"));
+  });
+
+  it("takes Alpaca's real-time price/bid/ask/volume over a delayed provider's value", async () => {
+    // Alpaca's real-time snapshot and Finnhub's delayed quote BOTH return a volume for
+    // AAPL, but with DIFFERENT numbers. The first-wins cascade must keep Alpaca's because
+    // it is seated first. Route fetch by host so each provider gets its own payload; every
+    // other URL (Finnhub's other 4 endpoints, Yahoo's crumb/quoteSummary) returns benign empty.
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("data.alpaca.markets/v2/stocks/snapshots")) {
+        return new Response(
+          JSON.stringify({
+            AAPL: {
+              latestTrade: { p: 195.50 },
+              latestQuote: { bp: 195.40, ap: 195.60 },
+              dailyBar: { c: 195.30, v: 2_000_000 },
+              prevDailyBar: { c: 192.00 }
+            }
+          })
+        );
+      }
+      if (url.includes("finnhub.io/api/v1/quote")) {
+        // Delayed quote: a DIFFERENT (stale) volume that must lose to Alpaca's.
+        return new Response(JSON.stringify({ c: 190.00, v: 9_999_999 }));
+      }
+      // Finnhub company-news returns an array; everything else an empty object/array.
+      if (url.includes("finnhub.io/api/v1/company-news")) return new Response(JSON.stringify([]));
+      if (url.includes("finnhub.io")) return new Response(JSON.stringify({}));
+      // Yahoo crumb/quoteSummary and any other URL: empty so nothing throws.
+      return new Response(JSON.stringify({}));
+    });
+
+    const provider = getEnrichmentProvider();
+    const result = await provider.enrich(["AAPL"]);
+
+    // Real-time Alpaca wins every price-family field…
+    expect(result.AAPL?.price).toBe(195.50);
+    expect(result.AAPL?.bid).toBe(195.40);
+    expect(result.AAPL?.ask).toBe(195.60);
+    // …including the field both providers returned (Alpaca 2,000,000 beats Finnhub 9,999,999).
+    expect(result.AAPL?.volume).toBe(2_000_000);
+
+    // …and each is stamped to the real-time source, proving Alpaca (not finnhub) supplied it.
+    expect(result.AAPL?.sources?.price).toBe("alpaca-snapshot");
+    expect(result.AAPL?.sources?.bid).toBe("alpaca-snapshot");
+    expect(result.AAPL?.sources?.ask).toBe("alpaca-snapshot");
+    expect(result.AAPL?.sources?.volume).toBe("alpaca-snapshot");
+  });
+});
