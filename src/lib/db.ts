@@ -566,6 +566,16 @@ export function deleteInternalSetting(key: string): void {
   getDb().prepare("DELETE FROM settings WHERE key = ?").run(key);
 }
 
+/** Find the first settings row whose key matches a LIKE pattern.  Used for
+ *  state-recovery during OAuth callbacks where userId is not yet in scope. */
+export function findInternalSettingByKeyLike<T>(pattern: string): { key: string; value: T } | undefined {
+  const row = getDb()
+    .prepare("SELECT key, value FROM settings WHERE key LIKE ? LIMIT 1")
+    .get(pattern) as { key: string; value: string } | undefined;
+  if (!row) return undefined;
+  return { key: row.key, value: JSON.parse(row.value) as T };
+}
+
 export type MarketDataDemandKind = "history";
 
 export interface MarketDataDemandFill {

@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     // hand-typed number, and never the read-only Investing/Roth IRA accounts. Requires the
     // Robinhood MCP to already be connected (OAuth complete).
     if (broker === "robinhood") {
-      const accounts = await getRobinhoodGateway().getAccounts();
+      const accounts = await getRobinhoodGateway(userId).getAccounts();
       const agentic = accounts.find((a) => a.agenticAllowed);
       if (!agentic) {
         return new NextResponse(
