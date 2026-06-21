@@ -1,11 +1,14 @@
 "use client";
 
+import { useId } from "react";
 import type { EquityCurvePoint } from "@/lib/types";
 import { formatPct, money, signedMoney } from "../dashboard-widgets";
 
 const ALLOC_COLORS = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#06b6d4", "#ef4444", "#84cc16", "#ec4899"];
 
 export function EquityCurve({ data }: { data: EquityCurvePoint[] }) {
+  // Scope the gradient id so two equity curves on one page can't collide.
+  const gradientId = `equity-fill-${useId().replace(/:/g, "")}`;
   if (data.length === 0) {
     return <div className="flex h-full items-center justify-center text-xs text-faint">No equity history yet</div>;
   }
@@ -27,14 +30,14 @@ export function EquityCurve({ data }: { data: EquityCurvePoint[] }) {
     <div className="relative h-full min-h-[180px]">
       <svg className="h-full w-full overflow-visible" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Equity curve">
         <defs>
-          <linearGradient id="equity-fill" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.32" />
             <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02" />
           </linearGradient>
         </defs>
         <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="var(--line)" strokeWidth="1" />
         <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="var(--line)" strokeWidth="1" />
-        <polygon points={area} fill="url(#equity-fill)" />
+        <polygon points={area} fill={`url(#${gradientId})`} />
         <polyline points={points} fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
         {latest && <circle cx={xFor(data.length - 1)} cy={yFor(latest.equity)} r="4" fill="var(--accent)" />}
       </svg>

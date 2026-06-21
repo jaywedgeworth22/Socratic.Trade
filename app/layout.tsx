@@ -1,11 +1,19 @@
 import "./globals.css";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { ThemeProvider, themeInitScript } from "./ui/theme";
 import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "Agentic Trading Cockpit",
   description: "Local dashboard for managing an agentic trading account"
+};
+
+// viewport-fit=cover lets the page extend under the notch/home indicator; the
+// safe-area-inset padding in globals.css then keeps content clear of them.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
