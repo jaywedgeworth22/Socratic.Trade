@@ -614,7 +614,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       )}
       {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
-        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
+        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide", safetyBanner.className)}
         title={executionState.clarification}
       >
         {safetyBanner.text}
@@ -704,11 +704,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <button
               onClick={() => setFeedOpen(true)}
+              aria-label={pendingCount > 0 ? `Activity — ${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}` : "Activity"}
               className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
             >
               <ActivityIcon size={15} /> <span className="hidden sm:inline">Activity</span>
               {pendingCount > 0 && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
+                <span aria-live="polite" className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
                   {pendingCount}
                 </span>
               )}
@@ -948,7 +949,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 function StatusPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={title}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">{label}</span>
       <span className="tnum text-[13px] leading-tight text-fg">{value}</span>
     </div>
   );
@@ -959,7 +960,7 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
   const bar = tone === "down" ? "bg-down" : tone === "warn" ? "bg-warn" : "bg-accent";
   return (
     <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={`${money(used)} of ${money(cap)} daily volume limit used`}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
       <div className="flex items-center gap-1.5">
         <span className="tnum text-[13px] leading-tight text-fg">{pct}%</span>
         <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-3/50 backdrop-blur-md">
@@ -1590,6 +1591,8 @@ function MarketScanView({
         <div className="h-[min(600px,65vh)] overflow-x-auto p-2">
           <TableVirtuoso
             data={sorted}
+            overscan={600}
+            initialItemCount={Math.min(sorted.length, 20)}
             components={{
               Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
