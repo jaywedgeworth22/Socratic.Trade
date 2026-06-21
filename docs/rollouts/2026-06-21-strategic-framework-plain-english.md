@@ -18,8 +18,28 @@
 ## Files
 
 - `docs/strategic-framework.md` (new)
+- `docs/Strategic-Framework-Overview.pdf` (new — polished standalone PDF for sharing)
+- `docs/strategic-framework-overview.html` (new — source HTML the PDF is rendered from)
 - `docs/rollouts/2026-06-21-strategic-framework-plain-english.md` (new)
 - `STATUS.md` (active-focus entry added)
+
+## Shareable PDF/HTML variant
+
+- `docs/strategic-framework-overview.html` is a self-contained, print-styled
+  variant of the framework with the audience line and all internal meta
+  (the "living document" note, changelog, and source-doc list) stripped, so it
+  reads as a document you'd hand directly to the intended reader. Title is
+  neutral ("Strategic Framework Overview") and does not name the audience.
+- `docs/Strategic-Framework-Overview.pdf` is rendered from that HTML.
+- **Regenerate the PDF** (LibreOffice's `--convert-to` is broken in this env;
+  use the bundled Playwright Chromium instead):
+  ```bash
+  /opt/pw-browsers/chromium-1194/chrome-linux/chrome --headless --no-sandbox \
+    --no-pdf-header-footer \
+    --print-to-pdf=docs/Strategic-Framework-Overview.pdf \
+    file://$PWD/docs/strategic-framework-overview.html
+  ```
+  Keep the HTML and PDF in sync when the framework changes.
 
 ## Sources synthesized
 
