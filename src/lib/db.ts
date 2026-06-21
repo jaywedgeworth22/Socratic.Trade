@@ -1806,6 +1806,7 @@ export type ApiKeySource = "user" | "env" | "none";
 
 const API_KEY_ENV_MAP: Record<string, string> = {
   openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
   finnhub: "FINNHUB_API_KEY",
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
@@ -1833,6 +1834,7 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   finnhub_api_key: "finnhub",
   fmp_api_key: "fmp",
   openai_api_key: "openai",
+  anthropic_api_key: "anthropic",
   marketstack_api_key: "marketstack",
   tradier_api_key: "tradier",
   fred_api_key: "fred",
@@ -2050,8 +2052,9 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
   })();
 }
 
-export function deleteConnectedAccount(id: string, userId: string = "local"): void {
-  getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+export function deleteConnectedAccount(id: string, userId: string = "local"): boolean {
+  const result = getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+  return result.changes > 0;
 }
 
 // ── Synthetic trailing stops (R2 scaffolding) ──────────────────────────────────

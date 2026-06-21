@@ -35,6 +35,27 @@ steps materially change.
   clean, **456 tests**. Remaining (next session): run-lock approval path, native Alpaca brackets,
   PDT/Reg-T gate, migration ledger, db.ts split, Litestream, Robinhood fundamentals. See
   `docs/rollouts/2026-06-21-deferred-continuation-multiagent.md`.
+- 2026-06-21: **Short/cover broker-side translation (money-path).** Broker adapters forwarded our
+  4-value `OrderSide` raw to buy/sell-only broker APIs, so a live `short`/`cover` was invalid (and the
+  synthetic-stops engine emits `cover` outside the policy gate). New `src/lib/broker-side.ts`
+  (`toBrokerSide`: short→sell, cover→buy); `alpaca.ts` translates on both order paths (Alpaca supports
+  shorting, still gated by `shortSellingEnabled`); `robinhood.ts` `toMcpOrder` fails closed (throws on
+  short/cover — no equity shorting). 423 tests (new `test/broker-side.test.ts`, incl. Alpaca SDK-mocked
+  end-to-end), tsc + build clean. Built in isolated worktree off clean `main`; landing via PR. Rollout:
+  `docs/rollouts/2026-06-21-short-cover-broker-side-translation.md`.
+- 2026-06-21: **Auth hardening — strip client identity headers on public routes.** The
+  `middleware.ts` PUBLIC_PREFIXES branch (`/api/health`, `/api/webhooks`) forwarded requests unchanged,
+  so a forged `x-authenticated-user-email`/`x-user-id` could pass to a public handler. New edge-safe
+  `src/lib/auth/strip-identity.ts` (`stripClientIdentityHeaders`); both middleware branches now strip
+  identity before forwarding (public stays unauthenticated — webhooks unaffected). Not exploitable
+  today; closes the latent footgun. 459 tests (new `test/strip-identity.test.ts`), tsc + build clean.
+  Isolated worktree off clean `main`; landing via PR. Rollout:
+  `docs/rollouts/2026-06-21-strip-identity-public-routes.md`.
+- 2026-06-21: **Git author identity rule (GitHub email privacy).** Codified in `AGENTS.md`: all
+  commits/pushes use the owner's GitHub noreply email
+  (`12656028+jaywedgeworth22@users.noreply.github.com`), never the real email. Repo-local
+  `user.email` already set repo-wide (all worktrees inherit via shared `.git/config`; global stays
+  the real email for other repos). Rollout: `docs/rollouts/2026-06-21-git-email-identity-rule.md`.
 - 2026-06-21 (`agent/claude`): **Deferred-task sweep — P0 safety re-application + IC backtest +
   buying-power gate.** Worked the financial-expert-panel backlog in the ISOLATED
   `~/apps/trading-claude` worktree (the prior P0 work was wiped twice from the co-edited main
