@@ -130,12 +130,6 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
   return deriveExecutionState(snapshot.policy, activeConnectedAccountFor(snapshot));
 }
 
-function executionTone(state: ExecutionState): "info" | "up" | "down" {
-  if (state.mode === "broker/live") return "down";
-  if (state.mode === "broker/paper") return "up";
-  return "info";
-}
-
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
 // decides the color + message so a live (Brokerage) session can never be mistaken for a
 // Test sandbox. Display-only — it does not place or gate orders.
@@ -510,7 +504,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         {safetyBanner.text}
       </div>
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md xl:h-14 xl:flex-nowrap xl:px-4 xl:py-0">
+      <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md xl:min-h-16 xl:flex-nowrap xl:px-4">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
             <Zap size={17} className="fill-current" />
@@ -525,10 +519,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <div className="flex items-center gap-1.5 whitespace-nowrap">
                 <Dot tone={marketStatus.tone} />
                 {marketStatus.label}
-              </div>
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={executionTone(executionState)} />
-                <span title={executionState.clarification}>{executionState.label} Mode</span>
               </div>
             </div>
           </div>
@@ -676,7 +666,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               />
             )}
             {workspaceTab === "assistant" && (
-              <AssistantView executionState={executionStateFor(snapshot)} approveProposal={approveProposal} />
+              <AssistantView executionState={executionStateFor(snapshot)} approveProposal={approveProposal} rejectProposal={rejectProposal} />
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
@@ -3001,6 +2991,10 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
               <Field label="API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
+              <Field label="API Endpoint URL (Optional)">
+                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets" />
+              </Field>
+
             </>
           )}
         </div>

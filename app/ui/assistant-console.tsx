@@ -45,7 +45,7 @@ interface ChatMessage {
   draft?: ChatDraft | null;
 }
 
-type DraftPhase = "draft" | "checking" | "checked" | "sending" | "proposed" | "placing" | "done" | "discarded";
+type DraftPhase = "draft" | "checking" | "checked" | "sending" | "proposed" | "placing" | "done" | "rejecting" | "rejected" | "discarded";
 interface DraftState {
   phase: DraftPhase;
   decision?: { approved: boolean; reasons: string[] };
@@ -65,10 +65,12 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 
 export function AssistantView({
   executionState,
-  approveProposal
+  approveProposal,
+  rejectProposal
 }: {
   executionState: ExecutionState;
   approveProposal: (proposalId: string) => Promise<void>;
+  rejectProposal: (proposalId: string) => Promise<void>;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
@@ -184,6 +186,16 @@ export function AssistantView({
     }
   }
 
+  async function rejectStaged(msgId: string, proposalId: string) {
+    patchDraft(msgId, { phase: "rejecting" });
+    try {
+      await rejectProposal(proposalId); // existing rail: marks the proposed row rejected + toasts + reloads
+      patchDraft(msgId, { phase: "rejected" });
+    } catch {
+      patchDraft(msgId, { phase: "proposed" });
+    }
+  }
+
   return (
     <Card className="flex h-full min-h-[28rem] flex-col p-0">
       <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
@@ -226,6 +238,7 @@ export function AssistantView({
                   onCheck={() => checkPolicy(m.id, m.draft!)}
                   onSend={() => sendToApprovals(m.id, m.draft!)}
                   onConfirm={(pid) => confirmPlace(m.id, pid)}
+                  onReject={(pid) => rejectStaged(m.id, pid)}
                   onDiscard={() => patchDraft(m.id, { phase: "discarded" })}
                 />
               )}
@@ -274,6 +287,7 @@ function DraftOrderCard({
   onCheck,
   onSend,
   onConfirm,
+  onReject,
   onDiscard
 }: {
   draft: ChatDraft;
@@ -282,6 +296,7 @@ function DraftOrderCard({
   onCheck: () => void;
   onSend: () => void;
   onConfirm: (proposalId: string) => void;
+  onReject: (proposalId: string) => void;
   onDiscard: () => void;
 }) {
   if (state.phase === "discarded") {
@@ -343,6 +358,9 @@ function DraftOrderCard({
             <Button size="sm" variant={dest.live ? "danger" : "primary"} onClick={() => onConfirm(state.proposalId!)}>
               <Check size={13} /> {dest.live ? `Confirm — places a REAL order against ${draft.symbol}` : "Confirm & place"}
             </Button>
+            <Button size="sm" variant="ghost" onClick={() => onReject(state.proposalId!)}>
+              <X size={13} /> Reject
+            </Button>
             <span className="text-[11px] text-muted">also in the Decision tab</span>
           </>
         )}
@@ -353,9 +371,21 @@ function DraftOrderCard({
           </span>
         )}
 
+        {state.phase === "rejecting" && (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <Loader2 size={13} className="animate-spin" /> rejecting…
+          </span>
+        )}
+
         {state.phase === "done" && (
           <span className="flex items-center gap-1.5 text-xs text-up">
             <Check size={14} /> Submitted via the approvals rail.
+          </span>
+        )}
+
+        {state.phase === "rejected" && (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <X size={14} /> Rejected.
           </span>
         )}
       </div>

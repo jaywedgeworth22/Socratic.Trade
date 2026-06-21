@@ -16,12 +16,16 @@ describe("market enrichment provider", () => {
   const originalFmpKey = process.env.FMP_API_KEY;
   const originalAlphaVantageKey = process.env.ALPHAVANTAGE_API_KEY;
   const originalWebullEnabled = process.env.WEBULL_UNOFFICIAL_ENABLED;
+  const originalFintechKey = process.env.FINTECH_STUDIOS_API_KEY;
+  const originalFintechBase = process.env.FINTECH_STUDIOS_BASE_URL;
 
   beforeEach(() => {
     delete process.env.FINNHUB_API_KEY;
     delete process.env.FMP_API_KEY;
     delete process.env.ALPHAVANTAGE_API_KEY;
     delete process.env.WEBULL_UNOFFICIAL_ENABLED;
+    delete process.env.FINTECH_STUDIOS_API_KEY;
+    delete process.env.FINTECH_STUDIOS_BASE_URL;
   });
 
   afterEach(() => {
@@ -33,6 +37,10 @@ describe("market enrichment provider", () => {
     else delete process.env.ALPHAVANTAGE_API_KEY;
     if (originalWebullEnabled) process.env.WEBULL_UNOFFICIAL_ENABLED = originalWebullEnabled;
     else delete process.env.WEBULL_UNOFFICIAL_ENABLED;
+    if (originalFintechKey) process.env.FINTECH_STUDIOS_API_KEY = originalFintechKey;
+    else delete process.env.FINTECH_STUDIOS_API_KEY;
+    if (originalFintechBase) process.env.FINTECH_STUDIOS_BASE_URL = originalFintechBase;
+    else delete process.env.FINTECH_STUDIOS_BASE_URL;
   });
 
   it("uses Yahoo Finance provider when no API key is configured", async () => {
@@ -304,5 +312,74 @@ describe("Alpha Vantage Warning Detection", () => {
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ headlines: ["AAPL is doing great"], sentiment: 70 });
     expect(fetchCount).toBe(1);
+  });
+
+  describe("Fintech Studios / PowerIntell", () => {
+    it("adds FintechStudiosEnrichmentProvider to cascade when key is set", async () => {
+      process.env.FINTECH_STUDIOS_API_KEY = "test-key-fts";
+      const provider = getEnrichmentProvider();
+      expect(provider.name).toContain("fintechstudios");
+    });
+
+    it("fetches news and computes sentiment correctly", async () => {
+      const { FintechStudiosEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      let fetchCount = 0;
+      let requestedUrl = "";
+      let requestedBody: any = null;
+
+      vi.stubGlobal("fetch", async (url: string, init: any) => {
+        fetchCount++;
+        requestedUrl = url;
+        requestedBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          data: {
+            articles: [
+              { title: "Apple surges on new AI model launch" },
+              { title: "Caterpillar logs steady growth" } // Wait, this is just mocked search articles
+            ]
+          }
+        }));
+      });
+
+      const provider = new FintechStudiosEnrichmentProvider("fts-key");
+      const res = await provider.enrich(["AAPL"]);
+
+      expect(fetchCount).toBe(1);
+      expect(requestedUrl).toBe("https://studio.fintechstudios.com/api/v1/search");
+      expect(requestedBody).toEqual({ query: "AAPL stock", limit: 5 });
+      expect(res.AAPL).toEqual({
+        headlines: [
+          "Apple surges on new AI model launch",
+          "Caterpillar logs steady growth"
+        ],
+        sentiment: 76
+      });
+      // Verify cache works
+      const resCached = await provider.enrich(["AAPL"]);
+      expect(fetchCount).toBe(1);
+      expect(resCached.AAPL).toEqual(res.AAPL);
+    });
+
+    it("prevents cache writes on transient errors", async () => {
+      const { FintechStudiosEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+      clearEnrichmentCache();
+
+      let fetchCount = 0;
+      vi.stubGlobal("fetch", async () => {
+        fetchCount++;
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const provider = new FintechStudiosEnrichmentProvider("fts-key");
+      const res1 = await provider.enrich(["AAPL"]);
+      expect(res1.AAPL).toEqual({});
+      expect(fetchCount).toBe(1);
+
+      const res2 = await provider.enrich(["AAPL"]);
+      expect(res2.AAPL).toEqual({});
+      expect(fetchCount).toBe(2);
+    });
   });
 });

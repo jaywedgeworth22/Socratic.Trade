@@ -159,6 +159,23 @@ function formatDiscordPayload(input: {
       }
       break;
     }
+    case "proposal_withdrawn": {
+      color = 15844367; // Amber — a pending idea was pulled, not an error
+      const proposal = payload?.proposal;
+      const expired = payload?.source === "expiry";
+      if (proposal) {
+        fields.push(
+          { name: "Symbol", value: String(proposal.symbol), inline: true },
+          { name: "Side", value: String(proposal.side).toUpperCase(), inline: true },
+          { name: "Outcome", value: expired ? "Expired" : "Withdrawn", inline: true }
+        );
+      }
+      if (payload?.reason) description = String(payload.reason);
+      if (payload?.proposalId) {
+        fields.push({ name: "Proposal ID", value: String(payload.proposalId), inline: false });
+      }
+      break;
+    }
   }
 
   return {

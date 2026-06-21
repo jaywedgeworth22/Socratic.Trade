@@ -31,6 +31,37 @@ steps materially change.
   count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt
   (notional = 0) — comments only, no logic change. tsc clean, 371 tests pass, build OK. See
   `docs/rollouts/2026-06-21-data-providers-cleanup.md`.
+- 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal staleness —
+  UI + expiry policy + on-run LLM re-validation.** (Part 1, UI) Pending-approval
+  cards show `Proposed <date, time> · <relative age>` with an escalating staleness
+  state; removed the redundant "Test Mode" brand-block line + dead
+  `executionTone()`; fixed the "too thin"/clipped command bar (`xl:h-14`/`xl:py-0`
+  → `min-h-16`). (Part 2, backend) New `src/lib/proposal-revalidation.ts`:
+  **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 2880 =
+  2 days; runs at run-start AND every scheduler tick → status `expired`) and a
+  **cadence-gated on-run LLM re-check** (`proposalRevalidateCadenceHours`, default
+  0 = every run; not optional) that, inside `runStrategyOnce`, asks the LLM whether
+  each *due* still-pending proposal still stands — **regular market hours only** (no
+  overnight checks). Dropdown: Every run / Once per day / Every 5 days.
+  `reaffirm` stamps `last_revalidated_at` (UI: "Re-checked X ago — still
+  advised"), `withdraw` → status `withdrawn` + `proposal_withdrawn` notification.
+  Safe-by-default: ambiguous LLM output keeps the proposal; market closed / no
+  `OPENAI_API_KEY` ⇒ LLM pass skips but deterministic expiry still runs. Both
+  surfaced as **dropdowns** + a notification toggle in Settings → Risk. The
+  **Flow** button was a question (static React Flow pipeline visualizer,
+  `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
+  build green. See
+  `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
+- 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
+- 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
+- 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
+  side-aware notional/exposure caps (T1/T10), partial-fill reconciliation (T2), FIFO lot matcher (T3),
+  paper-projection guards (T5), db notional tests (T6), short exits (T8), recordFill tests (T9),
+  red-team fail-open (T11), tax long-only pin (T12), explicit daily-reset timezone (T13),
+  `account_number → __unassigned__` sentinel (T14-db). 386 tests, tsc clean, build clean.
+  See rollout `docs/rollouts/2026-06-20-money-path-merge-gate.md`.
+- **Completed follow-ups:** gross/net exposure caps added to Settings UI (NumberField + RangeField
+  sliders; 0 = no cap); `OpenLot.quantity` now signed (negative for shorts, matches `EquityPosition`).
 - 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
   chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
   red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`

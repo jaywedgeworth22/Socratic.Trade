@@ -10,7 +10,7 @@ export type StrategyAuthority = "propose" | "decide";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert";
+export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
 
@@ -114,7 +114,9 @@ export interface ConnectedAccount {
   label: string;
   apiKey?: string;
   apiSecret?: string;
+  baseUrl?: string;
   isActive: boolean;
+
   createdAt: string;
   updatedAt: string;
 }
@@ -194,6 +196,20 @@ export interface TradingPolicy {
   maxNetExposurePct?: number;
   maxDailyOrders: number;
   maxProposalsPerRun: number;
+  /**
+   * Hard time-to-live for a still-pending (unapproved/unrejected) proposal, in minutes.
+   * A proposal older than this is auto-expired (status → "expired") so the approval queue
+   * never implies the agent is still actively recommending an hours/days-old idea. 0 or
+   * undefined disables hard expiry — the on-run LLM re-validation below still applies.
+   */
+  proposalExpiryMinutes?: number;
+  /**
+   * How often each still-pending proposal is re-validated by the LLM, as the minimum hours
+   * between re-checks for a given proposal. Re-checks ride on strategy runs and happen during
+   * regular market hours only (never overnight). 0 = every run; 24 = once per day; 120 = every
+   * 5 days. Default 0 (every run).
+   */
+  proposalRevalidateCadenceHours?: number;
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
@@ -483,6 +499,10 @@ export interface PendingProposal {
   proposal: TradeProposal;
   decision: PolicyDecision;
   review?: ReviewedOrder;
+  /** Last time a strategy run re-validated this still-pending proposal via the LLM. */
+  lastRevalidatedAt?: string;
+  /** The LLM's most recent re-validation note (why it still stands). */
+  revalidationNote?: string;
 }
 
 export interface StrategyOutcome {

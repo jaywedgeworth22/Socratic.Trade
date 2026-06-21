@@ -213,6 +213,9 @@ export function formatNotificationDisplay(
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {
     title = "Strategy Run Failed";
+  } else if (event.type === "proposal_withdrawn") {
+    const expired = stringValue(payload.source) === "expiry";
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
   }
 
   return {

@@ -226,8 +226,40 @@ export function SettingsContent({
           <NumberField label="Max daily notional ($)" value={policy.maxDailyNotional} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
           <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
           <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
+          <NumberField label="Max gross exposure (%)" value={policy.maxGrossExposurePct ?? 0} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v > 0 ? v : undefined })} />
+          <NumberField label="Max net exposure (%)" value={policy.maxNetExposurePct ?? 0} onCommit={(v) => updatePolicy({ maxNetExposurePct: v > 0 ? v : undefined })} />
           <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
+          <Field label="Re-check pending proposals">
+            <select
+              className={inputClass}
+              value={String(policy.proposalRevalidateCadenceHours ?? 0)}
+              onChange={(e) => updatePolicy({ proposalRevalidateCadenceHours: Number(e.target.value) })}
+            >
+              <option value="0">Every run</option>
+              <option value="24">Once per day</option>
+              <option value="120">Every 5 days</option>
+            </select>
+          </Field>
+          <Field label="Pending proposals expire after">
+            <select
+              className={inputClass}
+              value={String(policy.proposalExpiryMinutes ?? 0)}
+              onChange={(e) => updatePolicy({ proposalExpiryMinutes: Number(e.target.value) })}
+            >
+              <option value="180">3 hours</option>
+              <option value="360">6 hours</option>
+              <option value="720">12 hours</option>
+              <option value="1440">1 day</option>
+              <option value="2880">2 days</option>
+              <option value="7200">5 days</option>
+              <option value="14400">10 days</option>
+              <option value="0">Never</option>
+            </select>
+          </Field>
+          <p className="text-xs leading-relaxed text-faint sm:col-span-2">
+            Proposals sit in the approval queue until you act on them. <span className="text-muted">Re-check</span> has the strategy ask the LLM whether each still-pending proposal still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors &ldquo;re-checked&rdquo;. It only happens when the strategy runs, during regular market hours (never overnight), at most this often per proposal. <span className="text-muted">Expire after</span> is a deterministic backstop: anything pending longer than that is auto-expired regardless.
+          </p>
           <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
           <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
           <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
@@ -334,7 +366,7 @@ export function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-2 gap-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
@@ -626,6 +658,10 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
               <Field label="API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Optional (leave empty for OAuth)" />
               </Field>
+              <Field label="API Endpoint URL (Optional)">
+                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets" />
+              </Field>
+
             </>
           )}
         </div>
@@ -847,6 +883,8 @@ export function StrategyStudio({
             <RangeField label="Max order $" value={policy.maxOrderNotional ?? 0} min={1} max={1000} step={1} onCommit={(v) => updatePolicy({ maxOrderNotional: v })} />
             <RangeField label="Daily $" value={policy.maxDailyNotional ?? 0} min={10} max={10000} step={10} onCommit={(v) => updatePolicy({ maxDailyNotional: v })} />
             <RangeField label="Symbol cap %" value={policy.maxSymbolExposurePct ?? 0} min={1} max={100} step={1} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
+            <RangeField label="Gross exp %" value={policy.maxGrossExposurePct ?? 0} min={0} max={300} step={5} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v > 0 ? v : undefined })} />
+            <RangeField label="Net exp %" value={policy.maxNetExposurePct ?? 0} min={0} max={200} step={5} onCommit={(v) => updatePolicy({ maxNetExposurePct: v > 0 ? v : undefined })} />
             <RangeField label="Proposals/run" value={policy.maxProposalsPerRun} min={1} max={10} step={1} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
             <RangeField label="Stop loss %" value={policy.riskRules.stopLossPct ?? 0} min={0} max={50} step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
             <RangeField label="Take profit %" value={policy.riskRules.takeProfitPct ?? 0} min={0} max={100} step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />

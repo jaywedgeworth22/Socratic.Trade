@@ -125,6 +125,33 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
 
+  // Whole-portfolio gross/net exposure caps. Gross = Σ|marketValue| (total market
+  // involvement / leverage); net = Σ marketValue (directional bias). Each blocks only an
+  // order that pushes the metric FURTHER past its cap — a risk-reducing close is always
+  // allowed. These mainly bite once short selling is enabled. Defaults are 100% (non-binding).
+  if (context.policy.maxGrossExposurePct || context.policy.maxNetExposurePct) {
+    const totalValue = context.portfolio.totalMarketValue;
+    if (totalValue > 0) {
+      const grossNow = context.positions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
+      const netNow = context.positions.reduce((sum, p) => sum + p.marketValue, 0);
+      const grossProjected = isOpening ? grossNow + estimatedNotional : Math.max(0, grossNow - estimatedNotional);
+      const netDelta = proposal.side === "buy" || proposal.side === "cover" ? estimatedNotional : -estimatedNotional;
+      const netProjected = netNow + netDelta;
+      if (context.policy.maxGrossExposurePct) {
+        const grossCap = (context.policy.maxGrossExposurePct / 100) * totalValue;
+        if (grossProjected > grossCap && grossProjected > grossNow) {
+          reasons.push(`Projected gross exposure $${grossProjected.toFixed(2)} exceeds gross cap $${grossCap.toFixed(2)} (${context.policy.maxGrossExposurePct}%).`);
+        }
+      }
+      if (context.policy.maxNetExposurePct) {
+        const netCap = (context.policy.maxNetExposurePct / 100) * totalValue;
+        if (Math.abs(netProjected) > netCap && Math.abs(netProjected) > Math.abs(netNow)) {
+          reasons.push(`Projected net exposure $${netProjected.toFixed(2)} exceeds net cap $${netCap.toFixed(2)} (${context.policy.maxNetExposurePct}%).`);
+        }
+      }
+    }
+  }
+
   const sectorDecision = projectedSectorExposurePct(proposal, context, estimatedNotional);
   if (sectorDecision && sectorDecision.cap > 0 && sectorDecision.projectedPct > sectorDecision.cap) {
     reasons.push(`Projected ${sectorDecision.sector} sector exposure ${sectorDecision.projectedPct.toFixed(2)}% exceeds sector cap ${sectorDecision.cap}%.`);
@@ -137,7 +164,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     approved: reasons.length === 0,
     reasons,
     projectedSymbolExposurePct,
-    dailyNotionalUsed: context.dailyNotionalUsed + estimatedNotional
+    // Opening sides accumulate daily notional; closing sides (sell/cover) do not (matches the
+    // daily/hourly cap checks above, which are gated on isOpening). (T14)
+    dailyNotionalUsed: context.dailyNotionalUsed + (isOpening ? estimatedNotional : 0)
   };
 }
 
@@ -291,10 +320,3 @@ function sectorCapFor(policy: TradingPolicy, sector: string): number | undefined
   return match?.[1];
 }
 
-function currentPriceForPosition(position: EquityPosition, marketScan?: MarketScan): number | undefined {
-  const symbol = normalizeSymbol(position.symbol);
-  const scanPrice = marketScan?.quotesBySymbol[symbol]?.price;
-  if (scanPrice && scanPrice > 0) return scanPrice;
-  if (position.quantity > 0) return position.marketValue / position.quantity;
-  return undefined;
-}

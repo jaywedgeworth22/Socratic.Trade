@@ -17,6 +17,32 @@ function fill(input: Partial<FillEvent> & { id: string; side: "buy" | "sell"; qu
   return { proposalId: "p1", runId: "r1", source: "paper", status: "filled", raw: undefined, ...input };
 }
 
+describe("tax — T12 long-only for short/cover", () => {
+  it("excludes a short/cover round-trip from realized tax (long-only)", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "TAX_SHORT_ONLY";
+    const base = { proposalId: "p1", runId: "r1", source: "paper" as const, status: "filled", raw: undefined, accountNumber: a, symbol: "TSLA" };
+    // Profitable short within the year: short @100 (20d ago), cover @80 (10d ago) → +$20 on a SHORT lot.
+    insertFillEvent({ ...base, id: "t12-s1", side: "short", quantity: 1, price: 100, notional: 100, filledAt: daysAgo(20) });
+    insertFillEvent({ ...base, id: "t12-s2", side: "cover", quantity: 1, price: 80, notional: 80, filledAt: daysAgo(10) });
+
+    const summary = getTaxSummary(a, "paper", {}, undefined, NOW);
+    expect(summary.shortTermRealized).toBeCloseTo(0); // short/cover lots are not `long` → never taxed
+    expect(summary.longTermRealized).toBeCloseTo(0);
+  });
+
+  it("still counts an equivalent long round-trip (control)", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "TAX_LONG_CTRL";
+    const base = { proposalId: "p1", runId: "r1", source: "paper" as const, status: "filled", raw: undefined, accountNumber: a, symbol: "AAPL" };
+    insertFillEvent({ ...base, id: "t12-l1", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: daysAgo(20) });
+    insertFillEvent({ ...base, id: "t12-l2", side: "sell", quantity: 1, price: 130, notional: 130, filledAt: daysAgo(10) });
+
+    const summary = getTaxSummary(a, "paper", {}, undefined, NOW);
+    expect(summary.shortTermRealized).toBeCloseTo(30); // long round-trip IS taxed
+  });
+});
+
 describe("tax", () => {
   it("locks a symbol sold at a loss within 30 days and flags the wash sale", async () => {
     const { insertFillEvent } = await import("../src/lib/db");
