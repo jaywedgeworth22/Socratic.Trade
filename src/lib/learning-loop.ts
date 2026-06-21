@@ -1,6 +1,7 @@
 import type { FillSource } from "./types";
 import { normalizeSymbol } from "./money";
 import { getClosedLotsDetailed } from "./performance";
+import type { ClosedLot } from "./performance";
 
 export interface TradeExcursion {
   mae: number;
@@ -135,4 +136,56 @@ export async function getExcursionsByThesis(
       capturePct: Number((s.capture / s.trades).toFixed(0))
     }))
     .sort((a, b) => b.avgMfePct - a.avgMfePct);
+}
+
+/**
+ * Enrich a list of ClosedLots with MAE/MFE excursion data.
+ *
+ * This is intentionally async and MUST NOT be called in any synchronous
+ * order/proposal hot path — calculateExcursions performs live Yahoo OHLCV
+ * fetches. Call this only from background/post-mortem paths.
+ *
+ * Lots that lack the required fields (symbol, entryAt, exitAt, entryPrice,
+ * long/short side) are returned unchanged. Lots where calculateExcursions
+ * returns null (e.g. network failure) are also returned unchanged.
+ */
+export async function enrichClosedLotsWithExcursions(
+  lots: ClosedLot[],
+  compute: ExcursionFetcher = calculateExcursions
+): Promise<ClosedLot[]> {
+  const cache = new Map<string, TradeExcursion | null>();
+  const result: ClosedLot[] = [];
+
+  for (const lot of lots) {
+    if (
+      !lot.symbol ||
+      !lot.entryAt ||
+      !lot.exitAt ||
+      typeof lot.entryPrice !== "number" ||
+      lot.entryPrice <= 0 ||
+      (lot.side !== "long" && lot.side !== "short")
+    ) {
+      result.push(lot);
+      continue;
+    }
+
+    const side: "buy" | "short" = lot.side === "short" ? "short" : "buy";
+    const symbol = normalizeSymbol(lot.symbol);
+    const key = `${symbol}:${lot.entryAt}:${lot.exitAt}:${side}`;
+
+    let excursion = cache.get(key);
+    if (excursion === undefined) {
+      excursion = await compute(symbol, new Date(lot.entryAt), new Date(lot.exitAt), side, lot.entryPrice);
+      cache.set(key, excursion);
+    }
+
+    if (!excursion) {
+      result.push(lot);
+      continue;
+    }
+
+    result.push({ ...lot, mae: excursion.mae, mfe: excursion.mfe });
+  }
+
+  return result;
 }
