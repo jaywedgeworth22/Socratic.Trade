@@ -90,6 +90,9 @@ export function TickerLogo({
   // Reset failed so switching source retries the new provider
   useEffect(() => { setFailed(false); }, [source, normalized]);
 
+  // Transparent mode always uses GitHub (transparent PNGs); source picker is hidden in that mode
+  const effectiveSource = display === "transparent" ? "github" : source;
+
   if (!normalized || display === "off" || failed) {
     return fallback ? <>{fallback}</> : null;
   }
@@ -108,7 +111,7 @@ export function TickerLogo({
       aria-hidden="true"
     >
       <img
-        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}&source=${source}`}
+        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}&source=${effectiveSource}&v=2`}
         alt=""
         className="h-full w-full object-contain"
         loading="lazy"

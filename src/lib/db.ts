@@ -1285,12 +1285,31 @@ export function getProposal(id: string, userId: string = "local"):
   };
 }
 
-export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local"): void {
+export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local", refId?: string): void {
   getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional) WHERE id = ? AND user_id = ?"
+      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id) WHERE id = ? AND user_id = ?"
     )
-    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, id, userId);
+    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, refId ?? null, id, userId);
+}
+
+/**
+ * Crash-recovery support: "placing" rows older than the cutoff. A "placing" row is an
+ * order-placement INTENT written just before the broker call; it normally flips to "placed"
+ * (or "placing_failed") synchronously. One that lingers means a prior run died mid-placement,
+ * so the order's true state is unknown and must be surfaced for reconciliation.
+ */
+export function listStalePlacingProposals(
+  accountNumber: string,
+  olderThanIso: string,
+  userId: string = "local"
+): Array<{ id: string; refId: string | null; proposal: unknown; createdAt: string }> {
+  const rows = getDb()
+    .prepare(
+      "SELECT id, ref_id as refId, proposal, created_at as createdAt FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'placing' AND created_at < ?"
+    )
+    .all(scopeAccount(accountNumber), userId, olderThanIso) as Array<{ id: string; refId: string | null; proposal: string; createdAt: string }>;
+  return rows.map((r) => ({ id: r.id, refId: r.refId, proposal: JSON.parse(r.proposal), createdAt: r.createdAt }));
 }
 
 /** Idempotency for chat-drafted proposals: the id of an existing still-`proposed` row for a runId. */

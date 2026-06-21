@@ -1,4 +1,5 @@
 import { subscribeDashboardEvents, type DashboardEvent } from "@/lib/events";
+import { resolveRequestUserId } from "@/lib/request-user";
 
 export const dynamic = "force-dynamic";
 // Must run on the Node runtime so it shares the in-process event bus with the scheduler/strategy.
@@ -7,6 +8,10 @@ export const runtime = "nodejs";
 // Server-Sent Events stream of dashboard-relevant events. The browser opens one EventSource
 // here and refreshes /api/dashboard when an event arrives, instead of polling every 30s.
 export async function GET(request: Request) {
+  // Tenant isolation: only forward events belonging to this subscriber. The in-process bus is
+  // shared across all connected clients, so without a server-side filter every EventSource would
+  // receive other tenants' order/proposal/symbol metadata (relying on the client to ignore it).
+  const subscriberId = resolveRequestUserId(request);
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -26,6 +31,9 @@ export async function GET(request: Request) {
       send("event: ready\ndata: {}\n\n");
 
       unsubscribe = subscribeDashboardEvents((event: DashboardEvent) => {
+        // Drop events tagged for a different tenant. Untagged events (no userId) are global
+        // system signals and pass through to everyone.
+        if (event.userId && event.userId !== subscriberId) return;
         send(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       });
 
