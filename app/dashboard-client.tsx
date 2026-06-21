@@ -1146,6 +1146,21 @@ function DecisionView({
 
 const DASH = <span className="text-faint">—</span>;
 
+// Sticky-right treatment for the Score "verdict" column (header + body cells). `right-0` pins it
+// to the right edge of the horizontally-scrolling table; the solid `--bg` base (theme-reactive in
+// light/dark) keeps it opaque so scrolled cells don't show through the table's translucent
+// `--surface` tints; the left border + shadow separate the pinned cell from the content sliding
+// under it. `z-[1]` keeps the pinned column above its scrolling row siblings without fighting the
+// header's own stacking.
+//
+// Hover: the row's translucent `hover:bg-surface-2/50` can't show through this cell's opaque base,
+// so we re-create the highlight as an OPAQUE composite — `--surface-2` layered over `--bg` via a
+// background-image gradient — applied on the row's `group` hover. This keeps the pinned cell in
+// sync with its row's highlight while never going see-through (so scrolled cells never bleed in).
+const SCAN_PINNED_RIGHT_CLASS =
+  "sticky right-0 z-[1] bg-[var(--bg)] border-l border-line shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.18)] " +
+  "group-hover:bg-[linear-gradient(var(--surface-2),var(--surface-2)),linear-gradient(var(--bg),var(--bg))]";
+
 type ScanColumn = {
   id: string;
   label: string;
@@ -1423,34 +1438,64 @@ function MarketScanView({
             components={{
               Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
-              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
+              // `group` lets the right-pinned Score cell mirror the row hover tint (it has its own
+              // opaque base bg, so it can't inherit the row's translucent hover directly).
+              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="group cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
             }}
             fixedHeaderContent={() => (
               <tr className="border-b border-line bg-surface/50 text-[11px] uppercase text-faint shadow-sm backdrop-blur-xl">
-                {cols.map((c) => (
+                {cols.map((c) => {
+                  // Score is pinned to the right edge so the "verdict" column stays visible even
+                  // when many columns are toggled on and the table scrolls horizontally. The solid
+                  // --bg base (theme-reactive) keeps the pinned cell opaque so scrolled content
+                  // doesn't bleed through the translucent --surface tint; SCAN_PINNED_RIGHT_CLASS
+                  // adds the left divider + shadow that separates it from the scrolled body.
+                  const pinned = c.id === "score";
+                  return (
                   <th
                     key={c.id}
                     title={c.title}
                     onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
-                    className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
+                    className={cn(
+                      "cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg",
+                      c.align === "right" ? "text-right" : "text-left",
+                      pinned && SCAN_PINNED_RIGHT_CLASS
+                    )}
                   >
                     {c.label}
                     <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                   </th>
-                ))}
+                  );
+                })}
               </tr>
             )}
             itemContent={(index, q) => (
               <>
-                {cols.map((c) => (
-                  <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
+                {cols.map((c) => {
+                  const pinned = c.id === "score";
+                  return (
+                  <td
+                    key={c.id}
+                    title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined}
+                    className={cn(
+                      "px-2.5 py-1.5",
+                      c.align === "right" && "text-right",
+                      c.cellClass?.(q),
+                      // Mirror the header: pin Score to the right edge with the same opaque base
+                      // (rows have no base bg of their own, only a hover tint). The row's hover
+                      // highlight is re-created as an opaque composite via group-hover inside
+                      // SCAN_PINNED_RIGHT_CLASS so the pinned cell tracks its row.
+                      pinned && SCAN_PINNED_RIGHT_CLASS
+                    )}
+                  >
                     {c.id === "symbol" ? (
                       <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} logoDisplay={tickerLogoDisplay} showLogo />
                     ) : (
                       c.render(q)
                     )}
                   </td>
-                ))}
+                  );
+                })}
               </>
             )}
           />

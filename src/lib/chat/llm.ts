@@ -98,6 +98,19 @@ function fmt(n: unknown): string {
   return typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
+/**
+ * Ensure the "not investment advice" DISCLAIMER is present exactly once. The real Anthropic
+ * path used to append it only on an empty response (`text || DISCLAIMER`), so it could silently
+ * vanish on a non-empty answer — every user-facing reply must carry it. Idempotent: if the model
+ * already echoed the disclaimer, we don't double-append.
+ */
+function withDisclaimer(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return DISCLAIMER;
+  if (trimmed.includes(DISCLAIMER)) return trimmed;
+  return `${trimmed}\n\n${DISCLAIMER}`;
+}
+
 function groundedChat(message: string, memorySummary?: string): string {
   const lc = message.toLowerCase();
   if (/p\/?e|price.to.earnings/.test(lc))
@@ -283,7 +296,7 @@ export class AnthropicLLM implements ChatLLM {
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
       for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
     }
-    return { text: text || DISCLAIMER, toolCalls, citations };
+    return { text: withDisclaimer(text), toolCalls, citations };
   }
 }
 
