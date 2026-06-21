@@ -24,6 +24,18 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **Chat/RAG/learning advisory — HYBRID decision + issue log + roadmap.** A 5-agent expert
+  panel (RAG, NL-finance-chat, onboarding, prompt/tools, LLM-learning) reviewed the chat assistant and
+  unanimously landed on **HYBRID**: ISOLATE write surfaces (execution, strategy weight/risk tuning,
+  conversation memory) but SHARE the read substrate (RAG corpus, user constraints, and NEW read-only
+  views of positions/P&L/proposals/watchlist/scorecards) — one-way (outcomes flow into chat; chat
+  opinions never steer the trading brain except a confirm-gated constraints→policy path). Logged 13
+  tracked issues incl. **3 ship-blockers in the shipped chat** (quotes fabricate `change_pct:0`;
+  refusal+disclaimer live only in MockLLM so they vanish on the real-LLM path; single-turn —
+  `chat_turns` never replayed), the user-guidance design, and a NOW/NEXT/LATER roadmap. User decisions:
+  multi-LLM choice (key provisioning deferred), **NOW tranche approved**, constraint→policy via explicit
+  confirm + lean integrated learning. Docs only — no code. See `docs/chat-assistant-rag-learning.md` +
+  `docs/rollouts/2026-06-21-chat-rag-learning-advisory.md`.
 - 2026-06-21: **Responsive header command buttons.** Restructured header buttons to shrink gracefully on narrow screens and wrap cleanly into exactly 2 lines below the `md` (768px) breakpoint.
 - 2026-06-21: **UI/UX + iPad/iPhone audit and quick-win implementation.** Ran two
   multi-agent audits (real-Chrome desktop walkthrough → 64-agent review/verify/synthesis; source-grounded
