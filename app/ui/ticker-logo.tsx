@@ -111,7 +111,7 @@ export function TickerLogo({
       aria-hidden="true"
     >
       <img
-        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}&source=${effectiveSource}`}
+        src={`/api/logos/ticker?symbol=${encodeURIComponent(normalized)}&theme=${theme}&source=${effectiveSource}&v=2`}
         alt=""
         className="h-full w-full object-contain"
         loading="lazy"
