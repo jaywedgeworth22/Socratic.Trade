@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   analystScoreFromCounts,
   analystScoreFromMean,
@@ -10,6 +13,12 @@ import {
   parseWebullUnofficialQuote,
   scoreHeadlines
 } from "../src/lib/data-providers";
+
+// Each test file gets its own isolated SQLite db so db module singleton state
+// (user API keys, consent records) does not leak between test files.
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-data-providers-${randomUUID()}.db`)}`;
+});
 
 describe("market enrichment provider", () => {
   const originalFinnhubKey = process.env.FINNHUB_API_KEY;
@@ -167,6 +176,153 @@ describe("isTransientError", () => {
     expect(isTransientError(new Error("database error"))).toBe(false);
     expect(isTransientError(new Error("HTTP 404 Not Found"))).toBe(false);
     expect(isTransientError(undefined)).toBe(false);
+  });
+});
+
+// ── Consent-gated enrichment cache ─────────────────────────────────────────────
+// Verifies that data pulled with a user's own stored API key is:
+//   - NOT visible to a different non-consenting user (private scope)
+//   - IS shared via the pool to a consenting user (pool scope)
+//   - env-keyed data remains globally shared (shared scope) as before
+//
+// This mirrors the exact same privacy contract implemented in src/lib/history.ts.
+describe("enrichment cache consent gate", () => {
+  // Each test needs a fresh cache + db so key/consent state doesn't bleed.
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY;
+  });
+
+  it("user-keyed data is private: invisible to a non-consenting second user", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    clearEnrichmentCache();
+
+    const userA = `cg-priv-a-${randomUUID()}`;
+    const userB = `cg-priv-b-${randomUUID()}`;
+    // userA has their own API key; userB does NOT have an API key
+    upsertUserApiKey(userA, "finnhub", "user-a-finnhub-key");
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      // Return a minimal success: profile2 gives companyName, everything else empty
+      if (String(url).includes("profile2")) {
+        return new Response(JSON.stringify({ name: "Acme Corp" }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    // userA fetches — source is "user", no consent → scope = "private"
+    const providerA = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userA);
+    const resA = await providerA.enrich(["AAPL"]);
+    expect(resA.AAPL?.companyName).toBe("Acme Corp");
+    expect(fetchCount).toBe(5); // 5 Finnhub sub-calls (news, quote, rec, profile2, metric)
+
+    // userB (no consent) tries with their own env-keyed provider — should NOT see userA's cache
+    // To isolate the cache check, we make fetch throw so any cache miss would propagate as empty
+    vi.stubGlobal("fetch", async () => { throw new Error("no network"); });
+    const providerB = new FinnhubEnrichmentProvider("some-env-key", "env", userB);
+    const resB = await providerB.enrich(["AAPL"]);
+    // env-key provider reads shared scope — userA's private entry is not visible there
+    expect(resB.AAPL?.companyName).toBeUndefined();
+  });
+
+  it("user-keyed data is shared via pool to a consenting second user", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
+    clearEnrichmentCache();
+
+    const userA = `cg-pool-a-${randomUUID()}`;
+    const userB = `cg-pool-b-${randomUUID()}`;
+    // Both users consent to the data pool
+    upsertUserApiKey(userA, "finnhub", "user-a-finnhub-key");
+    setDataPoolConsent(userA, true);
+    setDataPoolConsent(userB, true);
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (String(url).includes("profile2")) {
+        return new Response(JSON.stringify({ name: "Pool Corp" }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    // userA fetches — user-key + consent → scope = "pool"
+    const providerA = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userA);
+    const resA = await providerA.enrich(["AAPL"]);
+    expect(resA.AAPL?.companyName).toBe("Pool Corp");
+    expect(fetchCount).toBe(5);
+
+    // userB (consenting) reads from the pool — no fetch should be needed
+    const providerB = new FinnhubEnrichmentProvider("user-b-finnhub-key", "user", userB);
+    const resB = await providerB.enrich(["AAPL"]);
+    expect(resB.AAPL?.companyName).toBe("Pool Corp");
+    // Pool hit — no additional fetch calls
+    expect(fetchCount).toBe(5);
+  });
+
+  it("env-keyed data remains globally shared regardless of user or consent", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    const userA = `cg-env-a-${randomUUID()}`;
+    const userB = `cg-env-b-${randomUUID()}`;
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (String(url).includes("profile2")) {
+        return new Response(JSON.stringify({ name: "Env Corp" }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    // userA uses env key — source = "env" → always shared scope
+    const providerA = new FinnhubEnrichmentProvider("env-finnhub-key", "env", userA);
+    await providerA.enrich(["AAPL"]);
+    expect(fetchCount).toBe(5);
+
+    // userB (no consent) uses env key — should hit the shared cache, no new fetch
+    const providerB = new FinnhubEnrichmentProvider("env-finnhub-key", "env", userB);
+    const resB = await providerB.enrich(["AAPL"]);
+    expect(resB.AAPL?.companyName).toBe("Env Corp");
+    expect(fetchCount).toBe(5); // shared cache hit — no additional fetches
+  });
+
+  it("MARKET_DATA_SHARE_USER_KEYED_HISTORY=on promotes user-key data to shared scope", async () => {
+    process.env.MARKET_DATA_SHARE_USER_KEYED_HISTORY = "on";
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    const userA = `cg-share-a-${randomUUID()}`;
+    const userB = `cg-share-b-${randomUUID()}`;
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (String(url).includes("profile2")) {
+        return new Response(JSON.stringify({ name: "Share Corp" }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    // userA's user-key → forced to shared because of the env override
+    const providerA = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userA);
+    await providerA.enrich(["AAPL"]);
+    expect(fetchCount).toBe(5);
+
+    // userB (no consent, no user key) can read from shared scope
+    const providerB = new FinnhubEnrichmentProvider("user-a-finnhub-key", "user", userB);
+    const resB = await providerB.enrich(["AAPL"]);
+    expect(resB.AAPL?.companyName).toBe("Share Corp");
+    expect(fetchCount).toBe(5); // shared cache hit
   });
 });
 

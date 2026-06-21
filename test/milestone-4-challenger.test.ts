@@ -39,6 +39,8 @@ vi.mock("voyageai", () => ({
 
 vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
+  resolveApiKeyWithSource: vi.fn((service: string) => ({ key: mocks.resolveApiKey(service), source: "env" as const })),
+  hasDataPoolConsent: vi.fn(() => false),
   audit: vi.fn(),
   setInternalSetting: vi.fn()
 }));
