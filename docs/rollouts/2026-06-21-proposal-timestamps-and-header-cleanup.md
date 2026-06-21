@@ -61,8 +61,76 @@ behavior. Left in place pending a product decision on its final purpose.
 
 ## Follow-ups
 
-- Staleness thresholds (1h / 24h) are constants in `utils.tsx`. If operators want
-  them configurable (per-policy expiry, or auto-cancel of stale proposals), that
-  would be a backend/policy change (schema + scheduler) rather than UI-only.
 - Flow button: awaiting a product decision on whether to make it data-driven,
   repurpose it, or remove it.
+
+---
+
+# Part 2 — Proposal expiry policy + on-run LLM re-validation (backend)
+
+## Summary
+
+Follow-on to the staleness UI above: the operator asked for (1) a real expiry
+**policy**, and (2) a supplemental task on each run that asks the LLM whether
+each old, still-pending proposal *still stands*.
+
+1. **Deterministic hard expiry** (`policy.proposalExpiryMinutes`, default **1440**
+   = 24h; 0 disables). Any pending proposal older than the TTL is moved to status
+   `expired`, with an audit event + a `proposal_withdrawn` notification + an SSE
+   `proposal` event so open dashboards refresh. Runs at the **start of every
+   strategy run** AND on **every scheduler tick** (even while halted / market
+   closed), so the queue self-clears regardless of run cadence.
+2. **On-run LLM re-validation** (`policy.revalidatePendingOnRun`, default **on**;
+   `policy.proposalRevalidateAfterMinutes`, default **60**). As a supplemental
+   step inside `runStrategyOnce` — before generating new ideas — every
+   still-pending proposal older than the window is sent to the LLM in one batched
+   call against the fresh scan + current regime. Verdict per proposal:
+   `reaffirm` → stamped `last_revalidated_at` + note (UI shows "Re-checked X ago —
+   still advised", and the staleness clock resets); `withdraw` → status
+   `withdrawn` + notification + SSE. Missing/unknown/garbled output defaults to
+   *keep* (never silently drops an idea). Degrades to a skip (deterministic expiry
+   still applies) when `OPENAI_API_KEY` is absent or the call fails. The run
+   summary gains "Expired N stale… Re-checked N pending: kept X, withdrew Y."
+
+## Why
+
+Proposals persist in the approval queue until a human acts, so an old one looks
+as current as a fresh one. Expiry is the deterministic backstop; the LLM re-check
+is the intelligent path that either refreshes the idea or pulls it when the setup
+no longer holds — exactly "ask the LLM if each old not-yet-approved/rejected
+proposal still stands."
+
+## Files
+
+- `src/lib/proposal-revalidation.ts` — **new**: `expireStalePendingProposals`,
+  `revalidatePendingProposals`, and the pure, tested `decideRevalidationActions`.
+- `src/lib/types.ts` — `TradingPolicy` (+3 fields), `PendingProposal`
+  (`lastRevalidatedAt`/`revalidationNote`), `NotificationEventType`
+  (+`proposal_withdrawn`).
+- `src/lib/defaults.ts` — `DEFAULT_POLICY` defaults + enable `proposal_withdrawn`
+  notifications.
+- `src/lib/db.ts` — migration for `last_revalidated_at`/`revalidation_note`,
+  surfaced in `listPendingProposals`, new `markProposalRevalidated`.
+- `src/lib/llm-request.ts` — `proposalRevalidation` token cap.
+- `src/lib/strategy.ts` — run-loop integration + summary lines.
+- `src/lib/scheduler.ts` — per-tick deterministic expiry sweep.
+- `src/lib/dashboard-ui.ts` — notification display title for the new type.
+- `app/api/policy/route.ts` — validation for the new knobs; `isNotificationEvent`
+  now includes `price_alert` (pre-existing gap) + `proposal_withdrawn`.
+- `app/ui/dashboard/settings.tsx` — expiry/re-check knobs + notification toggle.
+- `app/ui/dashboard/views.tsx` — pending card shows "Re-checked … still advised".
+- `test/proposal-revalidation.test.ts` — **new**, 6 tests.
+
+## Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — 41 files, **313 tests** passing (+6).
+- `npm run build` — green.
+
+## Follow-ups
+
+- Thresholds are policy-configurable; the per-run re-check is one batched LLM
+  call. If queues grow large, consider chunking the re-check or capping how many
+  proposals are re-validated per run.
+- `expired`/`withdrawn` are distinct statuses (vs `rejected`) so a future
+  Activity/Runs filter could surface them separately.

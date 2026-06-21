@@ -25,7 +25,7 @@ export const DEFAULT_RISK_RULES: RiskRules = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   webhookUrl: "",
-  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert"]
+  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"]
 };
 
 export const DEFAULT_POLICY: TradingPolicy = {
@@ -44,6 +44,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   maxNetExposurePct: 100,
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
+  proposalExpiryMinutes: 1440,
+  revalidatePendingOnRun: true,
+  proposalRevalidateAfterMinutes: 60,
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,

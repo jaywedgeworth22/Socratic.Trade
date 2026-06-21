@@ -83,33 +83,42 @@ export function DecisionView({
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
                 {(() => {
-                  const age = proposalAge(p.createdAt);
-                  if (!age) return null;
-                  const stale = age.staleness !== "fresh";
+                  const proposed = proposalAge(p.createdAt);
+                  if (!proposed) return null;
+                  // A run's LLM re-check resets the freshness clock: measure staleness from the
+                  // most recent of "proposed" and "re-checked", but still show when it was proposed.
+                  const revalidated = p.lastRevalidatedAt ? proposalAge(p.lastRevalidatedAt) : null;
+                  const effective = revalidated ?? proposed;
+                  const stale = effective.staleness !== "fresh";
                   return (
                     <div className="mt-2 space-y-1">
                       <div
                         className={cn(
                           "flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]",
-                          age.staleness === "stale"
+                          effective.staleness === "stale"
                             ? "bg-down/10 text-down"
-                            : age.staleness === "aging"
+                            : effective.staleness === "aging"
                               ? "bg-warn/10 text-warn"
                               : "text-faint"
                         )}
-                        title={`Proposed ${age.absolute}`}
+                        title={`Proposed ${proposed.absolute}`}
                       >
                         <Clock size={11} className="shrink-0" />
-                        <span>Proposed {age.absolute} · {age.relative}</span>
+                        <span>Proposed {proposed.absolute} · {proposed.relative}</span>
                         {stale && (
                           <span className="ml-auto font-semibold uppercase tracking-wide">
-                            {age.staleness === "stale" ? "Stale" : "Aging"}
+                            {effective.staleness === "stale" ? "Stale" : "Aging"}
                           </span>
                         )}
                       </div>
+                      {revalidated && (
+                        <p className="flex items-center gap-1.5 text-[11px] leading-snug text-up" title={p.revalidationNote}>
+                          <RefreshCw size={11} className="shrink-0" /> Re-checked {revalidated.relative} — still advised by the latest run
+                        </p>
+                      )}
                       {stale && (
                         <p className="text-[11px] leading-snug text-faint">
-                          Prices and conditions may have changed since this was proposed — re-run the strategy before approving.
+                          Prices and conditions may have changed since this was {revalidated ? "last re-checked" : "proposed"} — re-run the strategy before approving.
                         </p>
                       )}
                     </div>

@@ -1,0 +1,166 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { DEFAULT_POLICY } from "../src/lib/defaults";
+import type { TradeProposal, TradingPolicy } from "../src/lib/types";
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-reval-${randomUUID()}.db`)}`;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_URL;
+});
+
+const baseProposal: TradeProposal = {
+  symbol: "AAPL",
+  side: "buy",
+  type: "market",
+  dollarAmount: 100,
+  timeInForce: "gfd",
+  marketHours: "regular_hours",
+  rationale: "Momentum breakout on volume.",
+  tradeThesisTag: "Momentum-Breakout",
+  entryMarketRegime: "Neutral"
+};
+
+async function seedPending(account: string, id: string, overrides: Partial<TradeProposal> = {}) {
+  const { insertProposal } = await import("../src/lib/db");
+  insertProposal({
+    id,
+    runId: "run-1",
+    accountNumber: account,
+    proposal: { ...baseProposal, ...overrides },
+    decision: { approved: true, reasons: [] },
+    status: "proposed"
+  });
+}
+
+describe("decideRevalidationActions", () => {
+  it("withdraws only on an explicit verdict and defaults everything else to reaffirm", async () => {
+    const { decideRevalidationActions } = await import("../src/lib/proposal-revalidation");
+    const actions = decideRevalidationActions(
+      [{ id: "a" }, { id: "b" }, { id: "c" }],
+      [
+        { proposalId: "a", verdict: "withdraw", note: "played out" },
+        { proposalId: "b", verdict: "reaffirm", note: "still valid" },
+        { proposalId: "zzz", verdict: "withdraw", note: "unknown id is ignored" }
+      ]
+    );
+    expect(actions).toEqual([
+      { id: "a", action: "withdraw", note: "played out", confidence: undefined },
+      { id: "b", action: "reaffirm", note: "still valid", confidence: undefined },
+      { id: "c", action: "reaffirm", note: undefined, confidence: undefined } // missing assessment → kept
+    ]);
+  });
+});
+
+describe("expireStalePendingProposals", () => {
+  it("expires proposals older than the TTL and leaves fresh ones pending", async () => {
+    const { setPolicy, listPendingProposals, getProposal } = await import("../src/lib/db");
+    const { expireStalePendingProposals } = await import("../src/lib/proposal-revalidation");
+    const account = "EXPIRE-TTL";
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalExpiryMinutes: 60 };
+    setPolicy(policy);
+    await seedPending(account, "exp-old");
+
+    // now far in the future ⇒ the just-inserted proposal reads as > 60 min old.
+    const future = Date.now() + 2 * 60 * 60 * 1000;
+    const res = await expireStalePendingProposals({ userId: "local", policy, accountNumber: account, now: future });
+    expect(res.expired).toBe(1);
+    expect(getProposal("exp-old")?.status).toBe("expired");
+    expect(listPendingProposals(account).length).toBe(0);
+
+    // A second, freshly-aged check (now ≈ insertion time) leaves a new proposal alone.
+    await seedPending(account, "exp-fresh");
+    const res2 = await expireStalePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() });
+    expect(res2.expired).toBe(0);
+    expect(getProposal("exp-fresh")?.status).toBe("proposed");
+  });
+
+  it("is a no-op when proposalExpiryMinutes is 0/off", async () => {
+    const { setPolicy, getProposal } = await import("../src/lib/db");
+    const { expireStalePendingProposals } = await import("../src/lib/proposal-revalidation");
+    const account = "EXPIRE-OFF";
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalExpiryMinutes: 0 };
+    setPolicy(policy);
+    await seedPending(account, "off-1");
+    const res = await expireStalePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() + 10 * 24 * 60 * 60 * 1000 });
+    expect(res.expired).toBe(0);
+    expect(getProposal("off-1")?.status).toBe("proposed");
+  });
+});
+
+describe("revalidatePendingProposals", () => {
+  it("withdraws proposals the LLM no longer advises and stamps the survivors", async () => {
+    const { setPolicy, listPendingProposals, getProposal } = await import("../src/lib/db");
+    const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
+    const account = "REVAL-LLM";
+    process.env.OPENAI_API_KEY = "test-key";
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateAfterMinutes: 60 };
+    setPolicy(policy);
+    await seedPending(account, "keep-1", { symbol: "MSFT" });
+    await seedPending(account, "drop-1", { symbol: "TSLA" });
+
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            assessments: [
+              { proposalId: "keep-1", verdict: "reaffirm", confidence: 72, note: "Thesis intact." },
+              { proposalId: "drop-1", verdict: "withdraw", confidence: 81, note: "Already ran; entry gone." }
+            ]
+          })
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+
+    const future = Date.now() + 3 * 60 * 60 * 1000;
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: future });
+    expect(res).toMatchObject({ checked: 2, reaffirmed: 1, withdrawn: 1, skipped: false });
+
+    expect(getProposal("drop-1")?.status).toBe("withdrawn");
+    expect(getProposal("keep-1")?.status).toBe("proposed");
+
+    const pending = listPendingProposals(account);
+    expect(pending.map((p) => p.id)).toEqual(["keep-1"]);
+    expect(pending[0].lastRevalidatedAt).toBeTruthy();
+    expect(pending[0].revalidationNote).toBe("Thesis intact.");
+  });
+
+  it("skips the LLM pass (and changes nothing) when OpenAI is not configured", async () => {
+    const { setPolicy, getProposal } = await import("../src/lib/db");
+    const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
+    const account = "REVAL-NOKEY";
+    delete process.env.OPENAI_API_KEY;
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateAfterMinutes: 60 };
+    setPolicy(policy);
+    await seedPending(account, "nokey-1");
+
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() + 3 * 60 * 60 * 1000 });
+    expect(res.skipped).toBe(true);
+    expect(res.withdrawn).toBe(0);
+    expect(getProposal("nokey-1")?.status).toBe("proposed");
+  });
+
+  it("does not touch proposals younger than the re-check window", async () => {
+    const { setPolicy, getProposal } = await import("../src/lib/db");
+    const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
+    const account = "REVAL-YOUNG";
+    process.env.OPENAI_API_KEY = "test-key";
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateAfterMinutes: 60 };
+    setPolicy(policy);
+    await seedPending(account, "young-1");
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() });
+    expect(res).toMatchObject({ checked: 0, withdrawn: 0, reaffirmed: 0 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(getProposal("young-1")?.status).toBe("proposed");
+  });
+});

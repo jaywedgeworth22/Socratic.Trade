@@ -106,6 +106,12 @@ While the strategy evaluates trades across the strategy lenses, it must also res
 - **Short Selling Risk Cap:** Short positions must be heavily scrutinized. The maximum allowable portfolio allocation for any single short position will be strictly capped (e.g., lower than long positions).
 - **Hard Stop-Losses:** Any short proposal must carry an absolute, non-negotiable stop-loss logic (e.g., max 5% adverse excursion) to prevent runaway losses.
 
+### C.1 Pending-Proposal Staleness (Expiry + On-Run Re-Validation)
+Proposals stay in the approval queue until a human approves or rejects them, so an old one can keep looking like a current recommendation. Two mechanisms keep the queue honest (`src/lib/proposal-revalidation.ts`):
+
+1. **Deterministic hard expiry** — `policy.proposalExpiryMinutes` (default 1440 = 24h; 0 disables). A pending proposal older than the TTL is moved to status `expired` with an audit event, a `proposal_withdrawn` notification, and an SSE refresh. It runs at the **start of every strategy run** and on **every scheduler tick** (even while halted or the market is closed), so the queue self-clears regardless of run cadence.
+2. **On-run LLM re-validation** — `policy.revalidatePendingOnRun` (default on) with `policy.proposalRevalidateAfterMinutes` (default 60). As a supplemental step inside `runStrategyOnce`, every still-pending proposal older than the window is re-checked against the fresh scan + current regime in one batched LLM call ("does this still stand?"). `reaffirm` stamps `last_revalidated_at` (the dashboard then shows "Re-checked X ago — still advised" and the staleness clock resets); `withdraw` moves it to status `withdrawn`. Ambiguous/missing output defaults to *keep*; the pass is skipped (deterministic expiry still applies) when `OPENAI_API_KEY` is absent or the call fails.
+
 ### D. Token Efficiency & Asynchronous Post-Mortems
 Feeding dozens of raw rationales, P&L lines, and redundant daily news into the trading prompt wastes massive amounts of tokens and degrades LLM reasoning. To optimize this:
 

@@ -24,18 +24,24 @@ steps materially change.
 
 ## Active Focus
 
-- 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal timestamps +
-  staleness, and command-bar status cleanup.** Pending-approval cards now show
-  `Proposed <date, time> · <relative age>` and escalate a staleness state
-  (`≥1h` → amber "Aging", `≥24h` → red "Stale") with a "re-run before approving"
-  caution, so an old queued proposal no longer reads as freshly generated.
-  Removed the redundant "Test Mode" status line from the brand block (the top
-  tri-state safety banner already states the mode) and the now-dead
-  `executionTone()`. Fixed the command bar looking "too thin"/clipped by moving
-  it off a fixed `xl:h-14`/`xl:py-0` to a flexible `min-h-16`. The **Flow** button
-  was a question, not a change request — it's a static React Flow pipeline
-  visualizer (`app/ui/strategy-flow.tsx`) with hardcoded illustrative nodes; left
-  in place. tsc clean, 307 tests, build green. See
+- 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal staleness —
+  UI + expiry policy + on-run LLM re-validation.** (Part 1, UI) Pending-approval
+  cards show `Proposed <date, time> · <relative age>` with an escalating staleness
+  state; removed the redundant "Test Mode" brand-block line + dead
+  `executionTone()`; fixed the "too thin"/clipped command bar (`xl:h-14`/`xl:py-0`
+  → `min-h-16`). (Part 2, backend) New `src/lib/proposal-revalidation.ts`:
+  **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 1440;
+  runs at run-start AND every scheduler tick → status `expired`) and an **on-run
+  LLM re-check** (`policy.revalidatePendingOnRun` default on,
+  `proposalRevalidateAfterMinutes` default 60) that, inside `runStrategyOnce`,
+  asks the LLM whether each old still-pending proposal still stands —
+  `reaffirm` stamps `last_revalidated_at` (UI: "Re-checked X ago — still
+  advised"), `withdraw` → status `withdrawn` + `proposal_withdrawn` notification.
+  Safe-by-default: ambiguous LLM output keeps the proposal; no `OPENAI_API_KEY`
+  ⇒ LLM pass skips but deterministic expiry still runs. New policy knobs + a
+  notification toggle in Settings → Risk. The **Flow** button was a question
+  (static React Flow pipeline visualizer, `app/ui/strategy-flow.tsx`) — left in
+  place. tsc clean, **313 tests** (+6), build green. See
   `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
 - 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
   Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus

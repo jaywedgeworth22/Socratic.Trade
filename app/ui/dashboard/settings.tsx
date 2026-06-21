@@ -228,6 +228,17 @@ export function SettingsContent({
           <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
           <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
+          <NumberField label="Proposal expiry (min)" value={policy.proposalExpiryMinutes ?? 0} onCommit={(v) => updatePolicy({ proposalExpiryMinutes: Math.max(0, Math.round(v)) })} />
+          <NumberField label="Re-check pending after (min)" value={policy.proposalRevalidateAfterMinutes ?? 60} onCommit={(v) => updatePolicy({ proposalRevalidateAfterMinutes: Math.max(0, Math.round(v)) })} />
+          <div className="space-y-1 sm:col-span-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input type="checkbox" checked={policy.revalidatePendingOnRun !== false} onChange={(e) => updatePolicy({ revalidatePendingOnRun: e.target.checked })} />
+              Re-check pending proposals on each run (LLM)
+            </label>
+            <p className="text-xs leading-relaxed text-faint">
+              Pending proposals sit in the approval queue until you act on them. Each strategy run re-asks the LLM whether every still-pending proposal older than the window above still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors "re-checked". <span className="text-muted">Proposal expiry</span> is a deterministic backstop: anything pending longer than that many minutes is auto-expired (0 = never expire).
+            </p>
+          </div>
           <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
           <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
           <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
@@ -334,7 +345,7 @@ export function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-2 gap-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">

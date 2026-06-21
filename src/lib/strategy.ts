@@ -42,6 +42,7 @@ import {
   recordPortfolioSnapshot
 } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
+import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
@@ -114,6 +115,18 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       : { portfolio, positions };
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
+
+    // Supplemental tasks before generating new ideas — keep the approval queue honest so a
+    // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
+    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
+    //   (2) an LLM re-check ("does this still stand?") of every still-pending proposal against
+    //       this run's fresh scan — withdrawing what no longer holds, stamping the survivors.
+    const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber });
+    const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+      .catch((e) => {
+        console.error("[revalidation] run error:", e);
+        return null;
+      });
 
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
 
@@ -352,7 +365,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
       paperCount > 0 ? `Test: ${paperCount}.` : "",
-      proposed > 0 ? `Awaiting approval: ${proposed}.` : ""
+      proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
+      expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
+      revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
+        ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
+        : ""
     ]
       .filter(Boolean)
       .join(" ");

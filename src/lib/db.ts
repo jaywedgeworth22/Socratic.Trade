@@ -308,6 +308,13 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN trade_thesis_tag TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN entry_market_regime TEXT");
   }
+  // Proposal staleness: when a run's LLM re-validation re-checks a still-pending proposal,
+  // stamp when and why it still stands so the queue can show "re-checked X ago" rather than
+  // implying an old idea is still freshly recommended.
+  if (!columns.some((column) => column.name === "last_revalidated_at")) {
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN last_revalidated_at TEXT");
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN revalidation_note TEXT");
+  }
   // R3: per-account tax treatment (taxable vs Roth/Traditional IRA) on existing DBs.
   const connectedAccountColumns = database.prepare("PRAGMA table_info(connected_accounts)").all() as Array<{ name: string }>;
   if (!connectedAccountColumns.some((column) => column.name === "taxation_type")) {
@@ -1088,10 +1095,18 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
 }
 
 export function listPendingProposals(accountNumber: string, userId: string = "local"): PendingProposal[] {
-  type RawRow = { id: string; created_at: string; proposal: string; decision: string; review: string | null };
+  type RawRow = {
+    id: string;
+    created_at: string;
+    proposal: string;
+    decision: string;
+    review: string | null;
+    last_revalidated_at: string | null;
+    revalidation_note: string | null;
+  };
   const rows = getDb()
     .prepare(
-      "SELECT id, created_at, proposal, decision, review FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
+      "SELECT id, created_at, proposal, decision, review, last_revalidated_at, revalidation_note FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
     )
     .all(accountNumber, userId) as RawRow[];
 
@@ -1100,8 +1115,26 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     createdAt: r.created_at,
     proposal: JSON.parse(r.proposal) as TradeProposal,
     decision: JSON.parse(r.decision) as PolicyDecision,
-    review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined
+    review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined,
+    lastRevalidatedAt: r.last_revalidated_at ?? undefined,
+    revalidationNote: r.revalidation_note ?? undefined
   }));
+}
+
+/**
+ * Stamp a still-pending proposal as re-validated by a strategy run's LLM "does this still
+ * stand?" pass. Only touches the staleness columns — status stays "proposed".
+ */
+export function markProposalRevalidated(
+  id: string,
+  input: { at: string; note?: string },
+  userId: string = "local"
+): void {
+  getDb()
+    .prepare(
+      "UPDATE trade_proposals SET last_revalidated_at = ?, revalidation_note = COALESCE(?, revalidation_note) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+    )
+    .run(input.at, input.note ?? null, id, userId);
 }
 
 export function getProposal(id: string, userId: string = "local"):
