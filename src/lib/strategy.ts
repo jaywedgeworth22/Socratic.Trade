@@ -92,9 +92,9 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
-    // Surface any order-placement intent left "placing" by a prior run that crashed mid-call —
-    // the order's true state is unknown, so flag it for reconciliation instead of leaving it silent.
-    flagStalePlacingIntents(policy.accountNumber, userId);
+    // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
+    // mid-call: match it against the broker by clientOrderId and recover or abandon it.
+    await flagStalePlacingIntents(gateway, policy.accountNumber, userId);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
@@ -1609,7 +1609,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
  * follow-up), so we surface it loudly in the audit trail and mark it "placing_stale" so it isn't
  * re-flagged every run. An operator (or the future broker-truth sweep) then reconciles it.
  */
-function flagStalePlacingIntents(accountNumber: string, userId: string): void {
+async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string): Promise<void> {
   const STALE_PLACING_MS = 2 * 60_000;
   const cutoff = new Date(Date.now() - STALE_PLACING_MS).toISOString();
   let stale: ReturnType<typeof listStalePlacingProposals>;
@@ -1619,21 +1619,45 @@ function flagStalePlacingIntents(accountNumber: string, userId: string): void {
     console.error("[placing-sweep] failed to list stale placing intents:", e);
     return;
   }
+  if (stale.length === 0) return;
+
+  // Broker-truth-first reconcile: a stale "placing" intent means a prior run died between the
+  // broker call and the post-write. Ask the broker for the order carrying our idempotency key
+  // (refId → clientOrderId). If it exists, the order DID reach the broker — recover it into P&L/
+  // accounting at the broker's real fill price. If no order carries our key, it never executed and
+  // is safe to abandon. If the broker is unreachable, leave the row 'placing' for a later retry.
+  let brokerOrders: EquityOrder[];
+  try {
+    brokerOrders = await gateway.getEquityOrders(accountNumber);
+  } catch (e) {
+    console.error("[placing-sweep] broker unreachable for recovery; will retry next run:", e);
+    for (const row of stale) {
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId);
+    }
+    return;
+  }
+
   for (const row of stale) {
     const p = row.proposal as TradeProposal | undefined;
-    updateProposalStatus(row.id, "placing_stale", undefined, undefined, undefined, userId);
-    audit(
-      "order_placement_uncertain",
-      {
-        proposalId: row.id,
-        refId: row.refId,
-        symbol: p?.symbol,
-        side: p?.side,
-        createdAt: row.createdAt,
-        note: "Stale 'placing' intent surfaced at run start — a prior run may have died mid-placement; verify with the broker whether this order executed."
-      },
-      userId
-    );
+    const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
+    if (matched) {
+      updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
+      if (p) {
+        recordFillFromProposal({
+          userId,
+          accountNumber,
+          proposalId: row.id,
+          source: "live",
+          proposal: p,
+          execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
+          status: matched.state === "filled" ? "filled" : "pending_reconciliation"
+        });
+      }
+      audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId);
+    } else {
+      updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId);
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId);
+    }
   }
 }
 
