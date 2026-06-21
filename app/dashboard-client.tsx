@@ -2436,25 +2436,34 @@ function SettingsContent({
         {section === "display" && (
           <div className="space-y-3">
             <Field label="Ticker logos" hint="Applies to portfolio symbols, Market Scan rows, and symbol intelligence headers">
-              <Segmented<TickerLogoDisplay>
-                value={tickerLogoDisplay}
-                onChange={setTickerLogoDisplay}
-                options={[
-                  { value: "tile", label: "Normal tile" },
-                  { value: "transparent", label: "Transparent" },
-                  { value: "off", label: "Off" }
-                ]}
-              />
+              <div className="space-y-2">
+                <Segmented<TickerLogoDisplay>
+                  value={tickerLogoDisplay}
+                  onChange={setTickerLogoDisplay}
+                  options={[
+                    { value: "tile", label: "Tile" },
+                    { value: "transparent", label: "Transparent" },
+                    { value: "off", label: "Off" }
+                  ]}
+                />
+                {tickerLogoDisplay !== "off" && (
+                  <div className="flex items-center gap-2 pl-0.5">
+                    <span className="text-xs text-faint">Source</span>
+                    <LogoSourceSegmented />
+                  </div>
+                )}
+              </div>
             </Field>
-            <LogoSourceField />
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
-              {(["AAPL", "MSFT", "NVDA", "BRK.B"] as const).map((symbol) => (
-                <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
-                  <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
-                  <span>{symbol}</span>
-                </div>
-              ))}
-            </div>
+            {tickerLogoDisplay !== "off" && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
+                {(["AAPL", "MSFT", "NVDA", "BRK.B"] as const).map((symbol) => (
+                  <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
+                    <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
+                    <span>{symbol}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2789,20 +2798,17 @@ type ApiKeyStatus = {
   updatedAt?: string;
 };
 
-function LogoSourceField() {
+function LogoSourceSegmented() {
   const source = useLogoSource();
   return (
-    <Field label="Logo source">
-      <Segmented<LogoSource>
-        value={source}
-        onChange={setLogoSourcePref}
-        options={[
-          { value: "auto", label: "Auto" },
-          { value: "github", label: "Option 1", title: "GitHub — davidepalazzo/ticker-logos" },
-          { value: "logodev", label: "Option 2", title: "logo.dev — by ticker, with monogram fallback" }
-        ]}
-      />
-    </Field>
+    <Segmented<LogoSource>
+      value={source}
+      onChange={setLogoSourcePref}
+      options={[
+        { value: "github", label: "GitHub", title: "GitHub — davidepalazzo/ticker-logos (transparent PNGs; falls back to logo.dev)" },
+        { value: "logodev", label: "logo.dev", title: "logo.dev — colored tile icons with monogram fallback; falls back to GitHub" }
+      ]}
+    />
   );
 }
 

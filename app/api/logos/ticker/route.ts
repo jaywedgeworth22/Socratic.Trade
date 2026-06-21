@@ -9,7 +9,6 @@ import {
 
 const ONE_DAY_SECONDS = 86_400;
 const ONE_WEEK_SECONDS = 604_800;
-
 const FETCH_TIMEOUT_MS = 5_000;
 
 async function fetchImage(
@@ -25,7 +24,6 @@ async function fetchImage(
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
   } catch {
-    // Covers network errors, DNS failures, and AbortError from the timeout.
     return null;
   }
   if (!res.ok) return null;
@@ -42,47 +40,50 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "symbol is required" }, { status: 400 });
   }
 
-  // ── Source 1: GitHub davidepalazzo/ticker-logos ───────────────────────────
-  for (const symbol of candidates) {
-    const result = await fetchImage(tickerLogoRawUrl(symbol), ONE_WEEK_SECONDS);
-    if (result) {
-      return new NextResponse(result.buf, {
+  // source=github (default/auto): GitHub first → logo.dev fallback
+  // source=logodev: logo.dev first → GitHub fallback
+  const source = searchParams.get("source") ?? "github";
+
+  const logoDevToken = process.env.LOGO_DEV_TOKEN;
+  const baseSymbol = normalizeTickerLogoSymbol(rawSymbol);
+  const rawTheme = searchParams.get("theme");
+  const theme: LogoDevOptions["theme"] =
+    rawTheme === "light" || rawTheme === "dark" ? rawTheme : "dark";
+
+  async function tryGitHub() {
+    for (const sym of candidates) {
+      const r = await fetchImage(tickerLogoRawUrl(sym), ONE_WEEK_SECONDS);
+      if (r) return new NextResponse(r.buf, {
         headers: {
           "cache-control": `public, max-age=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
-          "content-type": result.contentType,
+          "content-type": r.contentType,
           "x-logo-source": "github:davidepalazzo/ticker-logos"
         }
       });
     }
+    return null;
   }
 
-  // ── Source 2: logo.dev — by ticker ────────────────────────────────────────
-  // Requires LOGO_DEV_TOKEN (publishable key). The Referer header is set to
-  // this app's own origin so domain-restricted keys accept the request.
-  const logoDevToken = process.env.LOGO_DEV_TOKEN;
-  if (logoDevToken) {
-    const baseSymbol = normalizeTickerLogoSymbol(rawSymbol);
-    if (baseSymbol) {
-      const rawTheme = searchParams.get("theme");
-      const theme: LogoDevOptions["theme"] =
-        rawTheme === "light" || rawTheme === "dark" ? rawTheme : "dark";
-
-      const logoUrl = logoDevTickerUrl(baseSymbol, logoDevToken, { theme, fallback: "monogram" });
-      const referer = `${protocol}//${host}/`;
-      const result = await fetchImage(logoUrl, ONE_WEEK_SECONDS, { Referer: referer });
-      if (result) {
-        return new NextResponse(result.buf, {
-          headers: {
-            "cache-control": `public, max-age=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
-            "content-type": result.contentType,
-            "x-logo-source": `logo.dev:ticker:${theme}`
-          }
-        });
+  async function tryLogoDev() {
+    if (!logoDevToken || !baseSymbol) return null;
+    const logoUrl = logoDevTickerUrl(baseSymbol, logoDevToken, { theme, fallback: "monogram" });
+    const referer = `${protocol}//${host}/`;
+    const r = await fetchImage(logoUrl, ONE_WEEK_SECONDS, { Referer: referer });
+    if (!r) return null;
+    return new NextResponse(r.buf, {
+      headers: {
+        "cache-control": `public, max-age=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_WEEK_SECONDS}`,
+        "content-type": r.contentType,
+        "x-logo-source": `logo.dev:ticker:${theme}`
       }
-    }
+    });
   }
 
-  return new NextResponse(null, {
+  const result = source === "logodev"
+    ? (await tryLogoDev()) ?? (await tryGitHub())
+    : (await tryGitHub()) ?? (await tryLogoDev());
+
+  return result ?? new NextResponse(null, {
     status: 404,
     headers: { "cache-control": `public, max-age=${ONE_DAY_SECONDS}` }
   });

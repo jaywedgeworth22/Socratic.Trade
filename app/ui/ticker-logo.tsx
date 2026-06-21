@@ -24,7 +24,7 @@ function useDarkMode(): "dark" | "light" {
 // Stored in localStorage; a custom event propagates changes to every
 // TickerLogo instance on the page without prop-threading.
 
-export type LogoSource = "auto" | "github" | "logodev";
+export type LogoSource = "github" | "logodev";
 
 const LOGO_SOURCE_KEY = "ticker-logo-source";
 const LOGO_SOURCE_EVENT = "ticker-logo-source-change";
@@ -39,13 +39,13 @@ export function setLogoSourcePref(source: LogoSource): void {
 export function getLogoSourcePref(): LogoSource {
   try {
     const v = localStorage.getItem(LOGO_SOURCE_KEY);
-    if (v === "github" || v === "logodev") return v;
+    if (v === "logodev") return "logodev";
   } catch { /* ignore */ }
-  return "auto";
+  return "github"; // default; also covers old "auto" stored value
 }
 
 export function useLogoSource(): LogoSource {
-  const [source, setSource] = useState<LogoSource>("auto");
+  const [source, setSource] = useState<LogoSource>("github");
 
   useEffect(() => {
     const read = () => setSource(getLogoSourcePref());
