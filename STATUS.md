@@ -24,6 +24,17 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Chat NOW tranche shipped + I4 (real citations).** Executed the approved
+  NOW tranche on `main` (`7d766de`→`7a675e8`): I1 stop quote fabrication, I2 server-side disclaimer guard
+  + `PROMPT_VERSION 0.4.0`, I3 multi-turn transcript replay, I6 read-only state tools
+  (positions/portfolio/watchlist/alerts/proposals — one-way, no execution), I13 router-matched
+  suggested-prompt chips (8-K framing). Then on `agent/claude`: **I4** — `retrieveContextDetailed`
+  returns REAL provenance (vector id, score, the chunk's own acceptance date, filing url) so citations
+  stop fabricating `<SYMBOL>#i` / the query's as_of; the UI renders citation chips as filing links.
+  Verified: tsc clean, **412 tests**. Running questions log: `docs/open-questions-for-jay.md` (Q0 =
+  worktree collision — a concurrent agent is mid-edit on `main`'s `strategy.ts`/`db.ts`/etc., so this
+  lane moved to the isolated `~/apps/trading-claude` worktree and lands via PR). See
+  `docs/rollouts/2026-06-21-chat-now-tranche-and-i4.md`.
 - 2026-06-21 (`agent/claude`): **Best-of-each branch reconciliation landed on `main`.** A 7-agent
   comparison (`docs/reviews/2026-06-21-branch-reconciliation-best-of-each.md`) resolved the parallel
   agent lanes; the recommended picks were cherry-picked + verified: **tuner missed-opportunity

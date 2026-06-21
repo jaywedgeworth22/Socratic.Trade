@@ -30,6 +30,7 @@ interface Citation {
   source: string;
   chunk_id?: string;
   as_of?: string;
+  url?: string;
 }
 interface ChatReply {
   text: string;
@@ -250,11 +251,19 @@ export function AssistantView({
               <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
-                  {m.citations.map((c, i) => (
-                    <Chip key={i} tone="neutral" className="text-[10px]">
-                      {c.chunk_id ?? c.source}
-                    </Chip>
-                  ))}
+                  {m.citations.map((c, i) =>
+                    c.url ? (
+                      <a key={i} href={c.url} target="_blank" rel="noopener noreferrer">
+                        <Chip tone="neutral" className="text-[10px] underline decoration-dotted">
+                          {c.chunk_id ?? c.source}
+                        </Chip>
+                      </a>
+                    ) : (
+                      <Chip key={i} tone="neutral" className="text-[10px]">
+                        {c.chunk_id ?? c.source}
+                      </Chip>
+                    )
+                  )}
                 </div>
               )}
               {m.draft && (
