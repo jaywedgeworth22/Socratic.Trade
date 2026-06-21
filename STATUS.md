@@ -24,6 +24,21 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude`): **UI/UX + iPad/iPhone audit and quick-win implementation.** Ran two
+  multi-agent audits (real-Chrome desktop walkthrough → 64-agent review/verify/synthesis; source-grounded
+  iPad/iPhone → 27-agent) and shipped the quick wins + high-severity fixes: Market Scan **Score → column 2**
+  + horizontal scroll; **zero P&L/tax values now neutral** (`pnlTone`); **light-mode ticker logos fixed**
+  (dark tile); **reduced-motion guard** + **iOS 16px inputs**; **macro sparkline polarity** + "Broad USD"
+  relabel; Settings tab overflow + no-jump min-height; drilldown header truncation/dedup; a11y (select
+  labels, tabpanel ARIA, ≥44px touch targets); chart vertical-touch-scroll; **iPad cockpit shell `xl`→`lg`**;
+  and **setup-state run failures render amber** instead of red. Verified: tsc clean, **386 tests**, build
+  green; live-confirmed on :4100. Full reports:
+  `docs/reviews/2026-06-20-ui-ux-and-mobile-audit.md`; **itemized status-tagged backlog of every
+  issue:** `docs/reviews/2026-06-21-ui-ux-issue-register.md`; rollout:
+  `docs/rollouts/2026-06-20-ui-ux-audit-and-quick-wins.md`. **Deferred:** F1 backend root cause
+  (`src/lib/strategy.ts` `policy.accountNumber` wiring — UI softened only); deleting the **dead
+  `app/ui/dashboard/{views,components,utils,settings}.tsx`** parallel implementation; header overflow menu;
+  full safe-area/`viewport-fit=cover`. On `agent/claude`, not pushed/merged.
 - 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
   chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
   red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`

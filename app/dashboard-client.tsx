@@ -66,7 +66,7 @@ import type {
   TradeProposal
 } from "@/lib/types";
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
-import { compactMoney, compactNum, formatPct, money, signedMoney } from "./dashboard-widgets";
+import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
@@ -501,7 +501,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 
   const safetyBanner = executionBanner(executionState);
   return (
-    <div className="flex min-h-dvh flex-col overflow-x-hidden xl:h-dvh xl:overflow-hidden">
+    <div className="flex min-h-dvh flex-col overflow-x-hidden lg:h-dvh lg:overflow-hidden">
       {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
         className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
@@ -546,6 +546,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           >
             <span className="text-xs font-medium text-muted">Mode</span>
             <select
+              aria-label="Approval mode"
               className="bg-transparent text-xs font-medium text-fg outline-none"
               value={policy.strategyAuthority}
               onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
@@ -556,6 +557,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
           <div className="flex items-center gap-2">
             <select
+              aria-label="Active account"
               className="h-9 max-w-[13rem] rounded-lg border border-line bg-surface/50 px-2.5 text-sm font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none"
               value={policy.connectedAccountId ?? ""}
               onChange={(e) => {
@@ -633,13 +635,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       </header>
 
       {/* ── Body grid ───────────────────────────────────────────── */}
-      <div className="grid flex-1 grid-cols-1 gap-3 p-3 xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 xl:block">
+      <div className="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="hidden min-h-0 lg:block">
           <PortfolioRail snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
         </aside>
 
-        <main className="flex min-w-0 flex-col gap-3 xl:min-h-0">
-          <div className="xl:hidden">
+        <main className="flex min-w-0 flex-col gap-3 lg:min-h-0">
+          <div className="lg:hidden">
             <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
           <div className="flex min-w-0 items-center justify-between overflow-x-auto">
@@ -663,7 +665,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-visible xl:overflow-auto">
+          <div
+            role="tabpanel"
+            id={`tabpanel-${workspaceTab}`}
+            aria-labelledby={`tab-${workspaceTab}`}
+            tabIndex={0}
+            className="min-h-0 flex-1 overflow-visible lg:overflow-auto"
+          >
             {workspaceTab === "decision" && (
               <DecisionView
                 snapshot={snapshot}
@@ -763,7 +771,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, tax & notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Universe, risk, keys, tax & notifications" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -906,7 +914,7 @@ function PortfolioRail({
       <PanelHeader title="Portfolio" subtitle={`${modeLabel} account`} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
-        <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
+        <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
       </div>
       <div className="px-4 py-3">
         {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No allocation yet" />}
@@ -931,7 +939,7 @@ function PortfolioRail({
                     <div className="tnum text-[11px] text-faint">{formatShareQuantity(p.quantity, p.symbol)} sh · {p.allocPct.toFixed(1)}%</div>
                   </td>
                   <td className="px-2 py-1.5 text-right tnum text-fg">{money(p.marketValue)}</td>
-                  <td className={cn("px-2 py-1.5 text-right tnum", p.pnl >= 0 ? "text-up" : "text-down")}>
+                  <td className={cn("px-2 py-1.5 text-right tnum", p.pnl > 0 ? "text-up" : p.pnl < 0 ? "text-down" : "text-fg")}>
                     <div>{signedMoney(p.pnl)}</div>
                     <div className="text-[11px]">{formatPct(p.returnPct)}</div>
                   </td>
@@ -1087,10 +1095,15 @@ function DecisionView({
           icon={<Sparkles size={16} />}
         />
         {!decision ? (
-          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Choose an account and tradable universe, then use Run to generate the agent's first decision." />
+          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
-            <div className={cn("rounded-xl border px-3 py-2 text-[13px]", decision.status === "failed" ? "border-down/30 bg-down/10 text-down" : "border-info/25 bg-info/10 text-fg")}>
+            <div className={cn("rounded-xl border px-3 py-2 text-[13px]",
+              decision.status !== "failed"
+                ? "border-info/25 bg-info/10 text-fg"
+                : /no account|account selected|no symbols|universe is empty|empty universe/i.test(decision.summary || "")
+                  ? "border-warn/30 bg-warn/10 text-warn"
+                  : "border-down/30 bg-down/10 text-down")}>
               {decision.summary}
             </div>
             {decision.proposals.map((item, i) => (
@@ -1152,6 +1165,8 @@ function vwapTitle(q: MarketQuote): string | undefined {
 const SCAN_COLUMNS: ScanColumn[] = [
   { id: "symbol", label: "Symbol", title: "Ticker symbol. Hover a row for the company name.", sortKey: "symbol",
     render: (q) => <span className="font-semibold text-fg">{q.symbol}</span>, cellTitle: (q) => q.companyName },
+  { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
+    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> },
   { id: "price", label: "Price", title: "Last traded price (delayed). Source: NASDAQ delayed screener, refined by Yahoo / broker quotes when available.", align: "right", sortKey: "price",
     render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
   { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
@@ -1216,9 +1231,7 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
     render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
   { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", sortKey: "sector",
-    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) },
-  { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
-    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
+    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) }
 ];
 
 const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
@@ -1301,7 +1314,7 @@ function MarketScanView({
         <EmptyState
           icon={<LineChartIcon size={20} />}
           title={scanLoading ? "Scanning the market…" : "No market scan yet"}
-          hint={scanError || "Choose a base index or add symbols, then refresh the scan."}
+          hint={scanError || (scanLoading ? "Fetching quotes and enrichment data…" : "Choose a base index or add symbols, then refresh the scan.")}
         />
         <div className="flex justify-center px-4 pb-4">
           <Button variant="ghost" size="sm" onClick={onConfigureUniverse}><SettingsIcon size={14} /> Configure universe</Button>
@@ -1321,7 +1334,7 @@ function MarketScanView({
     ? `No quotes returned · ${liveScan ? "live" : scan.cached ? "cached" : "latest"}`
     : `${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`;
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <PanelHeader
         title="Market scan"
         subtitle={subtitle}
@@ -1369,11 +1382,11 @@ function MarketScanView({
           </div>
         </div>
       ) : (
-        <div className="h-[min(600px,65vh)] p-2">
+        <div className="h-[min(600px,65vh)] overflow-x-auto p-2">
           <TableVirtuoso
             data={sorted}
             components={{
-              Table: (props) => <table {...props} className="w-full text-[13px]" />,
+              Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
               TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
             }}
@@ -1415,7 +1428,7 @@ function MarketScanView({
 function SentimentChip({ value }: { value: number }) {
   const tone = value >= 60 ? "up" : value <= 40 ? "down" : "neutral";
   const label = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
-  return <Chip tone={tone}>{label} {value}</Chip>;
+  return <Chip tone={tone}>{label} · {value}</Chip>;
 }
 
 function freshness(fetchedAt?: string): string {
@@ -1489,7 +1502,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
 function RatingChip({ score, label }: { score?: number; label: string }) {
   // Mirror the Sentiment chip: green for Buy-ish, red for Sell-ish, neutral for Hold.
   const tone = score === undefined ? "neutral" : score >= 65 ? "up" : score <= 40 ? "down" : "neutral";
-  return <Chip tone={tone}>{typeof score === "number" ? `${label} ${score}` : label}</Chip>;
+  return <Chip tone={tone}>{typeof score === "number" ? `${label} · ${score}` : label}</Chip>;
 }
 
 /** Map the raw market session to a status label + dot tone (green open, grey closed). */
@@ -1537,10 +1550,10 @@ function PerformanceView({
       <Card className="lg:col-span-2">
         <PanelHeader title="Equity" subtitle={`${modeLabel} account`} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
-          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
+          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={pnlTone(realized)} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={pnlTone(unrealized)} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
-          <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
+          <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={pnlTone(avgReturn)} title="Average percentage return per closed lot." />
         </div>
         <div className="h-64 p-4">
           <EquityCurve data={curve} />
@@ -1596,9 +1609,9 @@ function TaxView({
           actions={<Chip tone={tax.settings.washSaleGuard ? "up" : "warn"}>Wash-sale guard {tax.settings.washSaleGuard ? "on" : "off"}</Chip>}
         />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 sm:grid-cols-4">
-          <StatTile label="Short-term realized" value={signedMoney(tax.shortTermRealized)} tone={tax.shortTermRealized >= 0 ? "up" : "down"} sub={`taxed ~${tax.settings.shortTermRatePct}% (ordinary)`} />
-          <StatTile label="Long-term realized" value={signedMoney(tax.longTermRealized)} tone={tax.longTermRealized >= 0 ? "up" : "down"} sub={`taxed ~${tax.settings.longTermRatePct}%`} />
-          <StatTile label="Est. tax liability" value={money(tax.estimatedTaxLiability)} tone="down" sub="this year, on realized gains" />
+          <StatTile label="Short-term realized" value={signedMoney(tax.shortTermRealized)} tone={pnlTone(tax.shortTermRealized)} sub={`taxed ~${tax.settings.shortTermRatePct}% (ordinary)`} />
+          <StatTile label="Long-term realized" value={signedMoney(tax.longTermRealized)} tone={pnlTone(tax.longTermRealized)} sub={`taxed ~${tax.settings.longTermRatePct}%`} />
+          <StatTile label="Est. tax liability" value={money(tax.estimatedTaxLiability)} tone={tax.estimatedTaxLiability > 0 ? "down" : "neutral"} sub="this year, on realized gains" />
           <StatTile label="Disallowed (wash sale)" value={money(tax.disallowedWashSaleLoss)} tone={tax.disallowedWashSaleLoss > 0 ? "warn" : "neutral"} sub="losses you can't deduct" />
         </div>
       </Card>
@@ -2241,19 +2254,21 @@ function SettingsContent({
 
   return (
     <>
-      <div className="space-y-4">
-        <Tabs
-          value={section}
-          onChange={(v) => setSection(v as Section)}
-          tabs={[
-            { id: "operate", label: "Operate" },
-            { id: "display", label: "Display" },
-            { id: "keys", label: "API Keys" },
-            { id: "tax", label: "Tax" },
-            { id: "tuning", label: "Tuning" },
-            { id: "notifications", label: "Notifications" }
-          ]}
-        />
+      <div className="min-h-[60vh] space-y-4">
+        <div className="overflow-x-auto">
+          <Tabs
+            value={section}
+            onChange={(v) => setSection(v as Section)}
+            tabs={[
+              { id: "operate", label: "Operate" },
+              { id: "display", label: "Display" },
+              { id: "keys", label: "API Keys" },
+              { id: "tax", label: "Tax" },
+              { id: "tuning", label: "Tuning" },
+              { id: "notifications", label: "Notifications" }
+            ]}
+          />
+        </div>
 
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
