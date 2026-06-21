@@ -476,6 +476,7 @@ describe("calculatePnl — short/cover", () => {
     expect(pnl.unrealized).toBeCloseTo(20);
     expect(pnl.openLots).toHaveLength(1);
     expect(pnl.openLots[0].side).toBe("short");
+    expect(pnl.openLots[0].quantity).toBeLessThan(0); // signed: negative for short
   });
 
   it("a sell skips a leading short lot and realizes against the long lot (no $0 erasure)", () => {
@@ -491,6 +492,7 @@ describe("calculatePnl — short/cover", () => {
     expect(pnl.closedLots[0].side).toBe("long");
     expect(pnl.openLots).toHaveLength(1);
     expect(pnl.openLots[0].side).toBe("short");
+    expect(pnl.openLots[0].quantity).toBeLessThan(0); // signed: negative for short
   });
 
   it("a cover skips a leading long lot and realizes against the short lot", () => {
