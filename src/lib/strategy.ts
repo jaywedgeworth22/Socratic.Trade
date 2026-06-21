@@ -1041,7 +1041,13 @@ async function proposeTrades(input: {
         washSaleLockedSymbols: taxSummary.lockedSymbols,
         positionsNearLongTerm: taxSummary.openLots
           .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
-          .map((lot) => ({ symbol: lot.symbol, daysToLongTerm: lot.daysToLongTerm })),
+          .map((lot) => ({
+            symbol: lot.symbol,
+            daysToLongTerm: lot.daysToLongTerm,
+            ...(lot.earlyExitTaxPremium != null && lot.earlyExitTaxPremium > 0
+              ? { earlyExitTaxPremium: Math.round(lot.earlyExitTaxPremium) }
+              : {})
+          })),
         harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
       }
     : null;
