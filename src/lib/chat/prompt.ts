@@ -2,7 +2,7 @@
 // system prompt, memory format, and schemas are versioned together; bump this on any change
 // and re-run the no-execute eval suite (test/atlas-golden-eval.test.ts).
 
-export const PROMPT_VERSION = "agentic-chat@0.3.0";
+export const PROMPT_VERSION = "agentic-chat@0.4.0";
 
 export const DISCLAIMER = "This is general information, not personalized financial advice.";
 

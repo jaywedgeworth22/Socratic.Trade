@@ -70,10 +70,17 @@ export function classifyIntent(message: string): Intent {
 }
 
 function narrateQuote(quote: any, advice: boolean): string {
-  const dir = quote.change_pct >= 0 ? "up" : "down";
-  let text =
-    `${quote.symbol} is at $${quote.price_usd}, ${dir} ${Math.abs(quote.change_pct)}% ` +
-    `(as of ${quote.as_of}, ${quote.source} data, ${quote.session} session).`;
+  let lead = `${quote.symbol} is at $${quote.price_usd}`;
+  if (typeof quote.change_pct === "number" && Number.isFinite(quote.change_pct)) {
+    lead += `, ${quote.change_pct >= 0 ? "up" : "down"} ${Math.abs(quote.change_pct)}%`;
+  }
+  // Only narrate fields the source actually provided — never fabricate a 0% or a session.
+  const meta = [
+    quote.as_of ? `as of ${quote.as_of}` : null,
+    quote.source ? `${quote.source} data` : null,
+    quote.session ? `${quote.session} session` : null
+  ].filter(Boolean);
+  let text = meta.length ? `${lead} (${meta.join(", ")}).` : `${lead}.`;
   if (advice)
     text +=
       ` I can't tell you whether to buy or sell — that depends on your full financial picture, ` +
@@ -188,8 +195,14 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 export class AnthropicLLM implements ChatLLM {
   constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport) {}
 
-  async run({ system, message, tools, executeTool }: LlmRunArgs): Promise<LlmResult> {
-    const messages: any[] = [{ role: "user", content: message }];
+  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+    const messages: any[] = [];
+    // Replay prior turns for multi-turn context. Anthropic requires the first message to be user, so
+    // drop any leading assistant turn from the (chronological) history before appending the new message.
+    const prior = (history ?? []).slice();
+    while (prior.length && prior[0].role !== "user") prior.shift();
+    for (const h of prior) messages.push({ role: h.role, content: h.text });
+    messages.push({ role: "user", content: message });
     const toolCalls: ToolCall[] = [];
     let text = "";
 
