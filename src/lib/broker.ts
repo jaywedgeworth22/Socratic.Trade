@@ -11,5 +11,5 @@ export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"
     return getTestGateway();
   }
   // Robinhood (MCP-only) is the remaining broker.
-  return getRobinhoodGateway();
+  return getRobinhoodGateway(userId);
 }

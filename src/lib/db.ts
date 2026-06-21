@@ -28,7 +28,8 @@ import type {
   ChatTurn,
   ChatTurnRole,
   AccountCapabilities,
-  MemoryItem
+  MemoryItem,
+  LearnedContextRow
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -326,6 +327,25 @@ function migrate(database: Database.Database): void {
       chunk_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (accession, doc_type)
     );
+    CREATE TABLE IF NOT EXISTS learned_context (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'private' CHECK(scope IN ('private','shared')),
+      kind TEXT NOT NULL CHECK(kind IN ('pattern','decision','fact')),
+      subject TEXT NOT NULL,
+      symbol TEXT,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inferred',
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest')),
+      risk_tier TEXT NOT NULL DEFAULT 'fact' CHECK(risk_tier IN ('fact','risk','strategy-directive')),
+      confidence REAL NOT NULL DEFAULT 0.5,
+      contributor_user_id TEXT,
+      asserted_at TEXT NOT NULL,
+      superseded_by TEXT,
+      expires_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_learned_context_user ON learned_context (user_id, scope, superseded_by);
+    CREATE INDEX IF NOT EXISTS idx_learned_context_symbol ON learned_context (symbol, scope, superseded_by);
   `);
 
   // Migrate tables to include user_id
@@ -397,22 +417,67 @@ function migrate(database: Database.Database): void {
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
 
   const now = new Date().toISOString();
-  const ensure = database.prepare("INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)");
-  ensure.run("policy", JSON.stringify(DEFAULT_POLICY), now);
-  ensure.run("strategyPrompt", JSON.stringify(DEFAULT_STRATEGY_PROMPT), now);
+  // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
+  // These global rows are never read at runtime (all reads go through user_settings and
+  // strategy_profiles by userId). The legacy seeds were removed in M3 (2026-06-21).
+  migrateGlobalPolicyToLocalUser(database, now);
   ensureDefaultProfile(database, now);
   applySp500DefaultUniverseMigration(database, now);
+}
+
+/**
+ * ONE-TIME migration (M3, 2026-06-21): copy any existing global-only 'policy' / 'strategyPrompt'
+ * rows from the `settings` table into `user_settings` for the 'local' user, so that single-user
+ * DBs that were seeded before the per-user migration lose nothing.
+ *
+ * Guard key prevents the copy from running more than once. After this runs, the global rows
+ * become dead weight (never read at runtime) but are not deleted — they are harmless and their
+ * presence cannot cause confusion because no runtime code reads them.
+ */
+const GLOBAL_POLICY_TO_LOCAL_MIGRATION_KEY = "migration:global_policy_to_local_user:2026-06-21";
+
+function migrateGlobalPolicyToLocalUser(database: Database.Database, now: string): void {
+  const applied = database.prepare("SELECT value FROM settings WHERE key = ?").get(GLOBAL_POLICY_TO_LOCAL_MIGRATION_KEY);
+  if (applied) return;
+
+  const userId = "local";
+  const policyRow = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
+  const promptRow = database.prepare("SELECT value FROM settings WHERE key = 'strategyPrompt'").get() as { value: string } | undefined;
+
+  // Only copy if the user doesn't already have their own user_settings row.
+  if (policyRow) {
+    const existing = database.prepare("SELECT id FROM user_settings WHERE user_id = ? AND key = 'policy'").get(userId);
+    if (!existing) {
+      database
+        .prepare("INSERT OR IGNORE INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(`${userId}_policy`, userId, "policy", policyRow.value, now);
+    }
+  }
+  if (promptRow) {
+    const existing = database.prepare("SELECT id FROM user_settings WHERE user_id = ? AND key = 'strategyPrompt'").get(userId);
+    if (!existing) {
+      database
+        .prepare("INSERT OR IGNORE INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(`${userId}_strategyPrompt`, userId, "strategyPrompt", promptRow.value, now);
+    }
+  }
+
+  database
+    .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+    .run(GLOBAL_POLICY_TO_LOCAL_MIGRATION_KEY, JSON.stringify({ appliedAt: now }), now);
 }
 
 function ensureDefaultProfile(database: Database.Database, now: string): void {
   const userId = "local";
   const existing = database.prepare("SELECT COUNT(*) AS count FROM strategy_profiles WHERE user_id = ?").get(userId) as { count: number };
   if (existing.count === 0) {
-    const policyRow = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
-    const promptRow = database.prepare("SELECT value FROM settings WHERE key = 'strategyPrompt'").get() as { value: string } | undefined;
-    const rawPolicy = policyRow?.value ?? JSON.stringify(DEFAULT_POLICY);
+    // Seed from user_settings (which migrateGlobalPolicyToLocalUser may have just populated)
+    // or fall back to the compiled-in defaults. We no longer read from the global settings table.
+    const userPolicyRow = database.prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = 'policy'").get(userId) as { value: string } | undefined;
+    const userPromptRow = database.prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = 'strategyPrompt'").get(userId) as { value: string } | undefined;
+    const rawPolicy = userPolicyRow?.value ?? JSON.stringify(DEFAULT_POLICY);
     const policy = mergePolicy(JSON.parse(rawPolicy) as Partial<TradingPolicy>);
-    const prompt = promptRow ? (JSON.parse(promptRow.value) as string) : DEFAULT_STRATEGY_PROMPT;
+    const prompt = userPromptRow ? (JSON.parse(userPromptRow.value) as string) : DEFAULT_STRATEGY_PROMPT;
     database
       .prepare(
         "INSERT INTO strategy_profiles (id, user_id, name, policy, prompt, scoring_weights, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -443,13 +508,9 @@ function applySp500DefaultUniverseMigration(database: Database.Database, now: st
     }
   };
 
-  const settingsPolicy = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
-  const migratedSettingsPolicy = settingsPolicy ? migratePolicyJson(settingsPolicy.value) : undefined;
-  if (migratedSettingsPolicy) {
-    database
-      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'policy'")
-      .run(JSON.stringify(migratedSettingsPolicy), now);
-  }
+  // NOTE: The global settings.policy row is no longer updated here (M3, 2026-06-21).
+  // It is a dead row after the migrateGlobalPolicyToLocalUser migration; the canonical
+  // policy for each user lives in user_settings and strategy_profiles.
 
   const userSettingsPolicies = database
     .prepare("SELECT id, value FROM user_settings WHERE key = 'policy'")
@@ -573,6 +634,16 @@ export function setInternalSetting(key: string, value: unknown): void {
 
 export function deleteInternalSetting(key: string): void {
   getDb().prepare("DELETE FROM settings WHERE key = ?").run(key);
+}
+
+/** Find the first settings row whose key matches a LIKE pattern.  Used for
+ *  state-recovery during OAuth callbacks where userId is not yet in scope. */
+export function findInternalSettingByKeyLike<T>(pattern: string): { key: string; value: T } | undefined {
+  const row = getDb()
+    .prepare("SELECT key, value FROM settings WHERE key LIKE ? LIMIT 1")
+    .get(pattern) as { key: string; value: string } | undefined;
+  if (!row) return undefined;
+  return { key: row.key, value: JSON.parse(row.value) as T };
 }
 
 export type MarketDataDemandKind = "history";
@@ -1035,6 +1106,35 @@ export function activateStrategyProfile(id: string, userId: string = "local"): S
   activate();
   audit("profile_change", { action: "activate", id, name: profile.name }, userId);
   return getStrategyProfile(id, userId)!;
+}
+
+/**
+ * Delete a strategy profile owned by `userId`.
+ *
+ * Decision (M3, 2026-06-21): if the deleted profile was the active one, the active flag is
+ * reassigned to the OLDEST remaining profile (by created_at). If there are no remaining profiles
+ * the user is left with none active — callers should create a new profile in that case.
+ * The function throws if the profile does not exist or does not belong to `userId`.
+ */
+export function deleteStrategyProfile(id: string, userId: string = "local"): void {
+  const existing = getStrategyProfile(id, userId);
+  if (!existing) throw new Error("Strategy profile not found.");
+  const database = getDb();
+  const now = new Date().toISOString();
+  const wasActive = existing.active;
+  const del = database.transaction(() => {
+    database.prepare("DELETE FROM strategy_profiles WHERE id = ? AND user_id = ?").run(id, userId);
+    if (wasActive) {
+      // Reassign the active flag to the oldest remaining profile for this user.
+      database
+        .prepare(
+          "UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = (SELECT id FROM strategy_profiles WHERE user_id = ? ORDER BY created_at ASC LIMIT 1)"
+        )
+        .run(now, userId);
+    }
+  });
+  del();
+  audit("profile_change", { action: "delete", id, name: existing.name, wasActive }, userId);
 }
 
 export function latestAuditByKind(kind: string, userId: string = "local"): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
@@ -2732,4 +2832,133 @@ export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
     .prepare("SELECT accession, doc_type, ticker, indexed_at, chunk_count FROM ingested_accessions ORDER BY indexed_at DESC LIMIT ?")
     .all(limit) as Array<{ accession: string; doc_type: string; ticker: string; indexed_at: string; chunk_count: number }>;
   return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
+}
+
+// ── learned_context CRUD (userId-scoped; READ-ONLY toward the brain) ───────────
+interface RawLearnedContextRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  kind: string;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: string;
+  risk_tier: string;
+  confidence: number;
+  contributor_user_id: string | null;
+  asserted_at: string;
+  superseded_by: string | null;
+  expires_at: string | null;
+}
+
+function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    scope: row.scope as LearnedContextRow["scope"],
+    kind: row.kind as LearnedContextRow["kind"],
+    subject: row.subject,
+    symbol: row.symbol,
+    value: row.value,
+    source: row.source,
+    origin: row.origin as LearnedContextRow["origin"],
+    riskTier: row.risk_tier as LearnedContextRow["riskTier"],
+    confidence: row.confidence,
+    contributorUserId: row.contributor_user_id,
+    assertedAt: row.asserted_at,
+    supersededBy: row.superseded_by,
+    expiresAt: row.expires_at
+  };
+}
+
+export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow {
+  getDb()
+    .prepare(
+      `INSERT INTO learned_context
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      row.id,
+      row.userId,
+      row.scope,
+      row.kind,
+      row.subject,
+      row.symbol,
+      row.value,
+      row.source,
+      row.origin,
+      row.riskTier,
+      row.confidence,
+      row.contributorUserId,
+      row.assertedAt,
+      row.supersededBy,
+      row.expiresAt
+    );
+  return row;
+}
+
+export function findLiveLearnedContextBySubject(
+  userId: string,
+  kind: string,
+  subject: string,
+  symbol: string | null
+): LearnedContextRow | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM learned_context
+       WHERE user_id = ? AND kind = ? AND subject = ? AND ((symbol IS NULL AND ? IS NULL) OR symbol = ?)
+         AND superseded_by IS NULL
+       ORDER BY asserted_at DESC LIMIT 1`
+    )
+    .get(userId, kind, subject, symbol, symbol) as RawLearnedContextRow | undefined;
+  return row ? mapLearnedContext(row) : null;
+}
+
+/**
+ * Live FACT rows for a decision: the user's own private rows plus, when includeShared is set,
+ * other contributors' opted-in shared rows. Filtered to the given symbols (plus symbol-less
+ * rows, which are general facts) and to non-expired rows. READ-ONLY — never mutates.
+ *
+ * NOTE: in the fact-tier slice, only scope='private' rows are ever written, so includeShared
+ * has no effect yet; it is wired through so the later shared-fact slice needs no signature change.
+ */
+export function listLearnedContextForDecision(
+  userId: string,
+  symbols: string[],
+  includeShared = false
+): LearnedContextRow[] {
+  const nowIso = new Date().toISOString();
+  const normalizedSymbols = new Set(symbols.map((s) => s.toUpperCase()));
+  const rows = includeShared
+    ? (getDb()
+        .prepare(
+          `SELECT * FROM learned_context
+           WHERE superseded_by IS NULL AND risk_tier = 'fact'
+             AND (user_id = ? OR scope = 'shared')`
+        )
+        .all(userId) as RawLearnedContextRow[])
+    : (getDb()
+        .prepare(
+          `SELECT * FROM learned_context
+           WHERE superseded_by IS NULL AND risk_tier = 'fact' AND user_id = ?`
+        )
+        .all(userId) as RawLearnedContextRow[]);
+  return rows
+    .map(mapLearnedContext)
+    .filter((r) => r.expiresAt === null || r.expiresAt > nowIso)
+    .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
+}
+
+export function listLearnedContext(userId: string): LearnedContextRow[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM learned_context WHERE user_id = ? AND superseded_by IS NULL ORDER BY asserted_at DESC")
+    .all(userId) as RawLearnedContextRow[];
+  return rows.map(mapLearnedContext);
+}
+
+export function supersedeLearnedContext(oldId: string, newId: string): void {
+  getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
 }

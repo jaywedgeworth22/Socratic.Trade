@@ -814,3 +814,45 @@ export interface MemoryItem {
   assertedAt: string;
   supersededBy: string | null;
 }
+
+// ── learned_context (the tiered crossover-learning store) ──────────────────────
+// A SQLite channel, distinct from user_memory and the Pinecone corpus, holding durable
+// learned FACTS that reach the strategy brain ONLY as advisory prompt DATA — never as a
+// numeric input to sizing or scoring weights. The risk classifier (classify.ts) is the
+// single chokepoint: anything not clearly a non-risk fact is fail-closed to 'risk' and, in
+// this fact-tier slice, is audit-logged-and-dropped (the pending queue is a later slice).
+export type LearnedContextScope = "private" | "shared";
+export type LearnedContextKind = "pattern" | "decision" | "fact";
+export type LearnedContextOrigin = "chat" | "autonomous" | "ingest";
+export type LearnedContextRiskTier = "fact" | "risk" | "strategy-directive";
+
+/** A persisted learned-context row. `supersededBy` non-null means a newer fact replaced it. */
+export interface LearnedContextRow {
+  id: string;
+  userId: string;
+  scope: LearnedContextScope;
+  kind: LearnedContextKind;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: LearnedContextOrigin;
+  riskTier: LearnedContextRiskTier;
+  confidence: number;
+  contributorUserId: string | null;
+  assertedAt: string;
+  supersededBy: string | null;
+  expiresAt: string | null;
+}
+
+/** A pre-persistence learned-context candidate (origin/scope are assigned at ingest time). */
+export interface LearnedContextCandidate {
+  kind: LearnedContextKind;
+  subject: string;
+  value: string;
+  symbol?: string | null;
+  source?: string;
+  confidence?: number;
+  /** Optional intent hint from the producer; the classifier may use it to force 'risk'. */
+  intent?: string;
+}
