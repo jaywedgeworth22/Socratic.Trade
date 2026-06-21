@@ -282,19 +282,24 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       continue;
     }
 
+    // A closing fill matches only OPENING lots of the correct side: a "sell" closes
+    // "long" lots, a "cover" closes "short" lots. Select the first SAME-SIDE lot (FIFO)
+    // and skip opposite-side lots — never consume an opposite-side lot at $0 P&L, which
+    // would silently erase a real open position from the books.
+    const wantSide: "long" | "short" = fill.side === "cover" ? "short" : "long";
     let remaining = fill.quantity;
-    while (remaining > 0 && lots.get(symbol)!.length > 0) {
-      const lot = lots.get(symbol)![0];
+    const symbolLots = lots.get(symbol)!;
+    while (remaining > 0) {
+      const idx = symbolLots.findIndex((l) => l.side === wantSide);
+      if (idx === -1) break; // no matching open lot to close against
+      const lot = symbolLots[idx];
       const matched = Math.min(remaining, lot.quantity);
-      let pnl = 0;
-      let returnPct = 0;
-      if (fill.side === "sell" && lot.side === "long") {
-        pnl = matched * (fill.price - lot.price);
-        returnPct = lot.price > 0 ? ((fill.price - lot.price) / lot.price) * 100 : 0;
-      } else if (fill.side === "cover" && lot.side === "short") {
-        pnl = matched * (lot.price - fill.price);
-        returnPct = lot.price > 0 ? ((lot.price - fill.price) / lot.price) * 100 : 0;
-      }
+      const pnl = fill.side === "cover"
+        ? matched * (lot.price - fill.price)
+        : matched * (fill.price - lot.price);
+      const returnPct = lot.price > 0
+        ? (fill.side === "cover" ? (lot.price - fill.price) / lot.price : (fill.price - lot.price) / lot.price) * 100
+        : 0;
       realized += pnl;
       // Attribute the realized outcome to the thesis/regime the lot was *opened* under,
       // and carry entry/exit context for excursion (MAE/MFE) analysis.
@@ -315,7 +320,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
       remaining -= matched;
-      if (lot.quantity <= 0.000001) lots.get(symbol)!.shift();
+      if (lot.quantity <= 0.000001) symbolLots.splice(idx, 1);
     }
   }
 

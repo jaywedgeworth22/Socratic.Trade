@@ -116,7 +116,10 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.maxSymbolExposureNotional) {
     const existingPosition = context.positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const existingValue = existingPosition ? Math.abs(existingPosition.marketValue) : 0;
-    const projectedNotional = existingValue + estimatedNotional;
+    // Side-aware: opening orders (buy/short) ADD exposure; closing orders (sell/cover)
+    // REDUCE it. Mirrors projectedExposurePct / the sector cap so a risk-reducing exit
+    // (e.g. an automated stop-loss sell) is never blocked by a notional cap.
+    const projectedNotional = isOpening ? existingValue + estimatedNotional : Math.max(0, existingValue - estimatedNotional);
     if (projectedNotional > context.policy.maxSymbolExposureNotional) {
       reasons.push(`Projected ${symbol} notional exposure $${projectedNotional.toFixed(2)} exceeds cap $${context.policy.maxSymbolExposureNotional.toFixed(2)}.`);
     }

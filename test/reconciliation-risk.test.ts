@@ -110,6 +110,47 @@ describe("reconcilePendingFills", () => {
     expect(matched).toBeDefined();
     expect(matched!.status).toBe("cancelled");
   });
+
+  it("records the executed portion of a partially_filled live order", async () => {
+    const fillId = randomUUID();
+    const brokerOrderId = "broker-order-partial-1";
+    insertFillEvent({
+      id: fillId, proposalId: "pp1", runId: "r1", accountNumber: "ACCPF",
+      source: "live", symbol: "AAPL", side: "buy", quantity: 10, price: 150, notional: 1500,
+      status: "pending_reconciliation", brokerOrderId, raw: { test: true }
+    });
+    const mockGateway = createMockGateway({
+      getEquityOrders: async () => [
+        { id: brokerOrderId, symbol: "AAPL", side: "buy", type: "market", state: "partially_filled", filledQuantity: 4, averagePrice: 151, createdAt: new Date().toISOString(), updatedAt: "2026-06-15T12:00:00.000Z" } as EquityOrder
+      ]
+    });
+    await reconcilePendingFills(mockGateway, "ACCPF");
+    const matched = listFillEvents("ACCPF", "live").find((f) => f.id === fillId);
+    expect(matched!.status).toBe("filled");
+    expect(matched!.quantity).toBe(4);
+    expect(matched!.notional).toBeCloseTo(604); // 4 * 151
+  });
+
+  it("books the executed shares when an order is cancelled after a partial fill", async () => {
+    const fillId = randomUUID();
+    const brokerOrderId = "broker-order-partial-2";
+    insertFillEvent({
+      id: fillId, proposalId: "pp2", runId: "r1", accountNumber: "ACCPF",
+      source: "live", symbol: "MSFT", side: "buy", quantity: 5, price: 400, notional: 2000,
+      status: "pending_reconciliation", brokerOrderId, raw: { test: true }
+    });
+    const mockGateway = createMockGateway({
+      getEquityOrders: async () => [
+        { id: brokerOrderId, symbol: "MSFT", side: "buy", type: "market", state: "canceled", filledQuantity: 2, averagePrice: 401, createdAt: new Date().toISOString(), updatedAt: "2026-06-15T12:05:00.000Z" } as EquityOrder
+      ]
+    });
+    await reconcilePendingFills(mockGateway, "ACCPF");
+    const matched = listFillEvents("ACCPF", "live").find((f) => f.id === fillId);
+    // The 2 executed shares are booked (status filled), not dropped as cancelled.
+    expect(matched!.status).toBe("filled");
+    expect(matched!.quantity).toBe(2);
+    expect(matched!.notional).toBeCloseTo(802); // 2 * 401
+  });
 });
 
 describe("generateProactiveRiskProposals", () => {
@@ -169,6 +210,32 @@ describe("generateProactiveRiskProposals", () => {
     };
 
     const proposals = generateProactiveRiskProposals(positions, currentPrices, policy);
+    expect(proposals).toHaveLength(0);
+  });
+
+  it("emits a COVER (not a sell) to exit a breached short when short selling is enabled", () => {
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      shortSellingEnabled: true,
+      riskRules: { stopLossPct: 8, takeProfitPct: 20, shortStopLossPct: 8 }
+    };
+    // Short entered @100, price rose to 110 → short is down 10%, breaching the 8% short stop.
+    const positions = [{ symbol: "TSLA", quantity: -5, averageCost: 100, marketValue: -550 }];
+    const proposals = generateProactiveRiskProposals(positions, { TSLA: 110 }, policy);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].side).toBe("cover");
+    expect(proposals[0].quantity).toBe(5);
+    expect(proposals[0].rationale).toContain("short stop-loss");
+  });
+
+  it("does not manage a short position when short selling is disabled", () => {
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      shortSellingEnabled: false,
+      riskRules: { stopLossPct: 8, shortStopLossPct: 8 }
+    };
+    const positions = [{ symbol: "TSLA", quantity: -5, averageCost: 100, marketValue: -550 }];
+    const proposals = generateProactiveRiskProposals(positions, { TSLA: 110 }, policy);
     expect(proposals).toHaveLength(0);
   });
 });

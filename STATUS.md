@@ -24,6 +24,17 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude`): **Money-path safety — tranche 1 (4 bug fixes + 20 tests).**
+  From an adversarially-verified audit (38 findings → 12 confirmed → 14-task plan): fixed the
+  side-blind per-symbol notional cap that could block automated de-risking exits (T1,
+  `policy.ts`), dropped Alpaca partial fills (T2, `strategy.ts` `reconcilePendingFills`,
+  idempotent), the side-blind FIFO matcher that erased opposite-side lots at $0 P&L (T3,
+  `performance.ts`), and shorts getting no / wrong-side protective exits (T8, `strategy.ts` +
+  `synthetic-stops.ts`). Pinned with 20 regression tests (short/cover P&L signs, side-aware
+  caps, enabled-path short guardrails, partial-fill booking, synthetic-stop cover exit). tsc
+  clean, 327 tests, build green. Remaining: T5/T6/T9–T14 (coverage + cleanup; T10 = gross/net
+  exposure-gate design decision). On `origin/agent/claude`; merge to `main` deferred while the
+  integration worktree is active. See `docs/rollouts/2026-06-20-money-path-safety-fixes.md`.
 - 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
   Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus
   the three agent worktree branches. Deleted (tip SHAs in the rollout note for recovery):
