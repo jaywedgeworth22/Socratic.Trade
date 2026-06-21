@@ -319,6 +319,14 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory (user_id, superseded_by);
 
+    CREATE TABLE IF NOT EXISTS ingested_accessions (
+      accession TEXT NOT NULL,
+      doc_type TEXT NOT NULL,
+      ticker TEXT NOT NULL DEFAULT '',
+      indexed_at TEXT NOT NULL,
+      chunk_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (accession, doc_type)
+    );
     CREATE TABLE IF NOT EXISTS learned_context (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -2787,6 +2795,43 @@ export function touchMemory(id: string, assertedAt: string, confidence: number):
 
 export function deleteMemory(userId: string, id: string): boolean {
   return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
+}
+
+// ── ingested_accessions de-dup helpers ───────────────────────────────────────
+// Keyed by (accession, doc_type) — globally unique for SEC filings, so no user scoping needed.
+// The corpus write uses userId='local' (app-funded, scope:'shared') and is never per-user.
+
+export interface IngestedAccessionRow {
+  accession: string;
+  docType: string;
+  ticker: string;
+  indexedAt: string;
+  chunkCount: number;
+}
+
+/** Return true if this (accession, docType) pair has already been embedded. */
+export function hasIngestedAccession(accession: string, docType: string): boolean {
+  const row = getDb()
+    .prepare("SELECT 1 FROM ingested_accessions WHERE accession = ? AND doc_type = ?")
+    .get(accession, docType);
+  return row != null;
+}
+
+/** Record a successfully-ingested accession so it is never re-embedded. */
+export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+  getDb()
+    .prepare(
+      "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
+    )
+    .run(accession, docType, ticker, new Date().toISOString(), chunkCount);
+}
+
+/** List all ingested accessions (admin/diagnostic). */
+export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
+  const rows = getDb()
+    .prepare("SELECT accession, doc_type, ticker, indexed_at, chunk_count FROM ingested_accessions ORDER BY indexed_at DESC LIMIT ?")
+    .all(limit) as Array<{ accession: string; doc_type: string; ticker: string; indexed_at: string; chunk_count: number }>;
+  return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
 }
 
 // ── learned_context CRUD (userId-scoped; READ-ONLY toward the brain) ───────────

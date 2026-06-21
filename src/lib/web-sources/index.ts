@@ -44,6 +44,7 @@ import {
   setTechnicalWatchlist,
   technicalEnabled
 } from "./technical";
+import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -63,6 +64,8 @@ export {
   verifyWebhookSecret
 } from "./technical";
 export type { TechnicalSignal, TechnicalSource, TradingViewWebhookPayload } from "./technical";
+export { refreshFilingBodies, isFilingIngestDue } from "./sec-filings";
+export type { FilingRef, IngestResult, RefreshFilingBodiesResult } from "./sec-filings";
 
 /** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
