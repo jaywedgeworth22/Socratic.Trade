@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ExternalLink,
   Gauge,
+  HelpCircle,
   Hourglass,
   Info,
   KeyRound,
@@ -199,6 +200,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const [killConfirm, setKillConfirm] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
@@ -574,6 +576,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => setSettingsOpen(true)}>
               <SettingsIcon size={15} />
             </IconButton>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Help" onClick={() => setHelpOpen(true)}>
+              <HelpCircle size={15} />
+            </IconButton>
             <ThemeToggle />
           </div>
 
@@ -793,6 +798,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 
       <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect and switch supported accounts" icon={<Wallet size={18} />} size="lg">
         <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
+      </Modal>
+
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="Safety limits, tax logic, pricing & MCP" icon={<HelpCircle size={18} />} size="lg">
+        <HelpContent policy={policy} snapshot={snapshot} />
       </Modal>
 
       <ConfirmModal
@@ -3153,6 +3162,208 @@ function RobinhoodMcpStatusCard({
           <div className="mt-1 text-[12px] text-muted">
             {visibleTools.join(", ")}
             {(health?.tools.length ?? 0) > visibleTools.length && `, +${(health?.tools.length ?? 0) - visibleTools.length} more`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
+  type Section = "overview" | "guardrails" | "tax" | "fintech" | "mcp";
+  const [section, setSection] = useState<Section>("overview");
+
+  const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
+
+  return (
+    <div className="space-y-4">
+      <Tabs
+        value={section}
+        onChange={(v) => setSection(v as Section)}
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "guardrails", label: "Guardrails" },
+          { id: "tax", label: "Tax & Wash-sale" },
+          { id: "fintech", label: "Fintech Studios" },
+          { id: "mcp", label: "MCP Connection" }
+        ]}
+      />
+
+      {section === "overview" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Welcome to the <strong>Robinhood Agentic Trading</strong> dashboard. This platform leverages autonomous and semi-autonomous AI agents powered by LLMs to scan markets, enrich symbol datasets, formulate trading theses, and execute orders.
+          </p>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg flex items-center gap-1.5">
+              <Sparkles size={14} className="text-accent" /> How the System Works
+            </div>
+            <ol className="list-decimal pl-4 space-y-1">
+              <li><strong>Market Scan:</strong> The system continuously scans index universes (e.g. S&amp;P 500) to find candidate symbols.</li>
+              <li><strong>Enrichment:</strong> Fetches company profiles, premium news from Fintech Studios, and analyst reviews.</li>
+              <li><strong>AI Analysis:</strong> Executes prompts through the configured model (e.g. Claude) to score symbols and formulate trade suggestions.</li>
+              <li><strong>Execution:</strong> Approves or proposes orders based on your selected risk policies and safety limits.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {section === "guardrails" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Safety guardrails prevent runaway trading and keep allocations within your risk tolerance. Customize these in the <strong>Settings → Operate</strong> tab.
+          </p>
+          <div className="grid gap-2.5">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Gauge size={14} className="text-info" /> Daily Notional Ceiling
+              </div>
+              <p>
+                Maximum combined dollar amount of order executions permitted per day. Currently set to: <strong className="text-fg">${policy.maxDailyNotional ?? "Unlimited"}</strong>.
+              </p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Shield size={14} className="text-info" /> Trading Authority Mode
+              </div>
+              <p>
+                Currently in <strong className="text-fg">{policy.strategyAuthority === "decide" ? "Autonomous (Decide)" : "Semi-Autonomous (Propose)"}</strong> mode.
+              </p>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li><strong>Propose Mode:</strong> Order proposals are staged and require your explicit click to send to the brokerage.</li>
+                <li><strong>Decide Mode:</strong> The agent places orders autonomously when matching signals are identified.</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Hourglass size={14} className="text-info" /> Hourly Ceiling
+              </div>
+              <p>
+                Maximum notional executed in a rolling 60-minute window. Set to <strong className="text-fg">${policy.maxHourlyNotional ?? "Unlimited"}</strong>. Breaches automatically drop authority to Propose mode.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {section === "tax" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Tax rules govern how estimated liability is calculated and protect against costly regulatory tax traps like wash sales.
+          </p>
+          <div className="grid gap-2.5">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Percent size={14} className="text-warn" /> Wash-Sale Guardrail
+              </div>
+              <p>
+                <strong>Status: {taxSettings.washSaleGuard ? "Enabled" : "Disabled"}</strong>
+              </p>
+              <p className="mt-1">
+                Under IRC §1091, selling a security at a loss and rebuying it within 30 days disallows claiming the capital loss for tax purposes. The system's wash-sale guard prevents rebuying any security sold at a loss within a rolling 30-day window.
+              </p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Landmark size={14} className="text-warn" /> Account Sheltering
+              </div>
+              <p>
+                Tax treatments differ by account type:
+              </p>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li><strong>Taxable:</strong> Estimated tax liability is deducted from display returns (if configured) and subject to the 30-day lockout.</li>
+                <li><strong>IRA (Roth / Traditional):</strong> Tax-sheltered with 0% tax liability estimates and no in-account wash-sale blocks (though losses in taxable accounts still apply).</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {section === "fintech" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            <strong>Fintech Studios (PowerIntell.AI)</strong> supplies real-time financial news, press releases, regulatory updates, and sentiment analysis scores.
+          </p>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg flex items-center gap-1.5">
+              <Zap size={14} className="text-accent" /> Operation Credit Costs
+            </div>
+            <ul className="list-disc pl-4 space-y-0.5">
+              <li><strong>Symbol Search:</strong> 6 credits per query (returns 25 articles).</li>
+              <li><strong>AI Article Summary:</strong> 5 credits per summary.</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg">Monthly Run Projections (5-Ticker Portfolio)</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-line text-faint">
+                    <th className="pb-1.5">Scenario</th>
+                    <th className="pb-1.5">Frequency</th>
+                    <th className="pb-1.5 text-right">Est. Cost</th>
+                    <th className="pb-1.5 text-right">Recommended Plan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line/40">
+                  <tr>
+                    <td className="py-1.5 font-medium text-fg">Daily EOD scan</td>
+                    <td className="py-1.5 text-faint">Once/day (22 days)</td>
+                    <td className="py-1.5 text-right font-mono">660 credits/mo</td>
+                    <td className="py-1.5 text-right text-up font-medium">Free ($0/mo)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1.5 font-medium text-fg">Intra-day tracking</td>
+                    <td className="py-1.5 text-faint">3 scans/day (22 days)</td>
+                    <td className="py-1.5 text-right font-mono">1,980 credits/mo</td>
+                    <td className="py-1.5 text-right text-up font-medium">Starter ($20/mo)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1.5 font-medium text-fg">High Frequency</td>
+                    <td className="py-1.5 text-faint">10 scans/day (22 days)</td>
+                    <td className="py-1.5 text-right font-mono">6,600 credits/mo</td>
+                    <td className="py-1.5 text-right text-up font-medium">Pro ($40/mo)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-faint mt-1">
+              Note: Unused credits in the Starter tier roll over up to 1,500 credits.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {section === "mcp" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            The <strong>Model Context Protocol (MCP)</strong> enables your desktop AI agent (e.g. Claude Desktop) to connect directly to the Fintech Studios API and run advanced queries dynamically.
+          </p>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg flex items-center gap-1.5">
+              <Network size={14} className="text-accent" /> MCP Integration Benefits
+            </div>
+            <ul className="list-disc pl-4 space-y-1">
+              <li><strong>Dynamic Tool Use:</strong> Allows the agent to query news articles, filter by regulatory event tags, and request summary analysis on demand.</li>
+              <li><strong>Real-time Research:</strong> The agent can conduct deep multi-turn market research loops in the background when evaluating trading proposals.</li>
+              <li><strong>Decoupled Key Management:</strong> Keys are registered securely in the desktop config, not exposed to client dashboard scripts.</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg">Fintech Studios MCP Server Command</div>
+            <pre className="mt-1 block overflow-x-auto rounded bg-bg/50 px-2 py-1.5 font-mono text-[11px] text-fg border border-line/60">
+{`"fintechstudios": {
+  "command": "npx",
+  "args": ["-y", "@fintechstudios/mcp-server"],
+  "env": {
+    "FINTECH_STUDIOS_API_KEY": "fts_live_..."
+  }
+}`}
+            </pre>
+            <p className="text-[11px] text-faint mt-1.5">
+              Configured in Claude Desktop configuration at:<br />
+              <code className="text-fg font-mono">~/Library/Application Support/Claude/claude_desktop_config.json</code>
+            </p>
           </div>
         </div>
       )}
