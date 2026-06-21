@@ -279,6 +279,9 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaKey.key) providers.push(new AlpacaNewsEnrichmentProvider(alpacaKey.key, alpacaSecret || undefined, alpacaKey.source, userId));
+  // Alpaca snapshot: real bid/ask + price + volume + intraday change (replaces fabricated spreads).
+  // Needs both the key id and secret; self-skips when either is absent.
+  if (alpacaKey.key && alpacaSecret) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaKey.key, alpacaSecret, alpacaKey.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
   providers.push(new YahooFinanceEnrichmentProvider());
@@ -723,6 +726,123 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
     }
     return result;
   }
+}
+
+// ── Alpaca snapshot provider (real bid/ask, price, volume, intraday change) ──
+// Uses Alpaca's batch /v2/stocks/snapshots endpoint (IEX feed, free tier).
+// One request covers all scan symbols (chunked at 100 per call).
+// Maps: price = latestTrade.p ?? dailyBar.c, bid = latestQuote.bp,
+//       ask = latestQuote.ap, volume = dailyBar.v,
+//       intradayChangePct = (dailyBar.c − prevDailyBar.c) / prevDailyBar.c * 100.
+// Only sets a field when the source value is present and > 0 — never fabricates.
+// This is the fix for fabricated ±0.1% bid/ask spreads in the Market Scan panel.
+
+const ALPACA_SNAPSHOT_CHUNK = 100; // Alpaca batch limit per request
+
+export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "alpaca-snapshot";
+  readonly configured = true;
+  private readonly base = "https://data.alpaca.markets/v2/stocks/snapshots";
+  private readonly scope: CacheScope;
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly apiSecret: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("alpaca-snapshot", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    // Chunk into batches of up to ALPACA_SNAPSHOT_CHUNK symbols.
+    for (let i = 0; i < misses.length; i += ALPACA_SNAPSHOT_CHUNK) {
+      const chunk = misses.slice(i, i + ALPACA_SNAPSHOT_CHUNK);
+      try {
+        const url = `${this.base}?symbols=${encodeURIComponent(chunk.join(","))}&feed=iex`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        let snapshots: Record<string, AlpacaSnapshot>;
+        try {
+          const response = await fetchWithRetry(url, {
+            headers: {
+              "accept": "application/json",
+              "APCA-API-KEY-ID": this.apiKey,
+              "APCA-API-SECRET-KEY": this.apiSecret
+            },
+            cache: "no-store",
+            signal: controller.signal
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          snapshots = (await response.json()) as Record<string, AlpacaSnapshot>;
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        for (const symbol of chunk) {
+          const snap = snapshots[symbol];
+          const data = parseAlpacaSnapshot(snap);
+          const hasData = Object.keys(data).length > 0;
+          if (hasData) {
+            writeEnrichmentCache("alpaca-snapshot", symbol, this.scope, this.userId, data, now + ttlMs());
+          }
+          result[symbol] = data;
+        }
+      } catch {
+        for (const symbol of chunk) result[symbol] = {};
+      }
+    }
+    return result;
+  }
+}
+
+interface AlpacaSnapshot {
+  latestTrade?: { p?: number };
+  latestQuote?: { bp?: number; ap?: number };
+  dailyBar?: { o?: number; h?: number; l?: number; c?: number; v?: number };
+  prevDailyBar?: { c?: number };
+}
+
+export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): SymbolEnrichment {
+  if (!snap) return {};
+
+  const tradePrice = typeof snap.latestTrade?.p === "number" && snap.latestTrade.p > 0 ? snap.latestTrade.p : undefined;
+  const barClose = typeof snap.dailyBar?.c === "number" && snap.dailyBar.c > 0 ? snap.dailyBar.c : undefined;
+  const price = tradePrice ?? barClose;
+
+  const bid = typeof snap.latestQuote?.bp === "number" && snap.latestQuote.bp > 0 ? snap.latestQuote.bp : undefined;
+  const ask = typeof snap.latestQuote?.ap === "number" && snap.latestQuote.ap > 0 ? snap.latestQuote.ap : undefined;
+
+  const volume = typeof snap.dailyBar?.v === "number" && snap.dailyBar.v > 0 ? snap.dailyBar.v : undefined;
+
+  let intradayChangePct: number | undefined;
+  const prevClose = typeof snap.prevDailyBar?.c === "number" && snap.prevDailyBar.c > 0 ? snap.prevDailyBar.c : undefined;
+  if (barClose !== undefined && prevClose !== undefined && prevClose > 0) {
+    intradayChangePct = Math.round(((barClose - prevClose) / prevClose) * 10000) / 100;
+  }
+
+  return {
+    ...(price !== undefined && { price }),
+    ...(bid !== undefined && { bid }),
+    ...(ask !== undefined && { ask }),
+    ...(volume !== undefined && { volume }),
+    ...(intradayChangePct !== undefined && { intradayChangePct })
+  };
 }
 
 // ── Yahoo Finance provider (no API key required) ─────────────────────────────

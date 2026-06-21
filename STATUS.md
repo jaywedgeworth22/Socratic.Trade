@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`, PR #32): **PDT-rule repeal + Alpaca scan data + consent UI.**
+  FINRA Notice 26-10 retired the Pattern-Day-Trader rule ($25k / 4-trades-in-5-days) → replaced
+  the `policy.ts` PDT gate with a `MARGIN_MINIMUM_EQUITY` ($2,000) margin-account gate (LIVE +
+  `marginEnabled` + equity < $2k, opening legs only); day-trade counting kept but now informational.
+  New `AlpacaSnapshotEnrichmentProvider` feeds real bid/ask/price/volume/intraday-change into the
+  Market Scan (replacing fabricated spreads), consent-gated, verified live against the linked paper
+  account. Settings gained a "Data" tab that states the shared-pool deal + a consent toggle
+  (`GET/POST /api/consent`). tsc clean · **557 tests** · see
+  `docs/rollouts/2026-06-21-pdt-repeal-alpaca-scan-consent-ui.md`.
+
 - 2026-06-21 (`safety/deep-fixes`): **Execution-section CAS + synthetic-stop re-entrancy + boot
   autonomy interlock.** Three failure-mode-review deep fixes (the auth middleware #1, the drawdown
   circuit breaker #7, and the approval-path run-lock were already on `main`). Adds an atomic DB
