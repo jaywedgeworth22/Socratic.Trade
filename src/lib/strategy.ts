@@ -56,7 +56,7 @@ import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting }
 import { withLlmGeneration } from "./observability";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, FillSource, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -520,6 +520,82 @@ export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): numb
   return Math.max(0, Math.min(100, threshold));
 }
 
+/**
+ * Synchronous, model-free pre-filter applied to Bull proposals before the Bear LLM runs.
+ * This is the genuinely independent critique layer: no API call, no model, no chance of
+ * the same LLM arguing with itself. Three concrete rules:
+ *
+ *   1. No-position-to-exit: sell/cover with no matching existing position → hard veto.
+ *      The Bear LLM cannot catch phantom exits because it doesn't know the live book.
+ *
+ *   2. Momentum overextension: buy with momentum subscore > 92 AND value subscore < 20
+ *      → prepend a flag to the rationale so the Bear LLM sees the specific concern.
+ *      Not a hard veto — momentum breakouts can be real — but forces explicit review.
+ *
+ *   3. Regime contradiction: buy in Crisis or Risk-Off regime AND name's score is below
+ *      the median of the current scan → hard veto. A below-average name in an elevated-
+ *      VIX regime is the weakest possible risk-on entry and the Bear LLM is not reliably
+ *      calibrated to reject it (same model as Bull, trained to be helpful).
+ */
+export function deterministicBearFilter(
+  proposals: TradeProposal[],
+  positions: EquityPosition[],
+  topCandidates: MarketQuote[],
+  regime: string
+): { kept: TradeProposal[]; vetoed: Array<{ symbol: string; side: string; reason: string }> } {
+  // All EquityPosition entries are long positions (the app is equity-only; short positions
+  // are not represented in the live book yet). Cover proposals would require short positions,
+  // which we can't verify here — skip Rule 1 for cover to avoid false positives.
+  const heldLong = new Set(positions.map((p) => normalizeSymbol(p.symbol)));
+  const quoteBySymbol = new Map(topCandidates.map((q) => [normalizeSymbol(q.symbol), q]));
+
+  // Pre-compute median score for Rule 3 (only meaningful with ≥2 candidates)
+  const sortedScores = topCandidates.map((q) => q.score).sort((a, b) => a - b);
+  const medianScore = sortedScores.length > 1
+    ? sortedScores[Math.floor(sortedScores.length / 2)]
+    : -Infinity;
+  const riskOffRegime = regime.startsWith("Crisis") || regime.startsWith("Risk-Off");
+
+  const kept: TradeProposal[] = [];
+  const vetoed: Array<{ symbol: string; side: string; reason: string }> = [];
+
+  for (const p of proposals) {
+    const sym = normalizeSymbol(p.symbol);
+    const quote = quoteBySymbol.get(sym);
+
+    // Rule 1: can't sell a long position that doesn't exist in the live book
+    if (p.side === "sell" && !heldLong.has(sym)) {
+      vetoed.push({ symbol: sym, side: "sell", reason: "No existing long position to sell" });
+      continue;
+    }
+
+    // Rule 2: momentum overextension flag on buys (non-blocking — prepends to rationale)
+    if (p.side === "buy" && quote?.factorBreakdown) {
+      const momentum = (quote.factorBreakdown as MarketFactorBreakdown).momentum ?? null;
+      const value    = (quote.factorBreakdown as MarketFactorBreakdown).value    ?? null;
+      if (momentum !== null && value !== null && momentum > 92 && value < 20) {
+        p.rationale =
+          `[Deterministic flag: momentum overextension (momentum=${Math.round(momentum)}, value=${Math.round(value)}). ` +
+          `Verify this is a breakout, not a chase.]\n\n${p.rationale}`;
+      }
+    }
+
+    // Rule 3: below-median buy in a risk-off/crisis regime → hard veto
+    if (p.side === "buy" && riskOffRegime && quote && quote.score < medianScore) {
+      vetoed.push({
+        symbol: sym,
+        side:   "buy",
+        reason: `${regime} regime with below-median scan score (${quote.score.toFixed(1)} < median ${medianScore.toFixed(1)}); risk-on entry too weak`
+      });
+      continue;
+    }
+
+    kept.push(p);
+  }
+
+  return { kept, vetoed };
+}
+
 function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = []): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
@@ -928,10 +1004,11 @@ async function proposeTrades(input: {
   const source: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
-  // Multi-dimensional learning: thesis × regime buckets with >=2 closed lots (thin
-  // buckets are noise; shrunk rates temper the rest). Top movers by |total P&L|.
+  // Multi-dimensional learning: thesis × regime buckets with >=5 closed lots. Fewer than
+  // 5 trades produce a statistic that is dominated by the Bayesian shrinkage prior anyway
+  // and adds noise to the agent's reasoning without improving signal quality.
   const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
-    .filter((bucket) => bucket.trades >= 2)
+    .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
@@ -942,11 +1019,11 @@ async function proposeTrades(input: {
   const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId) : [];
   // Sector learning: realized outcomes grouped by the sector each position was opened in.
   const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
-    .filter((bucket) => bucket.trades >= 2 && bucket.sector !== "Unknown")
+    .filter((bucket) => bucket.trades >= 5 && bucket.sector !== "Unknown")
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
-    .filter((bucket) => bucket.trades >= 2)
+    .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14 })
@@ -1228,10 +1305,24 @@ async function proposeTrades(input: {
     }
   );
 
-  const bullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
+  const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
+
+  // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
+  // See deterministicBearFilter for the three rules (no-phantom-exit, momentum overextension
+  // flag, below-median buy in risk-off regime). Vetoed proposals are logged, not silently
+  // dropped, so runs are auditable.
+  const { kept: bullProposals, vetoed: deterministicVetoed } = deterministicBearFilter(
+    rawBullProposals,
+    input.positions,
+    input.marketScan?.topCandidates ?? [],
+    currentMarketRegime
+  );
+  if (deterministicVetoed.length > 0) {
+    console.log("[DeterministicBear] Vetoed before Bear LLM:", deterministicVetoed.map(v => `${v.symbol} ${v.side}: ${v.reason}`).join(" | "));
+  }
 
   // Phase 7: Bear Agent (Red Team) Critique
   const bearSystemPrompt = [

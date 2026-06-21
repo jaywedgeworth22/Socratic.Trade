@@ -318,7 +318,11 @@ export function aggregateCongressSignals(
   const bySymbol = new Map<string, CongressTrade[]>();
   for (const t of trades) {
     if (!wanted.has(t.symbol)) continue;
-    const ts = Date.parse(t.tradedAt || t.disclosedAt || "");
+    // Use disclosedAt as the recency anchor: trades are disclosed up to ~45 days after they
+    // occur, and the market can only react once the disclosure lands. Windowing on tradedAt
+    // would include trades the market hasn't seen yet (or saw weeks ago) and exclude fresh
+    // disclosures of older trades. Fall back to tradedAt when disclosedAt is absent.
+    const ts = Date.parse(t.disclosedAt || t.tradedAt || "");
     if (Number.isFinite(ts) && ts < cutoff) continue;
     const list = bySymbol.get(t.symbol) ?? [];
     list.push(t);
@@ -327,7 +331,7 @@ export function aggregateCongressSignals(
 
   const out: Record<string, CongressSignal> = {};
   for (const [symbol, list] of bySymbol) {
-    list.sort((a, b) => Date.parse(b.tradedAt) - Date.parse(a.tradedAt));
+    list.sort((a, b) => Date.parse(b.disclosedAt || b.tradedAt) - Date.parse(a.disclosedAt || a.tradedAt));
     const buyMembers = distinct(list.filter((t) => t.side === "buy").map((t) => t.member));
     const sellMembers = distinct(list.filter((t) => t.side === "sell").map((t) => t.member));
     const buyCount = list.filter((t) => t.side === "buy").length;
@@ -340,6 +344,7 @@ export function aggregateCongressSignals(
       sellMembers,
       windowDays: window,
       lastTradedAt: list[0]?.tradedAt,
+      lastDisclosedAt: list[0]?.disclosedAt,
       bulletin: buildBulletin(symbol, buyMembers, sellMembers, buyCount, sellCount, window)
     };
   }

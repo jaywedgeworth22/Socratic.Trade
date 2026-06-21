@@ -149,6 +149,40 @@ describe("aggregateCongressSignals", () => {
     expect(signals.OLD).toBeUndefined(); // outside window
     expect(signals.TSLA).toBeUndefined(); // no trades
   });
+
+  it("uses disclosedAt as the primary recency anchor when present", () => {
+    // Trade happened 90 days ago (outside the 60d window) but was only disclosed 5 days ago.
+    // The signal should be INCLUDED because the market couldn't act until disclosedAt.
+    const recentDisclosure: CongressTrade = {
+      symbol: "META",
+      member: "Alice Senator",
+      chamber: "senate",
+      side: "buy",
+      tradedAt: new Date(now - 90 * 24 * 60 * 60_000).toISOString().slice(0, 10), // 90d ago
+      disclosedAt: new Date(now - 5 * 24 * 60 * 60_000).toISOString().slice(0, 10), // 5d ago
+      source: "senate-efd"
+    };
+    const signals = aggregateCongressSignals([recentDisclosure], ["META"], now, 60);
+    expect(signals.META).toBeDefined();
+    expect(signals.META.netSignal).toBe(1);
+    expect(signals.META.lastDisclosedAt).toBe(recentDisclosure.disclosedAt);
+  });
+
+  it("excludes a trade whose disclosedAt is outside the window, even if tradedAt is recent", () => {
+    // Disclosed 90 days ago but the trade itself happened recently.
+    // The signal is stale from the market's perspective — should be EXCLUDED.
+    const staleDisclosure: CongressTrade = {
+      symbol: "AMZN",
+      member: "Bob Rep",
+      chamber: "house",
+      side: "buy",
+      tradedAt: new Date(now - 5 * 24 * 60 * 60_000).toISOString().slice(0, 10), // 5d ago
+      disclosedAt: new Date(now - 90 * 24 * 60 * 60_000).toISOString().slice(0, 10), // 90d ago
+      source: "apify"
+    };
+    const signals = aggregateCongressSignals([staleDisclosure], ["AMZN"], now, 60);
+    expect(signals.AMZN).toBeUndefined();
+  });
 });
 
 describe("getSymbolWebSignals (persisted overlay)", () => {
