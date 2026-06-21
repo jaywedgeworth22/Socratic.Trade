@@ -24,6 +24,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **vector-db userId sanitization + timestamp parsing hardening.**
+  `getClients()` now sanitizes `userId` before resolving Pinecone/Voyage keys so
+  key-lookup identity matches the Pinecone filter identity (multi-tenant
+  isolation fix); `[Published: YYYY-MM-DD]` prefixing now handles string/number
+  (epoch ms)/Date timestamps; `retryAfterMs` exported for testing. tsc clean;
+  `npm test`/`npm run build` NOT run in Cowork sandbox (host node_modules are
+  macOS-only) — run locally. See
+  `docs/rollouts/2026-06-21-vector-db-userid-timestamp-hardening.md`.
 - 2026-06-20 (`agent/antigravity`): **Rename project to Agentic Trading in documents.** Renamed the project title in `PLAN.md` to "Agentic Trading Dashboard", ensuring the overall application is consistently referred to as "Agentic Trading" rather than "Robinhood Agentic Trading" (now broker-neutral to support Alpaca and multi-broker setups). Verifications passed: tsc clean, 287 tests green, build OK.
 - 2026-06-20 (integration): **Public-repo consolidation into private dashboard.** Imported Atlas
   (`jaywedgeworth22/public`) design docs to `docs/atlas/`, archived reference material under

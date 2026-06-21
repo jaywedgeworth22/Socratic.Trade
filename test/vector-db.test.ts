@@ -205,7 +205,7 @@ describe("vector-db", () => {
     expect(sanitizeUserId("!!!")).toBe("local");
   });
 
-  it("keeps raw user IDs for key lookup while sanitizing Pinecone filters", async () => {
+  it("uses sanitized user IDs for key lookup and Pinecone filters", async () => {
     mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     mocks.query.mockResolvedValue({ matches: [] });
@@ -213,8 +213,8 @@ describe("vector-db", () => {
 
     await retrieveContext("query", "AAPL", 2, "auth0|user 1");
 
-    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0|user 1");
-    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0|user 1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0user1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0user1");
     expect(mocks.query.mock.calls[0][0].filter.userId).toEqual({ $eq: "auth0user1" });
   });
 
@@ -242,5 +242,56 @@ describe("vector-db", () => {
 
     // Total top 2 should be doc-3 (0.95) and doc-1 (0.9, deduplicated)
     expect(results).toEqual(["Very high score public doc", "High score user doc"]);
+  });
+
+  it("Voyage Backoff Jitter Test: verifies exponential backoff with full jitter is distributed", async () => {
+    const { retryAfterMs } = await import("../src/lib/vector-db");
+    process.env.VECTOR_EMBED_RETRY_DELAY_MS = "20000";
+    process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
+
+    const error = new Error("429 Rate Limit");
+    const sampleSize = 100;
+    const delays: number[] = [];
+
+    for (let i = 0; i < sampleSize; i++) {
+      delays.push(retryAfterMs(error, 2));
+    }
+
+    // attempt = 2, baseDelay = 20s => max backoff = min(60s, 20s * 2^2) = 60s = 60,000ms
+    // delay should be between 0 and 60,000.
+    const minDelay = Math.min(...delays);
+    const maxDelay = Math.max(...delays);
+
+    expect(minDelay).toBeGreaterThanOrEqual(0);
+    expect(maxDelay).toBeLessThanOrEqual(60000);
+    
+    // Check that we have a wide distribution (at least 20 seconds difference between min and max)
+    expect(maxDelay - minDelay).toBeGreaterThan(20000);
+  });
+
+  it("prepends publication date for string, number, and Date object timestamps", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    // Test ISO string
+    await storeContexts([
+      { text: "AAPL document", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: "2026-06-20T18:00:16Z" } }
+    ]);
+    expect(mocks.embed.mock.calls[mocks.embed.mock.calls.length - 1][0].input[0]).toBe("[Published: 2026-06-20] AAPL document");
+
+    // Test Epoch Milliseconds Number
+    const epochTime = new Date("2026-06-19T12:00:00Z").getTime();
+    await storeContexts([
+      { text: "AAPL document 2", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: epochTime as any } }
+    ]);
+    expect(mocks.embed.mock.calls[mocks.embed.mock.calls.length - 1][0].input[0]).toBe("[Published: 2026-06-19] AAPL document 2");
+
+    // Test Date Object
+    const dateObj = new Date("2026-06-18T00:00:00Z");
+    await storeContexts([
+      { text: "AAPL document 3", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: dateObj as any } }
+    ]);
+    expect(mocks.embed.mock.calls[mocks.embed.mock.calls.length - 1][0].input[0]).toBe("[Published: 2026-06-18] AAPL document 3");
   });
 });

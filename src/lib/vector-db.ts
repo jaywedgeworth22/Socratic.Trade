@@ -95,8 +95,9 @@ export function sanitizeUserId(userId?: string): string {
  * Ensures we have valid clients for Pinecone and Voyage.
  */
 function getClients(userId: string = "local") {
-  const pineconeKey = resolveApiKey("pinecone", userId);
-  const voyageKey = resolveApiKey("voyage", userId);
+  const sanitizedUserId = sanitizeUserId(userId);
+  const pineconeKey = resolveApiKey("pinecone", sanitizedUserId);
+  const voyageKey = resolveApiKey("voyage", sanitizedUserId);
 
   if (!pineconeKey || !voyageKey) {
     return { pc: null, voyage: null, initCacheKey: "" };
@@ -181,7 +182,7 @@ function isRateLimitError(error: unknown): boolean {
   return /\b429\b|rate limit|too many requests|RPM|TPM/i.test(message);
 }
 
-function retryAfterMs(error: unknown, attempt: number): number {
+export function retryAfterMs(error: unknown, attempt: number): number {
   const headers =
     (error as { headers?: { get?: (name: string) => string | null } })?.headers ??
     (error as { response?: { headers?: { get?: (name: string) => string | null } } })?.response?.headers;
@@ -251,14 +252,27 @@ export async function storeContexts(documents: ContextDocument[], userId: string
       let text = doc.text;
       const timestamp = doc.metadata?.timestamp;
       if (timestamp) {
-        const tsStr = String(timestamp);
-        if (tsStr.length >= 10) {
-          const dateStr = tsStr.slice(0, 10);
-          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-            const prefix = `[Published: ${dateStr}]`;
-            if (!text.startsWith("[Published:")) {
-              text = `${prefix} ${text}`;
-            }
+        let tsStr = "";
+        if (typeof timestamp === "number") {
+          try {
+            tsStr = new Date(timestamp).toISOString();
+          } catch {
+            tsStr = String(timestamp);
+          }
+        } else if ((timestamp as any) instanceof Date) {
+          try {
+            tsStr = (timestamp as any).toISOString();
+          } catch {}
+        } else {
+          tsStr = String(timestamp).trim();
+        }
+
+        const dateMatch = tsStr.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) {
+          const dateStr = dateMatch[1];
+          const prefix = `[Published: ${dateStr}]`;
+          if (!text.startsWith("[Published:")) {
+            text = `${prefix} ${text}`;
           }
         }
       }
@@ -267,10 +281,10 @@ export async function storeContexts(documents: ContextDocument[], userId: string
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
 
-  const { pc, voyage, initCacheKey } = getClients(userId);
+  const { pc, voyage, initCacheKey } = getClients(sanitizedUserId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, sanitizedUserId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true };
   }
 
@@ -309,13 +323,13 @@ export async function storeContexts(documents: ContextDocument[], userId: string
     // Persist the outcome so RAG ingestion health is visible in the audit log / dashboard
     // instead of being swallowed to console (the original cause of the silent empty index).
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed });
-    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, userId);
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, sanitizedUserId);
     return { attempted: validDocuments.length, indexed };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, userId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, sanitizedUserId);
     return { attempted: validDocuments.length, indexed, error };
   }
 }
@@ -357,7 +371,7 @@ export async function retrieveContext(
   userId: string = "local"
 ): Promise<string[]> {
   const sanitizedUserId = sanitizeUserId(userId);
-  const { pc, voyage } = getClients(userId);
+  const { pc, voyage } = getClients(sanitizedUserId);
   if (!pc || !voyage) return [];
 
   try {
