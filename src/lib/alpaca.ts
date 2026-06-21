@@ -42,21 +42,33 @@ class AlpacaBrokerGateway implements BrokerGateway {
       process.env.ALPACA_PAPER_SECRET_KEY ||
       "";
     
-    if (keyId && !secretKey) {
-      this.alpaca = new Alpaca({
-        oauth: keyId,
-        paper: accountKeys?.environment !== "live",
-        usePolygon: false
-      });
-    } else {
-      this.alpaca = new Alpaca({
-        keyId,
-        secretKey,
-        paper: accountKeys?.environment !== "live",
-        usePolygon: false
-      });
+    let baseUrl = accountKeys?.baseUrl?.trim();
+    if (baseUrl) {
+      baseUrl = baseUrl.replace(/\/+$/, "");
+      if (baseUrl.toLowerCase().endsWith("/v2")) {
+        baseUrl = baseUrl.slice(0, -3);
+      }
     }
+
+    const options: any = {
+      paper: accountKeys?.environment !== "live",
+      usePolygon: false
+    };
+
+    if (keyId && !secretKey) {
+      options.oauth = keyId;
+    } else {
+      options.keyId = keyId;
+      options.secretKey = secretKey;
+    }
+
+    if (baseUrl) {
+      options.baseUrl = baseUrl;
+    }
+
+    this.alpaca = new Alpaca(options);
   }
+
 
   async getAccounts(): Promise<BrokerageAccount[]> {
     const account = await this.alpaca.getAccount();

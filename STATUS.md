@@ -38,7 +38,17 @@ steps materially change.
   `docs/rollouts/2026-06-20-ui-ux-audit-and-quick-wins.md`. **Deferred:** F1 backend root cause
   (`src/lib/strategy.ts` `policy.accountNumber` wiring — UI softened only); deleting the **dead
   `app/ui/dashboard/{views,components,utils,settings}.tsx`** parallel implementation; header overflow menu;
-  full safe-area/`viewport-fit=cover`. On `agent/claude`, not pushed/merged.
+  full safe-area/`viewport-fit=cover`. Merged to `main` (2026-06-21).
+- 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
+- 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
+- 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
+  side-aware notional/exposure caps (T1/T10), partial-fill reconciliation (T2), FIFO lot matcher (T3),
+  paper-projection guards (T5), db notional tests (T6), short exits (T8), recordFill tests (T9),
+  red-team fail-open (T11), tax long-only pin (T12), explicit daily-reset timezone (T13),
+  `account_number → __unassigned__` sentinel (T14-db). 386 tests, tsc clean, build clean.
+  See rollout `docs/rollouts/2026-06-20-money-path-merge-gate.md`.
+- **Completed follow-ups:** gross/net exposure caps added to Settings UI (NumberField + RangeField
+  sliders; 0 = no cap); `OpenLot.quantity` now signed (negative for shorts, matches `EquityPosition`).
 - 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
   chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
   red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`

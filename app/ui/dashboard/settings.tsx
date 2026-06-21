@@ -628,6 +628,10 @@ export function IntegrationsSection({ accounts, onSaved }: { accounts: Dashboard
               <Field label="API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Optional (leave empty for OAuth)" />
               </Field>
+              <Field label="API Endpoint URL (Optional)">
+                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets" />
+              </Field>
+
             </>
           )}
         </div>
