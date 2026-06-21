@@ -2437,10 +2437,39 @@ function SettingsContent({
   openAccounts: () => void;
   load: () => Promise<void>;
 }) {
-  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications" | "data";
   const [section, setSection] = useState<Section>("operate");
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  // ── Shared data pool consent state ──────────────────────────────────────
+  const [poolConsent, setPoolConsent] = useState<boolean | null>(null);
+  const [poolConsentLoading, setPoolConsentLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/consent")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPoolConsent(Boolean(d?.accepted)); })
+      .catch(() => { /* leave null — show toggle in indeterminate/off state */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function setPoolConsentValue(accepted: boolean) {
+    if (poolConsentLoading) return;
+    setPoolConsentLoading(true);
+    try {
+      await fetch("/api/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accepted })
+      });
+      setPoolConsent(accepted);
+    } catch {
+      /* best-effort — keep local state unchanged on failure */
+    } finally {
+      setPoolConsentLoading(false);
+    }
+  }
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
@@ -2518,7 +2547,8 @@ function SettingsContent({
               { id: "keys", label: "API Keys" },
               { id: "tax", label: "Tax" },
               { id: "tuning", label: "Tuning" },
-              { id: "notifications", label: "Notifications" }
+              { id: "notifications", label: "Notifications" },
+              { id: "data", label: "Data" }
             ]}
           />
         </div>
@@ -2771,6 +2801,40 @@ function SettingsContent({
           </p>
           <p className="text-xs text-faint">
             Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.
+          </p>
+        </div>
+      )}
+
+      {section === "data" && (
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">Shared data pool</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Opting in shares the general market data you pull with your own provider keys / broker MCP —
+                quotes, fundamentals, price history, and news — with other opted-in users, and gives you
+                access to the data they&apos;ve pulled (the shared pool). Your personal account data —
+                positions, orders, balances, P&amp;L, and credentials — is never shared.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Sharing</span>
+              <span className="block text-xs text-faint">
+                {poolConsent === null ? "Loading…" : poolConsent ? "Sharing on — you contribute to and read from the shared pool." : "Sharing off — you use only your own data."}
+              </span>
+            </span>
+            <Switch
+              checked={Boolean(poolConsent)}
+              onChange={(v) => { if (!poolConsentLoading && poolConsent !== null) void setPoolConsentValue(v); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Your choice applies immediately. You can toggle sharing at any time.
           </p>
         </div>
       )}

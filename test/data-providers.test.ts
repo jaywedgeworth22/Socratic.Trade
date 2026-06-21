@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AlpacaSnapshotEnrichmentProvider,
   analystScoreFromCounts,
   analystScoreFromMean,
   getEnrichmentProvider,
@@ -10,6 +11,7 @@ import {
   labelFromAnalystScore,
   mockEnrichmentProvider,
   noopProvider,
+  parseAlpacaSnapshot,
   parseWebullUnofficialQuote,
   scoreHeadlines
 } from "../src/lib/data-providers";
@@ -537,5 +539,197 @@ describe("Alpha Vantage Warning Detection", () => {
       expect(res2.AAPL).toEqual({});
       expect(fetchCount).toBe(2);
     });
+  });
+});
+
+// ── AlpacaSnapshotEnrichmentProvider ─────────────────────────────────────────
+
+describe("parseAlpacaSnapshot", () => {
+  it("maps a full snapshot to the correct SymbolEnrichment fields", () => {
+    const snap = {
+      latestTrade: { p: 205.75 },
+      latestQuote: { bp: 205.50, ap: 205.80 },
+      dailyBar: { o: 203.00, h: 206.50, l: 202.00, c: 205.60, v: 1_250_000 },
+      prevDailyBar: { c: 200.00 }
+    };
+    const result = parseAlpacaSnapshot(snap);
+    expect(result.price).toBe(205.75);         // latestTrade.p preferred over dailyBar.c
+    expect(result.bid).toBe(205.50);
+    expect(result.ask).toBe(205.80);
+    expect(result.volume).toBe(1_250_000);
+    // (205.60 - 200.00) / 200.00 * 100 = 2.80%
+    expect(result.intradayChangePct).toBeCloseTo(2.80, 2);
+  });
+
+  it("falls back to dailyBar.c for price when latestTrade is absent", () => {
+    const snap = {
+      latestQuote: { bp: 100.00, ap: 100.10 },
+      dailyBar: { c: 100.05, v: 500_000 },
+      prevDailyBar: { c: 98.00 }
+    };
+    const result = parseAlpacaSnapshot(snap);
+    expect(result.price).toBe(100.05);
+    // (100.05 - 98.00) / 98.00 * 100 ≈ 2.09%
+    expect(result.intradayChangePct).toBeCloseTo(2.09, 1);
+  });
+
+  it("omits bid/ask when they are absent or zero", () => {
+    const snap = {
+      latestTrade: { p: 50.00 },
+      latestQuote: { bp: 0, ap: undefined as unknown as number },
+      dailyBar: { c: 50.00, v: 10_000 },
+      prevDailyBar: { c: 49.00 }
+    };
+    const result = parseAlpacaSnapshot(snap);
+    expect(result.price).toBe(50.00);
+    expect(result).not.toHaveProperty("bid");
+    expect(result).not.toHaveProperty("ask");
+  });
+
+  it("omits intradayChangePct when prevDailyBar is missing", () => {
+    const snap = {
+      latestTrade: { p: 75.00 },
+      latestQuote: { bp: 74.90, ap: 75.10 },
+      dailyBar: { c: 75.00, v: 300_000 }
+      // no prevDailyBar
+    };
+    const result = parseAlpacaSnapshot(snap);
+    expect(result.price).toBe(75.00);
+    expect(result.bid).toBe(74.90);
+    expect(result.ask).toBe(75.10);
+    expect(result).not.toHaveProperty("intradayChangePct");
+  });
+
+  it("returns an empty object for a null/undefined snapshot", () => {
+    expect(parseAlpacaSnapshot(null)).toEqual({});
+    expect(parseAlpacaSnapshot(undefined)).toEqual({});
+  });
+});
+
+describe("AlpacaSnapshotEnrichmentProvider", () => {
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the snapshots endpoint with correct headers and maps fields", async () => {
+    let capturedUrl = "";
+    let capturedHeaders: Record<string, string> = {};
+
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      capturedUrl = url;
+      capturedHeaders = init.headers as Record<string, string>;
+      return new Response(
+        JSON.stringify({
+          AAPL: {
+            latestTrade: { p: 195.50 },
+            latestQuote: { bp: 195.40, ap: 195.60 },
+            dailyBar: { o: 193.00, h: 196.00, l: 192.00, c: 195.30, v: 2_000_000 },
+            prevDailyBar: { c: 192.00 }
+          },
+          MSFT: {
+            latestTrade: { p: 421.10 },
+            latestQuote: { bp: 421.00, ap: 421.20 },
+            dailyBar: { o: 418.00, h: 422.00, l: 417.00, c: 421.00, v: 800_000 },
+            prevDailyBar: { c: 418.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("key-id", "key-secret", "env");
+    const result = await provider.enrich(["AAPL", "MSFT"]);
+
+    // Headers
+    expect(capturedHeaders["APCA-API-KEY-ID"]).toBe("key-id");
+    expect(capturedHeaders["APCA-API-SECRET-KEY"]).toBe("key-secret");
+    // URL contains both symbols and the iex feed
+    expect(capturedUrl).toContain("feed=iex");
+    expect(capturedUrl).toContain("AAPL");
+    expect(capturedUrl).toContain("MSFT");
+
+    // AAPL
+    expect(result.AAPL?.price).toBe(195.50);
+    expect(result.AAPL?.bid).toBe(195.40);
+    expect(result.AAPL?.ask).toBe(195.60);
+    expect(result.AAPL?.volume).toBe(2_000_000);
+    // (195.30 - 192.00) / 192.00 * 100 = 1.72%
+    expect(result.AAPL?.intradayChangePct).toBeCloseTo(1.72, 1);
+
+    // MSFT
+    expect(result.MSFT?.price).toBe(421.10);
+    expect(result.MSFT?.bid).toBe(421.00);
+    expect(result.MSFT?.ask).toBe(421.20);
+    expect(result.MSFT?.volume).toBe(800_000);
+    // (421.00 - 418.00) / 418.00 * 100 = 0.72%
+    expect(result.MSFT?.intradayChangePct).toBeCloseTo(0.72, 1);
+  });
+
+  it("caches results and avoids a second network call", async () => {
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response(
+        JSON.stringify({
+          AAPL: {
+            latestTrade: { p: 200.00 },
+            latestQuote: { bp: 199.90, ap: 200.10 },
+            dailyBar: { c: 200.00, v: 1_000_000 },
+            prevDailyBar: { c: 198.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    const r1 = await provider.enrich(["AAPL"]);
+    expect(r1.AAPL?.price).toBe(200.00);
+    expect(fetchCount).toBe(1);
+
+    const r2 = await provider.enrich(["AAPL"]);
+    expect(r2.AAPL?.price).toBe(200.00);
+    expect(fetchCount).toBe(1); // cache hit — no second fetch
+  });
+
+  it("returns empty objects on HTTP error and does not cache", async () => {
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response("Unauthorized", { status: 401 });
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("bad-key", "bad-secret");
+    const r1 = await provider.enrich(["AAPL"]);
+    expect(r1.AAPL).toEqual({});
+    expect(fetchCount).toBe(1);
+
+    // No cache written — second call should hit network again
+    const r2 = await provider.enrich(["AAPL"]);
+    expect(r2.AAPL).toEqual({});
+    expect(fetchCount).toBe(2);
+  });
+
+  it("does not fabricate bid/ask when the snapshot has zero quotes", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({
+          TSLA: {
+            latestTrade: { p: 175.00 },
+            latestQuote: { bp: 0, ap: 0 }, // zero = not available, must not be set
+            dailyBar: { c: 175.00, v: 500_000 },
+            prevDailyBar: { c: 172.00 }
+          }
+        })
+      )
+    );
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    const result = await provider.enrich(["TSLA"]);
+    expect(result.TSLA?.price).toBe(175.00);
+    expect(result.TSLA).not.toHaveProperty("bid");
+    expect(result.TSLA).not.toHaveProperty("ask");
   });
 });
