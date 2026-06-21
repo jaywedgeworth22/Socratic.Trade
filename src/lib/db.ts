@@ -1244,6 +1244,14 @@ export function updateProposalStatus(id: string, status: string, orderId?: strin
     .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, id, userId);
 }
 
+/** Idempotency for chat-drafted proposals: the id of an existing still-`proposed` row for a runId. */
+export function findProposedIdByRunId(runId: string, userId: string = "local"): string | null {
+  const row = getDb()
+    .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC LIMIT 1")
+    .get(runId, userId) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
 export function insertProposal(input: {
   userId?: string;
   id: string;
