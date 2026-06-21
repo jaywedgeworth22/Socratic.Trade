@@ -32,6 +32,11 @@ steps materially change.
   today; closes the latent footgun. 459 tests (new `test/strip-identity.test.ts`), tsc + build clean.
   Isolated worktree off clean `main`; landing via PR. Rollout:
   `docs/rollouts/2026-06-21-strip-identity-public-routes.md`.
+- 2026-06-21: **Git author identity rule (GitHub email privacy).** Codified in `AGENTS.md`: all
+  commits/pushes use the owner's GitHub noreply email
+  (`12656028+jaywedgeworth22@users.noreply.github.com`), never the real email. Repo-local
+  `user.email` already set repo-wide (all worktrees inherit via shared `.git/config`; global stays
+  the real email for other repos). Rollout: `docs/rollouts/2026-06-21-git-email-identity-rule.md`.
 - 2026-06-21 (`agent/claude`): **Deferred-task sweep — P0 safety re-application + IC backtest +
   buying-power gate.** Worked the financial-expert-panel backlog in the ISOLATED
   `~/apps/trading-claude` worktree (the prior P0 work was wiped twice from the co-edited main
