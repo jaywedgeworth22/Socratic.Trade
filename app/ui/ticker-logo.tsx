@@ -87,6 +87,9 @@ export function TickerLogo({
   const theme = useDarkMode();
   const source = useLogoSource();
 
+  // Reset failed so switching source retries the new provider
+  useEffect(() => { setFailed(false); }, [source, normalized]);
+
   if (!normalized || display === "off" || failed) {
     return fallback ? <>{fallback}</> : null;
   }
