@@ -13,10 +13,10 @@ import { retrieveContext } from "../vector-db";
 import { createAlert as alertsCreateAlert } from "../alerts";
 import { addToWatchlist } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
-import { appendTurn } from "../chat-history";
+import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
 import { classifyIntent, getLLM } from "./llm";
-import { buildSystem, PROMPT_VERSION } from "./prompt";
+import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
 import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, ToolSchema } from "./types";
 
@@ -32,6 +32,8 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
   return async function handleTurn(args: { userId: string; message: string }): Promise<ChatReply> {
     const { userId, message } = args;
     audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION }, userId);
+    // Prior turns (redacted) for multi-turn context — fetched BEFORE appending the current message.
+    const history = listTurns(userId, 10).map((t) => ({ role: t.role, text: t.text }));
     appendTurn(userId, { role: "user", text: message });
 
     const mem = ingestMessage(userId, message);
@@ -51,15 +53,20 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       message,
       tools: toolSchemas,
       executeTool,
-      context: { memorySummary }
+      context: { memorySummary },
+      history
     });
+
+    // Server-side disclaimer guarantee (provider-independent): the system prompt asks for it, but we
+    // never rely on the model to remember it — append if missing so compliance holds on every provider.
+    const text = result.text.includes(DISCLAIMER) ? result.text : `${result.text}\n\n${DISCLAIMER}`;
 
     // Extract a draft (if any) for the UI; the assistant never executes.
     const draftCall = result.toolCalls?.find((c) => c.name === "draft_order" && c.result && !c.result.error);
     const draft = (draftCall?.result as ChatDraft) ?? null;
 
     const reply: ChatReply = {
-      text: result.text,
+      text,
       draft,
       citations: result.citations ?? [],
       usedMemories: memories.map((m) => ({ subject: m.subject, value: m.value, hard: m.hard })),
@@ -82,7 +89,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
 export function buildProductionDeps(): ToolDeps {
   return {
     async getQuote(symbol, userId): Promise<ChatQuote> {
-      const fallback: ChatQuote = { symbol, price_usd: 0, change_pct: 0, as_of: "", source: "none", session: "regular" };
+      const fallback: ChatQuote = { symbol, price_usd: 0, as_of: "", source: "none" };
       try {
         const policy = getPolicy(userId);
         const account = policy.accountNumber;
@@ -90,7 +97,7 @@ export function buildProductionDeps(): ToolDeps {
         const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(account, [symbol]);
         const q = quotes[symbol];
         if (!q || typeof q.price !== "number") return { ...fallback, error: "NO_QUOTE" };
-        return { symbol, price_usd: q.price, change_pct: 0, as_of: q.asOf ?? new Date().toISOString(), source: q.provider ?? "broker", session: "regular" };
+        return { symbol, price_usd: q.price, as_of: q.asOf ?? new Date().toISOString(), source: q.provider ?? "broker" };
       } catch {
         return { ...fallback, error: "QUOTE_FAILED" };
       }
