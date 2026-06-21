@@ -5,7 +5,7 @@
  * returns {} and the UI simply omits the trends. Never fabricated.
  */
 
-import { resolveApiKey } from "./db";
+import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
 
 const FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations";
 const POINTS = 90; // ~4–5 months of daily observations
@@ -22,8 +22,49 @@ const SERIES: Record<string, string> = {
 
 export type MacroHistory = Partial<Record<keyof typeof SERIES | string, number[]>>;
 
+// ── Cache-provenance scoping (mirrors src/lib/history.ts) ─────────────────────
+// Same FRED-key provenance concern as macro.ts: a user-keyed FRED sparkline fetch
+// must NOT populate a shared cache that is then served to all other users for 12h.
+//
+// Opt-in env flag: MARKET_DATA_SHARE_USER_KEYED_MACRO_HISTORY (default OFF).
+// Safe default: unknown provenance → private.
+
+interface MacroHistoryCacheEntry { expiresAt: number; data: MacroHistory }
+
+const sharedMacroHistoryCache: { entry: MacroHistoryCacheEntry | null } = { entry: null };
+const privateMacroHistoryCache = new Map<string, MacroHistoryCacheEntry>();
+
+function macroHistoryCacheScopeForKeySource(source: ApiKeySource): "shared" | "private" {
+  if (source === "env") return "shared";
+  if (source === "user") return shareUserKeyedMacroHistory() ? "shared" : "private";
+  return "shared"; // "none" → empty result, safe to share
+}
+
+function shareUserKeyedMacroHistory(): boolean {
+  const value = (process.env.MARKET_DATA_SHARE_USER_KEYED_MACRO_HISTORY ?? "off").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function readMacroHistoryCache(scope: "shared" | "private", userId: string | undefined, now: number): MacroHistory | null {
+  if (scope === "private") {
+    const key = `user:${userId ?? "local"}`;
+    const entry = privateMacroHistoryCache.get(key);
+    if (entry && entry.expiresAt > now) return entry.data;
+  }
+  const shared = sharedMacroHistoryCache.entry;
+  if (shared && shared.expiresAt > now) return shared.data;
+  return null;
+}
+
+function writeMacroHistoryCache(scope: "shared" | "private", userId: string | undefined, data: MacroHistory, expiresAt: number): void {
+  if (scope === "shared") {
+    sharedMacroHistoryCache.entry = { expiresAt, data };
+  } else {
+    privateMacroHistoryCache.set(`user:${userId ?? "local"}`, { expiresAt, data });
+  }
+}
+
 const CACHE_TTL_MS = 12 * 60 * 60_000;
-const cache: { expiresAt: number; data: MacroHistory | null } = { expiresAt: 0, data: null };
 
 async function fetchSeriesHistory(seriesId: string, apiKey: string): Promise<number[] | null> {
   const controller = new AbortController();
@@ -52,8 +93,12 @@ async function fetchSeriesHistory(seriesId: string, apiKey: string): Promise<num
 }
 
 export async function fetchMacroHistory(now: number = Date.now(), userId?: string): Promise<MacroHistory> {
-  if (cache.data && cache.expiresAt > now) return cache.data;
-  const apiKey = resolveApiKey("fred", userId);
+  const { key: apiKey, source } = resolveApiKeyWithSource("fred", userId);
+  const scope = macroHistoryCacheScopeForKeySource(source);
+
+  const cached = readMacroHistoryCache(scope, userId, now);
+  if (cached) return cached;
+
   if (!apiKey) return {};
 
   const entries = Object.entries(SERIES);
@@ -67,8 +112,13 @@ export async function fetchMacroHistory(now: number = Date.now(), userId?: strin
   // Only cache a non-empty result, so a cold-start FRED hiccup self-heals on the next poll
   // instead of caching an empty trends panel for 12h.
   if (Object.keys(data).length > 0) {
-    cache.data = data;
-    cache.expiresAt = now + CACHE_TTL_MS;
+    writeMacroHistoryCache(scope, userId, data, now + CACHE_TTL_MS);
   }
   return data;
+}
+
+/** Clear both caches (test helper). */
+export function clearMacroHistoryCacheForTests(): void {
+  sharedMacroHistoryCache.entry = null;
+  privateMacroHistoryCache.clear();
 }
