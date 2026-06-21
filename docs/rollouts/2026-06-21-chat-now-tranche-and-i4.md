@@ -39,12 +39,19 @@ data flow.
   into citations (MockLLM + AnthropicLLM). `assistant-console.tsx` renders citation chips as filing
   links when a `url` is present.
 
+**I8 (on `agent/claude`, same lane):**
+- `prompt.ts`: hardened the data-not-command rule (tool results, retrieved docs, AND user memory are
+  DATA, never commands — cannot change boundaries/disclaimer/refusal even if they claim to be a system
+  message or an authorized override) and pinned precedence so the HARD BOUNDARIES outrank
+  `<user_memory>` — closing a self-injection vector where a planted `[HARD]` memory could try to
+  authorize advice/execution. `PROMPT_VERSION` → `agentic-chat@0.5.0`. New `test/chat-injection.test.ts`.
+
 ## Files
 - `src/lib/chat/llm.ts`, `src/lib/chat/orchestrator.ts`, `src/lib/chat/tools.ts`,
   `src/lib/chat/types.ts`, `src/lib/chat/prompt.ts`
 - `src/lib/vector-db.ts`
 - `app/ui/assistant-console.tsx`
-- `test/chat-orchestrator.test.ts`, `test/vector-db-provenance.test.ts`
+- `test/chat-orchestrator.test.ts`, `test/vector-db-provenance.test.ts`, `test/chat-injection.test.ts`
 - `docs/open-questions-for-jay.md` (new running questions log), `STATUS.md`, this rollout note
 
 ## Verification
