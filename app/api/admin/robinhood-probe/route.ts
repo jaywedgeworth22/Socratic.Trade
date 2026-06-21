@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { callRobinhoodMcpTool, robinhoodMcpDataEnabled } from "@/lib/robinhood";
+import { resolveRequestUserId } from "@/lib/request-user";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ function authorized(request: Request): boolean {
   return process.env.NODE_ENV !== "production";
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   if (!authorized(request)) {
     return NextResponse.json({ ok: false, error: "Not authorized in production without ADMIN_REINDEX_TOKEN." }, { status: 403 });
   }
@@ -22,10 +23,11 @@ export async function GET(request: Request) {
       error: "ROBINHOOD_ADAPTER is not 'mcp'. Set ROBINHOOD_ADAPTER=mcp and connect OAuth (or set ROBINHOOD_MCP_AUTH_TOKEN) first."
     });
   }
+  const userId = resolveRequestUserId(request);
   const symbol = (new URL(request.url).searchParams.get("symbol") || "AAPL").toUpperCase();
   const [historicals, fundamentals] = await Promise.allSettled([
-    callRobinhoodMcpTool("get_equity_historicals", { symbols: [symbol], symbol, interval: "day", span: "5year", bounds: "regular" }),
-    callRobinhoodMcpTool("get_equity_fundamentals", { symbols: [symbol] })
+    callRobinhoodMcpTool(userId, "get_equity_historicals", { symbols: [symbol], symbol, interval: "day", span: "5year", bounds: "regular" }),
+    callRobinhoodMcpTool(userId, "get_equity_fundamentals", { symbols: [symbol] })
   ]);
   return NextResponse.json({
     ok: true,

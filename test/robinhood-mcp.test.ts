@@ -36,7 +36,7 @@ describe("robinhood mcp transport", () => {
 
     const { callRobinhoodMcpTool, ROBINHOOD_TRADING_MCP_URL } = await import("../src/lib/robinhood");
 
-    const raw = await callRobinhoodMcpTool("get_accounts", {});
+    const raw = await callRobinhoodMcpTool("user-a", "get_accounts", {});
 
     expect(raw).toEqual({ accounts: [{ account_number: "A1", nickname: "Agentic" }] });
     expect(calls[0].url).toBe(ROBINHOOD_TRADING_MCP_URL);
@@ -64,7 +64,7 @@ describe("robinhood mcp transport", () => {
 
     const { callRobinhoodMcpTool } = await import("../src/lib/robinhood");
 
-    await expect(callRobinhoodMcpTool("get_equity_quotes", { symbols: ["AAPL"] })).resolves.toEqual({
+    await expect(callRobinhoodMcpTool("user-a", "get_equity_quotes", { symbols: ["AAPL"] })).resolves.toEqual({
       quotes: [{ symbol: "AAPL", price: "200" }]
     });
   });
@@ -75,7 +75,7 @@ describe("robinhood mcp transport", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { getRobinhoodMcpHealth } = await import("../src/lib/robinhood");
-    const health = await getRobinhoodMcpHealth();
+    const health = await getRobinhoodMcpHealth("user-a");
 
     expect(health.ok).toBe(false);
     expect(health.configured).toBe(true);
@@ -109,7 +109,7 @@ describe("robinhood mcp transport", () => {
 
     const { getRobinhoodMcpHealth } = await import("../src/lib/robinhood");
 
-    await expect(getRobinhoodMcpHealth()).resolves.toMatchObject({
+    await expect(getRobinhoodMcpHealth("user-a")).resolves.toMatchObject({
       ok: true,
       authenticated: true,
       tools: ["get_accounts", "get_equity_quotes", "place_equity_order"]
@@ -128,6 +128,6 @@ describe("robinhood mcp transport", () => {
 
     const { callRobinhoodMcpTool } = await import("../src/lib/robinhood");
 
-    await expect(callRobinhoodMcpTool("get_accounts", {})).rejects.toThrow("not authorized");
+    await expect(callRobinhoodMcpTool("user-a", "get_accounts", {})).rejects.toThrow("not authorized");
   });
 });
