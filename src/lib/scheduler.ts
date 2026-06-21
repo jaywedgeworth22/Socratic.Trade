@@ -5,7 +5,7 @@
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
 import { checkAllUserPriceAlerts } from "./alerts";
-import { getPolicy, listUsers, setInternalSetting } from "./db";
+import { audit, getPolicy, listUsers, setInternalSetting, setPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
@@ -23,6 +23,39 @@ const userSchedules: Record<string, {
   nextRunAt: string | null;
 }> = {};
 
+// Per-user re-entrancy guard for the synthetic-stop monitor: a slow broker call must not let
+// the next 60s tick start a second concurrent monitor for the same user. globalThis-pinned so
+// Next.js HMR module duplication can't defeat the guard with two module instances.
+const stopGuardHost = globalThis as unknown as { __stopMonitorInFlight?: Set<string> };
+const stopMonitorInFlight: Set<string> =
+  stopGuardHost.__stopMonitorInFlight ?? (stopGuardHost.__stopMonitorInFlight = new Set<string>());
+
+/**
+ * Boot-time autonomy interlock. A persisted `systemState === "active"` must NOT silently resume
+ * live/paper order placement after an unattended restart, crash-loop, or DB restore. Unless an
+ * operator explicitly opts in with AUTONOMY_RESUME_ON_BOOT=1, every user left "active" is reverted
+ * to "halted" on boot (audited), forcing a human to re-arm autonomy deliberately. "close_only" and
+ * "liquidating" are left untouched (they are themselves human-/breaker-set safe states).
+ */
+export function reconcileAutonomyOnBoot(): void {
+  if (process.env.AUTONOMY_RESUME_ON_BOOT === "1") {
+    console.log("[scheduler] AUTONOMY_RESUME_ON_BOOT=1 — persisted 'active' autonomy will resume");
+    return;
+  }
+  for (const userId of listUsers()) {
+    try {
+      const policy = getPolicy(userId);
+      if (policy.systemState === "active") {
+        setPolicy({ ...policy, systemState: "halted" }, userId);
+        audit("autonomy_halted_on_boot", { from: "active", to: "halted", reason: "AUTONOMY_RESUME_ON_BOOT not set" }, userId);
+        console.warn(`[scheduler] autonomy was 'active' for ${userId} at boot; reverted to 'halted' (set AUTONOMY_RESUME_ON_BOOT=1 to auto-resume).`);
+      }
+    } catch (err) {
+      console.error(`[scheduler] boot autonomy reconcile failed for ${userId}:`, err);
+    }
+  }
+}
+
 export function getSchedulerState(userId: string = "local"): {
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -32,6 +65,10 @@ export function getSchedulerState(userId: string = "local"): {
 
 export function startScheduler(): void {
   if (timer) return; // guard against double-start
+
+  // Boot interlock runs once, before any tick, so a restored/copied DB cannot resume live
+  // execution unattended.
+  reconcileAutonomyOnBoot();
 
   // Run a tick immediately on start to schedule Next Run right away
   void tick();
@@ -94,8 +131,15 @@ async function tick(): Promise<void> {
 
       // R2: synthetic trailing-stop monitor — runs every tick for active (Started) users, regardless
       // of the strategy-run cadence (a trail needs frequent checking). We only reach here when
-      // systemState === "active", so the protective market exit is gated behind Start.
-      void runSyntheticStopMonitor(userId, policy, true).catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err));
+      // systemState === "active", so the protective market exit is gated behind Start. The in-flight
+      // guard prevents a slow run (broker latency near the tick interval) from overlapping the next
+      // tick's monitor and double-firing an exit.
+      if (!stopMonitorInFlight.has(userId)) {
+        stopMonitorInFlight.add(userId);
+        void runSyntheticStopMonitor(userId, policy, true)
+          .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err))
+          .finally(() => stopMonitorInFlight.delete(userId));
+      }
 
       // Reconcile pending live fills every tick (independent of the strategy cadence) so a broker
       // order that returned non-filled — common on Robinhood, which has no realtime fill stream —

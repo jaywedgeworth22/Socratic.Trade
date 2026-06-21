@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`safety/deep-fixes`): **Execution-section CAS + synthetic-stop re-entrancy + boot
+  autonomy interlock.** Three failure-mode-review deep fixes (the auth middleware #1, the drawdown
+  circuit breaker #7, and the approval-path run-lock were already on `main`). Adds an atomic DB
+  compare-and-swap (`claimProposalForExecution`) at both `executeProposal` commit points — defense in
+  depth alongside the existing run-lock so concurrent/retried approvals can't double-place; the
+  synthetic-stop monitor now claims each stop (`claimSyntheticStop`/`revertSyntheticStopClaim`) +
+  a `globalThis`-pinned per-user in-flight guard in the scheduler (deterministic refId for broker
+  dedupe); and `reconcileAutonomyOnBoot()` reverts persisted `active` autonomy to `halted` on boot
+  unless `AUTONOMY_RESUME_ON_BOOT=1`. tsc clean · tests green (+8) · build green. See
+  `docs/rollouts/2026-06-21-execution-cas-and-boot-interlock.md`.
 - 2026-06-21: **Responsive UI spacing and sizing tweaks.** Stretched selects and text fields to be max-sm:h-11 on mobile device headers, constrained widths to prevent layout breaking, and aligned header elements cleanly.
 - 2026-06-21: **Proposal UI refinements, account details, and text contrast improvements.** Updated the proposed decisions card inside `DecisionView` to display a custom bold, smaller `TEST` label instead of the green chip for paper test status. Plumbed the connected account details (`Agentic x####`, `Brokerage x####`, `Paper x####`) to the top-left of each proposal card. Surfaced ticker logos directly in the proposal boxes beside the ticker. Hardened text contrast by changing size/cost labels to `text-fg font-medium` and rationale text to `text-fg/85`. Customised the portfolio panel and mobile summary titles to indicate the specific broker/environment (e.g., `Alpaca Paper Account` or `Robinhood Agentic Account`). Verified all 416 unit tests, type check, and Next.js build pass cleanly.
 - 2026-06-21: **Responsive header layout, logo options, and ticker validation.** Redesigned the header component to stack cleanly as `flex-col` on mobile/tablet and `lg:flex-row` on desktop, preventing overlap with the top safety banner. Aligned the green Zap logo to the top of the title text. Renamed autonomy status `"Halted"` to `"Inactive"`. Changed Settings subtitle to `"Risk, Tax, & Notifications"`. Renamed Ticker logo options to "Small Tile" and "Medium". Integrated logo source selection ("Option 1: Auto", "Option 2: GitHub only", "Option 3: logo.dev only") with backend routing. Added symbol validation to Watchlist, Additional Watchlist, and Ignore List (Blocklist) to restrict input to valid S&P 500, Nasdaq 100, and Dow 30 components. Passed all 416 unit tests, Next.js build, and type check.
