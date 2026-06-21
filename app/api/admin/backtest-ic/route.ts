@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server";
-import { buildFactorObservations, computeFactorICs, deriveWeightsFromICs } from "@/lib/backtest";
+import { buildFactorObservations, computeFactorICs, deriveWeightsFromICs, runWalkForwardOOS } from "@/lib/backtest";
 import { getPolicy } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 
 export const dynamic = "force-dynamic";
 
 // Admin/diagnostic route: validate the scan's factor weights against realized forward returns.
-// Computes each sub-score's information coefficient (rank correlation vs forward N-day return)
-// over the persisted signal_snapshot audits, and returns an IC-derived ScoringWeights SUGGESTION.
-// READ-ONLY — it never applies the weights (the auto-tuner's 20-closed-lot gate governs that).
-// Gated: only runs outside production, OR when ADMIN_REINDEX_TOKEN matches the x-admin-token header.
+// READ-ONLY — never applies weights (auto-tuner's 20-closed-lot gate governs that).
+// Gated: only runs outside production, OR when ADMIN_REINDEX_TOKEN matches x-admin-token header.
+//
+// Query params:
+//   horizonDays       Forward-return horizon in business days (default 5)
+//   auditLimit        Max signal_snapshot rows to scan (default 500)
+//   oos               Include walk-forward OOS validation (default true)
+//   trainFraction     Train/test split fraction (default 0.7)
+//   costRoundTripBps  Round-trip cost in bps for OOS adjustment (default 20)
+//   taxRate           Short-term tax rate for OOS adjustment (default 0.24)
+//   topK              Top-K names per date in OOS equity curve (default 3)
 function authorized(request: Request): boolean {
   const token = process.env.ADMIN_REINDEX_TOKEN;
   if (token && request.headers.get("x-admin-token") === token) return true;
@@ -24,19 +31,49 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const horizonDays = Number(url.searchParams.get("horizonDays")) || 5;
   const auditLimit = Number(url.searchParams.get("auditLimit")) || 500;
+  const includeOOS = url.searchParams.get("oos") !== "false";
+  const trainFraction = Number(url.searchParams.get("trainFraction")) || 0.7;
+  const costRoundTripBps = Number(url.searchParams.get("costRoundTripBps")) || 20;
+  const taxRate = Number(url.searchParams.get("taxRate")) || 0.24;
+  const topK = Number(url.searchParams.get("topK")) || 3;
 
   const observations = await buildFactorObservations(userId, { horizonDays, auditLimit });
   const ics = computeFactorICs(observations);
   const current = getPolicy(userId).scoringWeights;
   const suggestedWeights = deriveWeightsFromICs(ics, current);
 
+  const oosResult = includeOOS
+    ? await runWalkForwardOOS(userId, { horizonDays, auditLimit, trainFraction, costRoundTripBps, taxRate, topK })
+    : null;
+
   return NextResponse.json({
     ok: true,
     horizonDays,
     observationCount: observations.length,
-    informationCoefficients: ics, // [{ factor, ic, n }]
+    informationCoefficients: ics,
     currentWeights: current ?? null,
-    suggestedWeights, // IC-derived; advisory only, never auto-applied
-    note: "Suggestion only. Apply via the strategy tuner, which holds weight shifts to the 20-closed-lot gate."
+    suggestedWeights,
+    note: "Suggestion only. Apply via the strategy tuner, which holds weight shifts to the 20-closed-lot gate.",
+    oos: oosResult
+      ? {
+          trainObservations: oosResult.trainObservations,
+          testObservations: oosResult.testObservations,
+          trainDates: oosResult.trainDates,
+          testDates: oosResult.testDates,
+          oosIC: oosResult.oosIC,
+          oosICIR: oosResult.oosICIR,
+          oosICDefault: oosResult.oosICDefault,
+          icWeights: oosResult.icWeights,
+          equityCurve: oosResult.equityCurve,
+          annualizedReturn: oosResult.annualizedReturn,
+          benchmarkAnnualizedReturn: oosResult.benchmarkAnnualizedReturn,
+          activeReturn: oosResult.activeReturn,
+          sharpeRatio: oosResult.sharpeRatio,
+          maxDrawdownPct: oosResult.maxDrawdownPct,
+          note: oosResult.note
+        }
+      : oosResult === null && includeOOS
+        ? { note: "Insufficient data: fewer than 4 unique snapshot dates available for a walk-forward split." }
+        : null
   });
 }
