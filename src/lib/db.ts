@@ -1675,6 +1675,29 @@ function setSettingDirect(userId: string, key: string, value: unknown, updatedAt
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
+// Load .env.local if not already loaded (e.g. at early boot time before Next.js loads env)
+if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+  try {
+    const fs = await import("fs");
+    const path = await import("path");
+    const envPath = path.resolve(process.cwd(), ".env.local");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf8");
+      for (const line of content.split("\n")) {
+        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+        if (match) {
+          let value = match[2] || "";
+          if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+          if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
+          process.env[match[1]] = value;
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore error
+  }
+}
+
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   ? Buffer.from(process.env.ENCRYPTION_KEY, "hex")
   : crypto.randomBytes(32); // Fallback to memory-only key if not set (keys will be lost on restart!)
