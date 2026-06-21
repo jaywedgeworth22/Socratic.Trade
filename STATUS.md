@@ -31,7 +31,10 @@ steps materially change.
   Claude/Codex/Antigravity. Cursor occupies the `main` integration seat (`~/Code/Agentic Trading`)
   for review/merge/hand-edits; agent/background runs stay on `cursor/*` branches
   (`origin/cursor/setup-dev-environment-*` already exist). Docs/config only — no code or tests
-  changed. See `docs/rollouts/2026-06-20-cursor-integration-role-and-rules.md`.
+  changed; landed in `c80a96d` (a concurrent integration commit bundled it with the worktree
+  relocation + the `robinhood-agentic-dashboard`→`agentic-trading-dashboard` rename). `main` is
+  ahead of `origin/main` pending a push. See
+  `docs/rollouts/2026-06-20-cursor-integration-role-and-rules.md`.
 - 2026-06-21: **vector-db userId sanitization + timestamp parsing hardening.**
   `getClients()` now sanitizes `userId` before resolving Pinecone/Voyage keys so
   key-lookup identity matches the Pinecone filter identity (multi-tenant

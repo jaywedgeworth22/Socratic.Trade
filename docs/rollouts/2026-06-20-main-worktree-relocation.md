@@ -54,9 +54,8 @@ drops the "Robinhood" prefix, consistent with the broker-neutral rename
 
 ## Follow-ups
 
-- No commit was made — these are working-tree edits only. (Also still uncommitted
-  from before this change: `package.json` / `package-lock.json`.)
-- The agent worktrees are still on older branch tips; they'll pick up these doc
-  edits the next time they `git merge origin/main`.
+- Committed in `c80a96d`, bundled with the `package.json` / `package-lock.json` rename and the
+  Cursor review-cockpit integration. `main` is ahead of `origin/main`; **push** so the agent
+  worktrees pick these doc edits up on their next `git merge origin/main`.
 - If the `~/apps/README.md` host-deployment doc (lives on the deployment machine,
   not in this repo) references the old Documents path, update it there too.

@@ -42,8 +42,10 @@
 
 ## Follow-ups
 
-- Not committed — left in the working tree for review. Note the tree also carries unrelated
-  `package.json` / `package-lock.json` changes from a prior session; do not bundle them blindly.
+- Committed in `c80a96d` — a concurrent integration commit on `main` swept this into the same
+  commit as the worktree relocation and the `robinhood-agentic-dashboard` → `agentic-trading-dashboard`
+  package rename. `main` is ahead of `origin/main`; **push** to propagate the Cursor role docs to
+  the agent worktrees (they read `origin/main`).
 - If Cursor is adopted as the standard review cockpit, consider a one-line mention in the
   README tooling section.
 
