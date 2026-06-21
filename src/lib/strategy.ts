@@ -10,12 +10,14 @@ import {
   insertProposal,
   insertStrategyRun,
   listFillEvents,
+  listStalePlacingProposals,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
+import { accountEquity, recordAndEvaluateDrawdownBreaker } from "./risk-breaker";
 import { mergeQuoteData, pricePosition52w, scanMarket } from "./market";
 import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
@@ -90,6 +92,9 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
+    // Surface any order-placement intent left "placing" by a prior run that crashed mid-call —
+    // the order's true state is unknown, so flag it for reconciliation instead of leaving it silent.
+    flagStalePlacingIntents(policy.accountNumber, userId);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
@@ -115,6 +120,31 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       : { portfolio, positions };
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
+    const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+
+    // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
+    // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
+    // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
+    // and fire a kill-switch notification, putting a human back in the loop.
+    if (policy.systemState === "active") {
+      const equity = accountEquity(workingPortfolio);
+      const breaker = recordAndEvaluateDrawdownBreaker({
+        accountNumber: policy.accountNumber,
+        source: learningSource,
+        equity,
+        riskRules: policy.riskRules,
+        userId
+      });
+      if (breaker.breached) {
+        policy.systemState = "close_only";
+        setPolicy(policy, userId);
+        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo: "close_only" }, userId);
+        await sendNotification(
+          { type: "kill_switch", title: "Circuit breaker halted new entries", payload: { runId, reason: breaker.reason, equity } },
+          { policy, userId }
+        );
+      }
+    }
 
     // Supplemental tasks before generating new ideas — keep the approval queue honest so a
     // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
@@ -165,10 +195,14 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       ragContext
     });
 
-    const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
-    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId));
+    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions));
 
     const debatedProposals: TradeProposal[] = [];
+    // Red Team is REQUIRED for high-conviction trades. If it could not run (no key, provider
+    // error, timeout) we FAIL CLOSED: keep the proposal but route it to a human rather than
+    // auto-executing an un-reviewed high-conviction trade with real capital. The live placement
+    // path below checks this set and downgrades these to status "proposed".
+    const requiresHumanReview = new Set<TradeProposal>();
     for (const proposal of sizedProposals) {
       if (shouldRunRedTeamDebate(proposal, policy)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
@@ -178,6 +212,10 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Skip this proposal completely, as the Red Team found a critical flaw
           continue;
+        } else if (!redTeamResult.available) {
+          console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
+          proposal.rationale += `\n\nRed Team review was REQUIRED (high conviction) but unavailable (${redTeamResult.reason}); routed to human approval.`;
+          requiresHumanReview.add(proposal);
         } else {
           proposal.rationale += `\n\nRed Team Debate Survived: ${redTeamResult.reason}`;
         }
@@ -280,10 +318,29 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         continue;
       }
 
+      // Fail CLOSED: a high-conviction trade whose REQUIRED Red Team review could not run is
+      // routed to a human instead of auto-executed with real capital.
+      if (requiresHumanReview.has(proposal)) {
+        const proposalId = crypto.randomUUID();
+        insertProposal({ userId, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        await sendNotification(
+          { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        continue;
+      }
+
+      // Atomic, crash-recoverable placement. Persist an idempotency-keyed INTENT row BEFORE the
+      // broker call. If the process dies — or the broker accepts the order but the response is
+      // lost — between the call and the post-write, the order is no longer an invisible orphan:
+      // the "placing" row records refId/symbol/notional so an operator (and the run-start
+      // flagStalePlacingIntents sweep) can find it. Each placement is isolated in its own
+      // try/catch so one broker outage can't abort the rest of the run's risk exits.
       const refId = crypto.randomUUID();
-      const execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       const proposalId = crypto.randomUUID();
-      insertProposal({ userId, 
+      insertProposal({
+        userId,
         id: proposalId,
         runId,
         accountNumber: policy.accountNumber,
@@ -292,9 +349,27 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         review,
         estimatedNotional: review.estimatedNotional,
         refId,
-        orderId: execution.orderId,
-        status: "placed"
+        status: "placing"
       });
+
+      let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+      try {
+        execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
+      } catch (placeError) {
+        const message = placeError instanceof Error ? placeError.message : String(placeError);
+        // The broker may or may not have accepted the order. Keep the durable intent row and
+        // flag it loudly for reconciliation rather than aborting the whole run.
+        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${message}`] });
+        continue;
+      }
+
+      updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
       const fill = recordFillFromProposal({
         userId,
         accountNumber: policy.accountNumber,
@@ -436,8 +511,26 @@ export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): numb
   return Math.max(0, Math.min(100, threshold));
 }
 
-function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local"): TradeProposal {
-  if (proposal.side === "sell" || proposal.side === "cover") return proposal; // Preserve exits
+function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = []): TradeProposal {
+  if (proposal.side === "sell" || proposal.side === "cover") {
+    // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
+    // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
+    // phantom fill the dashboard reports as a successful close while the position stays open —
+    // a silent no-op stop/take-profit in live mode. (policy.ts also hard-rejects size-less
+    // exits as a backstop for any path that doesn't pass through here.)
+    if (proposal.quantity == null && proposal.dollarAmount == null) {
+      const pos = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
+      const fullQty = pos ? Math.abs(pos.quantity) : 0;
+      if (fullQty > 0) {
+        return {
+          ...proposal,
+          quantity: fullQty,
+          rationale: proposal.rationale + `\n\n[Sizing] Exit size resolved to the full ${normalizeSymbol(proposal.symbol)} position (${fullQty} sh) — the proposal carried no quantity.`
+        };
+      }
+    }
+    return proposal; // Preserve explicit exit sizes
+  }
   const account = policy.accountNumber;
   if (!account) return proposal;
 
@@ -629,8 +722,24 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     return { status: "paper" };
   }
 
+  // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
+  // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
+  // lost broker response can't leave an untracked real order.
   const refId = crypto.randomUUID();
-  const execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
+  updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, refId);
+  let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+  try {
+    execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
+  } catch (placeError) {
+    const message = placeError instanceof Error ? placeError.message : String(placeError);
+    updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+    audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+    await sendNotification(
+      { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
+      { policy, userId }
+    );
+    return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
+  }
   updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
   const fill = recordFillFromProposal({
     userId,
@@ -1489,6 +1598,42 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
     }
   } catch (error) {
     console.error("[reconciliation] failed to reconcile pending fills:", error);
+  }
+}
+
+/**
+ * Crash-recovery sweep (companion to the atomic placement path). A "placing" row is an order
+ * intent persisted just before the broker call; it flips to "placed"/"placing_failed"
+ * synchronously, so one older than the cutoff means a prior run died mid-placement. We can't yet
+ * auto-match it to a broker order (that needs client_order_id plumbing into EquityOrder — a
+ * follow-up), so we surface it loudly in the audit trail and mark it "placing_stale" so it isn't
+ * re-flagged every run. An operator (or the future broker-truth sweep) then reconciles it.
+ */
+function flagStalePlacingIntents(accountNumber: string, userId: string): void {
+  const STALE_PLACING_MS = 2 * 60_000;
+  const cutoff = new Date(Date.now() - STALE_PLACING_MS).toISOString();
+  let stale: ReturnType<typeof listStalePlacingProposals>;
+  try {
+    stale = listStalePlacingProposals(accountNumber, cutoff, userId);
+  } catch (e) {
+    console.error("[placing-sweep] failed to list stale placing intents:", e);
+    return;
+  }
+  for (const row of stale) {
+    const p = row.proposal as TradeProposal | undefined;
+    updateProposalStatus(row.id, "placing_stale", undefined, undefined, undefined, userId);
+    audit(
+      "order_placement_uncertain",
+      {
+        proposalId: row.id,
+        refId: row.refId,
+        symbol: p?.symbol,
+        side: p?.side,
+        createdAt: row.createdAt,
+        note: "Stale 'placing' intent surfaced at run start — a prior run may have died mid-placement; verify with the broker whether this order executed."
+      },
+      userId
+    );
   }
 }
 

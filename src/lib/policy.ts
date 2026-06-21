@@ -95,6 +95,20 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
   }
 
+  // An exit (sell/cover) must carry a resolvable size. A size-less exit (neither quantity nor
+  // dollarAmount) slips past the holdings/notional checks above (they no-op on an undefined
+  // quantity) and books a ZERO-quantity phantom fill the dashboard reports as a successful close
+  // while the position stays fully open and exposed. Deterministic sizing resolves LLM-emitted
+  // exits to the full position before they reach here, so a size-less exit at the gate is a real
+  // defect — reject it rather than silently no-op the stop.
+  if (
+    (proposal.side === "sell" || proposal.side === "cover") &&
+    proposal.quantity == null &&
+    proposal.dollarAmount == null
+  ) {
+    reasons.push(`${symbol} exit must specify a quantity or dollar amount.`);
+  }
+
   const crisisOpeningExposureReason = deRiskInCrisisReason(proposal, context, estimatedNotional);
   if (crisisOpeningExposureReason) reasons.push(crisisOpeningExposureReason);
 

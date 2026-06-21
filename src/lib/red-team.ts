@@ -12,6 +12,9 @@ export interface RedTeamDebateResult {
   reason: string;
 }
 
+/** Abort the Red Team LLM call after this long so a hung provider can't wedge the run lock. */
+const RED_TEAM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 45_000;
+
 export async function debateProposal(
   proposal: TradeProposal,
   quote: MarketQuoteSummary | undefined,
@@ -113,7 +116,10 @@ Respond with a JSON object containing:
             "content-type": "application/json",
             authorization: `Bearer ${openaiKey}`
           },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          // A hung provider would otherwise hold the per-user run lock until the OS socket
+          // timeout, starving the scheduler's concurrency slots. Abort and fail closed.
+          signal: AbortSignal.timeout(RED_TEAM_TIMEOUT_MS)
         });
 
         if (!response.ok) {
