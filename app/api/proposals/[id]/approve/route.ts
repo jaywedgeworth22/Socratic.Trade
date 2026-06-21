@@ -11,6 +11,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to execute proposal.";
+    if (message === "Proposal not found.") return new NextResponse(message, { status: 404 });
     return new NextResponse(message, { status: 400 });
   }
 }
