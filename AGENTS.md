@@ -182,6 +182,36 @@ deployment machine.
 - Tests use a temp SQLite file per run via `DATABASE_URL=file:<tmpdir>/...`
   (see `beforeAll` in test files) — don't point tests at the dev `data/app.db`.
 
+## Git author identity (GitHub email privacy)
+
+The owner's real email must **never** be published to the public GitHub repo. When committing or
+pushing to GitHub, every commit's author/committer email MUST be the owner's GitHub **noreply**
+address:
+
+```
+12656028+jaywedgeworth22@users.noreply.github.com
+```
+
+**Where the email is configured:**
+
+- **Global** (`~/.gitconfig`, `git config --global user.email`) = the owner's real email
+  `mail@jaywedgeworth.com`. This is correct for the owner's *other* repos — do not change it.
+- **This repo** overrides that with a repo-local `user.email` set to the noreply address. Because
+  `extensions.worktreeConfig` is **off**, a repo-local `git config user.email` lives in the shared
+  `.git/config` and applies to **all** linked worktrees (`~/apps/trading-claude`, `-codex`,
+  `-antigravity`, `-live`, the `main` integration tree, and any temporary `git worktree add` dirs).
+
+**Rules for every agent (Claude, Codex, Antigravity, Cursor):**
+
+- Before committing, confirm `git config user.email` resolves to the noreply address. If you ever see
+  `mail@jaywedgeworth.com` as the effective email in a worktree, fix it before committing:
+  `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com"` (writes the shared
+  repo-local config — covers all worktrees).
+- The repo-local config is **not tracked**, so a fresh clone or a config reset loses it — restore it
+  with the command above. New `git worktree add` dirs inherit it automatically.
+- If a commit was already made with the real email, amend before pushing:
+  `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com" && git commit --amend --reset-author --no-edit`.
+
 ## Don't
 
 - Don't run destructive git operations (`reset --hard`, force-push, branch
