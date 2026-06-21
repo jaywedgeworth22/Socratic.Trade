@@ -991,6 +991,7 @@ export function dailyExecutionStats(accountNumber: string, now = new Date(), use
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
       const isBuy = proposal.side === "buy" || proposal.side === "short";
+      // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
       // Prefer the persisted estimated_notional; fall back to proposal fields for old rows.
       const notional = isBuy
         ? (row.estimated_notional != null
@@ -1019,6 +1020,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
       const isBuy = proposal.side === "buy" || proposal.side === "short";
+      // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
       const notional = isBuy
         ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;

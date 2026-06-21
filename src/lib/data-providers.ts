@@ -246,7 +246,6 @@ export const mockEnrichmentProvider: MarketEnrichmentProvider = {
 
 // Keep the old export name for any code that references it.
 export const noopProvider = mockEnrichmentProvider;
-export const fallbackProvider = mockEnrichmentProvider;
 
 // ── Cascading provider ──────────────────────────────────────────────────────
 // Runs all child providers in parallel. For each scalar field it takes the first
