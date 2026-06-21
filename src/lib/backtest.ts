@@ -173,6 +173,62 @@ export function computeFactorICs(observations: FactorObservation[]): FactorIC[] 
 }
 
 /**
+ * PURE. Per-factor IC — an alias for `computeFactorICs` that returns the same per-factor
+ * IC and sample-size data. Accepts the same `FactorObservation[]` produced by
+ * `buildFactorObservations`. Exported under the singular name for callers that prefer it.
+ *
+ * @returns One entry per market factor in canonical order: { factor, ic, n }
+ */
+export function computePerFactorIC(
+  observations: FactorObservation[]
+): { factor: MarketFactor; ic: number; n: number }[] {
+  return computeFactorICs(observations);
+}
+
+/**
+ * PURE. Derive scoring weights from per-factor ICs with a minimum sample-size gate.
+ * - Factors with `n < minN` are excluded (insufficient data) and receive their DEFAULT weight.
+ * - Negative ICs are floored to 0.
+ * - Positive ICs are scaled so their sum matches the sum of DEFAULT_SCORING_WEIGHTS (~8.6)
+ *   rather than 1.0, so the derived weights are in the same magnitude as the hand-tuned defaults.
+ * - If no factor clears both the minN gate AND has a positive IC, returns DEFAULT_SCORING_WEIGHTS.
+ *
+ * @param perFactorIC  Output of `computePerFactorIC` or `computeFactorICs`.
+ * @param minN         Minimum number of contributing snapshot dates to use a factor's IC. Default 20.
+ * @returns Partial<ScoringWeights> — factors below minN carry their DEFAULT value.
+ */
+export function deriveWeightsFromIC(
+  perFactorIC: { factor: MarketFactor; ic: number; n: number }[],
+  minN: number = 20
+): Partial<ScoringWeights> {
+  const defaultSum = MARKET_FACTORS.reduce((s, f) => s + DEFAULT_SCORING_WEIGHTS[f], 0);
+
+  const qualified = new Map<MarketFactor, number>();
+  let positiveTotal = 0;
+  for (const { factor, ic, n } of perFactorIC) {
+    if (n >= minN && Number.isFinite(ic) && ic > 0) {
+      qualified.set(factor, ic);
+      positiveTotal += ic;
+    }
+  }
+
+  // If nothing qualifies, fall back to defaults entirely.
+  if (positiveTotal <= 0) return { ...DEFAULT_SCORING_WEIGHTS };
+
+  const out: Partial<ScoringWeights> = {};
+  for (const factor of MARKET_FACTORS) {
+    if (qualified.has(factor)) {
+      // Scale so positive ICs sum to the same total as the defaults.
+      out[factor] = (qualified.get(factor)! / positiveTotal) * defaultSum;
+    } else {
+      // Below minN (or negative IC) → keep default weight unchanged.
+      out[factor] = DEFAULT_SCORING_WEIGHTS[factor];
+    }
+  }
+  return out;
+}
+
+/**
  * PURE. Turns measured ICs into a normalized weight vector: floor each negative IC at
  * 0, then normalize the positives to sum to 1. If every IC is ≤ 0 (no factor showed
  * positive predictive power), fall back to `fallbackWeights` (DEFAULT_SCORING_WEIGHTS)

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildFactorObservations, computeFactorICs, deriveWeightsFromICs, runWalkForwardOOS } from "@/lib/backtest";
+import { buildFactorObservations, computeFactorICs, computePerFactorIC, deriveWeightsFromIC, deriveWeightsFromICs, runWalkForwardOOS } from "@/lib/backtest";
 import { getPolicy } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 
@@ -39,6 +39,9 @@ export async function GET(request: Request) {
 
   const observations = await buildFactorObservations(userId, { horizonDays, auditLimit });
   const ics = computeFactorICs(observations);
+  // computePerFactorIC is an alias for computeFactorICs; derive weights using the minN gate.
+  const perFactorIC = computePerFactorIC(observations);
+  const suggestedWeightsGated = deriveWeightsFromIC(perFactorIC);
   const current = getPolicy(userId).scoringWeights;
   const suggestedWeights = deriveWeightsFromICs(ics, current);
 
@@ -53,6 +56,7 @@ export async function GET(request: Request) {
     informationCoefficients: ics,
     currentWeights: current ?? null,
     suggestedWeights,
+    suggestedWeightsGated,
     note: "Suggestion only. Apply via the strategy tuner, which holds weight shifts to the 20-closed-lot gate.",
     oos: oosResult
       ? {
