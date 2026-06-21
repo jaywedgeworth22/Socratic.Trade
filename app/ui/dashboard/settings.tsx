@@ -230,6 +230,36 @@ export function SettingsContent({
           <NumberField label="Max net exposure (%)" value={policy.maxNetExposurePct ?? 0} onCommit={(v) => updatePolicy({ maxNetExposurePct: v > 0 ? v : undefined })} />
           <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
+          <Field label="Re-check pending proposals">
+            <select
+              className={inputClass}
+              value={String(policy.proposalRevalidateCadenceHours ?? 0)}
+              onChange={(e) => updatePolicy({ proposalRevalidateCadenceHours: Number(e.target.value) })}
+            >
+              <option value="0">Every run</option>
+              <option value="24">Once per day</option>
+              <option value="120">Every 5 days</option>
+            </select>
+          </Field>
+          <Field label="Pending proposals expire after">
+            <select
+              className={inputClass}
+              value={String(policy.proposalExpiryMinutes ?? 0)}
+              onChange={(e) => updatePolicy({ proposalExpiryMinutes: Number(e.target.value) })}
+            >
+              <option value="180">3 hours</option>
+              <option value="360">6 hours</option>
+              <option value="720">12 hours</option>
+              <option value="1440">1 day</option>
+              <option value="2880">2 days</option>
+              <option value="7200">5 days</option>
+              <option value="14400">10 days</option>
+              <option value="0">Never</option>
+            </select>
+          </Field>
+          <p className="text-xs leading-relaxed text-faint sm:col-span-2">
+            Proposals sit in the approval queue until you act on them. <span className="text-muted">Re-check</span> has the strategy ask the LLM whether each still-pending proposal still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors &ldquo;re-checked&rdquo;. It only happens when the strategy runs, during regular market hours (never overnight), at most this often per proposal. <span className="text-muted">Expire after</span> is a deterministic backstop: anything pending longer than that is auto-expired regardless.
+          </p>
           <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
           <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
           <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
@@ -336,7 +366,7 @@ export function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-2 gap-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">

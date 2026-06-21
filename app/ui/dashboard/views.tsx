@@ -15,6 +15,7 @@ import {
     BrainCircuit,
     Check,
     CheckCircle,
+    Clock,
     Gauge,
     Hourglass,
     Landmark,
@@ -46,7 +47,7 @@ import {
 } from "../../ui/primitives";
 import { EditableParam, EquityCurve, NumberField, ScorecardBars, SymbolButton } from "./components";
 import { TuningCard } from "./settings";
-import { DEFAULT_SCAN_COLS, SCAN_COLS_KEY, SCAN_COLUMNS, compare, displayStatus, formatSectorCaps, formatSources, freshness, parseSectorCaps, proposalSize, renderActionTitle, scanSortValue, statusTone } from "./utils";
+import { DEFAULT_SCAN_COLS, SCAN_COLS_KEY, SCAN_COLUMNS, compare, displayStatus, formatSectorCaps, formatSources, freshness, parseSectorCaps, proposalAge, proposalSize, renderActionTitle, scanSortValue, statusTone } from "./utils";
 
 export function DecisionView({
   snapshot,
@@ -81,6 +82,48 @@ export function DecisionView({
                   <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                {(() => {
+                  const proposed = proposalAge(p.createdAt);
+                  if (!proposed) return null;
+                  // A run's LLM re-check resets the freshness clock: measure staleness from the
+                  // most recent of "proposed" and "re-checked", but still show when it was proposed.
+                  const revalidated = p.lastRevalidatedAt ? proposalAge(p.lastRevalidatedAt) : null;
+                  const effective = revalidated ?? proposed;
+                  const stale = effective.staleness !== "fresh";
+                  return (
+                    <div className="mt-2 space-y-1">
+                      <div
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]",
+                          effective.staleness === "stale"
+                            ? "bg-down/10 text-down"
+                            : effective.staleness === "aging"
+                              ? "bg-warn/10 text-warn"
+                              : "text-faint"
+                        )}
+                        title={`Proposed ${proposed.absolute}`}
+                      >
+                        <Clock size={11} className="shrink-0" />
+                        <span>Proposed {proposed.absolute} · {proposed.relative}</span>
+                        {stale && (
+                          <span className="ml-auto font-semibold uppercase tracking-wide">
+                            {effective.staleness === "stale" ? "Stale" : "Aging"}
+                          </span>
+                        )}
+                      </div>
+                      {revalidated && (
+                        <p className="flex items-center gap-1.5 text-[11px] leading-snug text-up" title={p.revalidationNote}>
+                          <RefreshCw size={11} className="shrink-0" /> Re-checked {revalidated.relative} — still advised by the latest run
+                        </p>
+                      )}
+                      {stale && (
+                        <p className="text-[11px] leading-snug text-faint">
+                          Prices and conditions may have changed since this was {revalidated ? "last re-checked" : "proposed"} — re-run the strategy before approving.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="mt-3 flex gap-2">
                   <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
                     <Check size={14} /> Approve
@@ -647,7 +690,7 @@ export function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
           ? "border-l-info"
           : group.status === "filled"
             ? "border-l-up"
-            : group.status === "blocked" || group.status === "rejected"
+            : group.status === "blocked" || group.status === "rejected" || group.status === "expired" || group.status === "withdrawn"
               ? "border-l-down"
               : group.status === "pending_approval" || group.status === "pending"
                 ? "border-l-warn"
