@@ -24,6 +24,18 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20: **Atlas public repo retired + 6 subsystems ported to TS.** Reviewed `jaywedgeworth22/public`
+  (the "Atlas" BFF) via a 14-agent inventory, preserved it whole (git bundle of all 9 branches + source →
+  `reference/atlas-public-src/`), retired its live deployment (uninstalled the `com.jays.trading` BFF + the
+  `com.jays.trading.autoupdate` 5-min git-puller + backup cron — reversible bits in `~/.atlas-retired/`),
+  and **emptied** the public repo to a tombstone. Ported the genuinely-useful, not-yet-present work to
+  TypeScript with tests: RAG structure-aware chunking + `as_of` point-in-time; multi-channel alert delivery
+  (push/webhook/email/SMS); conversation transcript + redact-on-write; salience-gated memory; and a chat
+  orchestrator (LLM tool-loop, draft-only — never executes) + a 10-case no-execute eval gate. New tables
+  `notification_prefs`/`chat_turns`/`user_memory`; new APIs `/api/chat`, `/api/memory`, `/api/notifications`,
+  `/api/chat-history`. Deleted the redundant `~/agentic-trading` clone. Verified: tsc clean, 339 tests, build OK.
+  **Open:** user to confirm the tunnel still serves the dashboard (then `rm -rf ~/Code/trading`); UI wiring for
+  the chat/memory/notify surfaces is deferred (backends only). See `docs/rollouts/2026-06-20-atlas-public-retire-and-port.md`.
 - 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
   Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus
   the three agent worktree branches. Deleted (tip SHAs in the rollout note for recovery):
