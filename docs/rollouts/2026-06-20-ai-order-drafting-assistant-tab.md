@@ -50,6 +50,8 @@ can actually help place orders — safely, behind the same gates as the strategy
 - Chat uses the deterministic **MockLLM** until `CHAT_LLM=anthropic` + an Anthropic key are set.
 - The dry-run is a PREVIEW (no full market scan); `executeProposal` re-evaluates authoritatively at
   approve against fresh data, branching paper/live on the active account.
-- Not yet wired: rejecting a chat draft from the card (use the Decision tab's Reject), and a distinct
-  scorecard tag — chat drafts carry `Manual-Chat`/`Manual` and are (harmlessly) excluded from the
-  regime scorecard / learning loop.
+- A staged chat draft can now be **rejected inline** from the card (post-stage) too — `DraftOrderCard`
+  shows Confirm + Reject in the `proposed` phase, Reject calling the existing `rejectProposal` rail.
+- Deliberately NOT changed: chat drafts carry `Manual-Chat`/`Manual` and stay excluded from the regime
+  scorecard / learning loop (manual trades shouldn't tune the strategy engine); and chat uses MockLLM
+  until `CHAT_LLM=anthropic` + a key are set (config, not code).

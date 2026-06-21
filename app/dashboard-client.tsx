@@ -676,7 +676,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               />
             )}
             {workspaceTab === "assistant" && (
-              <AssistantView executionState={executionStateFor(snapshot)} approveProposal={approveProposal} />
+              <AssistantView executionState={executionStateFor(snapshot)} approveProposal={approveProposal} rejectProposal={rejectProposal} />
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
