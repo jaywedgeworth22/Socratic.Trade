@@ -27,6 +27,7 @@ import type {
   NotifyChannelId,
   ChatTurn,
   ChatTurnRole,
+  AccountCapabilities,
   MemoryItem
 } from "./types";
 
@@ -44,6 +45,10 @@ export function getDb(): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
   db = new Database(path);
   db.pragma("journal_mode = WAL");
+  // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
+  // up to 5s for the lock instead. NORMAL durability is the WAL-recommended pairing.
+  db.pragma("busy_timeout = 5000");
+  db.pragma("synchronous = NORMAL");
   migrate(db);
   return db;
 }
@@ -365,6 +370,9 @@ function migrate(database: Database.Database): void {
   }
   if (!connectedAccountColumns.some((column) => column.name === "base_url")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN base_url TEXT");
+  }
+  if (!connectedAccountColumns.some((column) => column.name === "capabilities")) {
+    database.exec("ALTER TABLE connected_accounts ADD COLUMN capabilities TEXT");
   }
 
   // Rename: legacy "dry_run" proposal status is now "paper".
@@ -1201,7 +1209,7 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     .prepare(
       "SELECT id, created_at, proposal, decision, review, last_revalidated_at, revalidation_note FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
     )
-    .all(accountNumber, userId) as RawRow[];
+    .all(scopeAccount(accountNumber), userId) as RawRow[];
 
   return rows.map((r) => ({
     id: r.id,
@@ -1901,6 +1909,11 @@ export function deleteUserApiKey(userId: string, service: string): void {
   }
 }
 
+function parseCapabilities(raw: unknown): AccountCapabilities | undefined {
+  if (!raw || typeof raw !== "string") return undefined;
+  try { return JSON.parse(raw) as AccountCapabilities; } catch { return undefined; }
+}
+
 export function listConnectedAccounts(userId: string = "local"): ConnectedAccount[] {
   const rows = getDb()
     .prepare("SELECT * FROM connected_accounts WHERE user_id = ? ORDER BY created_at ASC")
@@ -1914,8 +1927,8 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
     label: String(r.label),
     taxationType: r.taxation_type != null ? (String(r.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
     baseUrl: r.base_url != null ? String(r.base_url) : undefined,
+    capabilities: parseCapabilities(r.capabilities),
     isActive: r.is_active === 1,
-
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   }));
@@ -1954,8 +1967,8 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
     apiKey: row.api_key ? decryptValue(String(row.api_key)) : undefined,
     apiSecret: row.api_secret ? decryptValue(String(row.api_secret)) : undefined,
     baseUrl: row.base_url != null ? String(row.base_url) : undefined,
+    capabilities: parseCapabilities(row.capabilities),
     isActive: row.is_active === 1,
-
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -1970,10 +1983,11 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
     if (account.isActive) {
       database.prepare("UPDATE connected_accounts SET is_active = 0 WHERE user_id = ?").run(account.userId);
     }
+    const capabilitiesJson = account.capabilities ? JSON.stringify(account.capabilities) : null;
     database
       .prepare(
-        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, taxation_type, base_url, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO connected_accounts (id, user_id, broker, environment, account_number, label, api_key, api_secret, taxation_type, base_url, capabilities, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           broker = excluded.broker,
           environment = excluded.environment,
@@ -1983,6 +1997,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           api_secret = COALESCE(excluded.api_secret, connected_accounts.api_secret),
           taxation_type = COALESCE(excluded.taxation_type, connected_accounts.taxation_type),
           base_url = COALESCE(excluded.base_url, connected_accounts.base_url),
+          capabilities = COALESCE(excluded.capabilities, connected_accounts.capabilities),
           is_active = excluded.is_active,
           updated_at = excluded.updated_at`
       )
@@ -1997,6 +2012,7 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
         encryptedApiSecret,
         account.taxationType ?? null,
         account.baseUrl ?? null,
+        capabilitiesJson,
         account.isActive ? 1 : 0,
         now,
         now

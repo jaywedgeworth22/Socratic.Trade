@@ -3,10 +3,12 @@
 export interface ChatQuote {
   symbol: string;
   price_usd: number;
-  change_pct: number;
+  /** Intraday % change vs prior close — omitted when the source doesn't provide it (never fabricated). */
+  change_pct?: number;
   as_of: string;
   source: string;
-  session: string;
+  /** Trading session label — omitted when unknown (never fabricated). */
+  session?: string;
   error?: string;
 }
 
@@ -63,6 +65,8 @@ export interface LlmRunArgs {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   executeTool: (name: string, input: any) => Promise<any>;
   context?: { memorySummary?: string };
+  /** Prior redacted turns (chronological) for multi-turn context. The current message is separate. */
+  history?: Array<{ role: "user" | "assistant"; text: string }>;
 }
 
 export interface LlmResult {

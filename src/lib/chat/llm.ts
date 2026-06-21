@@ -14,7 +14,7 @@ import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types
 const MAX_STEPS = 5;
 
 export interface Intent {
-  intent: "alert" | "order" | "watchlist_add" | "kb" | "advice" | "quote" | "chat";
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "chat";
   symbol?: string;
   alert?: { symbol: string; op: "<" | ">"; price: number };
   order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
@@ -63,6 +63,12 @@ export function classifyIntent(message: string): Intent {
       symbol: sym,
       doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
     };
+  if (
+    /\b(my (positions?|portfolio|holdings)|how (?:am i|is my account|are my (?:positions|holdings)) doing|how (?:'?s|is) my [a-z. ]*position|my (?:p&l|pnl|p ?and ?l|gains?|losses?))\b/.test(lc)
+  )
+    return { intent: "positions" };
+  if (/\b(my watchlist|what'?s on my watchlist|show (?:me )?my watchlist)\b/.test(lc)) return { intent: "watchlist_view" };
+  if (/\b(my alerts?|what alerts|active alerts?|show (?:me )?my alerts?)\b/.test(lc)) return { intent: "alerts_view" };
   if (/\b(should i|is it a good (buy|time)|recommend|what should i do|allocate)\b/.test(lc)) return { intent: "advice", symbol: sym };
   if (/\b(price|quote|trading at|how much is|what'?s)\b/.test(lc) && sym) return { intent: "quote", symbol: sym };
   if (sym) return { intent: "quote", symbol: sym };
@@ -70,15 +76,26 @@ export function classifyIntent(message: string): Intent {
 }
 
 function narrateQuote(quote: any, advice: boolean): string {
-  const dir = quote.change_pct >= 0 ? "up" : "down";
-  let text =
-    `${quote.symbol} is at $${quote.price_usd}, ${dir} ${Math.abs(quote.change_pct)}% ` +
-    `(as of ${quote.as_of}, ${quote.source} data, ${quote.session} session).`;
+  let lead = `${quote.symbol} is at $${quote.price_usd}`;
+  if (typeof quote.change_pct === "number" && Number.isFinite(quote.change_pct)) {
+    lead += `, ${quote.change_pct >= 0 ? "up" : "down"} ${Math.abs(quote.change_pct)}%`;
+  }
+  // Only narrate fields the source actually provided — never fabricate a 0% or a session.
+  const meta = [
+    quote.as_of ? `as of ${quote.as_of}` : null,
+    quote.source ? `${quote.source} data` : null,
+    quote.session ? `${quote.session} session` : null
+  ].filter(Boolean);
+  let text = meta.length ? `${lead} (${meta.join(", ")}).` : `${lead}.`;
   if (advice)
     text +=
       ` I can't tell you whether to buy or sell — that depends on your full financial picture, ` +
       `and I'm not a licensed advisor. I can lay out the trade-offs and you decide.`;
   return text;
+}
+
+function fmt(n: unknown): string {
+  return typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
 function groundedChat(message: string, memorySummary?: string): string {
@@ -168,6 +185,41 @@ export class MockLLM implements ChatLLM {
       return { text: `${result.item.symbol} ${tag} on your watchlist.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
     }
 
+    if (cls.intent === "positions") {
+      const positionsResult = await executeTool("get_positions", {});
+      const portfolioResult = await executeTool("get_portfolio", {});
+      toolCalls.push({ name: "get_positions", input: {}, result: positionsResult });
+      toolCalls.push({ name: "get_portfolio", input: {}, result: portfolioResult });
+      const positions = positionsResult?.positions ?? [];
+      const portfolio = portfolioResult?.portfolio;
+      const parts: string[] = [];
+      if (portfolio) parts.push(`Account value $${fmt(portfolio.totalMarketValue)}, cash $${fmt(portfolio.cash)}.`);
+      parts.push(
+        positions.length
+          ? `Positions: ${positions.map((p: any) => `${p.symbol} ${p.quantity} (~$${fmt(p.marketValue)})`).join(", ")}.`
+          : "No open positions."
+      );
+      return { text: `${parts.join(" ")}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "watchlist_view") {
+      const result = await executeTool("list_watchlist", {});
+      toolCalls.push({ name: "list_watchlist", input: {}, result });
+      const wl = result?.watchlist ?? [];
+      const text = wl.length ? `Your watchlist: ${wl.map((w: any) => w.symbol).join(", ")}.` : "Your watchlist is empty.";
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "alerts_view") {
+      const result = await executeTool("list_alerts", {});
+      toolCalls.push({ name: "list_alerts", input: {}, result });
+      const al = result?.alerts ?? [];
+      const text = al.length
+        ? `Your armed alerts: ${al.map((a: any) => `${a.symbol} ${a.op} $${a.price}`).join(", ")}.`
+        : "You have no armed alerts.";
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
     return { text: `${groundedChat(message, context.memorySummary)}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
   }
 }
@@ -188,8 +240,14 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 export class AnthropicLLM implements ChatLLM {
   constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport) {}
 
-  async run({ system, message, tools, executeTool }: LlmRunArgs): Promise<LlmResult> {
-    const messages: any[] = [{ role: "user", content: message }];
+  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+    const messages: any[] = [];
+    // Replay prior turns for multi-turn context. Anthropic requires the first message to be user, so
+    // drop any leading assistant turn from the (chronological) history before appending the new message.
+    const prior = (history ?? []).slice();
+    while (prior.length && prior[0].role !== "user") prior.shift();
+    for (const h of prior) messages.push({ role: h.role, content: h.text });
+    messages.push({ role: "user", content: message });
     const toolCalls: ToolCall[] = [];
     let text = "";
 

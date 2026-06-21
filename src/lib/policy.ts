@@ -1,4 +1,4 @@
-import type { EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
 import { symbolsForPolicyUniverse } from "./index-universes";
 
@@ -14,6 +14,8 @@ export interface PolicyContext {
   marketScan?: MarketScan;
   /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
   washSaleLockedSymbols?: Set<string>;
+  /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
+  accountCapabilities?: AccountCapabilities;
   now?: Date;
 }
 
@@ -36,13 +38,19 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
-  // SHORT_SELLING: Feature gate. When shortSellingEnabled is true, short/cover
-  // proposals pass through to the guardrails below. When false (default), they
-  // are unconditionally rejected. Flip this flag + implement the SHORT_SELLING
-  // TODOs below + confirm broker support before enabling.
+  // SHORT_SELLING: Two-layer gate.
+  // Layer 1 — policy flag: shortSellingEnabled must be true.
+  // Layer 2 — account capability: the connected broker/account must report shortSelling=true.
+  //   Robinhood MCP always reports false (MCP docs: "no short sells").
+  //   Alpaca: parsed from account.shorting_enabled.
+  //   When accountCapabilities is absent (legacy row), we treat shortSelling as false.
   if (proposal.side !== "buy" && proposal.side !== "sell") {
-    if (!context.policy.shortSellingEnabled) {
-      reasons.push(`Order side "${proposal.side}" is not supported. Only "buy" and "sell" are permitted.`);
+    const brokerSupportsShort = context.accountCapabilities?.shortSelling === true;
+    if (!context.policy.shortSellingEnabled || !brokerSupportsShort) {
+      const why = !context.policy.shortSellingEnabled
+        ? `short-selling is disabled in policy`
+        : `the connected account does not support short selling`;
+      reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
       if (proposal.side === "short") {
         if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
@@ -113,13 +121,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
     reasons.push(`Projected ${symbol} exposure ${projectedSymbolExposurePct.toFixed(2)}% exceeds ${context.policy.maxSymbolExposurePct}%.`);
   }
-  if (context.policy.maxSymbolExposureNotional) {
+  if (context.policy.maxSymbolExposureNotional && isOpening) {
     const existingPosition = context.positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const existingValue = existingPosition ? Math.abs(existingPosition.marketValue) : 0;
-    // Side-aware: opening orders (buy/short) ADD exposure; closing orders (sell/cover)
-    // REDUCE it. Mirrors projectedExposurePct / the sector cap so a risk-reducing exit
-    // (e.g. an automated stop-loss sell) is never blocked by a notional cap.
-    const projectedNotional = isOpening ? existingValue + estimatedNotional : Math.max(0, existingValue - estimatedNotional);
+    // Opening orders (buy/short) ADD exposure. Closing orders (sell/cover) always
+    // reduce symbol exposure and must never be blocked — guard on isOpening above.
+    const projectedNotional = existingValue + estimatedNotional;
     if (projectedNotional > context.policy.maxSymbolExposureNotional) {
       reasons.push(`Projected ${symbol} notional exposure $${projectedNotional.toFixed(2)} exceeds cap $${context.policy.maxSymbolExposureNotional.toFixed(2)}.`);
     }

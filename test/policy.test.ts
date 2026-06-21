@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
-import type { EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import type { AccountCapabilities, EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+
+// Minimal AccountCapabilities that grants short-selling for tests that verify the enabled path.
+const shortCapableAccount: AccountCapabilities = {
+  equityTrading: true,
+  shortSelling: true,
+  optionsTrading: false,
+  futuresTrading: false,
+  cryptoTrading: false,
+  marginEnabled: true,
+  accountType: "brokerage"
+};
 
 const portfolio: Portfolio = {
   accountNumber: "A1",
@@ -303,6 +314,7 @@ describe("evaluateTradeProposal", () => {
           maxSymbolExposurePct: 50,
           tuning: { crisisMaxOpeningExposurePct: 5 }
         },
+        accountCapabilities: shortCapableAccount,
         positions: [
           ...positions,
           { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }
@@ -328,7 +340,7 @@ describe("evaluateTradeProposal", () => {
       context()
     );
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "short" is not supported');
+    expect(decision.reasons.join(" ")).toContain('Order side "short" rejected');
   });
 
   it("rejects cover proposals", () => {
@@ -337,7 +349,7 @@ describe("evaluateTradeProposal", () => {
       context()
     );
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "cover" is not supported');
+    expect(decision.reasons.join(" ")).toContain('Order side "cover" rejected');
   });
 
   // T1 — maxSymbolExposureNotional must be side-aware (regression for the side-blind cap
@@ -367,11 +379,23 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).not.toContain("notional exposure");
   });
 
+  it("maxSymbolExposureNotional does NOT block a quantity-only market sell when estimatedNotional is zero", () => {
+    // Regression for: a market sell with quantity-only (no price, no dollarAmount) produces
+    // estimatedNotional=0. The old code computed projectedNotional = max(0, existingValue - 0)
+    // = existingValue, which blocked the sell when existingValue > cap. Closing orders are now
+    // unconditionally allowed.
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(0), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
   // T7 — enabled-path short/cover guardrails.
   it("short without a mandatory stop-loss is rejected when short selling is enabled", () => {
     const decision = evaluateTradeProposal(
       { ...proposal, symbol: "VOO", side: "short", dollarAmount: 1000 },
-      { ...context(1000), policy: { ...enabledPolicy, shortSellingEnabled: true, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 0 } } }
+      { ...context(1000), policy: { ...enabledPolicy, shortSellingEnabled: true, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 0 } }, accountCapabilities: shortCapableAccount }
     );
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("mandatory stop-loss");
@@ -380,7 +404,7 @@ describe("evaluateTradeProposal", () => {
   it("short over maxShortOrderNotional is rejected", () => {
     const decision = evaluateTradeProposal(
       { ...proposal, symbol: "VOO", side: "short", dollarAmount: 5000 },
-      { ...context(5000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortOrderNotional: 1000, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } } }
+      { ...context(5000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortOrderNotional: 1000, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } }, accountCapabilities: shortCapableAccount }
     );
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("max short order limit");
@@ -389,7 +413,7 @@ describe("evaluateTradeProposal", () => {
   it("opening short over maxShortExposurePct is rejected", () => {
     const decision = evaluateTradeProposal(
       { ...proposal, symbol: "VOO", side: "short", dollarAmount: 6000 },
-      { ...context(6000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortExposurePct: 50, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } } }
+      { ...context(6000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortExposurePct: 50, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } }, accountCapabilities: shortCapableAccount }
     );
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("short exposure");
@@ -401,6 +425,7 @@ describe("evaluateTradeProposal", () => {
       {
         ...context(100),
         policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "VOO", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
         positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
       }
     );
@@ -414,6 +439,7 @@ describe("evaluateTradeProposal", () => {
       {
         ...context(1000),
         policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "VOO", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
         positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
       }
     );

@@ -1,4 +1,5 @@
 import type {
+  AccountCapabilities,
   BrokerageAccount,
   BrokerQuote,
   EquityOrder,
@@ -50,12 +51,46 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
     const raw = await this.callTool("get_accounts", {}) as Record<string, unknown>;
     const accounts = Array.isArray(raw?.accounts) ? raw.accounts : Array.isArray(raw) ? raw : [];
-    return accounts.map((item: Record<string, unknown>) => ({
-      accountNumber: String(item.account_number ?? item.accountNumber),
-      // Robinhood labels accounts with `nickname` (e.g. "Agentic"); fall back to type.
-      label: String(item.nickname ?? item.label ?? item.brokerage_account_type ?? item.type ?? "Brokerage account"),
-      agenticAllowed: Boolean(item.agentic_allowed ?? item.agenticAllowed)
-    }));
+    return accounts.map((item: Record<string, unknown>) => {
+      // Options level: Robinhood returns an integer 0-4 (0 = no options).
+      const rawOptLevel = typeof item.option_level === "number" ? item.option_level : undefined;
+      const optionsLevel = (rawOptLevel !== undefined && rawOptLevel >= 0 && rawOptLevel <= 4)
+        ? (rawOptLevel as 0 | 1 | 2 | 3 | 4)
+        : undefined;
+      const optionsTrading = optionsLevel !== undefined ? optionsLevel > 0 : false;
+
+      // Margin: Robinhood distinguishes "cash" vs "margin" account_type.
+      const rawType = String(item.account_type ?? item.type ?? "").toLowerCase();
+      const marginEnabled = rawType === "margin" || rawType.includes("margin");
+
+      // Account structure for tax-regime classification.
+      const rawBrokerageType = String(item.brokerage_account_type ?? "").toLowerCase();
+      const accountType: AccountCapabilities["accountType"] =
+        rawBrokerageType.includes("roth") ? "roth_ira"
+        : rawBrokerageType.includes("ira") || rawBrokerageType.includes("traditional") ? "traditional_ira"
+        : "brokerage";
+
+      const capabilities: AccountCapabilities = {
+        equityTrading: true,
+        // Robinhood MCP does not support short selling. The MCP's review_equity_order
+        // docs explicitly state "no short sells". Hardcoded false regardless of account type.
+        shortSelling: false,
+        optionsTrading,
+        optionsLevel: optionsTrading ? optionsLevel : undefined,
+        futuresTrading: false,
+        cryptoTrading: false,
+        marginEnabled,
+        accountType
+      };
+
+      return {
+        accountNumber: String(item.account_number ?? item.accountNumber),
+        // Robinhood labels accounts with `nickname` (e.g. "Agentic"); fall back to type.
+        label: String(item.nickname ?? item.label ?? item.brokerage_account_type ?? item.type ?? "Brokerage account"),
+        agenticAllowed: Boolean(item.agentic_allowed ?? item.agenticAllowed),
+        capabilities
+      };
+    });
   }
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
@@ -419,7 +454,20 @@ const MOCK_PRICES: Record<string, number> = {
 
 class TestBrokerGateway implements BrokerGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
-    return [{ accountNumber: "TEST", label: "Test", agenticAllowed: true }];
+    return [{
+      accountNumber: "TEST",
+      label: "Test",
+      agenticAllowed: true,
+      capabilities: {
+        equityTrading: true,
+        shortSelling: false,
+        optionsTrading: false,
+        futuresTrading: false,
+        cryptoTrading: false,
+        marginEnabled: false,
+        accountType: "brokerage"
+      }
+    }];
   }
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
