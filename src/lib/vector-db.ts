@@ -1,6 +1,7 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
+import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -335,6 +336,50 @@ export async function storeContexts(documents: ContextDocument[], userId: string
 }
 
 /**
+ * Chunk a long document (structure-aware) and store each chunk as its own vector, carrying
+ * `acceptance_datetime` so retrieval can apply a point-in-time (`as_of`) filter. Prefer this over
+ * storeContexts for anything longer than a short catalyst summary (e.g. full 10-K risk sections).
+ */
+export async function storeDocument(
+  doc: ChunkInput & { symbol?: string },
+  userId: string = "local",
+  options?: ChunkOptions
+): Promise<StoreContextsResult> {
+  const chunked = chunkDocument(doc, options);
+  const fallbackSymbol = doc.symbol ?? (Array.isArray(doc.ticker) ? doc.ticker[0] : doc.ticker) ?? "";
+  const documents: ContextDocument[] = chunked.map((c) => ({
+    text: `${c.context_header}\n\n${c.text}`,
+    metadata: {
+      symbol: c.ticker[0] ?? fallbackSymbol,
+      source: c.source,
+      timestamp: c.published_at,
+      accession: c.chunk_id,
+      acceptance_datetime: c.acceptance_datetime,
+      section: c.section,
+      doc_type: c.doc_type,
+      is_table: c.is_table,
+      ticker: c.ticker
+    }
+  }));
+  return storeContexts(documents, userId);
+}
+
+/**
+ * Point-in-time guard for retrieval: returns false when a chunk's
+ * acceptance_datetime / as_of / timestamp is strictly after `asOf` — a lookahead-bias guard for
+ * backtest-style queries. Undated chunks and an unset/unparseable `asOf` are kept.
+ */
+export function isWithinAsOf(metadata: Record<string, unknown> | undefined, asOf: string | undefined): boolean {
+  if (!asOf) return true;
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs)) return true;
+  const stamp = metadata?.acceptance_datetime ?? metadata?.as_of ?? metadata?.timestamp;
+  if (stamp == null) return true;
+  const t = typeof stamp === "number" ? stamp : Date.parse(String(stamp));
+  return !Number.isFinite(t) || t <= asOfMs;
+}
+
+/**
  * Live Pinecone index stats — used by the reindex/diagnostic route so the operator can
  * confirm `totalVectorCount > 0` after a backfill instead of guessing.
  */
@@ -368,11 +413,15 @@ export async function retrieveContext(
   query: string,
   symbol: string,
   limit: number = 3,
-  userId: string = "local"
+  userId: string = "local",
+  options?: { asOf?: string }
 ): Promise<string[]> {
   const sanitizedUserId = sanitizeUserId(userId);
   const { pc, voyage } = getClients(sanitizedUserId);
   if (!pc || !voyage) return [];
+  // When an as-of date is set, over-fetch then drop look-ahead chunks (post-query filter, since
+  // Pinecone can't range-filter ISO datetime strings reliably).
+  const fetchK = options?.asOf ? Math.min(Math.max(limit * 5, limit), 50) : limit;
 
   try {
     const response = await embedWithRetry(voyage, [query], "query");
@@ -389,7 +438,7 @@ export async function retrieveContext(
     if (sanitizedUserId === "local") {
       const results = await index.query({
         vector: embedding,
-        topK: limit,
+        topK: fetchK,
         filter: {
           symbol: { $eq: symbol },
           userId: { $eq: "local" }
@@ -401,7 +450,7 @@ export async function retrieveContext(
       const [userResults, localResults] = await Promise.all([
         index.query({
           vector: embedding,
-          topK: limit,
+          topK: fetchK,
           filter: {
             symbol: { $eq: symbol },
             userId: { $eq: sanitizedUserId }
@@ -410,7 +459,7 @@ export async function retrieveContext(
         }),
         index.query({
           vector: embedding,
-          topK: limit,
+          topK: fetchK,
           filter: {
             symbol: { $eq: symbol },
             userId: { $eq: "local" }
@@ -434,11 +483,15 @@ export async function retrieveContext(
           unique.push(m);
         }
       }
-      matches = unique.slice(0, limit);
+      matches = unique.slice(0, fetchK);
     }
 
-    return matches
-      .map(match => match.metadata?.text as string)
+    const withinAsOf = options?.asOf
+      ? matches.filter((match) => isWithinAsOf(match.metadata as Record<string, unknown> | undefined, options.asOf))
+      : matches;
+    return withinAsOf
+      .slice(0, limit)
+      .map((match) => match.metadata?.text as string)
       .filter(Boolean);
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);
