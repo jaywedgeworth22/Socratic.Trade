@@ -22,7 +22,9 @@ import type {
   PriceAlert,
   PriceAlertOp,
   PriceAlertStatus,
-  WatchlistItem
+  WatchlistItem,
+  NotifyPrefs,
+  NotifyChannelId
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -269,6 +271,16 @@ function migrate(database: Database.Database): void {
       triggered_price REAL
     );
     CREATE INDEX IF NOT EXISTS idx_price_alerts_user_status ON price_alerts (user_id, status, created_at);
+
+    CREATE TABLE IF NOT EXISTS notification_prefs (
+      user_id TEXT PRIMARY KEY,
+      channels TEXT NOT NULL DEFAULT '[]',
+      push_target TEXT NOT NULL DEFAULT '',
+      webhook_url TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      updated_at TEXT
+    );
   `);
 
   // Migrate tables to include user_id
@@ -2082,4 +2094,69 @@ export function markPriceAlertTriggered(id: string, userId: string, triggeredPri
   if (result.changes === 0) return null;
   const row = getDb().prepare("SELECT * FROM price_alerts WHERE id = ? AND user_id = ?").get(id, userId) as RawPriceAlertRow | undefined;
   return row ? mapPriceAlert(row) : null;
+}
+
+const NOTIFY_CHANNEL_IDS: readonly NotifyChannelId[] = ["push", "webhook", "email", "sms"];
+
+function isNotifyChannelId(value: unknown): value is NotifyChannelId {
+  return typeof value === "string" && (NOTIFY_CHANNEL_IDS as readonly string[]).includes(value);
+}
+
+export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
+  const row = getDb().prepare("SELECT * FROM notification_prefs WHERE user_id = ?").get(userId) as
+    | { user_id: string; channels: string; push_target: string; webhook_url: string; email: string; phone: string; updated_at: string | null }
+    | undefined;
+  if (!row) {
+    return { userId, channels: [], pushTarget: "", webhookUrl: "", email: "", phone: "", updatedAt: null };
+  }
+  let channels: NotifyChannelId[] = [];
+  try {
+    const parsed = JSON.parse(row.channels) as unknown;
+    if (Array.isArray(parsed)) channels = parsed.filter(isNotifyChannelId);
+  } catch {
+    channels = [];
+  }
+  return {
+    userId: row.user_id,
+    channels,
+    pushTarget: row.push_target,
+    webhookUrl: row.webhook_url,
+    email: row.email,
+    phone: row.phone,
+    updatedAt: row.updated_at
+  };
+}
+
+export function setNotifyPrefs(
+  userId: string,
+  partial: { channels?: unknown; pushTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown }
+): NotifyPrefs {
+  const next: NotifyPrefs = { ...getNotifyPrefs(userId), userId };
+  if (Array.isArray(partial.channels)) {
+    next.channels = [...new Set(partial.channels.filter(isNotifyChannelId))];
+  }
+  if (typeof partial.pushTarget === "string") next.pushTarget = partial.pushTarget.trim();
+  if (typeof partial.webhookUrl === "string") next.webhookUrl = partial.webhookUrl.trim();
+  if (typeof partial.email === "string") next.email = partial.email.trim();
+  if (typeof partial.phone === "string") next.phone = partial.phone.trim();
+  next.updatedAt = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO notification_prefs (user_id, channels, push_target, webhook_url, email, phone, updated_at)
+       VALUES (@userId, @channels, @pushTarget, @webhookUrl, @email, @phone, @updatedAt)
+       ON CONFLICT(user_id) DO UPDATE SET
+         channels = excluded.channels, push_target = excluded.push_target, webhook_url = excluded.webhook_url,
+         email = excluded.email, phone = excluded.phone, updated_at = excluded.updated_at`
+    )
+    .run({
+      userId,
+      channels: JSON.stringify(next.channels),
+      pushTarget: next.pushTarget,
+      webhookUrl: next.webhookUrl,
+      email: next.email,
+      phone: next.phone,
+      updatedAt: next.updatedAt
+    });
+  audit("notify.prefs.set", { userId, channels: next.channels }, userId);
+  return next;
 }

@@ -623,3 +623,44 @@ export interface NotificationEvent {
   payload: unknown;
   error?: string;
 }
+
+// --- Out-of-app multi-channel alert delivery (ported from Atlas) ---
+/** Out-of-app delivery channels for triggered alerts. */
+export type NotifyChannelId = "push" | "webhook" | "email" | "sms";
+
+/** Per-user notification preferences: enabled channels + per-channel delivery target. */
+export interface NotifyPrefs {
+  userId: string;
+  channels: NotifyChannelId[];
+  pushTarget: string;
+  webhookUrl: string;
+  email: string;
+  phone: string;
+  updatedAt: string | null;
+}
+
+export interface NotifyMessage {
+  title: string;
+  body: string;
+  kind?: string;
+  data?: unknown;
+}
+
+export interface NotifyChannelResult {
+  channel: NotifyChannelId;
+  ok: boolean;
+  skipped?: "not_configured" | "no_target";
+  error?: string;
+}
+
+/** UI metadata so the client shows only usable channels and the right target field. */
+export interface NotifyChannelDescriptor {
+  id: NotifyChannelId;
+  label: string;
+  available: boolean;
+  provider?: string | null;
+  targetField: string;
+  targetLabel: string;
+  placeholder: string;
+  hint: string;
+}
