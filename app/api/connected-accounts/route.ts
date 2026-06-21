@@ -71,7 +71,13 @@ export async function POST(req: Request) {
       label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel,
       apiKey: apiKey || undefined,
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
-      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl.trim() || undefined : undefined,
+      baseUrl: typeof body.baseUrl === "string" && body.baseUrl.trim()
+        ? body.baseUrl.trim()
+        : broker === "alpaca"
+          ? environment === "paper"
+            ? "https://paper-api.alpaca.markets/v2"
+            : "https://api.alpaca.markets/v2"
+          : undefined,
       taxationType,
       isActive: body.isActive ?? false
     });

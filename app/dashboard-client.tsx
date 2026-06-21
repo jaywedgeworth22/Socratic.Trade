@@ -539,96 +539,110 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
         </div>
 
-        <div className="ml-0 flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:ml-auto">
-          <div
-            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1 md:flex"
-            title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
-          >
-            <span className="text-xs font-medium text-muted">Mode</span>
-            <select
-              className="bg-transparent text-xs font-medium text-fg outline-none"
-              value={policy.strategyAuthority}
-              onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
+        <div className="ml-0 flex min-w-0 flex-1 flex-col items-end gap-1.5 sm:ml-auto md:flex-row md:items-center md:justify-end md:gap-2">
+          {/* Sub-container 1: Selects and Utility tools */}
+          <div className="flex flex-wrap items-center justify-end gap-1.5 md:gap-2">
+            <div
+              className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
+              title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
-              <option value="propose">Propose → you approve</option>
-              <option value="decide">Decide → auto-executes</option>
-            </select>
+              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
+              <select
+                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs"
+                value={policy.strategyAuthority}
+                onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
+              >
+                <option value="propose">Propose → you approve</option>
+                <option value="decide">Decide → auto-executes</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5 lg:gap-2">
+              <select
+                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none lg:h-9 lg:px-2.5 lg:text-sm"
+                value={policy.connectedAccountId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (id === "manage") {
+                    setAccountsOpen(true);
+                    return;
+                  }
+                  void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                }}
+              >
+                <option value="" disabled>Select Account...</option>
+                {snapshot.connectedAccounts?.map(acc => (
+                  <option key={acc.id} value={acc.id}>{acc.broker === "test" ? acc.label : `${acc.label} (${acc.environment})`}</option>
+                ))}
+                <option value="manage">Manage Accounts...</option>
+              </select>
+            </div>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Refresh" onClick={() => load()} disabled={busy}>
+              <RefreshCw size={15} className={cn(busy && "animate-spin")} />
+            </IconButton>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => setSettingsOpen(true)}>
+              <SettingsIcon size={15} />
+            </IconButton>
+            <ThemeToggle />
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              className="h-9 max-w-[13rem] rounded-lg border border-line bg-surface/50 px-2.5 text-sm font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none"
-              value={policy.connectedAccountId ?? ""}
-              onChange={(e) => {
-                const id = e.target.value;
-                if (id === "manage") {
-                  setAccountsOpen(true);
+
+          {/* Sub-container 2: Action buttons */}
+          <div className="flex flex-wrap items-center justify-end gap-1.5 md:gap-2">
+            <button
+              onClick={() => setFeedOpen(true)}
+              className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
+            >
+              <ActivityIcon size={15} /> Activity
+              {pendingCount > 0 && (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+            <Button
+              variant="ghost"
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              onClick={() => setNodeEditorOpen(true)}
+            >
+              <Network size={15} /> Flow
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              onClick={() => setStudioOpen(true)}
+            >
+              <BrainCircuit size={15} /> Strategy
+            </Button>
+            <Button
+              variant={enableBlockedReason ? "ghost" : "primary"}
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              title={enableBlockedReason}
+              onClick={() => {
+                if (enableBlockedReason) {
+                  routeSetupBlocker(enableBlockedReason);
                   return;
                 }
-                void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                void runStrategy();
+              }}
+              disabled={busy}
+            >
+              <Zap size={15} /> Run once
+            </Button>
+            <Button
+              variant={policy.systemState === "halted" ? "primary" : "danger"}
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
+              onClick={() => {
+                if (policy.systemState === "halted" && enableBlockedReason) {
+                  routeSetupBlocker(enableBlockedReason);
+                  return;
+                }
+                setKillConfirm(true);
               }}
             >
-              <option value="" disabled>Select Account...</option>
-              {snapshot.connectedAccounts?.map(acc => (
-                <option key={acc.id} value={acc.id}>{acc.broker === "test" ? acc.label : `${acc.label} (${acc.environment})`}</option>
-              ))}
-              <option value="manage">Manage Accounts...</option>
-            </select>
+              {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />}{" "}
+              {policy.systemState === "halted" ? "Start" : "Stop"}
+            </Button>
           </div>
-          <IconButton label="Refresh" onClick={() => load()} disabled={busy}>
-            <RefreshCw size={15} className={cn(busy && "animate-spin")} />
-          </IconButton>
-          <button
-            onClick={() => setFeedOpen(true)}
-            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-3 text-sm font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50"
-          >
-            <ActivityIcon size={15} /> Activity
-            {pendingCount > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => setNodeEditorOpen(true)}>
-            <Network size={15} /> Flow
-          </Button>
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => setStudioOpen(true)}>
-            <BrainCircuit size={15} /> Strategy
-          </Button>
-          <IconButton label="Settings" onClick={() => setSettingsOpen(true)}>
-            <SettingsIcon size={15} />
-          </IconButton>
-          <ThemeToggle />
-          <Button
-            variant={enableBlockedReason ? "ghost" : "primary"}
-            size="sm"
-            className="h-9"
-            title={enableBlockedReason}
-            onClick={() => {
-              if (enableBlockedReason) {
-                routeSetupBlocker(enableBlockedReason);
-                return;
-              }
-              void runStrategy();
-            }}
-            disabled={busy}
-          >
-            <Zap size={15} /> Run once
-          </Button>
-          <Button
-            variant={policy.systemState === "halted" ? "primary" : "danger"}
-            size="sm"
-            className="h-9"
-            title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
-            onClick={() => {
-              if (policy.systemState === "halted" && enableBlockedReason) {
-                routeSetupBlocker(enableBlockedReason);
-                return;
-              }
-              setKillConfirm(true);
-            }}
-          >
-            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} {policy.systemState === "halted" ? "Start" : "Stop"}
-          </Button>
         </div>
       </header>
 
@@ -3002,7 +3016,7 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
               <Field label="API Endpoint URL (Optional)">
-                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets" />
+                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets/v2" />
               </Field>
 
             </>

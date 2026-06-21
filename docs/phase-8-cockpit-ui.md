@@ -26,8 +26,7 @@ screen.
 - The desktop app shell uses `height: 100dvh` and three fixed rows: command bar,
   main cockpit, and bottom drawer.
 - As of 2026-06-19, the fixed-height cockpit shell is desktop-only (`xl+`).
-  Mobile/tablet use `min-height: 100dvh`, normal page scrolling, wrapping
-  command-bar actions, and a compact portfolio summary above the workspace.
+  Mobile/tablet use `min-height: 100dvh`, normal page scrolling, responsive shrinking command-bar buttons (grouped into selects/utility vs actions) that stack as exactly two right-aligned lines below the `md` (768px) breakpoint, and a compact portfolio summary above the workspace.
 - The main cockpit has three regions: left rail, center workspace, and right
   inspector.
 - Page-level scrolling is intentionally disabled on desktop. Long content

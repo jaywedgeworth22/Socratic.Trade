@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **Responsive header command buttons.** Restructured header buttons to shrink gracefully on narrow screens and wrap cleanly into exactly 2 lines below the `md` (768px) breakpoint.
 - 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
 - 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
 - 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
