@@ -71,8 +71,16 @@ function makeRow(overrides: Partial<LearnedContextRow>): LearnedContextRow {
   };
 }
 
-// ── PHASE 0: the safety invariant (the entire safety guarantee) ─────────────────
-describe("PHASE 0 — learned_context is advisory-only, never an input to sizing/weights", () => {
+// ── PHASE 0: the safety invariant (DATA-CHANNEL guarantee only) ─────────────────
+// SCOPE: this suite guards the DATA channel — it proves applyDeterministicSizing never READS a
+// learned_context row, so no stored row can flow through the sizing math (output is byte-identical
+// with and without rows). It does NOT and CANNOT cover the SEMANTIC channel: a 'fact' that primes the
+// LLM to emit a higher confidenceScore can still enlarge size via strategy.ts:633/640/659
+// (conviction = confidenceScore/100 → multiplier → targetNotional). That residual is KNOWN and handled
+// outside the classifier (evidence floor at strategy.ts:651-653 protects unproven theses; full fix is a
+// volumetric cap / semantic gate). The classifier mitigates it only insofar as conviction/certainty
+// phrases now route to 'risk' (see PHASE 2 regression battery). See classify.ts header + rollout note.
+describe("PHASE 0 — learned_context is advisory-only, never an input to sizing/weights (DATA channel)", () => {
   it("applyDeterministicSizing output is byte-identical with or without learned_context rows", () => {
     // Baseline sizing in a DB with NO learned_context rows for this user.
     const before = applyDeterministicSizing(buyProposal, policy, portfolio, "paper", "safety-user", positions);
@@ -137,6 +145,60 @@ describe("PHASE 2 — classifyRiskTier is fail-closed", () => {
     expect(classifyRiskTier({ kind: "fact", subject: "x", value: "be more aggressive on growth" })).toBe("risk");
     expect(classifyRiskTier({ kind: "fact", subject: "x", value: "increase exposure to energy" })).toBe("risk");
   });
+});
+
+// ── PHASE 2 (hardening): the panel's CRITICAL ESCAPE battery ─────────────────────
+// SAFETY GUARANTEE — these are real false-negatives the investment-expert panel found. Each MUST
+// classify as 'risk'. They are build-failing on purpose: if a future change reopens any hole, the
+// build breaks here. NEVER make these pass by weakening the assertion — only by improving the
+// classifier. Producers emit `fact:<SYM>`-style subjects, so the risk vocabulary lives in value/intent
+// (the full-haystack match is what catches it).
+describe("PHASE 2 (hardening) — panel CRITICAL ESCAPES must classify as 'risk'", () => {
+  const CRITICAL_ESCAPES: ReadonlyArray<readonly [string, string]> = [
+    ["drawdown-denial / always-bought timing", "the semiconductor sector never has a sustained drawdown; dips are always bought within days"],
+    ["over-conviction / sure-thing priming", "NVDA post-earnings moves are predictable; very high conviction warranted, as close to a sure thing as equities get"],
+    ["correlation collapse / one-position", "NVDA, AMD and AVGO move together so closely they are effectively one position, treat them as interchangeable"],
+    ["stop removal", "remove the stop entirely on this one"],
+    ["stop widening", "give it more room to breathe, widen the stop"],
+    ["short-locate eligibility", "NVDA is easy to locate, no locate required before shorting"],
+    ["restricted-list eligibility", "AAPL is not on the restricted list and can be traded freely"],
+    ["wash-sale lockout cleared", "TSLA wash-sale lockout has expired, safe to rebuy at a loss"],
+    ["impact-coefficient knob (bare count)", "empirically the sqrt-impact coefficient for mid-cap names is closer to 15 than the current 10"],
+    ["load-the-boat sizing", "back up the truck on tech here, load up while it is cheap"],
+    ["3x-the-clip sizing (Nx numeric)", "put on 3x the usual clip and run it as half the book"],
+    ["knob name in value (full-haystack)", "the effective max_order_notional should really be treated as much higher than configured"]
+  ];
+
+  for (const [label, text] of CRITICAL_ESCAPES) {
+    it(`escape → risk: ${label}`, () => {
+      // Producer emits the risk vocabulary in value/intent under a benign fact:<SYM> subject.
+      expect(classifyRiskTier({ kind: "pattern", subject: "fact:NVDA", value: text, intent: text })).toBe("risk");
+    });
+  }
+});
+
+// ── PHASE 2 (hardening): legitimate FACTS must stay 'fact' (anti-fatigue) ────────
+// If these regress to 'risk' the gate is over-firing (reviewer fatigue → incentive to phrase
+// abstractly → trust erosion). They guard the false-POSITIVE side of the tightening.
+describe("PHASE 2 (hardening) — legitimate company-fundamental facts stay 'fact'", () => {
+  const LEGITIMATE_FACTS: ReadonlyArray<readonly [string, string]> = [
+    ["sole-supplier structural fact", "ASML is the sole EUV-lithography supplier"],
+    ["earnings date (bare ordinal, not a size)", "NVDA reports earnings on the 20th"],
+    ["governance event", "the CEO resigned last week"],
+    ["balance-sheet fundamental", "the company has no debt and strong free cash flow"],
+    ["profit-margin fundamental (bare 'margin' must NOT fire)", "gross margin expanded last quarter"],
+    // NOTE on the spec's "market cap is $2T" illustration: we deliberately do NOT assert that stays
+    // a 'fact'. The mandated numeric fix (dollar amounts → risk) catches "$2T", and fail-closed makes
+    // over-gating one market-cap line safe. Bare "cap"/"market cap" itself does NOT fire (no such
+    // subject), but the $-numeric does — an accepted, documented residual, not a hole.
+    ["market-cap WORDS alone (no $) stay fact — bare 'cap' must NOT fire", "the company is now a large-cap with a huge market cap"]
+  ];
+
+  for (const [label, text] of LEGITIMATE_FACTS) {
+    it(`fact stays fact: ${label}`, () => {
+      expect(classifyRiskTier({ kind: "decision", subject: "fact:NVDA", value: text })).toBe("fact");
+    });
+  }
 });
 
 // ── PHASE 3: the store (fact written, risk dropped, chat hard-capped) ───────────
