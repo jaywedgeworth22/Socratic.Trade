@@ -24,6 +24,23 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Deferred-task sweep — P0 safety re-application + IC backtest +
+  buying-power gate.** Worked the financial-expert-panel backlog in the ISOLATED
+  `~/apps/trading-claude` worktree (the prior P0 work was wiped twice from the co-edited main
+  integration worktree by concurrent PR merges; moved here per the multi-agent rule and committed
+  each chunk). Landed: (1) `bddaa35` the full P0 safety slice — size-less-exit reject + full-position
+  resolve, fail-closed Red Team (`available` flag + 45s timeout → human review), atomic
+  crash-recoverable order placement (`placing` intent row + `ref_id` persistence + run-start stale
+  sweep) on both autonomous + approval paths, account-level drawdown/daily-loss kill-switch
+  (`src/lib/risk-breaker.ts`), real `/api/health` probe + scheduler heartbeat, SSE per-tenant
+  filter (+12 tests); (2) `4ea77a8` an IC backtest harness (`src/lib/backtest.ts` — Spearman factor
+  ICs over `signal_snapshot` audits → advisory IC-derived weights, dev-gated
+  `GET /api/admin/backtest-ic`, +10 tests); (3) `71698a5` a buying-power affordability gate (+4
+  tests). tsc clean, **441 tests**. Restored the wiped panel review doc
+  (`docs/reviews/2026-06-21-financial-expert-panel.md`). **Hand off:** merge `agent/claude` → `main`
+  deliberately. Remaining (staged in the rollout note): cost model, PDT gate, clientOrderId
+  broker-truth sweep, native brackets, factor orthogonalization, real macro feed, P3 polish. See
+  `docs/rollouts/2026-06-21-deferred-tasks-p0-backtest.md`.
 - 2026-06-21: **Logo source toggle + logo.dev integration.** Added logo.dev as a cascade fallback behind GitHub in the `/api/logos/ticker` proxy. Client detects dark/light mode via MutationObserver and passes `&theme=`. Added `LOGO_DEV_TOKEN` env var support. Added a "Logo source" Segmented control in Settings → Display so the user can compare GitHub vs logo.dev logos live. Preference stored in localStorage, propagated to all TickerLogo instances via custom event. API route accepts `?source=auto|github|logodev` and reorders the cascade. LOGO_DEV_TOKEN added to `.env.local` and documented in `.env.example`. Rollout note: `docs/rollouts/2026-06-21-logo-dev-toggle.md`.
 - 2026-06-21: **Accounts connection modal and list formatting simplification.** Simplified Alpaca connection buttons to a single "Connect Alpaca Account" and derived Paper vs Brokerage environment dynamically based on `PA` account number prefix. Enforced required account numbers for Alpaca. Reformatted connected accounts listing with custom titles, green `CONNECTED` and red `AUTONOMOUS` status indicators, and localized test account formatting.
 - 2026-06-21: **Alpaca MCP connection & multi-account connection buttons.** Added Alpaca MCP paper/live support, implemented standard JSON-RPC SSE tool call routing with REST client fallback, fixed order type mapping build issues, and ensured all connection buttons remain visible in the dashboard UI for multi-account linking. Verified: tsc clean, 401 tests green, build OK. Rollout note: `docs/rollouts/2026-06-21-alpaca-mcp-integration.md`.
