@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AlpacaSnapshotEnrichmentProvider,
+  alpacaDataFeed,
   analystScoreFromCounts,
   analystScoreFromMean,
   getEnrichmentProvider,
@@ -549,7 +550,7 @@ describe("parseAlpacaSnapshot", () => {
     const snap = {
       latestTrade: { p: 205.75 },
       latestQuote: { bp: 205.50, ap: 205.80 },
-      dailyBar: { o: 203.00, h: 206.50, l: 202.00, c: 205.60, v: 1_250_000 },
+      dailyBar: { o: 203.00, h: 206.50, l: 202.00, c: 205.60, v: 1_250_000, vw: 204.42 },
       prevDailyBar: { c: 200.00 }
     };
     const result = parseAlpacaSnapshot(snap);
@@ -557,8 +558,40 @@ describe("parseAlpacaSnapshot", () => {
     expect(result.bid).toBe(205.50);
     expect(result.ask).toBe(205.80);
     expect(result.volume).toBe(1_250_000);
+    expect(result.vwap).toBe(204.42);          // dailyBar.vw mapped to vwap
     // (205.60 - 200.00) / 200.00 * 100 = 2.80%
     expect(result.intradayChangePct).toBeCloseTo(2.80, 2);
+  });
+
+  it("maps dailyBar.vw to vwap only when it is a positive number", () => {
+    const result = parseAlpacaSnapshot({
+      latestTrade: { p: 12.34 },
+      dailyBar: { c: 12.34, v: 100_000, vw: 12.31 }
+    });
+    expect(result.vwap).toBe(12.31);
+  });
+
+  it("omits vwap when dailyBar.vw is missing or zero", () => {
+    // vw absent entirely
+    const noVw = parseAlpacaSnapshot({
+      latestTrade: { p: 50.00 },
+      dailyBar: { c: 50.00, v: 10_000 }
+    });
+    expect(noVw).not.toHaveProperty("vwap");
+
+    // vw present but zero — never fabricate
+    const zeroVw = parseAlpacaSnapshot({
+      latestTrade: { p: 50.00 },
+      dailyBar: { c: 50.00, v: 10_000, vw: 0 }
+    });
+    expect(zeroVw).not.toHaveProperty("vwap");
+
+    // vw negative — never fabricate
+    const negVw = parseAlpacaSnapshot({
+      latestTrade: { p: 50.00 },
+      dailyBar: { c: 50.00, v: 10_000, vw: -1 }
+    });
+    expect(negVw).not.toHaveProperty("vwap");
   });
 
   it("falls back to dailyBar.c for price when latestTrade is absent", () => {
@@ -606,13 +639,86 @@ describe("parseAlpacaSnapshot", () => {
   });
 });
 
+describe("alpacaDataFeed", () => {
+  const original = process.env.ALPACA_DATA_FEED;
+  afterEach(() => {
+    if (original === undefined) delete process.env.ALPACA_DATA_FEED;
+    else process.env.ALPACA_DATA_FEED = original;
+  });
+
+  it("defaults to iex when unset", () => {
+    delete process.env.ALPACA_DATA_FEED;
+    expect(alpacaDataFeed()).toBe("iex");
+  });
+
+  it("honors the allowed feeds (iex|sip|otc), case-insensitively", () => {
+    process.env.ALPACA_DATA_FEED = "sip";
+    expect(alpacaDataFeed()).toBe("sip");
+    process.env.ALPACA_DATA_FEED = "OTC";
+    expect(alpacaDataFeed()).toBe("otc");
+    process.env.ALPACA_DATA_FEED = "  IEX  ";
+    expect(alpacaDataFeed()).toBe("iex");
+  });
+
+  it("falls back to iex for any disallowed value", () => {
+    process.env.ALPACA_DATA_FEED = "delayed_sip";
+    expect(alpacaDataFeed()).toBe("iex");
+    process.env.ALPACA_DATA_FEED = "";
+    expect(alpacaDataFeed()).toBe("iex");
+  });
+});
+
 describe("AlpacaSnapshotEnrichmentProvider", () => {
+  const originalFeed = process.env.ALPACA_DATA_FEED;
   beforeEach(async () => {
     const { clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (originalFeed === undefined) delete process.env.ALPACA_DATA_FEED;
+    else process.env.ALPACA_DATA_FEED = originalFeed;
+  });
+
+  it("honors ALPACA_DATA_FEED in the request URL and maps vwap from dailyBar.vw", async () => {
+    process.env.ALPACA_DATA_FEED = "sip";
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          AAPL: {
+            latestTrade: { p: 195.50 },
+            latestQuote: { bp: 195.40, ap: 195.60 },
+            dailyBar: { c: 195.30, v: 2_000_000, vw: 195.12 },
+            prevDailyBar: { c: 192.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("key-id", "key-secret", "env");
+    const result = await provider.enrich(["AAPL"]);
+
+    expect(capturedUrl).toContain("feed=sip");
+    expect(capturedUrl).not.toContain("feed=iex");
+    expect(result.AAPL?.vwap).toBe(195.12);
+  });
+
+  it("uses feed=iex in the request URL when ALPACA_DATA_FEED is unset", async () => {
+    delete process.env.ALPACA_DATA_FEED;
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          AAPL: { latestTrade: { p: 1 }, dailyBar: { c: 1, v: 1 }, prevDailyBar: { c: 1 } }
+        })
+      );
+    });
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s", "env");
+    await provider.enrich(["AAPL"]);
+    expect(capturedUrl).toContain("feed=iex");
   });
 
   it("fetches the snapshots endpoint with correct headers and maps fields", async () => {

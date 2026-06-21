@@ -1423,14 +1423,17 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
 ];
 
-// Default-visible columns — chosen by a 2-expert review (2026-06-21) for fast at-a-glance triage:
-// identity → price → momentum (Chg) → liquidity ($Vol) → sector relative strength → reward:risk →
-// external rating → Score (far-right "verdict"). Everything else is one click away via "Configure
-// columns". This explicit list is the source of truth; the per-column `defaultHidden` flags are
-// legacy and no longer consulted for the default set.
-const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "dollarVolM", "sectorRelStrength", "rr52w", "analystScore", "score"];
-// v2: bumped so the slimmer default replaces a saved column set from the old (dense) layout.
-const SCAN_COLS_KEY = "scan-visible-cols-v2";
+// Default-visible columns — chosen by a 4-expert trading-desk panel (2026-06-21) now that Alpaca
+// supplies REAL bid/ask/spread/VWAP. Reading left-to-right, the row answers one question — "is this
+// name moving, leading, in a tradeable spot, and can I get filled cheaply right now?": identity →
+// price → momentum (Chg) → intraday VWAP benchmark → sector relative strength → distance from the
+// 52-week high (entry timing) → dollar-volume liquidity → execution block (Spread flanked by the real
+// Bid/Ask) → Score (far-right "verdict", default sort). Everything else is one click away via
+// "Configure columns". This explicit list is the source of truth; the per-column `defaultHidden`
+// flags are legacy and no longer consulted for the default set.
+const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "vsVwap", "sectorRelStrength", "pctFromHigh", "dollarVolM", "spreadBps", "bid", "ask", "score"];
+// v3: bumped so the execution-aware default (real bid/ask/spread/VWAP) replaces a saved v2 column set.
+const SCAN_COLS_KEY = "scan-visible-cols-v3";
 
 function MarketScanView({
   snapshot,

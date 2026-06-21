@@ -439,6 +439,7 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     bid: extra.bid && extra.bid > 0 ? extra.bid : quote.bid,
     ask: extra.ask && extra.ask > 0 ? extra.ask : quote.ask,
     intradayChangePct: typeof extra.intradayChangePct === "number" ? extra.intradayChangePct : quote.intradayChangePct,
+    vwap: extra.vwap && extra.vwap > 0 ? extra.vwap : quote.vwap,
     asOf: extra.asOf ?? quote.asOf,
     companyName: extra.companyName ?? quote.companyName,
     sentiment: extra.sentiment ?? quote.sentiment,

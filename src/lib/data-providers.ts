@@ -84,6 +84,7 @@ export interface SymbolEnrichment {
   bid?: number;
   ask?: number;
   intradayChangePct?: number;
+  vwap?: number;        // session volume-weighted average price (Alpaca dailyBar.vw)
   asOf?: string;
   sentiment?: number;    // 0–100 news tone (50 = neutral). News-derived only.
   peRatio?: number;
@@ -117,6 +118,7 @@ export type EnrichmentSourcedField =
   | "bid"
   | "ask"
   | "intradayChangePct"
+  | "vwap"
   | "asOf"
   | "sentiment"
   | "peRatio"
@@ -359,6 +361,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("bid", name, r.bid);
         takeScalar("ask", name, r.ask);
         takeScalar("intradayChangePct", name, r.intradayChangePct);
+        takeScalar("vwap", name, r.vwap);
         takeScalar("asOf", name, r.asOf);
         takeScalar("sentiment", name, r.sentiment);
         takeScalar("peRatio", name, r.peRatio);
@@ -416,6 +419,7 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   bid: true,
   ask: true,
   intradayChangePct: true,
+  vwap: true,
   asOf: true,
   sentiment: true,
   peRatio: true,
@@ -728,16 +732,29 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
-// ── Alpaca snapshot provider (real bid/ask, price, volume, intraday change) ──
-// Uses Alpaca's batch /v2/stocks/snapshots endpoint (IEX feed, free tier).
+// ── Alpaca snapshot provider (real bid/ask, price, volume, vwap, intraday change) ──
+// Uses Alpaca's batch /v2/stocks/snapshots endpoint. The data feed defaults to
+// IEX (free tier) and is configurable via ALPACA_DATA_FEED (iex|sip|otc).
 // One request covers all scan symbols (chunked at 100 per call).
 // Maps: price = latestTrade.p ?? dailyBar.c, bid = latestQuote.bp,
-//       ask = latestQuote.ap, volume = dailyBar.v,
+//       ask = latestQuote.ap, volume = dailyBar.v, vwap = dailyBar.vw,
 //       intradayChangePct = (dailyBar.c − prevDailyBar.c) / prevDailyBar.c * 100.
 // Only sets a field when the source value is present and > 0 — never fabricates.
 // This is the fix for fabricated ±0.1% bid/ask spreads in the Market Scan panel.
 
 const ALPACA_SNAPSHOT_CHUNK = 100; // Alpaca batch limit per request
+
+// Data feed for the snapshot endpoint. The free plan only has IEX; SIP returns
+// HTTP 403 ("subscription does not permit querying recent SIP data") unless the
+// account has a paid SIP subscription. Configurable via ALPACA_DATA_FEED; any
+// value outside the allowed set falls back to "iex".
+const ALPACA_ALLOWED_FEEDS = ["iex", "sip", "otc"] as const;
+export function alpacaDataFeed(): (typeof ALPACA_ALLOWED_FEEDS)[number] {
+  const raw = String(process.env.ALPACA_DATA_FEED ?? "").trim().toLowerCase();
+  return (ALPACA_ALLOWED_FEEDS as readonly string[]).includes(raw)
+    ? (raw as (typeof ALPACA_ALLOWED_FEEDS)[number])
+    : "iex";
+}
 
 export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpaca-snapshot";
@@ -774,7 +791,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
     for (let i = 0; i < misses.length; i += ALPACA_SNAPSHOT_CHUNK) {
       const chunk = misses.slice(i, i + ALPACA_SNAPSHOT_CHUNK);
       try {
-        const url = `${this.base}?symbols=${encodeURIComponent(chunk.join(","))}&feed=iex`;
+        const url = `${this.base}?symbols=${encodeURIComponent(chunk.join(","))}&feed=${alpacaDataFeed()}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
         let snapshots: Record<string, AlpacaSnapshot>;
@@ -814,7 +831,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
 interface AlpacaSnapshot {
   latestTrade?: { p?: number };
   latestQuote?: { bp?: number; ap?: number };
-  dailyBar?: { o?: number; h?: number; l?: number; c?: number; v?: number };
+  dailyBar?: { o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number };
   prevDailyBar?: { c?: number };
 }
 
@@ -830,6 +847,10 @@ export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): Sy
 
   const volume = typeof snap.dailyBar?.v === "number" && snap.dailyBar.v > 0 ? snap.dailyBar.v : undefined;
 
+  // Session VWAP comes free on every snapshot via dailyBar.vw. Only map it when
+  // it is a real positive number — never fabricate.
+  const vwap = typeof snap.dailyBar?.vw === "number" && snap.dailyBar.vw > 0 ? snap.dailyBar.vw : undefined;
+
   let intradayChangePct: number | undefined;
   const prevClose = typeof snap.prevDailyBar?.c === "number" && snap.prevDailyBar.c > 0 ? snap.prevDailyBar.c : undefined;
   if (barClose !== undefined && prevClose !== undefined && prevClose > 0) {
@@ -841,6 +862,7 @@ export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): Sy
     ...(bid !== undefined && { bid }),
     ...(ask !== undefined && { ask }),
     ...(volume !== undefined && { volume }),
+    ...(vwap !== undefined && { vwap }),
     ...(intradayChangePct !== undefined && { intradayChangePct })
   };
 }

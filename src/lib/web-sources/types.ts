@@ -38,6 +38,8 @@ export interface CongressSignal {
   sellMembers: string[]; // distinct members who sold
   windowDays: number;
   lastTradedAt?: string;
+  /** ISO date the most recent disclosure was filed (the date the market could act on it). */
+  lastDisclosedAt?: string;
   /** One-line bulletin for the agent prompt (raw rows are kept OUT of the prompt). */
   bulletin: string;
 }

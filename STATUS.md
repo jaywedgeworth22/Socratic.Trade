@@ -24,6 +24,15 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Scan default columns (expert panel) + Alpaca VWAP/feed.**
+  A 4-persona financial-expert panel chose a new 11-column execution-aware default for the Market
+  Scan — `symbol·price·Chg·vsVWAP·SecRS·%offHi·$Vol·Spread·Bid·Ask·Score` (bid/ask now default-on
+  per owner mandate; `SCAN_COLS_KEY`→v3). Alpaca snapshot provider now also maps real **VWAP**
+  (lights the existing "vs VWAP" column) and the data feed is env-configurable (`ALPACA_DATA_FEED`,
+  default `iex`; SIP is 403 on the free plan). Also fixed 5 tsc errors another lane left in
+  `test/deterministic-bear.test.ts`. tsc clean · **580 tests** · live VWAP verified · see
+  `docs/rollouts/2026-06-21-scan-default-columns-alpaca-vwap.md`.
+- 2026-06-21 (`agent/claude`): **P1 edge quality — congress disclosedAt windowing + scorecard noise floor + deterministic Bear veto.** Three financial-expert-panel P1 items: (1) `aggregateCongressSignals` now windows on `disclosedAt` (not `tradedAt`) so only market-visible disclosures count; (2) LLM scorecard filters raised ≥2→≥5 trades; (3) `deterministicBearFilter` (sync, no LLM) runs before Bear: hard-vetos phantom exits + below-median buys in crisis regime, flags momentum overextension. tsc clean, 573 tests (+16). Commit: `61b560e`. See `docs/rollouts/2026-06-21-p1-edge-quality.md`.
 - 2026-06-21 (`agent/claude-ui`, PR pending): **UI/UX deferred-fix pass.** Cleared a batch from
   the issue register: Strategy-Flow rework (REL-6), safe-area insets (IPH-9/IOS-1), dark-mode
   danger contrast (A11Y-7), scoped chart gradient (MISC-1), deleted dead `app/ui/dashboard/*`
