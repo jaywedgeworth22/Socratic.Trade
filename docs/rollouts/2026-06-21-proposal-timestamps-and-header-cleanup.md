@@ -158,8 +158,11 @@ A parallel code-review + integration audit surfaced several issues, fixed here:
   proposals are re-validated per run.
 - `expired`/`withdrawn` are distinct statuses (vs `rejected`) so a future
   Activity/Runs filter could surface them separately.
-- **Out of scope (noted for a separate change):** the scout agent flagged a
-  possible CLAUDE.md violation in `src/lib/data-providers.ts` (`getFallbackMetrics`
-  / `MOCK_METRICS` may fabricate user-facing numbers on a total provider miss) and
-  an unused `fallbackProvider` export. Left untouched here to keep this PR focused;
-  worth a dedicated investigation.
+- **Investigated, no action needed:** a scout agent suspected `getFallbackMetrics`
+  / `MOCK_METRICS` in `src/lib/data-providers.ts` might fabricate user-facing
+  numbers (a CLAUDE.md "never fabricate" violation). Confirmed it is **test-only**:
+  `mockEnrichmentProvider` and its `noopProvider`/`fallbackProvider` aliases are
+  referenced only inside `data-providers.ts` and `test/`, and are NOT part of the
+  live `CascadingEnrichmentProvider`, so no fabricated value reaches the dashboard.
+  Minor cleanup left for a separate PR: `fallbackProvider` is an unused export
+  (tests use `noopProvider`).
