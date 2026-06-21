@@ -9,7 +9,7 @@
 
 import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
-import { retrieveContext } from "../vector-db";
+import { retrieveContextDetailed } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
@@ -105,8 +105,9 @@ export function buildProductionDeps(): ToolDeps {
     async searchKnowledge(args, userId) {
       const symbol = args.ticker ? canonicalTicker(args.ticker) : "";
       if (!symbol) return [];
-      const texts = await retrieveContext(args.query, symbol, args.k ?? 5, userId, args.as_of ? { asOf: args.as_of } : undefined);
-      return texts.map((text, i) => ({ chunk_id: `${symbol}#${i + 1}`, text, source: "kb", as_of: args.as_of }));
+      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, args.as_of ? { asOf: args.as_of } : undefined);
+      // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).
+      return chunks.map((c) => ({ chunk_id: c.id, text: c.text, source: c.source ?? "kb", as_of: c.as_of, score: c.score, url: c.url }));
     },
     createAlert(userId, input) {
       const result = alertsCreateAlert(userId, input);

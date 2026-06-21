@@ -24,6 +24,28 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Multi-agent coordination — verified + gap-filled; landing via PR.** The
+  landing protocol that stops the `main` push-races + Q0 worktree collision was already implemented on
+  `main` (pre-push hook, `scripts/land.sh`, `core.hooksPath` wiring, AGENTS.md protocol). A 4-agent design
+  workflow independently reproduced + validated it and surfaced the honest limits. Added a `land.sh`
+  self-heal preflight (auto-sets `core.hooksPath` so a non-bootstrapped worktree still gets the main-push
+  guard — closes red-team gap #3), **resolved Q0** (option a), and documented the review +
+  residual-limits in `docs/reviews/2026-06-21-multi-agent-coordination-review.md`. Limits that need Jay:
+  no server branch protection (private repo → consider GitHub Pro/Team + merge queue); `--no-verify`
+  bypass; hooks guard pushes not file-writes; CI inert until `gh auth refresh -s workflow`. **This change
+  is landing via `scripts/land.sh` (PR), not a direct push** — dog-fooding the protocol. See
+  `docs/rollouts/2026-06-21-coordination-verify-and-gapfill.md`.
+- 2026-06-21 (`agent/claude`): **Chat NOW tranche shipped + I4 (real citations).** Executed the approved
+  NOW tranche on `main` (`7d766de`→`7a675e8`): I1 stop quote fabrication, I2 server-side disclaimer guard
+  + `PROMPT_VERSION 0.4.0`, I3 multi-turn transcript replay, I6 read-only state tools
+  (positions/portfolio/watchlist/alerts/proposals — one-way, no execution), I13 router-matched
+  suggested-prompt chips (8-K framing). Then on `agent/claude`: **I4** — `retrieveContextDetailed`
+  returns REAL provenance (vector id, score, the chunk's own acceptance date, filing url) so citations
+  stop fabricating `<SYMBOL>#i` / the query's as_of; the UI renders citation chips as filing links.
+  Verified: tsc clean, **412 tests**. Running questions log: `docs/open-questions-for-jay.md` (Q0 =
+  worktree collision — a concurrent agent is mid-edit on `main`'s `strategy.ts`/`db.ts`/etc., so this
+  lane moved to the isolated `~/apps/trading-claude` worktree and lands via PR). See
+  `docs/rollouts/2026-06-21-chat-now-tranche-and-i4.md`.
 - 2026-06-21 (`agent/claude`): **Best-of-each branch reconciliation landed on `main`.** A 7-agent
   comparison (`docs/reviews/2026-06-21-branch-reconciliation-best-of-each.md`) resolved the parallel
   agent lanes; the recommended picks were cherry-picked + verified: **tuner missed-opportunity

@@ -40,6 +40,13 @@ for i in "${!NAMES[@]}"; do
     cp "$REPO/.env.local" "$dir/.env.local"
   fi
 
+  # Install git hooks in the agent worktree (idempotent).
+  # core.hooksPath is per-clone/worktree, so it must be set in each one.
+  # The hook path is relative to the worktree root so it works wherever the
+  # worktree is checked out.
+  git -C "$dir" config core.hooksPath scripts/githooks
+  echo "[setup] $app → git hooks installed (scripts/githooks)"
+
   if pm2 describe "$app" >/dev/null 2>&1; then
     pm2 restart "$app" >/dev/null
   else
@@ -47,6 +54,12 @@ for i in "${!NAMES[@]}"; do
   fi
   echo "[setup] $app → http://localhost:$port   ($dir on $branch)"
 done
+
+# Also install hooks in the main integration worktree (REPO itself).
+# The pre-push hook will still block agent-style pushes to main from here,
+# but allows the human integrator to override via HOOKS_ALLOW_MAIN_PUSH=1.
+git -C "$REPO" config core.hooksPath scripts/githooks
+echo "[setup] integration worktree → git hooks installed (scripts/githooks)"
 
 pm2 save >/dev/null
 echo "[setup] done. Production stays on :4000 (pm2 'trading'). Integration worktree: $REPO (main)."
