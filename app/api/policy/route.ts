@@ -1,6 +1,6 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
-import { isIndexUniverse } from "@/lib/index-universes";
+import { isIndexUniverse, isValidAppSymbol } from "@/lib/index-universes";
 import { normalizeSymbol } from "@/lib/money";
 import { getBrokerGateway } from "@/lib/broker";
 import { resolveRequestUserId } from "@/lib/request-user";
@@ -70,6 +70,12 @@ export async function PUT(request: Request) {
 }
 
 async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
+  for (const symbol of policy.additionalSymbols || []) {
+    if (!isValidAppSymbol(symbol)) return `Symbol ${symbol} in additional watchlist is not supported by the app.`;
+  }
+  for (const symbol of policy.blocklist || []) {
+    if (!isValidAppSymbol(symbol)) return `Symbol ${symbol} in ignore list is not supported by the app.`;
+  }
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";

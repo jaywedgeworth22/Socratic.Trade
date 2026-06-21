@@ -52,7 +52,7 @@ import {
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
-import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse } from "@/lib/index-universes";
+import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse, isValidAppSymbol } from "@/lib/index-universes";
 import { DEFAULT_TICKER_LOGO_DISPLAY, isTickerLogoDisplay } from "@/lib/ticker-logos";
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import type {
@@ -64,7 +64,8 @@ import type {
   ScoringWeights,
   StrategyTuningProposal,
   TradingPolicy,
-  TradeProposal
+  TradeProposal,
+  ConnectedAccount
 } from "@/lib/types";
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
@@ -190,6 +191,98 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
+// ── Shared market-data pool consent gate ─────────────────────────────────
+
+type ConsentGateState = "loading" | "needed" | "done";
+
+function ConsentGate({ onResolved }: { onResolved: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+
+  async function respond(accepted: boolean) {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await fetch("/api/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accepted })
+      });
+    } catch {
+      /* best-effort — proceed regardless of network error */
+    }
+    onResolved();
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consent-title"
+      aria-describedby="consent-body"
+      className="fixed inset-0 z-[2000] flex items-center justify-center p-4"
+    >
+      {/* Opaque backdrop — blocks all interaction beneath */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[3px]" />
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <Network size={18} />
+          </span>
+          <div>
+            <h2 id="consent-title" className="text-base font-semibold text-fg">
+              Shared market-data pool
+            </h2>
+            <p className="mt-0.5 text-xs text-muted">One-time choice — can be changed later in Settings</p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div id="consent-body" className="space-y-3 text-sm leading-relaxed text-muted">
+          <p>
+            When enabled, general market data you pull through your own API keys or broker MCP —
+            quotes, fundamentals, price history, and news — is contributed to a shared cache
+            that other consenting users can read. In return, you read data others have contributed,
+            reducing API spend and enriching everyone&apos;s market view.
+          </p>
+          <p>
+            <strong className="font-semibold text-fg">Your personal account data is never shared.</strong>{" "}
+            Positions, orders, balances, P&amp;L, and credentials remain strictly private and never
+            leave your device.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void respond(false)}
+            className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            Decline
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void respond(true)}
+            className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50"
+          >
+            {submitting ? "Saving…" : "Agree & Continue"}
+          </button>
+        </div>
+
+        {/* Muted reassurance */}
+        <p className="text-[11px] text-faint text-center">
+          You can enable or disable pooling at any time under Settings → Data.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
@@ -201,6 +294,23 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Consent gate: "loading" → fetch in progress; "needed" → show modal; "done" → clear
+  const [consentGate, setConsentGate] = useState<ConsentGateState>("loading");
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/consent")
+      .then((r) => (r.ok ? (r.json() as Promise<{ needsConsent: boolean }>) : null))
+      .then((data) => {
+        if (cancelled) return;
+        setConsentGate(data?.needsConsent === true ? "needed" : "done");
+      })
+      .catch(() => {
+        // Network error: don't block the app — skip the gate
+        if (!cancelled) setConsentGate("done");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const [killConfirm, setKillConfirm] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
@@ -468,7 +578,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const pendingCount = snapshot.pendingProposals.length;
   const setupBlocked = Boolean(enableBlockedReason);
   const autonomyStatus = policy.systemState === "halted"
-    ? { tone: "down" as const, label: "Halted" }
+    ? { tone: "down" as const, label: "Inactive" }
     : policy.systemState === "active" && setupBlocked
       ? { tone: "warn" as const, label: "Setup Needed" }
     : policy.systemState === "active"
@@ -498,6 +608,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const safetyBanner = executionBanner(executionState);
   return (
     <div className="flex min-h-dvh flex-col overflow-x-hidden lg:h-dvh lg:overflow-hidden">
+      {/* ── Shared market-data pool consent gate (blocking until answered) ── */}
+      {consentGate === "needed" && (
+        <ConsentGate onResolved={() => setConsentGate("done")} />
+      )}
       {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
         className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
@@ -506,34 +620,38 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         {safetyBanner.text}
       </div>
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md xl:min-h-16 xl:flex-nowrap xl:px-4">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
-            <Zap size={17} className="fill-current" />
-          </span>
-          <div className="leading-tight">
-            <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
-            <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
-                {autonomyStatus.label}
-              </div>
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={marketStatus.tone} />
-                {marketStatus.label}
+      <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:py-0 xl:px-4">
+        {/* Left Side: Logo, Title, Status, and Pills */}
+        <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-3 w-full xl:w-auto xl:justify-start xl:gap-4">
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Zap size={17} className="fill-current" />
+            </span>
+            <div className="leading-tight">
+              <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
+              <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
+                  {autonomyStatus.label}
+                </div>
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  <Dot tone={marketStatus.tone} />
+                  {marketStatus.label}
+                </div>
               </div>
             </div>
           </div>
+
+          <div className="flex items-center gap-2">
+            <StatusPill label="Universe" value={universeLabelText} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
+            <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
+          </div>
         </div>
 
-        <div className="ml-2 hidden items-center gap-2 lg:flex">
-          <StatusPill label="Universe" value={universeLabelText} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
-          <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
-        </div>
-
-        <div className="ml-0 flex min-w-0 flex-1 flex-col items-end gap-1.5 sm:ml-auto md:flex-row md:items-center md:justify-end md:gap-2">
+        {/* Right Side: Selects, Utilities, Actions */}
+        <div className="flex flex-col gap-2.5 w-full lg:flex-row lg:items-center lg:justify-end xl:w-auto xl:flex-nowrap xl:gap-3">
           {/* Sub-container 1: Selects and Utility tools */}
-          <div className="flex flex-wrap items-center justify-end gap-1.5 md:gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
               className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
@@ -541,7 +659,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
               <select
                 aria-label="Approval mode"
-                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs"
+                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
                 value={policy.strategyAuthority}
                 onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
               >
@@ -552,7 +670,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
-                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none lg:h-9 lg:px-2.5 lg:text-sm"
+                className="h-8 max-sm:h-11 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
                 value={policy.connectedAccountId ?? ""}
                 onChange={(e) => {
                   const id = e.target.value;
@@ -583,12 +701,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
 
           {/* Sub-container 2: Action buttons */}
-          <div className="flex flex-wrap items-center justify-end gap-1.5 md:gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <button
               onClick={() => setFeedOpen(true)}
               className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
             >
-              <ActivityIcon size={15} /> Activity
+              <ActivityIcon size={15} /> <span className="hidden sm:inline">Activity</span>
               {pendingCount > 0 && (
                 <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
                   {pendingCount}
@@ -600,14 +718,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
               onClick={() => setNodeEditorOpen(true)}
             >
-              <Network size={15} /> Flow
+              <Network size={15} /> <span className="hidden sm:inline">Flow</span>
             </Button>
             <Button
               variant="ghost"
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
               onClick={() => setStudioOpen(true)}
             >
-              <BrainCircuit size={15} /> Strategy
+              <BrainCircuit size={15} /> <span className="hidden sm:inline">Strategy</span>
             </Button>
             <Button
               variant={enableBlockedReason ? "ghost" : "primary"}
@@ -622,7 +740,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               }}
               disabled={busy}
             >
-              <Zap size={15} /> Run once
+              <Zap size={15} /> <span className="hidden sm:inline">Run once</span>
             </Button>
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
@@ -637,7 +755,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               }}
             >
               {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />}{" "}
-              {policy.systemState === "halted" ? "Start" : "Stop"}
+              <span className="hidden sm:inline">{policy.systemState === "halted" ? "Start" : "Stop"}</span>
             </Button>
           </div>
         </div>
@@ -781,7 +899,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Universe, risk, keys, tax & notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, Tax, & Notifications" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -869,7 +987,7 @@ function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: Dashb
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
-          <p className="text-xs text-faint">{modeLabel} account</p>
+          <p className="text-xs text-faint">{getPortfolioAccountSubtitle(snapshot)}</p>
         </div>
         <Chip tone={mode === "paper" ? "info" : modeLabel === "Paper" ? "up" : "down"}>{modeLabel}</Chip>
       </div>
@@ -925,7 +1043,7 @@ function PortfolioRail({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={`${modeLabel} account`} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={getPortfolioAccountSubtitle(snapshot)} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
@@ -1082,24 +1200,40 @@ function DecisionView({
         <Card className="overflow-hidden">
           <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
-            {pending.map((p) => (
-              <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                <div className="flex items-center gap-2">
-                  <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
-                  <SymbolButton symbol={p.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
-                  <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
+            {pending.map((p) => {
+              const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              return (
+                <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
+                  {accountLabel && (
+                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
+                      {accountLabel}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
+                    <SymbolButton
+                      symbol={p.proposal.symbol}
+                      scan={scan}
+                      onDrilldown={onDrilldown}
+                      className="text-base font-semibold text-fg"
+                      title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}
+                      logoDisplay={tickerLogoDisplay}
+                      showLogo
+                    />
+                    <span className="ml-auto tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-fg/85" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                  <div className="mt-3 flex gap-2">
+                    <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
+                      <Check size={14} /> Approve
+                    </Button>
+                    <Button variant="ghost" size="sm" className="flex-1" disabled={busy} onClick={() => reject(p.id)}>
+                      <XCircle size={14} /> Reject
+                    </Button>
+                  </div>
                 </div>
-                <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
-                <div className="mt-3 flex gap-2">
-                  <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
-                    <Check size={14} /> Approve
-                  </Button>
-                  <Button variant="ghost" size="sm" className="flex-1" disabled={busy} onClick={() => reject(p.id)}>
-                    <XCircle size={14} /> Reject
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}
@@ -1122,19 +1256,39 @@ function DecisionView({
                   : "border-down/30 bg-down/10 text-down")}>
               {decision.summary}
             </div>
-            {decision.proposals.map((item, i) => (
-              <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
-                  <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
-                  <SymbolButton symbol={item.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
-                  <span className="tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
-                  {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
+            {decision.proposals.map((item, i) => {
+              const accountLabel = getProposalAccountLabel(decision.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              return (
+                <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
+                  {accountLabel && (
+                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
+                      {accountLabel}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {item.status === "paper" ? (
+                      <span className="text-xs font-bold text-muted uppercase tracking-wider">TEST</span>
+                    ) : (
+                      <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
+                    )}
+                    <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
+                    <SymbolButton
+                      symbol={item.proposal.symbol}
+                      scan={scan}
+                      onDrilldown={onDrilldown}
+                      className="font-semibold text-fg"
+                      title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)}
+                      logoDisplay={tickerLogoDisplay}
+                      showLogo
+                    />
+                    <span className="tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
+                    {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
+                  </div>
+                  <p className="mt-2 text-[13px] leading-snug text-fg/85">{item.proposal.rationale}</p>
+                  {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
                 </div>
-                <p className="mt-2 text-[13px] leading-snug text-muted">{item.proposal.rationale}</p>
-                {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
-              </div>
-            ))}
+              );
+            })}
             <p className="text-[11px] text-faint">Automated, for this single owner account — not investment advice. Past performance is not indicative of future results.</p>
           </div>
         )}
@@ -2303,14 +2457,30 @@ function SettingsContent({
 
   function addAllowlist() {
     if (draft.trim() === "") return;
-    const next = normalizeSymbols([...policy.additionalSymbols, ...draft.split(/[,\s]+/)]);
+    const inputs = draft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    const invalid = inputs.filter(s => !isValidAppSymbol(s));
+    if (invalid.length > 0) {
+      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      });
+      return;
+    }
+    const next = normalizeSymbols([...policy.additionalSymbols, ...inputs]);
     setDraft("");
     updatePolicy({ additionalSymbols: next });
   }
 
   function addBlocklist() {
     if (blockDraft.trim() === "") return;
-    const next = normalizeSymbols([...(policy.blocklist || []), ...blockDraft.split(/[,\s]+/)]);
+    const inputs = blockDraft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    const invalid = inputs.filter(s => !isValidAppSymbol(s));
+    if (invalid.length > 0) {
+      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      });
+      return;
+    }
+    const next = normalizeSymbols([...(policy.blocklist || []), ...inputs]);
     setBlockDraft("");
     updatePolicy({ blocklist: next });
   }
@@ -2486,13 +2656,13 @@ function SettingsContent({
 
         {section === "display" && (
           <div className="space-y-3">
-            <Field label="Ticker logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
+            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}
                 onChange={setTickerLogoDisplay}
                 options={[
-                  { value: "tile", label: "Tile" },
-                  { value: "transparent", label: "Transparent" },
+                  { value: "tile", label: "Small Tile" },
+                  { value: "transparent", label: "Medium" },
                   { value: "off", label: "Off" }
                 ]}
               />
@@ -2706,6 +2876,50 @@ function RangeField({ label, value, min, max, step, onCommit }: { label: string;
 
 /* ───────────────────────── Helpers ───────────────────────── */
 
+function getProposalAccountLabel(accountNumber: string | undefined, connectedAccounts: ConnectedAccount[] | undefined): string {
+  if (!accountNumber) return "";
+  const acc = connectedAccounts?.find(
+    (a) => a.accountNumber === accountNumber || (a.accountNumber && accountNumber && (a.accountNumber.endsWith(accountNumber) || accountNumber.endsWith(a.accountNumber)))
+  );
+  
+  const last4 = accountNumber.slice(-4);
+  const suffix = `x${last4}`;
+  
+  if (acc) {
+    if (acc.broker === "robinhood") {
+      return `Agentic ${suffix}`;
+    }
+    if (acc.broker === "alpaca" || acc.broker === "alpaca-mcp") {
+      return acc.environment === "paper" ? `Paper ${suffix}` : `Brokerage ${suffix}`;
+    }
+    if (acc.broker === "test") {
+      return `Test ${suffix}`;
+    }
+  }
+  
+  if (accountNumber === "test" || accountNumber.toLowerCase().includes("test")) {
+    return `Test ${suffix}`;
+  }
+  if (accountNumber.startsWith("PA")) {
+    return `Paper ${suffix}`;
+  }
+  return `Brokerage ${suffix}`;
+}
+
+function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
+  const activeAcc = activeConnectedAccountFor(snapshot);
+  if (!activeAcc || activeAcc.broker === "test") {
+    return "Local Simulation";
+  }
+  if (activeAcc.broker === "robinhood") {
+    return "Robinhood Agentic Account";
+  }
+  if (activeAcc.broker === "alpaca" || activeAcc.broker === "alpaca-mcp") {
+    return activeAcc.environment === "paper" ? "Alpaca Paper Account" : "Alpaca Brokerage Account";
+  }
+  return `${activeAcc.label} Account`;
+}
+
 function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
   if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
   if (status === "blocked" || status === "rejected" || status === "failed") return "down";
@@ -2827,6 +3041,8 @@ function renderActionTitle(title: string) {
     </span>
   );
 }
+
+
 
 type ApiKeyStatus = {
   service: string;

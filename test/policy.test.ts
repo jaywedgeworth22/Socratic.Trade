@@ -32,11 +32,11 @@ const enabledPolicy: TradingPolicy = {
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
-  additionalSymbols: ["AAPL", "VOO"]
+  additionalSymbols: ["AAPL", "TSLA"]
 };
 
 const proposal: TradeProposal = {
-  symbol: "VOO",
+  symbol: "TSLA",
   side: "buy",
   type: "market",
   dollarAmount: 10,
@@ -68,7 +68,7 @@ describe("evaluateTradeProposal", () => {
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10,
-      washSaleLockedSymbols: new Set(["VOO"])
+      washSaleLockedSymbols: new Set(["TSLA"])
     });
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
@@ -82,13 +82,13 @@ describe("evaluateTradeProposal", () => {
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10,
-      washSaleLockedSymbols: new Set(["VOO"])
+      washSaleLockedSymbols: new Set(["TSLA"])
     });
     expect(decision.approved).toBe(true);
   });
 
   it("blocks symbols outside the allowed universe", () => {
-    const decision = evaluateTradeProposal({ ...proposal, symbol: "TSLA" }, context());
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "MSFT" }, context());
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
   });
@@ -119,13 +119,13 @@ describe("evaluateTradeProposal", () => {
   });
 
   it("subtracts the ignore list from selected indexes and additional watchlist symbols", () => {
-    const policy: TradingPolicy = { ...enabledPolicy, includedIndices: ["dow30"], additionalSymbols: ["AAPL", "VOO"], blocklist: ["AAPL", "GS"] };
+    const policy: TradingPolicy = { ...enabledPolicy, includedIndices: ["dow30"], additionalSymbols: ["AAPL", "TSLA"], blocklist: ["AAPL", "GS"] };
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const blockedDecision = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, { ...context(), policy, estimatedNotional: 10 });
 
     expect(allowedSymbols).not.toContain("AAPL");
     expect(allowedSymbols).not.toContain("GS");
-    expect(allowedSymbols).toContain("VOO");
+    expect(allowedSymbols).toContain("TSLA");
     expect(blockedDecision.approved).toBe(false);
     expect(blockedDecision.reasons.join(" ")).toContain("not in the allowed universe");
   });
@@ -394,7 +394,7 @@ describe("evaluateTradeProposal", () => {
   // T7 — enabled-path short/cover guardrails.
   it("short without a mandatory stop-loss is rejected when short selling is enabled", () => {
     const decision = evaluateTradeProposal(
-      { ...proposal, symbol: "VOO", side: "short", dollarAmount: 1000 },
+      { ...proposal, symbol: "MSFT", side: "short", dollarAmount: 1000 },
       { ...context(1000), policy: { ...enabledPolicy, shortSellingEnabled: true, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 0 } }, accountCapabilities: shortCapableAccount }
     );
     expect(decision.approved).toBe(false);
@@ -403,7 +403,7 @@ describe("evaluateTradeProposal", () => {
 
   it("short over maxShortOrderNotional is rejected", () => {
     const decision = evaluateTradeProposal(
-      { ...proposal, symbol: "VOO", side: "short", dollarAmount: 5000 },
+      { ...proposal, symbol: "MSFT", side: "short", dollarAmount: 5000 },
       { ...context(5000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortOrderNotional: 1000, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } }, accountCapabilities: shortCapableAccount }
     );
     expect(decision.approved).toBe(false);
@@ -412,7 +412,7 @@ describe("evaluateTradeProposal", () => {
 
   it("opening short over maxShortExposurePct is rejected", () => {
     const decision = evaluateTradeProposal(
-      { ...proposal, symbol: "VOO", side: "short", dollarAmount: 6000 },
+      { ...proposal, symbol: "MSFT", side: "short", dollarAmount: 6000 },
       { ...context(6000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortExposurePct: 50, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } }, accountCapabilities: shortCapableAccount }
     );
     expect(decision.approved).toBe(false);
@@ -424,7 +424,7 @@ describe("evaluateTradeProposal", () => {
       { ...proposal, symbol: "TSLA", side: "cover", quantity: 3, dollarAmount: undefined, type: "market" },
       {
         ...context(100),
-        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "VOO", "TSLA"] },
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
         accountCapabilities: shortCapableAccount,
         positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
       }
@@ -438,7 +438,7 @@ describe("evaluateTradeProposal", () => {
       { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, type: "market" },
       {
         ...context(1000),
-        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "VOO", "TSLA"] },
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
         accountCapabilities: shortCapableAccount,
         positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
       }
