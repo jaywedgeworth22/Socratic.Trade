@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude`): **Codex lane reconciled + money-path T5 (paper-projection guards).**
+  Codex is usage-capped for days, so Claude took over its lane: a 3-agent parity audit had already
+  confirmed Codex's only unmerged commit (tax-treatment + hourly-cap WIP) is fully superseded by
+  `main` (R1/R3) with an explicit DO-NOT-MERGE, so there was no unique code to land — reconciled
+  `agent/codex` to current `main` (merge favoring main, src now byte-identical), reset its stale local
+  `data/app.db` (old `taxation_type NOT NULL` schema), and verified 4101 serving 200. Then advanced the
+  money path: fixed **T5** — `getPaperPortfolioProjection` side-blindness (wrong-sign/flat closes +
+  opposite-side cost averaging), pinned with 6 tests. tsc clean, 365 tests. `agent/codex`, `agent/claude`,
+  `main` pushed. See `docs/rollouts/2026-06-20-money-path-t5-paper-projection.md` +
+  `docs/rollouts/2026-06-20-codex-tax-notional-wip-superseded.md`.
 - 2026-06-20 (`agent/claude` → `main`): **Landed Claude lane to `main`; last `node:crypto` holdout reconciled.**
   Merged `main` into `agent/claude` to catch up on the 6 Atlas ports + the committed `node:crypto`
   instrumentation fix (`03c6f27`), then merged `agent/claude` → `main` (no-ff) to land the money-path
