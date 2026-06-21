@@ -71,6 +71,7 @@ import { cn } from "./ui/cn";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
+import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
@@ -93,7 +94,7 @@ import { ThemeToggle } from "./ui/theme";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "market" | "macro" | "performance" | "tax" | "strategy";
+type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 type RobinhoodMcpHealth = {
@@ -637,6 +638,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               onChange={setWorkspaceTab}
               tabs={[
                 { id: "decision", label: "Decision" },
+                { id: "assistant", label: "Assistant" },
                 { id: "market", label: "Market Scan" },
                 { id: "macro", label: "Macro" },
                 { id: "performance", label: "Performance" },
@@ -662,6 +664,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 scan={drilldownScan}
                 onDrilldown={setDrilldownSymbol}
               />
+            )}
+            {workspaceTab === "assistant" && (
+              <AssistantView executionState={executionStateFor(snapshot)} approveProposal={approveProposal} rejectProposal={rejectProposal} />
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">

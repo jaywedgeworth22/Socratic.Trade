@@ -641,3 +641,89 @@ export interface NotificationEvent {
   payload: unknown;
   error?: string;
 }
+
+// --- Out-of-app multi-channel alert delivery (ported from Atlas) ---
+/** Out-of-app delivery channels for triggered alerts. */
+export type NotifyChannelId = "push" | "webhook" | "email" | "sms";
+
+/** Per-user notification preferences: enabled channels + per-channel delivery target. */
+export interface NotifyPrefs {
+  userId: string;
+  channels: NotifyChannelId[];
+  pushTarget: string;
+  webhookUrl: string;
+  email: string;
+  phone: string;
+  updatedAt: string | null;
+}
+
+export interface NotifyMessage {
+  title: string;
+  body: string;
+  kind?: string;
+  data?: unknown;
+}
+
+export interface NotifyChannelResult {
+  channel: NotifyChannelId;
+  ok: boolean;
+  skipped?: "not_configured" | "no_target";
+  error?: string;
+}
+
+/** UI metadata so the client shows only usable channels and the right target field. */
+export interface NotifyChannelDescriptor {
+  id: NotifyChannelId;
+  label: string;
+  available: boolean;
+  provider?: string | null;
+  targetField: string;
+  targetLabel: string;
+  placeholder: string;
+  hint: string;
+}
+
+// --- Conversation transcript (chat history, ported from Atlas) ---
+export type ChatTurnRole = "user" | "assistant";
+
+export interface ChatTurn {
+  id: string;
+  userId: string;
+  role: ChatTurnRole;
+  text: string;
+  citations: string[];
+  intent: string | null;
+  /** True when redact-on-write stripped a secret/PII from `text` before persistence. */
+  redacted: boolean;
+  createdAt: string;
+}
+
+// --- Salience-gated per-user memory (Atlas Deep Dive 12) ---
+export type MemoryKind = "constraint" | "preference" | "goal" | "correction" | "pattern" | "decision" | "oneoff";
+export type MemoryDecision = "WRITE" | "HOLD" | "SKIP";
+
+/** A scored extraction candidate (pre-persistence). */
+export interface MemoryCandidate {
+  kind: MemoryKind;
+  subject: string;
+  value: string;
+  source: string;
+  confidence: number;
+  hard: boolean;
+  specificity: number;
+  pii: boolean;
+}
+
+/** A persisted memory. `supersededBy` non-null means it was reconciled away by a newer value. */
+export interface MemoryItem {
+  id: string;
+  userId: string;
+  kind: MemoryKind;
+  subject: string;
+  value: string;
+  source: string;
+  confidence: number;
+  hard: boolean;
+  assertedAt: string;
+  supersededBy: string | null;
+}

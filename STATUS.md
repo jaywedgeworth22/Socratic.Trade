@@ -45,6 +45,56 @@ steps materially change.
   `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
   build green. See
   `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
+- 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
+  chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
+  red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`
+  WorkspaceTab: a chat draft from `/api/chat` is bridged via a new `POST /api/proposals/from-draft`
+  (dry-run preview, or insert a `proposed` row — idempotent on `runId='chat:'+draftId`) into the
+  UNCHANGED approve → `executeProposal` rail, so the chat module gains **no** execution capability. The
+  destination pill derives from the live `executionState`; the mapper (`src/lib/chat/promote-draft.ts`)
+  sets the required `TradeProposal` fields and rejects non-buy/sell. tsc clean, 371 tests, build OK,
+  verified live (a halted system correctly blocks at the dry-run before any row is minted). See
+  `docs/rollouts/2026-06-20-ai-order-drafting-assistant-tab.md`.
+- 2026-06-20 (`agent/claude`): **Codex lane reconciled + money-path T5 (paper-projection guards).**
+  Codex is usage-capped for days, so Claude took over its lane: a 3-agent parity audit had already
+  confirmed Codex's only unmerged commit (tax-treatment + hourly-cap WIP) is fully superseded by
+  `main` (R1/R3) with an explicit DO-NOT-MERGE, so there was no unique code to land — reconciled
+  `agent/codex` to current `main` (merge favoring main, src now byte-identical), reset its stale local
+  `data/app.db` (old `taxation_type NOT NULL` schema), and verified 4101 serving 200. Then advanced the
+  money path: fixed **T5** — `getPaperPortfolioProjection` side-blindness (wrong-sign/flat closes +
+  opposite-side cost averaging), pinned with 6 tests. tsc clean, 365 tests. `agent/codex`, `agent/claude`,
+  `main` pushed. See `docs/rollouts/2026-06-20-money-path-t5-paper-projection.md` +
+  `docs/rollouts/2026-06-20-codex-tax-notional-wip-superseded.md`.
+- 2026-06-20 (`agent/claude` → `main`): **Landed Claude lane to `main`; last `node:crypto` holdout reconciled.**
+  Merged `main` into `agent/claude` to catch up on the 6 Atlas ports + the committed `node:crypto`
+  instrumentation fix (`03c6f27`), then merged `agent/claude` → `main` (no-ff) to land the money-path
+  tranche-1 fixes below. Fixed the one holdout `03c6f27` missed — `src/lib/memory/store.ts` now imports
+  bare `crypto`, not `node:crypto` (mandatory: the `node:` scheme breaks the Next.js instrumentation
+  webpack build with `UnhandledSchemeError`). 4100 (PM2 `trading-claude`) verified serving 200; `main` +
+  `agent/claude` pushed to origin. See `docs/rollouts/2026-06-20-claude-lane-integration-and-node-crypto-reconcile.md`.
+- 2026-06-20 (`agent/claude`): **Money-path safety — tranche 1 (4 bug fixes + 20 tests).**
+  From an adversarially-verified audit (38 findings → 12 confirmed → 14-task plan): fixed the
+  side-blind per-symbol notional cap that could block automated de-risking exits (T1,
+  `policy.ts`), dropped Alpaca partial fills (T2, `strategy.ts` `reconcilePendingFills`,
+  idempotent), the side-blind FIFO matcher that erased opposite-side lots at $0 P&L (T3,
+  `performance.ts`), and shorts getting no / wrong-side protective exits (T8, `strategy.ts` +
+  `synthetic-stops.ts`). Pinned with 20 regression tests (short/cover P&L signs, side-aware
+  caps, enabled-path short guardrails, partial-fill booking, synthetic-stop cover exit). tsc
+  clean, 327 tests, build green. Remaining: T5/T6/T9–T14 (coverage + cleanup; T10 = gross/net
+  exposure-gate design decision). Landed to `main` 2026-06-20 via integration merge (see entry above).
+  See `docs/rollouts/2026-06-20-money-path-safety-fixes.md`.
+- 2026-06-20: **Atlas public repo retired + 6 subsystems ported to TS.** Reviewed `jaywedgeworth22/public`
+  (the "Atlas" BFF) via a 14-agent inventory, preserved it whole (git bundle of all 9 branches + source →
+  `reference/atlas-public-src/`), retired its live deployment (uninstalled the `com.jays.trading` BFF + the
+  `com.jays.trading.autoupdate` 5-min git-puller + backup cron — reversible bits in `~/.atlas-retired/`),
+  and **emptied** the public repo to a tombstone. Ported the genuinely-useful, not-yet-present work to
+  TypeScript with tests: RAG structure-aware chunking + `as_of` point-in-time; multi-channel alert delivery
+  (push/webhook/email/SMS); conversation transcript + redact-on-write; salience-gated memory; and a chat
+  orchestrator (LLM tool-loop, draft-only — never executes) + a 10-case no-execute eval gate. New tables
+  `notification_prefs`/`chat_turns`/`user_memory`; new APIs `/api/chat`, `/api/memory`, `/api/notifications`,
+  `/api/chat-history`. Deleted the redundant `~/agentic-trading` clone. Verified: tsc clean, 339 tests, build OK.
+  **Open:** user to confirm the tunnel still serves the dashboard (then `rm -rf ~/Code/trading`); UI wiring for
+  the chat/memory/notify surfaces is deferred (backends only). See `docs/rollouts/2026-06-20-atlas-public-retire-and-port.md`.
 - 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
   Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus
   the three agent worktree branches. Deleted (tip SHAs in the rollout note for recovery):

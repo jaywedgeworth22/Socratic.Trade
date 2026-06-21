@@ -1,0 +1,238 @@
+// Provider-agnostic LLM contract: run({ system, message, tools, executeTool, context }) drives a
+// tool loop and returns { text, toolCalls, citations }. The model can only call the tools it is
+// given (read-only get_quote/kb_search, draft-only draft_order, reversible create_alert/
+// watchlist_add) — there is NO execution tool. AnthropicLLM takes an injectable transport so the
+// real multi-turn tool loop is unit-testable offline; MockLLM is a deterministic offline stand-in.
+// Ported from reference/atlas-public-src/bff/llm/client.mjs.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { canonicalTicker } from "../rag/chunk";
+import { resolveApiKey } from "../db";
+import { DISCLAIMER } from "./prompt";
+import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
+
+const MAX_STEPS = 5;
+
+export interface Intent {
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "advice" | "quote" | "chat";
+  symbol?: string;
+  alert?: { symbol: string; op: "<" | ">"; price: number };
+  order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
+  doc_type?: string;
+}
+
+/** Cheap deterministic intent router (also a pre-router in front of a real model). */
+export function classifyIntent(message: string): Intent {
+  const lc = String(message).toLowerCase();
+  const EXCLUDE = ["THE", "BUY", "SELL", "USD", "PE", "AND", "FOR", "YOU"];
+  const sym = (String(message).match(/\b([A-Z]{2,5})\b/g) || []).map(canonicalTicker).find((s) => !EXCLUDE.includes(s));
+
+  if (
+    /\b(alert|notify|tell me|let me know|remind me)\b/.test(lc) &&
+    /\b(below|under|above|over|drops?|falls?|rises?|hits?|reaches?|<|>)\b/.test(lc)
+  ) {
+    const dir: "<" | ">" = /\b(below|under|drops?|falls?|<)\b/.test(lc) ? "<" : ">";
+    const priceM = lc.match(/\$?\s*(\d+(?:\.\d+)?)/);
+    if (sym && priceM) return { intent: "alert", alert: { symbol: sym, op: dir, price: Number(priceM[1]) } };
+  }
+
+  const orderM = String(message).match(/\b(buy|sell)\b\s+(\d+)\s+(?:shares?\s+(?:of\s+)?)?([A-Za-z.]{1,10})/i);
+  if (orderM) {
+    const limitM = lc.match(/(?:at|limit|@)\s*\$?(\d+(?:\.\d+)?)/);
+    return {
+      intent: "order",
+      order: {
+        side: orderM[1]!.toLowerCase(),
+        qty: Number(orderM[2]),
+        symbol: canonicalTicker(orderM[3]!),
+        order_type: limitM ? "limit" : "market",
+        limit_usd: limitM ? Number(limitM[1]) : null
+      }
+    };
+  }
+
+  const watchM =
+    String(message).match(/\b(?:add|put|track|watch|follow)\s+\$?([A-Za-z.]{1,10})\b(?:[^.?!]{0,40}\bwatchlist\b)?/i) ||
+    String(message).match(/\bwatchlist\b[^.?!]{0,40}\$?([A-Za-z.]{1,10})\b/i);
+  if (watchM && /\b(watchlist|watch|track|follow)\b/.test(lc)) return { intent: "watchlist_add", symbol: canonicalTicker(watchM[1]!) };
+
+  const docType = lc.match(/\b(10-k|10-q|8-k|filing|news|note|document|report)\b/)?.[1]?.toUpperCase();
+  if (/\b(what did|say about|according to|filing|10-k|10-q|8-k|risk factors?|knowledge|research|document|source|kb)\b/.test(lc))
+    return {
+      intent: "kb",
+      symbol: sym,
+      doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
+    };
+  if (/\b(should i|is it a good (buy|time)|recommend|what should i do|allocate)\b/.test(lc)) return { intent: "advice", symbol: sym };
+  if (/\b(price|quote|trading at|how much is|what'?s)\b/.test(lc) && sym) return { intent: "quote", symbol: sym };
+  if (sym) return { intent: "quote", symbol: sym };
+  return { intent: "chat" };
+}
+
+function narrateQuote(quote: any, advice: boolean): string {
+  const dir = quote.change_pct >= 0 ? "up" : "down";
+  let text =
+    `${quote.symbol} is at $${quote.price_usd}, ${dir} ${Math.abs(quote.change_pct)}% ` +
+    `(as of ${quote.as_of}, ${quote.source} data, ${quote.session} session).`;
+  if (advice)
+    text +=
+      ` I can't tell you whether to buy or sell — that depends on your full financial picture, ` +
+      `and I'm not a licensed advisor. I can lay out the trade-offs and you decide.`;
+  return text;
+}
+
+function groundedChat(message: string, memorySummary?: string): string {
+  const lc = message.toLowerCase();
+  if (/p\/?e|price.to.earnings/.test(lc))
+    return "P/E (price-to-earnings) is a stock's price divided by its earnings per share — a rough valuation gauge.";
+  if (/\bwhat do you remember|what do you know about me\b/.test(lc))
+    return memorySummary ? `Here's what I have on file:\n${memorySummary}` : "I don't have anything on file for you yet.";
+  return 'Noted. Ask me for a quote (e.g. "AAPL price") or to draft an order (e.g. "buy 10 AAPL at 200") and I\'ll help — every order is a draft you confirm.';
+}
+
+function bestSentence(text: string, query: string): string {
+  const tokens = new Set(String(query).toLowerCase().match(/[a-z0-9.$%-]+/g) ?? []);
+  const sentences = String(text).split(/(?<=[.!?])\s+/).filter(Boolean);
+  let best = sentences[0] ?? String(text).slice(0, 240);
+  let bestScore = -1;
+  for (const s of sentences) {
+    const sc = (String(s).toLowerCase().match(/[a-z0-9.$%-]+/g) ?? []).reduce((sum, t) => sum + (tokens.has(t) ? 1 : 0), 0);
+    if (sc > bestScore) {
+      best = s;
+      bestScore = sc;
+    }
+  }
+  return best.trim();
+}
+
+/** Deterministic offline stand-in, shaped exactly like a real tool-use loop. */
+export class MockLLM implements ChatLLM {
+  async run({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
+    const cls = classifyIntent(message);
+    const toolCalls: ToolCall[] = [];
+
+    if (cls.intent === "quote" || cls.intent === "advice") {
+      const input = { symbol: cls.symbol };
+      const result = await executeTool("get_quote", input);
+      toolCalls.push({ name: "get_quote", input, result });
+      if (result?.error) return { text: `I don't have data on that.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      return {
+        text: `${narrateQuote(result, cls.intent === "advice")}\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: [{ source: "get_quote", as_of: result.as_of }]
+      };
+    }
+
+    if (cls.intent === "alert" && cls.alert) {
+      const result = await executeTool("create_alert", cls.alert);
+      toolCalls.push({ name: "create_alert", input: cls.alert, result });
+      const text = result?.error
+        ? `I couldn't set that alert (${result.error}).`
+        : `Done — I'll alert you when ${result.symbol} is ${result.op === "<" ? "below" : "above"} $${result.price}.`;
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "order" && cls.order) {
+      const input = { ...cls.order, rationale: "User requested this order." };
+      const result = await executeTool("draft_order", input);
+      toolCalls.push({ name: "draft_order", input, result });
+      const lead = result?.blocked
+        ? `I've drafted this order but it can't proceed as-is — ${(result.warnings ?? []).join("; ")}.`
+        : `I've prepared a draft order for your review — it won't go through until you confirm.` +
+          ` (Account: ${result.account_label}${result.is_real ? "" : " — simulated, not a real broker"}.)`;
+      return { text: `${lead}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "kb") {
+      const input = { query: message, ticker: cls.symbol, doc_type: cls.doc_type, k: 5 };
+      const result = await executeTool("kb_search", input);
+      toolCalls.push({ name: "kb_search", input, result });
+      const chunks = result?.chunks ?? [];
+      if (!chunks.length) {
+        return { text: `I don't have data on that in the sources available to me.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      }
+      const lines = chunks.slice(0, 2).map((c: any) => `- ${bestSentence(c.text, message)} [${c.chunk_id}]`);
+      return {
+        text: `${lines.join("\n")}\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: chunks.map((c: any) => ({ source: c.source, chunk_id: c.chunk_id, as_of: c.as_of }))
+      };
+    }
+
+    if (cls.intent === "watchlist_add") {
+      const input = { symbol: cls.symbol };
+      const result = await executeTool("watchlist_add", input);
+      toolCalls.push({ name: "watchlist_add", input, result });
+      if (result?.error) return { text: `I couldn't add that symbol to your watchlist: ${result.error}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      const tag = result.item?.deduped ? "was already" : "is now";
+      return { text: `${result.item.symbol} ${tag} on your watchlist.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    return { text: `${groundedChat(message, context.memorySummary)}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+  }
+}
+
+type Transport = (body: any, apiKey: string) => Promise<any>;
+
+async function defaultTransport(body: any, apiKey: string): Promise<any> {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`anthropic ${res.status}`);
+  return res.json();
+}
+
+/** Real Anthropic Messages API tool loop (server-side only). */
+export class AnthropicLLM implements ChatLLM {
+  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport) {}
+
+  async run({ system, message, tools, executeTool }: LlmRunArgs): Promise<LlmResult> {
+    const messages: any[] = [{ role: "user", content: message }];
+    const toolCalls: ToolCall[] = [];
+    let text = "";
+
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const resp = await this.transport(
+        { model: this.model, max_tokens: 1024, system, messages, ...(tools?.length ? { tools } : {}) },
+        this.apiKey
+      );
+      const content = resp.content || [];
+      messages.push({ role: "assistant", content });
+      text = content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+
+      const toolUses = content.filter((b: any) => b.type === "tool_use");
+      if (resp.stop_reason !== "tool_use" || toolUses.length === 0) break;
+
+      const results: any[] = [];
+      for (const tu of toolUses) {
+        let result: any;
+        try {
+          result = await executeTool(tu.name, tu.input);
+        } catch (e) {
+          result = { error: "TOOL_FAILED", message: e instanceof Error ? e.message : String(e) };
+        }
+        toolCalls.push({ name: tu.name, input: tu.input, result });
+        results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
+      }
+      messages.push({ role: "user", content: results }); // all results in ONE message
+    }
+
+    const citations: Citation[] = toolCalls
+      .filter((c) => c.name === "get_quote" && c.result && !c.result.error)
+      .map((c) => ({ source: "get_quote", as_of: c.result.as_of }));
+    for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
+      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of });
+    }
+    return { text: text || DISCLAIMER, toolCalls, citations };
+  }
+}
+
+export function getLLM(opts: { transport?: Transport } = {}): ChatLLM {
+  const key = resolveApiKey("anthropic");
+  if (process.env.CHAT_LLM === "anthropic" && key) {
+    return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport);
+  }
+  return new MockLLM();
+}

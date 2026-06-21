@@ -78,7 +78,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   } catch {
     return result; // can't evaluate safely without positions
   }
-  const liveSymbols = new Set(positions.filter((p) => p.quantity > 0.000001).map((p) => normalizeSymbol(p.symbol)));
+  const liveSymbols = new Set(positions.filter((p) => Math.abs(p.quantity) > 0.000001).map((p) => normalizeSymbol(p.symbol)));
 
   // Purge stops whose position has closed (size hit 0).
   for (const stop of listSyntheticStops(accountNumber, userId)) {
@@ -88,23 +88,27 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     }
   }
 
-  // Auto-register a trailing stop for each long position when a trail % is configured.
+  // Auto-register a trailing stop for each open position when a trail % is configured.
+  // Longs trail from a high-watermark and exit with a sell; shorts (only when short
+  // selling is enabled) trail from a low-watermark and exit with a cover.
   const trailPct = policy.riskRules?.trailingStopPct ?? 0;
   if (trailPct > 0) {
     const existing = new Set(listSyntheticStops(accountNumber, userId).map((s) => s.symbol.toUpperCase()));
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
-      if (pos.quantity <= 0.000001 || existing.has(sym)) continue;
-      const mark = pos.quantity > 0 ? pos.marketValue / pos.quantity : pos.averageCost;
+      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
+      const isShort = pos.quantity < 0;
+      if (isShort && !policy.shortSellingEnabled) continue;
+      const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
       upsertSyntheticStop({
         id: `synstop-${userId}-${accountNumber}-${sym}`,
         userId,
         accountNumber,
         symbol: sym,
-        side: "long",
-        quantity: pos.quantity,
+        side: isShort ? "short" : "long",
+        quantity: Math.abs(pos.quantity),
         entryPrice: pos.averageCost,
-        extremePrice: Math.max(mark, pos.averageCost),
+        extremePrice: isShort ? Math.min(mark, pos.averageCost) : Math.max(mark, pos.averageCost),
         trailPercent: trailPct,
         status: "active"
       });
@@ -143,7 +147,8 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     }
 
     // Gated execution: fire the protective market exit (sell a long / cover a short).
-    const qty = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(stop.symbol))?.quantity ?? stop.quantity;
+    const posQty = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(stop.symbol))?.quantity ?? stop.quantity;
+    const qty = Math.abs(posQty); // order/fill quantity is always a positive magnitude (cover qty for shorts)
     if (qty <= 0.000001) {
       deleteSyntheticStop(stop.id, userId);
       continue;

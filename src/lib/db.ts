@@ -22,7 +22,12 @@ import type {
   PriceAlert,
   PriceAlertOp,
   PriceAlertStatus,
-  WatchlistItem
+  WatchlistItem,
+  NotifyPrefs,
+  NotifyChannelId,
+  ChatTurn,
+  ChatTurnRole,
+  MemoryItem
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -269,6 +274,42 @@ function migrate(database: Database.Database): void {
       triggered_price REAL
     );
     CREATE INDEX IF NOT EXISTS idx_price_alerts_user_status ON price_alerts (user_id, status, created_at);
+
+    CREATE TABLE IF NOT EXISTS notification_prefs (
+      user_id TEXT PRIMARY KEY,
+      channels TEXT NOT NULL DEFAULT '[]',
+      push_target TEXT NOT NULL DEFAULT '',
+      webhook_url TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_turns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+      text TEXT NOT NULL,
+      citations TEXT NOT NULL DEFAULT '[]',
+      intent TEXT,
+      redacted INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS user_memory (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'user_stated',
+      confidence REAL NOT NULL DEFAULT 0.5,
+      hard INTEGER NOT NULL DEFAULT 0,
+      asserted_at TEXT NOT NULL,
+      superseded_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory (user_id, superseded_by);
   `);
 
   // Migrate tables to include user_id
@@ -1190,6 +1231,14 @@ export function updateProposalStatus(id: string, status: string, orderId?: strin
       "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional) WHERE id = ? AND user_id = ?"
     )
     .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, id, userId);
+}
+
+/** Idempotency for chat-drafted proposals: the id of an existing still-`proposed` row for a runId. */
+export function findProposedIdByRunId(runId: string, userId: string = "local"): string | null {
+  const row = getDb()
+    .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC LIMIT 1")
+    .get(runId, userId) as { id: string } | undefined;
+  return row?.id ?? null;
 }
 
 export function insertProposal(input: {
@@ -2115,4 +2164,200 @@ export function markPriceAlertTriggered(id: string, userId: string, triggeredPri
   if (result.changes === 0) return null;
   const row = getDb().prepare("SELECT * FROM price_alerts WHERE id = ? AND user_id = ?").get(id, userId) as RawPriceAlertRow | undefined;
   return row ? mapPriceAlert(row) : null;
+}
+
+const NOTIFY_CHANNEL_IDS: readonly NotifyChannelId[] = ["push", "webhook", "email", "sms"];
+
+function isNotifyChannelId(value: unknown): value is NotifyChannelId {
+  return typeof value === "string" && (NOTIFY_CHANNEL_IDS as readonly string[]).includes(value);
+}
+
+export function getNotifyPrefs(userId: string = "local"): NotifyPrefs {
+  const row = getDb().prepare("SELECT * FROM notification_prefs WHERE user_id = ?").get(userId) as
+    | { user_id: string; channels: string; push_target: string; webhook_url: string; email: string; phone: string; updated_at: string | null }
+    | undefined;
+  if (!row) {
+    return { userId, channels: [], pushTarget: "", webhookUrl: "", email: "", phone: "", updatedAt: null };
+  }
+  let channels: NotifyChannelId[] = [];
+  try {
+    const parsed = JSON.parse(row.channels) as unknown;
+    if (Array.isArray(parsed)) channels = parsed.filter(isNotifyChannelId);
+  } catch {
+    channels = [];
+  }
+  return {
+    userId: row.user_id,
+    channels,
+    pushTarget: row.push_target,
+    webhookUrl: row.webhook_url,
+    email: row.email,
+    phone: row.phone,
+    updatedAt: row.updated_at
+  };
+}
+
+export function setNotifyPrefs(
+  userId: string,
+  partial: { channels?: unknown; pushTarget?: unknown; webhookUrl?: unknown; email?: unknown; phone?: unknown }
+): NotifyPrefs {
+  const next: NotifyPrefs = { ...getNotifyPrefs(userId), userId };
+  if (Array.isArray(partial.channels)) {
+    next.channels = [...new Set(partial.channels.filter(isNotifyChannelId))];
+  }
+  if (typeof partial.pushTarget === "string") next.pushTarget = partial.pushTarget.trim();
+  if (typeof partial.webhookUrl === "string") next.webhookUrl = partial.webhookUrl.trim();
+  if (typeof partial.email === "string") next.email = partial.email.trim();
+  if (typeof partial.phone === "string") next.phone = partial.phone.trim();
+  next.updatedAt = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO notification_prefs (user_id, channels, push_target, webhook_url, email, phone, updated_at)
+       VALUES (@userId, @channels, @pushTarget, @webhookUrl, @email, @phone, @updatedAt)
+       ON CONFLICT(user_id) DO UPDATE SET
+         channels = excluded.channels, push_target = excluded.push_target, webhook_url = excluded.webhook_url,
+         email = excluded.email, phone = excluded.phone, updated_at = excluded.updated_at`
+    )
+    .run({
+      userId,
+      channels: JSON.stringify(next.channels),
+      pushTarget: next.pushTarget,
+      webhookUrl: next.webhookUrl,
+      email: next.email,
+      phone: next.phone,
+      updatedAt: next.updatedAt
+    });
+  audit("notify.prefs.set", { userId, channels: next.channels }, userId);
+  return next;
+}
+
+interface RawChatTurnRow {
+  id: string;
+  user_id: string;
+  role: string;
+  text: string;
+  citations: string;
+  intent: string | null;
+  redacted: number;
+  created_at: string;
+}
+
+function mapChatTurn(row: RawChatTurnRow): ChatTurn {
+  let citations: string[] = [];
+  try {
+    const parsed = JSON.parse(row.citations) as unknown;
+    if (Array.isArray(parsed)) citations = parsed.filter((c): c is string => typeof c === "string");
+  } catch {
+    citations = [];
+  }
+  const role: ChatTurnRole = row.role === "assistant" ? "assistant" : "user";
+  return {
+    id: row.id,
+    userId: row.user_id,
+    role,
+    text: row.text,
+    citations,
+    intent: row.intent,
+    redacted: row.redacted === 1,
+    createdAt: row.created_at
+  };
+}
+
+export function insertChatTurn(turn: ChatTurn): ChatTurn {
+  getDb()
+    .prepare(
+      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.createdAt);
+  return turn;
+}
+
+export function listChatTurns(userId: string, limit: number = 100): ChatTurn[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM chat_turns WHERE user_id = ? ORDER BY created_at ASC, rowid ASC")
+    .all(userId) as RawChatTurnRow[];
+  const mapped = rows.map(mapChatTurn);
+  return limit > 0 && mapped.length > limit ? mapped.slice(mapped.length - limit) : mapped;
+}
+
+/** Keep only the most recent `keep` turns for a user (FIFO cap); returns rows deleted. */
+export function trimChatTurns(userId: string, keep: number): number {
+  return getDb()
+    .prepare(
+      `DELETE FROM chat_turns WHERE user_id = ? AND id NOT IN (
+         SELECT id FROM chat_turns WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?
+       )`
+    )
+    .run(userId, userId, keep).changes;
+}
+
+export function clearChatTurns(userId: string): number {
+  return getDb().prepare("DELETE FROM chat_turns WHERE user_id = ?").run(userId).changes;
+}
+
+interface RawMemoryRow {
+  id: string;
+  user_id: string;
+  kind: string;
+  subject: string;
+  value: string;
+  source: string;
+  confidence: number;
+  hard: number;
+  asserted_at: string;
+  superseded_by: string | null;
+}
+
+function mapMemory(row: RawMemoryRow): MemoryItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    kind: row.kind as MemoryItem["kind"],
+    subject: row.subject,
+    value: row.value,
+    source: row.source,
+    confidence: row.confidence,
+    hard: row.hard === 1,
+    assertedAt: row.asserted_at,
+    supersededBy: row.superseded_by
+  };
+}
+
+export function insertMemory(item: MemoryItem): MemoryItem {
+  getDb()
+    .prepare(
+      "INSERT INTO user_memory (id, user_id, kind, subject, value, source, confidence, hard, asserted_at, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(item.id, item.userId, item.kind, item.subject, item.value, item.source, item.confidence, item.hard ? 1 : 0, item.assertedAt, item.supersededBy);
+  return item;
+}
+
+export function findLiveMemoryBySubject(userId: string, kind: string, subject: string): MemoryItem | null {
+  const row = getDb()
+    .prepare(
+      "SELECT * FROM user_memory WHERE user_id = ? AND kind = ? AND subject = ? AND superseded_by IS NULL ORDER BY asserted_at DESC LIMIT 1"
+    )
+    .get(userId, kind, subject) as RawMemoryRow | undefined;
+  return row ? mapMemory(row) : null;
+}
+
+export function listLiveMemory(userId: string): MemoryItem[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM user_memory WHERE user_id = ? AND superseded_by IS NULL ORDER BY asserted_at DESC")
+    .all(userId) as RawMemoryRow[];
+  return rows.map(mapMemory);
+}
+
+export function supersedeMemory(oldId: string, newId: string): void {
+  getDb().prepare("UPDATE user_memory SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+export function touchMemory(id: string, assertedAt: string, confidence: number): MemoryItem | null {
+  getDb().prepare("UPDATE user_memory SET asserted_at = ?, confidence = ? WHERE id = ?").run(assertedAt, confidence, id);
+  const row = getDb().prepare("SELECT * FROM user_memory WHERE id = ?").get(id) as RawMemoryRow | undefined;
+  return row ? mapMemory(row) : null;
+}
+
+export function deleteMemory(userId: string, id: string): boolean {
+  return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
 }
