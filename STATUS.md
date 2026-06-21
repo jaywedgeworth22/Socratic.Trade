@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21: **Alpaca MCP connection & multi-account connection buttons.** Added Alpaca MCP paper/live support, implemented standard JSON-RPC SSE tool call routing with REST client fallback, fixed order type mapping build issues, and ensured all connection buttons remain visible in the dashboard UI for multi-account linking. Verified: tsc clean, 401 tests green, build OK. Rollout note: `docs/rollouts/2026-06-21-alpaca-mcp-integration.md`.
 - 2026-06-21: **Responsive header command buttons.** Restructured header buttons to shrink gracefully on narrow screens and wrap cleanly into exactly 2 lines below the `md` (768px) breakpoint.
 - 2026-06-21: **UI/UX + iPad/iPhone audit and quick-win implementation.** Ran two
   multi-agent audits (real-Chrome desktop walkthrough → 64-agent review/verify/synthesis; source-grounded

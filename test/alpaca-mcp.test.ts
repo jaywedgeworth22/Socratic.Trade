@@ -1,0 +1,160 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mock Alpaca Trade API SDK client
+vi.mock("@alpacahq/alpaca-trade-api", () => {
+  return {
+    default: class MockAlpaca {
+      async getAccount() {
+        return { account_number: "MOCK_REST_ACC_1", portfolio_value: "10000", buying_power: "5000", equity: "8000", cash: "2000" };
+      }
+      async getPositions() {
+        return [{ symbol: "AAPL", qty: "10", avg_entry_price: "150", market_value: "1500" }];
+      }
+      async getOrders() {
+        return [{ id: "order_rest_1", symbol: "AAPL", side: "buy", type: "market", status: "filled", qty: "10" }];
+      }
+      async createOrder(opts: any) {
+        return { id: "order_rest_new", status: "accepted", qty: opts.qty, filled_qty: "0", filled_avg_price: null };
+      }
+      async cancelOrder() {}
+    }
+  };
+});
+beforeEach(async () => {
+  vi.resetModules();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-alpaca-mcp-${randomUUID()}.db`)}`;
+
+  const { upsertConnectedAccount } = await import("../src/lib/db");
+  upsertConnectedAccount({
+    id: "acc-mcp-test",
+    userId: "local",
+    broker: "alpaca-mcp",
+    environment: "paper",
+    baseUrl: "http://localhost:8000/sse",
+    apiKey: "PK_TEST",
+    apiSecret: "secret",
+    isActive: true,
+    label: "Alpaca Paper"
+  });
+});
+
+describe("Alpaca MCP gateway adapter", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("routes getAccounts() to get_account_info tool and parses result", async () => {
+    const calls: Array<{ url: string; body: any }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body || "{}")) });
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ account_number: "MCP_ACC_1" })
+              }
+            ]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+    const accounts = await gateway.getAccounts();
+
+    expect(accounts).toEqual([{ accountNumber: "MCP_ACC_1", label: "Alpaca Paper", agenticAllowed: true }]);
+    expect(calls[0].url).toBe("http://localhost:8000/sse");
+    expect(calls[0].body.params.name).toBe("get_account_info");
+  });
+
+  it("routes getEquityPositions() to get_positions tool", async () => {
+    vi.stubGlobal("fetch", async () => {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify([{ symbol: "MSFT", qty: 20, avg_entry_price: 300, market_value: 6000 }])
+              }
+            ]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+    const positions = await gateway.getEquityPositions("MCP_ACC_1");
+
+    expect(positions).toEqual([
+      { symbol: "MSFT", quantity: 20, averageCost: 300, marketValue: 6000, sector: undefined, industry: undefined }
+    ]);
+  });
+
+  it("routes placeEquityOrder() to order placement tool", async () => {
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body || "{}")));
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ id: "order_mcp_123", status: "accepted", filled_qty: 0, filled_avg_price: null })
+              }
+            ]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+    const order = await gateway.placeEquityOrder({
+      accountNumber: "MCP_ACC_1",
+      symbol: "NVDA",
+      side: "buy",
+      type: "market",
+      quantity: 5,
+      timeInForce: "gfd",
+      refId: "client-ref-123"
+    });
+
+    expect(order.orderId).toBe("order_mcp_123");
+    expect(order.state).toBe("accepted");
+    expect(calls[0].params.name).toBe("place_market_order");
+    expect(calls[0].params.arguments.qty).toBe("5");
+  });
+
+  it("falls back to REST client when fetch errors or is rejected", async () => {
+    vi.stubGlobal("fetch", async () => {
+      return new Response(null, { status: 500 }); // Server error
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+    
+    // getAccounts will fall back to REST (which returns mock REST account MOCK_REST_ACC_1)
+    const accounts = await gateway.getAccounts();
+    expect(accounts).toEqual([{ accountNumber: "MOCK_REST_ACC_1", label: "Alpaca Paper", agenticAllowed: true }]);
+  });
+});

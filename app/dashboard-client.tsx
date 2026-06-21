@@ -3001,27 +3001,46 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
   if (editing) {
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
-        <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : `Add ${editing.broker === "alpaca" ? "Alpaca" : "Robinhood"} Account`}</h4>
+        <h4 className="text-sm font-semibold text-fg">
+          {editing.id
+            ? "Edit Account"
+            : editing.broker === "robinhood"
+              ? "Add Robinhood Account"
+              : editing.broker === "alpaca-mcp"
+                ? "Add Alpaca MCP Account"
+                : "Add Alpaca Account"}
+        </h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          {editing.broker === "alpaca" ? (
+          {editing.broker === "alpaca" || editing.broker === "alpaca-mcp" ? (
             <Field label="Environment">
               <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-                <option value="paper">Alpaca Paper</option>
-                <option value="live">Alpaca Brokerage (Real Money)</option>
+                <option value="paper">{editing.broker === "alpaca-mcp" ? "Alpaca MCP Paper" : "Alpaca Paper"}</option>
+                <option value="live">{editing.broker === "alpaca-mcp" ? "Alpaca MCP Brokerage (Real Money)" : "Alpaca Brokerage (Real Money)"}</option>
               </select>
             </Field>
           ) : (
-            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted">
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
               Robinhood uses OAuth through MCP and syncs the agentic Brokerage account. No API key fields are required here.
             </div>
           )}
           <Field label="Label (Optional)">
-            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder={editing.broker === "alpaca" ? "e.g. Alpaca Paper" : "e.g. Robinhood Agentic"} />
+            <input
+              className={inputClass}
+              value={editing.label || ""}
+              onChange={e => setEditing({ ...editing, label: e.target.value })}
+              placeholder={
+                editing.broker === "robinhood"
+                  ? "e.g. Robinhood Agentic"
+                  : editing.broker === "alpaca-mcp"
+                    ? "e.g. Alpaca MCP Paper"
+                    : "e.g. Alpaca Paper"
+              }
+            />
           </Field>
           <Field label="Account Number (Optional)">
             <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
           </Field>
-          {editing.broker === "alpaca" && (
+          {(editing.broker === "alpaca" || editing.broker === "alpaca-mcp") && (
             <>
               <Field label="API Key">
                 <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
@@ -3030,9 +3049,17 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
               <Field label="API Endpoint URL (Optional)">
-                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets/v2" />
+                <input
+                  className={inputClass}
+                  value={editing.baseUrl || ""}
+                  onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                  placeholder={
+                    editing.broker === "alpaca-mcp"
+                      ? "e.g. http://localhost:8000/sse"
+                      : "e.g. https://paper-api.alpaca.markets/v2"
+                  }
+                />
               </Field>
-
             </>
           )}
         </div>
@@ -3053,19 +3080,23 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
           Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {!accounts?.some(a => a.broker === "robinhood") && (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
-              if (mcpHealth?.authenticated) { void syncRobinhood(); }
-              else { window.location.href = "/api/auth/robinhood/start"; }
-            }}>
-              <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
-            </Button>
-          )}
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+            if (mcpHealth?.authenticated) { void syncRobinhood(); }
+            else { window.location.href = "/api/auth/robinhood/start"; }
+          }}>
+            <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
             <Plus size={14} className="mr-1" /> Connect Alpaca Paper Account
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "live" })}>
             <Plus size={14} className="mr-1" /> Connect Alpaca Brokerage Account
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca-mcp", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca MCP Paper Account
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca-mcp", environment: "live" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca MCP Brokerage Account
           </Button>
         </div>
       </div>

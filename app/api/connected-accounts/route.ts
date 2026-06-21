@@ -11,7 +11,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const userId = resolveRequestUserId(req, body);
     const broker =
-      body.broker === "alpaca" || body.broker === "robinhood" || body.broker === "test" ? body.broker : undefined;
+      body.broker === "alpaca" || body.broker === "alpaca-mcp" || body.broker === "robinhood" || body.broker === "test" ? body.broker : undefined;
     if (!broker) {
       return new NextResponse("broker is required (alpaca | robinhood | test)", { status: 400 });
     }
@@ -56,12 +56,16 @@ export async function POST(req: Request) {
     // endpoint the key works against, so it overrides whichever button was clicked.
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
     let environment: "paper" | "live" = body.environment === "live" ? "live" : "paper";
-    if (broker === "alpaca" && apiKey) {
+    if ((broker === "alpaca" || broker === "alpaca-mcp") && apiKey) {
       if (apiKey.toUpperCase().startsWith("PK")) environment = "paper";
       else if (apiKey.toUpperCase().startsWith("AK")) environment = "live";
     }
     const defaultLabel =
-      broker === "test" ? "Test" : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
+      broker === "test"
+        ? "Test"
+        : broker === "alpaca-mcp"
+          ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
+          : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
     upsertConnectedAccount({
       id: body.id || crypto.randomUUID(),
       userId,
@@ -73,7 +77,7 @@ export async function POST(req: Request) {
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
       baseUrl: typeof body.baseUrl === "string" && body.baseUrl.trim()
         ? body.baseUrl.trim()
-        : broker === "alpaca"
+        : (broker === "alpaca" || broker === "alpaca-mcp")
           ? environment === "paper"
             ? "https://paper-api.alpaca.markets/v2"
             : "https://api.alpaca.markets/v2"

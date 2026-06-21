@@ -106,7 +106,7 @@ export interface NotificationSettings {
 export interface ConnectedAccount {
   id: string;
   userId: string;
-  broker: "alpaca" | "robinhood" | "test";
+  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
   environment: "paper" | "live";
   /** Tax treatment of this account (taxable vs Roth/Traditional IRA). Defaults to "taxable". */
   taxationType?: TaxationType;
@@ -222,7 +222,7 @@ export interface TradingPolicy {
   taxSettings?: TaxSettings;
   tuning?: TuningSettings;
   activeProfileId?: string;
-  activeBroker?: "alpaca" | "robinhood" | "test";
+  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally

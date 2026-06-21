@@ -119,5 +119,5 @@ export function llmFillSource(source: FillSource, executionState?: ExecutionStat
 }
 
 function brokerLabel(broker: ExecutionAccount["broker"]): string {
-  return broker === "alpaca" ? "Alpaca" : broker === "test" ? "Test" : "Robinhood";
+  return (broker === "alpaca" || broker === "alpaca-mcp") ? "Alpaca" : broker === "test" ? "Test" : "Robinhood";
 }
