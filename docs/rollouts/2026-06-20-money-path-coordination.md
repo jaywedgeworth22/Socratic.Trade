@@ -18,11 +18,17 @@ is the coordination channel — the repo's mandated "coordinate via git" rule.
 | T10 | gross/net exposure gates enforced | ✅ DONE `da644b6` (origin/agent/claude) |
 | T14-policy | opens-only dailyNotionalUsed; dead helper removed | ✅ DONE `da644b6` |
 | T14-db | empty `account_number` normalization | 🟡 IN PROGRESS in `db.ts` (uncommitted edits present) |
-| T6 | db notional tests + null-notional fallback | ⬜ `db.ts` / `persistence-notification.test.ts` |
-| T9 | `recordFillFromProposal` short/cover tests | ⬜ `performance.test.ts` |
-| T11 | red-team fail-open tests | ⬜ `red-team.test.ts` / `reconciliation-risk.test.ts` |
-| T12 | tax long-only pin (document + guard tests) | ⬜ `tax.ts` / `tax.test.ts` |
-| T13 | daily-reset timezone + kill-switch notification | ⬜ `db.ts` |
+| T6 | db notional tests + null-notional fallback | ✅ DONE (this session) — `test/daily-notional-reset.test.ts` (side-aware notional, tenant isolation, null fallback) |
+| T9 | `recordFillFromProposal` short/cover tests | ✅ DONE (this session) — `test/performance.test.ts` |
+| T11 | red-team fail-open tests | ✅ DONE (this session) — `test/red-team.test.ts` (no-key + LLM-throw fail-open contract) |
+| T12 | tax long-only pin (document + guard tests) | ✅ DONE (this session) — `test/tax.test.ts` |
+| T13 | daily-reset timezone + kill-switch notification | ✅ DONE (this session) — tz boundary now explicit (`startOfDayInTimeZone`/`DAILY_RESET_TIME_ZONE` in `db.ts`); kill-switch notify already exists (`strategy.ts:389`) |
+
+> 2026-06-20 (this session): landed T6/T9/T11/T12/T13 on `agent/claude` (test-hardening + the
+> T13 timezone fix in `db.ts`). I own `db.ts` only for the T13 `startOfDayInTimeZone` boundary —
+> **T14-db** (empty `account_number` normalization at db.ts:1255/1021/1049) is left untouched for
+> its owner. T10 tests came in via `da644b6`, so my redundant copies were dropped. Staged
+> explicitly. See `docs/rollouts/2026-06-20-money-path-tranche-3-tests.md`.
 
 ## Owner decisions (from the user, 2026-06-20)
 

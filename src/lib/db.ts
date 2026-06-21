@@ -976,9 +976,44 @@ export function latestAuditByKind(kind: string, userId: string = "local"): { id:
   };
 }
 
-export function dailyExecutionStats(accountNumber: string, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
-  const dayStart = new Date(now);
-  dayStart.setHours(0, 0, 0, 0);
+/**
+ * IANA timezone whose civil midnight defines the daily-notional reset boundary. Made explicit so the
+ * daily cap resets deterministically regardless of the server process's local TZ — the old
+ * `setHours(0,0,0,0)` silently used `process.env.TZ`. US equities trade on the NYSE calendar, so the
+ * market day (America/New_York) is the natural boundary. (T13)
+ */
+export const DAILY_RESET_TIME_ZONE = "America/New_York";
+
+/** UTC instant of civil midnight, in `timeZone`, for the calendar day containing `now`. (T13) */
+export function startOfDayInTimeZone(now: Date, timeZone: string = DAILY_RESET_TIME_ZONE): Date {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    })
+      .formatToParts(now)
+      .map((part) => [part.type, part.value])
+  );
+  const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some engines render midnight as "24"
+  const wallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+  const offsetMs = wallAsUTC - now.getTime(); // how far the tz wall-clock leads UTC at `now`
+  const midnightWallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 0, 0, 0);
+  return new Date(midnightWallAsUTC - offsetMs);
+}
+
+export function dailyExecutionStats(
+  accountNumber: string,
+  now = new Date(),
+  userId: string = "local",
+  timeZone: string = DAILY_RESET_TIME_ZONE
+): { orderCount: number; notional: number } {
+  const dayStart = startOfDayInTimeZone(now, timeZone);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
