@@ -36,9 +36,15 @@ no ESTABLISHED connections to :8787; private docs all point the tunnel at :4000)
 2. **Delete redundant clone (done):** `rm -rf ~/agentic-trading` (verified clean duplicate of the private repo; worktrees intact).
 3. **Retire deployment — safe half (done):** uninstalled `com.jays.trading.autoupdate`, removed the backup cron (both archived to `~/.atlas-retired/`).
 4. **Retire deployment — BFF (done):** stopped + uninstalled `com.jays.trading` (mock-mode orphan, tunnel serves :4000). `~/Code/trading` checkout left on disk as instant rollback; bundle is the durable copy.
-5. **Empty the public repo (pending):** delete the 8 non-`gh-pages` branches, wipe `gh-pages` to a tombstone README, keep the (empty) repo.
-6. **Port useful subsystems to TS (pending):** see the table in `reference/atlas-public-src/README.md` and `docs/atlas-integration-map.md`.
-7. **Fix `docs/atlas-integration-map.md` (pending):** correct the RAG overstatements; mark ported items.
+5. **Empty the public repo (done):** deleted the 8 non-`gh-pages` branches; wiped `gh-pages` to a tombstone README (`3ad7508..768e2f3`). Only the empty `gh-pages` remains.
+6. **Port useful subsystems to TS (done):** all six ported, each verified (tsc + targeted test) and committed:
+   - RAG structure-aware chunking + `as_of` point-in-time (`f21ba26`) — `src/lib/rag/chunk.ts`, `vector-db.ts`.
+   - Multi-channel alert delivery (`68d5ca0`) — `src/lib/notify.ts`, `notification_prefs`, `app/api/notifications/*`.
+   - Transcript history + redact-on-write (`1375941`) — `src/lib/chat-history.ts`, `chat_turns`, `app/api/chat-history`.
+   - Salience-gated memory (`a5611be`) — `src/lib/memory/*`, `user_memory`, `app/api/memory`.
+   - Chat orchestrator + no-execute eval gate (`4b6f4eb`) — `src/lib/chat/*`, `app/api/chat`, `test/atlas-golden-eval.test.ts`.
+   - Build/lint fix (`03c6f27`) — normalize `node:crypto`→`crypto`; exclude `reference/**` from vitest.
+7. **Fix `docs/atlas-integration-map.md` (done):** corrected the RAG "already shipped" overstatement (storage was shipped; chunking/point-in-time/citations were not) and marked all ports.
 
 ## Files (so far)
 
@@ -51,9 +57,22 @@ no ESTABLISHED connections to :8787; private docs all point the tunnel at :4000)
 - Tunnel: `lsof` — active connections on :4000, none on :8787; BFF log shows mock-mode + no traffic.
 - Secret scan of public repo (all branches): clean — only `.env.example` placeholders.
 
+## Verification (final)
+
+- Full gate green on `main`: `npx tsc --noEmit` clean (pre-existing `alternative-data.test.ts`
+  mismatch aside), `npm test` = **46 files / 339 tests** pass, `npm run build` OK (`/_not-found`
+  prerenders). New tests: rag-chunk (5), notify (4), chat-history (5), memory (5),
+  chat-orchestrator (3), atlas-golden-eval (10).
+
 ## Follow-ups / risks
 
-- Confirm `https://trading.jays.services` still loads the dashboard after the BFF stop (Cloudflare
-  Access blocks automated checks). If anything is off, relaunch: the plist is in `~/.atlas-retired/`.
-- After site confirmation, `rm -rf ~/Code/trading` for final cleanup.
-- The TS ports are real feature work and land incrementally with the verify gate (tsc/test/build).
+- **User to confirm:** `https://trading.jays.services` still loads the dashboard after the BFF stop
+  (Cloudflare Access blocks automated checks). If off, relaunch from `~/.atlas-retired/`. After
+  confirmation, `rm -rf ~/Code/trading` for final cleanup.
+- **UI wiring deferred (backends ported):** the chat panel, memory panel, notify-prefs settings,
+  watchlist/alerts UI, and a draft-card confirm flow are not yet wired into the dashboard — only the
+  APIs (`/api/chat`, `/api/memory`, `/api/notifications`, `/api/chat-history`) and libs exist.
+- **AnthropicLLM is config-gated:** chat uses the deterministic MockLLM unless `CHAT_LLM=anthropic`
+  + an Anthropic key are set. `draft_order` only mints a ticket (no live proposal/execution wiring yet).
+- RAG hybrid/RRF rerank from the Atlas store was intentionally NOT ported (Pinecone dense ANN is the
+  production path); only chunking + `as_of` were salvaged.

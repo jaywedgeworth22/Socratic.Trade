@@ -13,12 +13,14 @@ The public repo explored a chat-first BFF MVP (`apps/bff` + `apps/web`) from the
 | User watchlist (persisted symbols) | `src/lib/watchlist.ts`, `app/api/watchlist/route.ts` | Distinct from strategy universe / ignore list |
 | Price alerts (threshold rules + poller) | `src/lib/alerts.ts`, `app/api/alerts/route.ts`, scheduler tick | Emits `price_alert` notifications |
 | Test/Paper/Brokerage honesty | Already shipped | See `docs/rollouts/2026-06-20-broker-honesty-redesign.md` |
-| KB RAG with citations | Already shipped (Pinecone/Voyage) | Public in-memory RAG was the MVP; private index is production |
-| Conversation history | **Deferred** | Public chat transcript store; private uses strategy audit + SSE, not a chat UI yet |
-| Chat orchestrator + draft cards | **Deferred** | Valuable patterns in `reference/atlas-public/` BFF; no chat surface in dashboard yet |
-| Salience-gated memory store | **Deferred** | See `docs/atlas/deep-dives/12-memory-format-and-model-decisions.md` |
-| Order blotter UI | **Partial overlap** | Private has proposals/orders/fills; no separate blotter panel |
-| Auto-deploy launchd scripts | **Deferred** | Private uses PM2 + `~/apps/trading-publish.sh` for production |
+| KB RAG: chunking + point-in-time | **Ported 2026-06-20** | `src/lib/rag/chunk.ts` + `vector-db.ts` (`storeDocument`, `retrieveContext({asOf})`, `isWithinAsOf`). NB: the prior "Already shipped (Pinecone/Voyage)" claim covered **storage only** — structure-aware chunking, point-in-time `as_of`, and citation surfacing were NOT shipped; chunking + `as_of` now are. Hybrid/RRF rerank still deferred. |
+| Multi-channel alert delivery | **Ported 2026-06-20** | `src/lib/notify.ts` (push/webhook/email/SMS) + `notification_prefs` table + `app/api/notifications/*`; fired on alert triggers |
+| Conversation history (redact-on-write) | **Ported 2026-06-20** | `src/lib/chat-history.ts` + `chat_turns` table + `app/api/chat-history` |
+| Chat orchestrator + draft cards | **Ported 2026-06-20** | `src/lib/chat/*` (tool-loop, MockLLM + Anthropic, draft-only — never executes) + `app/api/chat` |
+| Salience-gated memory store | **Ported 2026-06-20** | `src/lib/memory/*` + `user_memory` table + `app/api/memory` |
+| No-execute prompt-eval gate | **Ported 2026-06-20** | `test/atlas-golden-eval.test.ts` (10 adversarial no-execute/refusal/citation cases) |
+| Order blotter UI | **Partial overlap (deferred)** | Private has proposals/orders/fills; no separate blotter panel. The chat assistant's draft cards now provide a draft surface. |
+| Auto-deploy launchd scripts | **Retired 2026-06-20** | The Atlas self-hosted deployment was torn down; private uses PM2 + Litestream + Infisical. Public repo emptied. |
 
 ## Architecture relationship
 
