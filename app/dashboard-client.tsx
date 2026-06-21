@@ -509,7 +509,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {/* ── Command bar ─────────────────────────────────────────── */}
       <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:py-0 xl:px-4">
         {/* Left Side: Logo, Title, Status, and Pills */}
-        <div className="flex flex-wrap items-center justify-between gap-3 w-full xl:w-auto xl:justify-start xl:gap-4">
+        <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-3 w-full xl:w-auto xl:justify-start xl:gap-4">
           <div className="flex items-start gap-2.5">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
               <Zap size={17} className="fill-current" />
@@ -538,7 +538,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         {/* Right Side: Selects, Utilities, Actions */}
         <div className="flex flex-col gap-2.5 w-full lg:flex-row lg:items-center lg:justify-end xl:w-auto xl:flex-nowrap xl:gap-3">
           {/* Sub-container 1: Selects and Utility tools */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap justify-end w-full lg:w-auto">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
               className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
@@ -546,7 +546,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
               <select
                 aria-label="Approval mode"
-                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs"
+                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
                 value={policy.strategyAuthority}
                 onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
               >
@@ -557,7 +557,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
-                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none lg:h-9 lg:px-2.5 lg:text-sm"
+                className="h-8 max-sm:h-11 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
                 value={policy.connectedAccountId ?? ""}
                 onChange={(e) => {
                   const id = e.target.value;
@@ -588,7 +588,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
 
           {/* Sub-container 2: Action buttons */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap justify-end w-full lg:w-auto">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <button
               onClick={() => setFeedOpen(true)}
               className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
