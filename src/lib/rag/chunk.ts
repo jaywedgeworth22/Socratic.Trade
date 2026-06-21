@@ -3,7 +3,7 @@
 // headings set section metadata, tables are kept atomic, long prose is split with overlap, and
 // each chunk carries a deterministic context header plus a point-in-time `acceptance_datetime`.
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 
 const DEFAULT_MAX_TOKENS = 480;
 const DEFAULT_OVERLAP_RATIO = 0.12;

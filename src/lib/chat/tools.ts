@@ -3,7 +3,7 @@
 // ToolDeps so the loop is testable offline. Ported from reference/atlas-public-src/bff/tools.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 import { canonicalTicker } from "../rag/chunk";
 import type { ChatDraft, ChatQuote, KbChunk } from "./types";
 

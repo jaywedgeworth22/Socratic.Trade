@@ -3,7 +3,7 @@
 // redaction never reaches disk — and flagged. Ported from reference/atlas-public-src/bff/history.
 // (NB: src/lib/history.ts is the unrelated OHLC price-history module.)
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 import { clearChatTurns, insertChatTurn, listChatTurns, trimChatTurns } from "./db";
 import type { ChatTurn, ChatTurnRole } from "./types";
 
