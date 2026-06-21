@@ -14,7 +14,7 @@ live-confirmed where visible) · 🟡 Partial (some of the fix shipped) · ⏳ D
 strategy-flow, assistant-console). **`app/ui/dashboard/{views,components,utils,settings}.tsx` are a
 dead, unimported parallel implementation** — issues there don't affect runtime (see DUP-1).
 
-Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
+Totals: ~45 ✅ · ~6 🟡 · ~22 ⏳ · ~5 📝 (updated 2026-06-21 deferred-fix pass — see `docs/rollouts/2026-06-21-ui-ux-deferred-fixes.md`).
 
 ---
 
@@ -27,7 +27,7 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 | REL-3 | Settings policy-write race — full-snapshot PUT can revert a concurrent edit | Med | ⏳ | `app/dashboard-client.tsx:~307`; `app/api/policy/route.ts:25-33` | Send only the `patch` (server merges per-field) + `disabled={busy}` on index toggles / ticker inputs. |
 | REL-4 | Dual concurrent `/api/scan` fetches on every load | Low | ⏳ | `app/dashboard-client.tsx` (`tickerScan` mount + `MarketScanView.refreshScan`) | Lift scan fetch into `DashboardApp`, pass `initialScan`/`onRefresh` down. |
 | REL-5 | ⌘K command palette is built but unmounted; a live hint still points users to it | Med | ⏳ | `app/ui/command-palette.tsx`; `app/dashboard-client.tsx:~285` | Re-wire (state + meta/ctrl+K listener + mount + ⌘K pill) or delete the stale hint. |
-| REL-6 | Strategy Flow edges render unthemed/low-contrast; nodes overlap; minimap unstyled; React-Flow watermark shown | Med | ⏳ | `app/ui/strategy-flow.tsx` | Pass `colorMode` + `proOptions={{hideAttribution:true}}`; theme `--xy-*`/edge stroke; respace nodes; theme/remove minimap. |
+| REL-6 | Strategy Flow edges render unthemed/low-contrast; nodes overlap; minimap unstyled; React-Flow watermark shown | Med | ✅ | `app/ui/strategy-flow.tsx` | Themed animated edges + arrowheads (`defaultEdgeOptions`), respaced nodes, `proOptions:{hideAttribution:true}`, removed the unstyled minimap, `colorMode` follows the app theme. |
 | REL-7 | Macro default values impersonate live data (no `isDefault` flag, `asOf = now`) when no FRED key | Med | 🟡 | `src/lib/macro.ts:40,46,63`; `app/ui/macro-panel.tsx` | "Broad USD (DTWEXBGS, not DXY)" relabel + tooltip shipped; backend `isDefault` flag + a "showing defaults" chip still TODO. |
 
 ## Information architecture & navigation
@@ -45,7 +45,7 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 | ID | Issue | Sev | Status | Files | Fix / note |
 |----|-------|-----|--------|-------|-----------|
 | SCN-1 | Idle vs loading copy contradicts itself ("Scanning…" + "choose a base index") | Low | ✅ | `app/dashboard-client.tsx:~1303` | Hint branches on `scanLoading` ("Fetching quotes…"). |
-| SCN-2 | `TableVirtuoso` blank-row flash on mount (no `overscan`/`initialItemCount`) | Low | ⏳ | `app/dashboard-client.tsx:~1373` | Add `overscan={600}` (+ `initialItemCount`). |
+| SCN-2 | `TableVirtuoso` blank-row flash on mount (no `overscan`/`initialItemCount`) | Low | ✅ | `app/dashboard-client.tsx` | `overscan={600}` + `initialItemCount` added. |
 | SCN-3 | Compound chips show an unlabeled 0–100 score ("Positive 64") | Low | 🟡 | `app/dashboard-client.tsx` (local chips); `app/ui/dashboard/components.tsx` (dead) | Added "·" separator ("Positive · 64"); the number's scale is in the cell tooltip. Splitting into 2 columns deferred. |
 | SCN-4 | Congress/Insider feed is all-red SELL chips with no base-rate framing | Low | ⏳ | `app/dashboard-client.tsx:~1444` | Add a one-line "SELLs are routine — watch BUYs" footnote and/or sort BUYs first. |
 
@@ -54,7 +54,7 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 | ID | Issue | Sev | Status | Files | Fix / note |
 |----|-------|-----|--------|-------|-----------|
 | VIS-1 | Light-mode logo tile hides white-glyph logos (AAPL invisible) | Med | ✅ | `app/ui/ticker-logo.tsx` | Dark slate tile in light mode; surface tile in dark. Live-confirmed AAPL renders. |
-| VIS-2 | `backdrop-blur` on table `<tr>`s (dead/no-op CSS + GPU cost) | Low | 📝 | `app/ui/dashboard/views.tsx:245` (dead) | The active `dashboard-client` `TableRow` has no row blur; only the dead copy does — N/A on the active path. |
+| VIS-2 | `backdrop-blur` on table `<tr>`s (dead/no-op CSS + GPU cost) | Low | ✅ | `app/ui/dashboard/views.tsx` (deleted) | Resolved by deleting the dead `views.tsx` (DUP-1). |
 | VIS-3 | Animated mesh orbs over-saturate light mode (washes out cards; red orb behind content) | Low | ✅ | `app/globals.css` | Lower light-mode opacities (+ `.dark` restore); swapped the red `--down` orb to neutral `--info`. |
 | VIS-4 | Settings/Flow modal jumps vertically on tab switch | Med | ✅ | `app/dashboard-client.tsx` (Settings body `min-h`) | Settings content min-height stops the reflow; Flow is full-size (N/A). |
 | VIS-5 | Score cell visually under-weighted vs Sentiment/Rating chips | Low | 📝 | `app/dashboard-client.tsx` | Score is now col 2 + bold; an optional score-tier dot/bar is a nice-to-have. |
@@ -67,11 +67,11 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 | CPY-2 | Macro sparklines color rising VIX / credit spread green ("up = good") | Med | ✅ | `app/ui/macro-panel.tsx` | Polarity-aware: VIX/HY green when falling, red when rising; yields/USD/oil neutral gray. Live-confirmed. |
 | CPY-3 | "USD index" label invites DXY confusion (broad index ~120 vs DXY ~100) | Med | ✅ | `app/ui/macro-panel.tsx` | Relabeled "Broad USD" + tooltip clarifying DTWEXBGS, not DXY. |
 | CPY-4 | Settings subtitle ("Risk, tax & notifications") names only 2 of 6 tabs | Low | ✅ | `app/dashboard-client.tsx:766` | "Universe, risk, keys, tax & notifications". |
-| CPY-5 | Two divergent `SettingsContent`s; Risk tab unreachable from the gear | Med | ⏳ | `app/ui/dashboard/settings.tsx` (dead); `app/dashboard-client.tsx:~2165` | Delete the dead copy (see DUP-1); add a Risk tab to the live Settings (risk params currently only on the Strategy tab). |
+| CPY-5 | Two divergent `SettingsContent`s; Risk tab unreachable from the gear | Med | 🟡 | `app/dashboard-client.tsx:~2165` | Dead copy deleted (DUP-1); adding a Risk tab to the live Settings still TODO (risk params currently only on the Strategy tab). |
 | CPY-6 | Decision empty-state says "Choose an account" though Test is always active | Low | ✅ | `app/dashboard-client.tsx:~1090` | Reworded to "Set your tradable universe in Settings → Operate, then Run…". |
-| CPY-7 | Tuning tab exposes source-file paths to end users | Low | ⏳ | `app/ui/dashboard/settings.tsx` (dead) | Replace with "see the project README" if/when the live Tuning tab is built out. |
+| CPY-7 | Tuning tab exposes source-file paths to end users | Low | ✅ | `app/ui/dashboard/settings.tsx` (deleted) | Resolved by deleting the dead `settings.tsx` (DUP-1) where the paths lived. |
 | CPY-8 | "No account selected." run failure rendered as an alarming **red** error for an active Test account | High | 🟡 | `app/dashboard-client.tsx` (UI); `src/lib/strategy.ts:87,478` (root) | UI: setup-type failures now render **amber "needs setup"** (live-confirmed). Root cause (why `policy.accountNumber` is empty when `connectedAccountId` is set) deferred — needs backend investigation + tests. |
-| CPY-9 | Safety banner is all-caps (swallows the explanatory sentence) | Low | ⏳ | `app/dashboard-client.tsx:~506` | Reserve caps for the mode prefix; sentence-case the clarification. |
+| CPY-9 | Safety banner is all-caps (swallows the explanatory sentence) | Low | ✅ | `app/dashboard-client.tsx` | Removed CSS `uppercase`; the mode prefix is already caps in the string, so the clarification now reads sentence-case. |
 | CPY-10 | Leaked internal identifiers ("test/local"; stale `Mock\/Local` regex missing `Test`) | Low | ⏳ | `src/lib/execution-mode.ts`; `app/dashboard-client.tsx` (action-title regex) | Map internal mode strings to user labels; update the action-title regex. |
 | CPY-11 | Mode-label copy mismatch (header "Propose → you approve" vs Settings "LLM proposes — you approve") | Low | ⏳ | `app/dashboard-client.tsx` | Standardize one phrasing. |
 | CPY-12 | "· live" overstates freshness when the market is closed / quotes are delayed | Low | ⏳ | `app/dashboard-client.tsx:~1322` | "· refreshed" + "· prices delayed" when closed. |
@@ -84,10 +84,10 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 | A11Y-2 | Tabs missing `aria-controls`/`tabpanel` wiring | High | ✅ | `app/ui/primitives.tsx`; `app/dashboard-client.tsx` | Tab buttons get `id`/`aria-controls`; workspace panel is `role="tabpanel"` + `aria-labelledby` + `tabIndex=0`. |
 | A11Y-3 | Command palette has no dialog role / focus trap | High | ⏳ | `app/ui/command-palette.tsx` | Apply `useDismissable` + dialog ARIA (resolve with REL-5). |
 | A11Y-4 | Two header `<select>`s have no accessible name | Med | ✅ | `app/dashboard-client.tsx:548,558` | `aria-label="Approval mode"` / `"Active account"`. |
-| A11Y-5 | Activity button doesn't announce its pending-count badge | Med | ⏳ | `app/dashboard-client.tsx:~580` | Dynamic `aria-label` + `aria-live="polite"` on the badge. |
+| A11Y-5 | Activity button doesn't announce its pending-count badge | Med | ✅ | `app/dashboard-client.tsx` | Dynamic `aria-label` with the pending count; badge is `aria-live="polite"`. |
 | A11Y-6 | Column-picker dropdown lacks `aria-expanded`/role/Escape | Med | ⏳ | `app/dashboard-client.tsx:~1336` | `aria-haspopup`/`aria-expanded`, `role="listbox"`, Escape-to-close + focus restore. |
-| A11Y-7 | Danger-button text fails AA contrast in dark mode (`text-white` on `--down`) | Low | ⏳ | `app/ui/primitives.tsx`; `app/ui/overlays.tsx` | Add `--down-fg` tokens; use `text-down-fg`. |
-| A11Y-8 | `--faint` helper text fails AA against the page background | Med | 🟡 | `app/globals.css` | Light `--faint` darkened to `#55657a`; raising the 9px StatusPill/DailyRiskPill labels to ≥11px still TODO. |
+| A11Y-7 | Danger-button text fails AA contrast in dark mode (`text-white` on `--down`) | Low | ✅ | `app/globals.css`; `app/ui/primitives.tsx`; `app/ui/overlays.tsx` | Added `--down-fg` token (light `#fff`, dark `#2b0a10`); danger buttons use `text-down-fg`. |
+| A11Y-8 | `--faint` helper text fails AA against the page background | Med | ✅ | `app/globals.css`; `app/dashboard-client.tsx` | Light `--faint` darkened to `#55657a`; 9px StatusPill/DailyRiskPill labels raised to 11px. |
 | A11Y-9 | Input focus relies on cascade-layer order (works, but inconsistent with buttons) | Low | 📝 | `app/ui/primitives.tsx:260` | Align inputs to `focus-visible:outline` for consistency. |
 
 ## Mobile — iPhone (≤430px)
@@ -102,7 +102,7 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 | IPH-6 | Symbol drilldown header: name vs price block collide, no truncation | Med | ✅ | `app/ui/symbol-drilldown.tsx` | `min-w-0` + `truncate`; price block `shrink-0`. |
 | IPH-7 | Price chart touch-pan steals page scroll; timeframe buttons ~18px tall | Med | ✅ | `app/ui/price-chart.tsx` | `handleScroll: { vertTouchDrag: false }`; timeframe buttons `min-h-[40px]` on mobile. |
 | IPH-8 | Workspace tab bar scrolls but with no visual cue of hidden tabs | Med | 📝 | `app/dashboard-client.tsx:~645` | Already `overflow-x-auto` (not clipped); shorten labels / auto-scroll active tab — nice-to-have. |
-| IPH-9 | No safe-area insets (landscape notch; home-indicator clearance) | Med | ⏳ | `app/layout.tsx`; `app/globals.css` | Add `viewport-fit=cover` + `env(safe-area-inset-*)` padding (deferred to avoid an untested landscape regression; portrait is auto-constrained). |
+| IPH-9 | No safe-area insets (landscape notch; home-indicator clearance) | Med | ✅ | `app/layout.tsx`; `app/globals.css` | `viewport-fit=cover` + `env(safe-area-inset-*)` body padding under an `@supports` guard (0 on non-notched devices). |
 
 ## Mobile — iPad
 
@@ -117,7 +117,7 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 
 | ID | Issue | Sev | Status | Files | Fix / note |
 |----|-------|-----|--------|-------|-----------|
-| IOS-1 | Safe-area insets entirely absent | Med | ⏳ | `app/layout.tsx`; `app/globals.css` | See IPH-9. |
+| IOS-1 | Safe-area insets entirely absent | Med | ✅ | `app/layout.tsx`; `app/globals.css` | See IPH-9 — shipped. |
 | IOS-2 | `100vh` on the error page (URL-bar jump) | Low | ✅ | `app/global-error.tsx` | `100vh` → `100dvh`. (Shell already uses `dvh`.) |
 | IOS-3 | Input zoom (<16px) — the most pervasive mobile defect | High | ✅ | `app/globals.css` | See IPH-1. |
 | IOS-4 | Tap targets <44pt | High | 🟡 | shared primitives | See IPH-4. |
@@ -129,8 +129,8 @@ Totals: ~33 ✅ · ~6 🟡 · ~33 ⏳ · ~6 📝.
 
 | ID | Issue | Sev | Status | Files | Fix / note |
 |----|-------|-----|--------|-------|-----------|
-| DUP-1 | **Dead parallel UI implementation** — `app/ui/dashboard/{views,components,utils,settings}.tsx` have no importers; `dashboard-client.tsx` carries local copies of all of it | Med | ⏳ | `app/ui/dashboard/*` | Root of the audit's "two divergent SettingsContent" / duplicate `SCAN_COLUMNS` findings. Delete the directory after a final usage check. (This pass's edits to `components.tsx`/`utils.tsx` are inert.) |
-| MISC-1 | SVG gradient ids (`equity-fill`) are global — latent collision if rendered twice | Low | ⏳ | `app/ui/charts.tsx:30` | Scope with `useId()`. |
+| DUP-1 | **Dead parallel UI implementation** — `app/ui/dashboard/{views,components,utils,settings}.tsx` have no importers; `dashboard-client.tsx` carries local copies of all of it | Med | ✅ | `app/ui/dashboard/*` (deleted) | Deleted the directory after confirming no importers (`grep` across app/src/test). Closes CPY-7, VIS-2; removes the dead half of CPY-5/SCN-3. |
+| MISC-1 | SVG gradient ids (`equity-fill`) are global — latent collision if rendered twice | Low | ✅ | `app/ui/charts.tsx` | Scoped with `useId()`. |
 | MISC-2 | Glassmorphism blur tiers inverted (inner cards blur more than outer) | Low | ⏳ | various `app/ui/*` | Standardize: panels `-sm`, floating `-md`, overlays `-xl`. |
 | MISC-3 | Win-rate StatTile has no tone; Congress column shows "0" for mixed activity; no persistent sort affordance on inactive headers | Low | ⏳ | `app/dashboard-client.tsx` | Minor polish batch. |
 | MISC-4 | SSE staleness not surfaced (120s fallback poll, no "last updated"); empty-universe scan returns 200 indistinguishable from "no data" | Low | ⏳ | `app/dashboard-client.tsx`; `app/api/scan/route.ts` | "Updated Xm ago" badge; short-circuit empty universe to the configure state. |
