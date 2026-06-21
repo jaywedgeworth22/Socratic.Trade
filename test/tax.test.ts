@@ -152,4 +152,40 @@ describe("tax", () => {
     );
     expect(locked.has("BABA")).toBe(false);
   });
+
+  it("computes unrealizedGain and earlyExitTaxPremium for near-long-term lots with current prices", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "TURNOVER_COST";
+    // Buy 40 days ago @100, current price @110 → $10 unrealized gain on 1 share
+    // With 24% short-term and 15% long-term rates: earlyExitTaxPremium = $10 * (24-15)/100 = $0.90
+    insertFillEvent(fill({ id: "tc1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "XYZ", filledAt: daysAgo(40) }));
+
+    const tax = getTaxSummary(a, "paper", { XYZ: 110 }, { shortTermRatePct: 24, longTermRatePct: 15 }, NOW);
+    const xyzLot = tax.openLots.find((l) => l.symbol === "XYZ");
+    expect(xyzLot?.unrealizedGain).toBeCloseTo(10);
+    expect(xyzLot?.earlyExitTaxPremium).toBeCloseTo(0.9);
+  });
+
+  it("does not compute earlyExitTaxPremium for lots without current price", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "NO_PRICE";
+    insertFillEvent(fill({ id: "np1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "UNKNOWN", filledAt: daysAgo(40) }));
+
+    const tax = getTaxSummary(a, "paper", {}, { shortTermRatePct: 24, longTermRatePct: 15 }, NOW);
+    const unknownLot = tax.openLots.find((l) => l.symbol === "UNKNOWN");
+    expect(unknownLot?.unrealizedGain).toBeUndefined();
+    expect(unknownLot?.earlyExitTaxPremium).toBeUndefined();
+  });
+
+  it("does not compute earlyExitTaxPremium for lots at a loss", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const a = "AT_LOSS";
+    // Buy 40 days ago @100, current price @90 → -$10 unrealized loss
+    insertFillEvent(fill({ id: "al1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: a, symbol: "DOWN", filledAt: daysAgo(40) }));
+
+    const tax = getTaxSummary(a, "paper", { DOWN: 90 }, { shortTermRatePct: 24, longTermRatePct: 15 }, NOW);
+    const downLot = tax.openLots.find((l) => l.symbol === "DOWN");
+    expect(downLot?.unrealizedGain).toBeCloseTo(-10);
+    expect(downLot?.earlyExitTaxPremium).toBeUndefined();
+  });
 });
