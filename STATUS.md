@@ -24,6 +24,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
+  Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus
+  the three agent worktree branches. Deleted (tip SHAs in the rollout note for recovery):
+  `agent/antigravity-local` (`095175c`, superseded), `codex/phase-7-…` (`b990c14`, merged),
+  `codex/upload-current-state` (`47786c4`, merged), and remote
+  `cursor/setup-dev-environment-a574` (`7e82278`, integrated). See
+  `docs/rollouts/2026-06-20-branch-hygiene-and-a574-integration.md`.
 - 2026-06-20: **Cursor positioned as the human review cockpit (not a 4th agent).** Documented
   Cursor's role in `AGENTS.md` (Hosting & dev servers section: integration row now credits Cursor +
   a new "Cursor: the human review cockpit" subsection) and added `.cursor/rules/handoff.mdc`
