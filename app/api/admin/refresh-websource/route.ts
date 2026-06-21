@@ -1,21 +1,15 @@
 import { NextResponse } from "next/server";
 import { refreshCongress, getCongressDataset } from "@/lib/web-sources/congress";
 import { refreshEightK, getEightKDataset } from "@/lib/web-sources/sec8k";
+import { requireAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
 // Dev/ops route to force a web-source refresh (bypasses TTL/backoff) and report the result.
-// Gated to non-production unless ADMIN_REINDEX_TOKEN matches the x-admin-token header.
-function authorized(request: Request): boolean {
-  const token = process.env.ADMIN_REINDEX_TOKEN;
-  if (token && request.headers.get("x-admin-token") === token) return true;
-  return process.env.NODE_ENV !== "production";
-}
-
+// Admin-gated: verified ADMIN_USER_EMAILS / primary operator, or x-admin-token, or non-production.
 export async function POST(request: Request) {
-  if (!authorized(request)) {
-    return NextResponse.json({ ok: false, error: "Not authorized in production without ADMIN_REINDEX_TOKEN." }, { status: 403 });
-  }
+  const denied = requireAdmin(request);
+  if (denied) return denied;
   let id = "congress";
   try {
     const body = (await request.json()) as { id?: string };

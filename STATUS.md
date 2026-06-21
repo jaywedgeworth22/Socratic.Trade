@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`feat/csrf-rate-limit-admin`): **SECURITY-HARDENING — CSRF origin guard + per-user rate limiting + admin-role gate.** Added `src/lib/auth/csrf.ts` (same-origin Sec-Fetch-Site/Origin check, wired into `middleware.ts` for state-changing `/api/*`; webhooks/health exempt), `src/lib/rate-limit.ts` (in-process sliding window, no deps; fail-open on error, 429 over limit; applied to OAuth start/callback, `orders/cancel`, `proposals/[id]/approve`), and `src/lib/auth/admin.ts` `requireAdmin` (ADMIN_USER_EMAILS allowlist + primary operator, default-deny in prod; composes with the legacy x-admin-token/non-prod gate; wired into all six `app/api/admin/*` routes). tsc clean, 642 tests pass (+19), build green. See `docs/rollouts/2026-06-21-csrf-rate-limit-admin.md`.
 - 2026-06-21 (`agent/claude`): **P0-3/P1-2/P1-7 — VIX Yahoo fallback + congress floor + exposure defaults.** Live ^VIX from Yahoo Finance (key-free) replaces "Unknown regime" when no FRED key is configured; `hasNotableWebSignal` now requires buyCount≥2 AND netSignal≥2 (single-member disclosures no longer trigger rank-lift); `maxGrossExposurePct`/`maxNetExposurePct` defaults tightened 100→80 to enforce a 20% cash buffer. tsc clean, 593 tests all pass (+20). See `docs/rollouts/2026-06-21-p1-macro-signal-exposure.md`.
 - 2026-06-21 (`agent/claude`): **P1-4/5/6 — congress disclosedAt windowing + scorecard floor + deterministic Bear veto.** PR #35.
 - 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**

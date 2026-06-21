@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildFactorObservations, computeFactorICs, deriveWeightsFromICs, runWalkForwardOOS } from "@/lib/backtest";
 import { getPolicy } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { requireAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -17,16 +18,9 @@ export const dynamic = "force-dynamic";
 //   costRoundTripBps  Round-trip cost in bps for OOS adjustment (default 20)
 //   taxRate           Short-term tax rate for OOS adjustment (default 0.24)
 //   topK              Top-K names per date in OOS equity curve (default 3)
-function authorized(request: Request): boolean {
-  const token = process.env.ADMIN_REINDEX_TOKEN;
-  if (token && request.headers.get("x-admin-token") === token) return true;
-  return process.env.NODE_ENV !== "production";
-}
-
 export async function GET(request: Request) {
-  if (!authorized(request)) {
-    return NextResponse.json({ ok: false, error: "Not authorized in production without ADMIN_REINDEX_TOKEN." }, { status: 403 });
-  }
+  const denied = requireAdmin(request);
+  if (denied) return denied;
   const userId = resolveRequestUserId(request);
   const url = new URL(request.url);
   const horizonDays = Number(url.searchParams.get("horizonDays")) || 5;
