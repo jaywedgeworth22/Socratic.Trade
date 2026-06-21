@@ -13,7 +13,7 @@
 
 ## Files
 
-- [app/dashboard-client.tsx](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/app/dashboard-client.tsx)
+- [app/dashboard-client.tsx](file:///Users/jay/Code/Agentic%20Trading/app/dashboard-client.tsx)
 
 ## Verification
 

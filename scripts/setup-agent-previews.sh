@@ -7,7 +7,7 @@
 #   Codex       → ~/apps/trading-codex        (branch agent/codex)       http://localhost:4101
 #   Antigravity → ~/apps/trading-antigravity  (branch agent/antigravity) http://localhost:4102
 #
-# This worktree (~/Documents/Robinhood Agentic Trading, branch `main`) is the INTEGRATION
+# This worktree (~/Code/Agentic Trading, branch `main`) is the INTEGRATION
 # checkout — merge agent branches here; do not run an agent dev server in it.
 # Production is separate and unaffected: ~/apps/trading-live (pm2 `trading`, `next start` :4000).
 #

@@ -22,7 +22,7 @@ assets the app needs.
 ## Verification
 
 - `git status --short --branch --untracked-files=all` in
-  `/Users/jay/Documents/Robinhood Agentic Trading` showed only the disposable
+  `/Users/jay/Code/Agentic Trading` showed only the disposable
   scratch artifacts before the ignore rule.
 - `ls -l "SELECT value FROM store WHERE key = \"policy_jay\"" screenshot*.png
   test-run.ts test-ui.cjs test-ui.js` classified the files and sizes.

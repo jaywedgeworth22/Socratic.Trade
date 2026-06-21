@@ -24,6 +24,14 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20: **Cursor positioned as the human review cockpit (not a 4th agent).** Documented
+  Cursor's role in `AGENTS.md` (Hosting & dev servers section: integration row now credits Cursor +
+  a new "Cursor: the human review cockpit" subsection) and added `.cursor/rules/handoff.mdc`
+  (always-applied) so Cursor follows the same read-order + pre-commit handoff protocol as
+  Claude/Codex/Antigravity. Cursor occupies the `main` integration seat (`~/Code/Agentic Trading`)
+  for review/merge/hand-edits; agent/background runs stay on `cursor/*` branches
+  (`origin/cursor/setup-dev-environment-*` already exist). Docs/config only — no code or tests
+  changed. See `docs/rollouts/2026-06-20-cursor-integration-role-and-rules.md`.
 - 2026-06-21: **vector-db userId sanitization + timestamp parsing hardening.**
   `getClients()` now sanitizes `userId` before resolving Pinecone/Voyage keys so
   key-lookup identity matches the Pinecone filter identity (multi-tenant
@@ -219,7 +227,7 @@ steps materially change.
   rules for manual screenshot captures, one-off UI probe scripts, and accidental
   SQL-named shell output files so the `main` integration checkout stays usable
   for review/fast-forward merges. Existing untracked scratch files in
-  `~/Documents/Robinhood Agentic Trading` were classified as disposable local
+  `~/Code/Agentic Trading` were classified as disposable local
   artifacts. See `docs/rollouts/2026-06-19-integration-scratch-cleanup.md`.
 - 2026-06-19 (`agent/claude`, committed): **Pinecone RAG fixed + backfilled (0→83
   vectors) and Robinhood MCP market data wired.** Root cause of the empty index was a
@@ -420,7 +428,7 @@ steps materially change.
   `npm run build` never touch another's preview or production: Claude →
   `~/apps/trading-claude` (`agent/claude`) :4100; Codex → `~/apps/trading-codex`
   (`agent/codex`) :4101; Antigravity → `~/apps/trading-antigravity` (`agent/antigravity`)
-  :4102. `~/Documents/Robinhood Agentic Trading` (`main`) is the integration/merge worktree
+  :4102. `~/Code/Agentic Trading` (`main`) is the integration/merge worktree
   (no agent dev server). Production unchanged: pm2 `trading`, `next start` :4000. Bootstrap/
   repair with `scripts/setup-agent-previews.sh`; see the rewritten "Hosting & dev servers"
   section in `AGENTS.md`. Key rule: a running port is NOT a work lock — coordinate via git +

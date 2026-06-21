@@ -16,7 +16,7 @@ fully isolated (`node_modules`/`.next`/`data/app.db`/`.env.local` per worktree):
 | Claude | `~/apps/trading-claude` | `agent/claude` | 4100 | `trading-claude` (`next dev`) |
 | Codex | `~/apps/trading-codex` | `agent/codex` | 4101 | `trading-codex` (`next dev`) |
 | Antigravity | `~/apps/trading-antigravity` | `agent/antigravity` | 4102 | `trading-antigravity` (`next dev`) |
-| (integration) | `~/Documents/Robinhood Agentic Trading` | `main` | — | merge/review only |
+| (integration) | `~/Code/Agentic Trading` | `main` | — | merge/review only |
 | production | `~/apps/trading-live` | release | 4000 | `trading` (`next start`) |
 
 - `scripts/setup-agent-previews.sh` — NEW, idempotent bootstrap/repair of the three agent

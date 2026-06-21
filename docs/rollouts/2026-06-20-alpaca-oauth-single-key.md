@@ -9,12 +9,12 @@ For the official `@alpacahq/alpaca-trade-api` client constructor, when a secret 
 Alpaca Paper environments only utilize a single API Key (the Key ID) with no separate Secret Key. The platform previously assumed standard API key-pair authentication (requiring both key and secret), blocking connection or stream startup when the secret key was absent, and initially structured the SDK option as an object instead of the required plain string.
 
 ## Files Touched
-- [src/lib/alpaca.ts](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/src/lib/alpaca.ts)
-- [src/lib/data-providers.ts](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/src/lib/data-providers.ts)
-- [src/lib/streams/alpaca-news-stream.ts](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/src/lib/streams/alpaca-news-stream.ts)
-- [src/lib/streams/alpaca-trade-updates-stream.ts](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/src/lib/streams/alpaca-trade-updates-stream.ts)
-- [app/dashboard-client.tsx](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/app/dashboard-client.tsx)
-- [app/ui/dashboard/settings.tsx](file:///Users/jay/Documents/Robinhood%20Agentic%20Trading/app/ui/dashboard/settings.tsx)
+- [src/lib/alpaca.ts](file:///Users/jay/Code/Agentic%20Trading/src/lib/alpaca.ts)
+- [src/lib/data-providers.ts](file:///Users/jay/Code/Agentic%20Trading/src/lib/data-providers.ts)
+- [src/lib/streams/alpaca-news-stream.ts](file:///Users/jay/Code/Agentic%20Trading/src/lib/streams/alpaca-news-stream.ts)
+- [src/lib/streams/alpaca-trade-updates-stream.ts](file:///Users/jay/Code/Agentic%20Trading/src/lib/streams/alpaca-trade-updates-stream.ts)
+- [app/dashboard-client.tsx](file:///Users/jay/Code/Agentic%20Trading/app/dashboard-client.tsx)
+- [app/ui/dashboard/settings.tsx](file:///Users/jay/Code/Agentic%20Trading/app/ui/dashboard/settings.tsx)
 
 ## Verification
 Ran all verification commands in the required sequence:

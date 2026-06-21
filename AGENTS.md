@@ -75,7 +75,7 @@ one worktree's process at another's files.
 
 | Worktree | Branch | Port | Process | Owner |
 |----------|--------|------|---------|-------|
-| `~/Documents/Robinhood Agentic Trading` | `main` | — (no dev server) | — | **integration / review / merges** |
+| `~/Code/Agentic Trading` | `main` | — (no dev server) | — | **integration / review / merges / hand-edits** (human via **Cursor**) |
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | Antigravity/Gemini |
@@ -98,6 +98,27 @@ Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-pre
   another agent's app or `trading`; run `pm2 save` after intentional changes. Never run a
   build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
   via its release steps only.
+
+### Cursor: the human review cockpit (not a 4th agent lane)
+Cursor fills the **human-in-the-loop** seat, not a fourth autonomous agent. The three
+CLI/agentic tools (Claude Code, Codex, Antigravity) *produce* work in parallel `agent/*`
+worktrees; Cursor is where a human *reviews, steers, hand-edits, and integrates* it. Its home
+is the existing **`main` integration worktree** (`~/Code/Agentic Trading`) — no new port, no
+PM2 preview.
+
+- **Best uses:** reviewing/merging the `agent/*` branches (inline-AI diff reading + merge-
+  conflict resolution), fast surgical hand-edits where firing a whole agent is overkill,
+  in-editor debugging, and codebase Q&A while you steer.
+- **Don't** make `main` an autonomous lane or stand up an `agent/cursor` dev-server worktree to
+  run a 4th parallel agent — it adds a branch to merge and a preview to babysit for little gain
+  over the three you already have.
+- **If you do use Cursor's agent/background mode** for a feature, keep it on its own branch like
+  the others. It already does this: background runs land on `cursor/*` branches (e.g.
+  `origin/cursor/setup-dev-environment-*`) — merge them like any `agent/*` branch.
+- **Handoff still applies.** Cursor auto-loads `AGENTS.md` (and `.cursor/rules/`); `AGENTS.md`
+  *is* `CLAUDE.md` (symlink) and already carries the Pre-Commit / Handoff Protocol above. Before
+  any commit from Cursor, update `STATUS.md` + a `docs/rollouts/` note + `PLAN.md` like every
+  other tool.
 
 ### A running port is NOT a work lock
 A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
