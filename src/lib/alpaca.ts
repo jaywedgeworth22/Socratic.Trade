@@ -1,6 +1,7 @@
 import Alpaca from "@alpacahq/alpaca-trade-api";
 import crypto from "crypto";
 import type {
+  AccountCapabilities,
   BrokerageAccount,
   BrokerQuote,
   EquityOrder,
@@ -72,11 +73,24 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getAccounts(): Promise<BrokerageAccount[]> {
     const account = await this.alpaca.getAccount();
+    // Alpaca returns shorting_enabled (boolean) and account_type ("MARGIN" | "CASH").
+    const shortSelling = Boolean(account.shorting_enabled);
+    const marginEnabled = shortSelling || String(account.account_type ?? "").toUpperCase() === "MARGIN";
+    const capabilities: AccountCapabilities = {
+      equityTrading: true,
+      shortSelling,
+      optionsTrading: false, // Alpaca REST v2 does not include equity options
+      futuresTrading: false,
+      cryptoTrading: false,
+      marginEnabled,
+      accountType: "brokerage"
+    };
     return [
       {
         accountNumber: account.account_number,
         label: this.label,
-        agenticAllowed: true
+        agenticAllowed: true,
+        capabilities
       }
     ];
   }

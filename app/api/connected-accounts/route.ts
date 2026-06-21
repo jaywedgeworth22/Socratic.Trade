@@ -45,6 +45,9 @@ export async function POST(req: Request) {
         accountNumber: agentic.accountNumber,
         label: agentic.label || "Robinhood Agentic",
         taxationType: taxationType ?? existing?.taxationType,
+        // Persist live capabilities from the broker so the UI can display them
+        // and policy can enforce them without a round-trip on each strategy run.
+        capabilities: agentic.capabilities ?? existing?.capabilities,
         isActive: body.isActive ?? existing?.isActive ?? !getActiveConnectedAccount(userId)
       });
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });

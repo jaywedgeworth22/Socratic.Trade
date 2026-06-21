@@ -223,7 +223,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         dailyOrderCount: dailyNow.orderCount,
         estimatedNotional: review.estimatedNotional,
         marketScan,
-        washSaleLockedSymbols
+        washSaleLockedSymbols,
+        accountCapabilities: selected?.capabilities
       });
 
       if (!decision.approved) {
@@ -553,7 +554,8 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     dailyOrderCount: daily.orderCount,
     estimatedNotional: review.estimatedNotional,
     marketScan: approvalScan,
-    washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date())
+    washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
+    accountCapabilities: activeAccount?.capabilities
   });
 
   if (!decision.approved) {

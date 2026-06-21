@@ -94,6 +94,12 @@ steps materially change.
   still open: auth layer (T1), execution-section CAS/atomicity (T4/T5), portfolio
   circuit breaker (#7), boot-time autonomy interlock (T3). See
   `docs/rollouts/2026-06-21-safety-quick-wins.md`.
+- 2026-06-21: **AccountCapabilities classifier.** Added `AccountCapabilities` interface
+  covering equity, shortSelling, options (CBOE level 0–4), futures, crypto, margin, and
+  accountType (brokerage/IRA/crypto_exchange). Wired into Robinhood and Alpaca gateways,
+  DB persistence (JSON column + migration), policy two-layer short gate, strategy context,
+  and coloured capability badges on account cards. Robinhood MCP confirmed: shortSelling
+  always false. tsc clean · 390 tests · build OK. See `docs/rollouts/2026-06-21-account-capabilities.md`.
 - 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
 - 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
 - 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
