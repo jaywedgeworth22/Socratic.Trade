@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **P1 edge quality — congress disclosedAt windowing + scorecard noise floor + deterministic Bear veto.** Three financial-expert-panel P1 items: (1) `aggregateCongressSignals` now windows on `disclosedAt` (not `tradedAt`) so only market-visible disclosures count; (2) LLM scorecard filters raised ≥2→≥5 trades; (3) `deterministicBearFilter` (sync, no LLM) runs before Bear: hard-vetos phantom exits + below-median buys in crisis regime, flags momentum overextension. tsc clean, 573 tests (+16). Commit: `61b560e`. See `docs/rollouts/2026-06-21-p1-edge-quality.md`.
 - 2026-06-21 (`agent/claude`, PR #32): **PDT-rule repeal + Alpaca scan data + consent UI.**
   FINRA Notice 26-10 retired the Pattern-Day-Trader rule ($25k / 4-trades-in-5-days) → replaced
   the `policy.ts` PDT gate with a `MARGIN_MINIMUM_EQUITY` ($2,000) margin-account gate (LIVE +
