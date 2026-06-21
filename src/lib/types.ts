@@ -114,7 +114,9 @@ export interface ConnectedAccount {
   label: string;
   apiKey?: string;
   apiSecret?: string;
+  baseUrl?: string;
   isActive: boolean;
+
   createdAt: string;
   updatedAt: string;
 }

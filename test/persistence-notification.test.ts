@@ -99,14 +99,17 @@ describe("persistence and notifications", () => {
       label: "Alpaca Test",
       apiKey: "key-123",
       apiSecret: "secret-456",
+      baseUrl: "https://paper-api.alpaca.markets/v2",
       isActive: true
     });
 
     const listed = listConnectedAccounts().find((account) => account.id === accountId);
     expect(listed?.apiKey).toBeUndefined();
     expect(listed?.apiSecret).toBeUndefined();
+    expect(listed?.baseUrl).toBe("https://paper-api.alpaca.markets/v2");
     expect(getActiveConnectedAccount()?.apiKey).toBe("key-123");
     expect(getActiveConnectedAccount()?.apiSecret).toBe("secret-456");
+    expect(getActiveConnectedAccount()?.baseUrl).toBe("https://paper-api.alpaca.markets/v2");
 
     upsertConnectedAccount({
       id: accountId,
@@ -115,13 +118,16 @@ describe("persistence and notifications", () => {
       environment: "paper",
       accountNumber: "PA-TEST",
       label: "Renamed Alpaca",
+      baseUrl: "https://paper-api.alpaca.markets/v2",
       isActive: true
     });
 
     expect(getActiveConnectedAccount()?.label).toBe("Renamed Alpaca");
     expect(getActiveConnectedAccount()?.apiKey).toBe("key-123");
+    expect(getActiveConnectedAccount()?.baseUrl).toBe("https://paper-api.alpaca.markets/v2");
     expect(() => setActiveConnectedAccount("missing-account")).toThrow("Connected account not found.");
     expect(getActiveConnectedAccount()?.id).toBe(accountId);
+
   });
 
   it("keeps active broker paper account separate from the Test policy toggle", async () => {
@@ -368,4 +374,27 @@ describe("persistence and notifications", () => {
     expect(event.status).toBe("sent");
     expect(event.webhookUrl).toBe("https://example.test/webhook");
   });
+
+  it("sanitizes custom Alpaca baseUrl and instantiates client correctly", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    const userId = `alpaca-base-url-user-${randomUUID()}`;
+    const accountId = randomUUID();
+
+    upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-URL-TEST",
+      label: "Custom Alpaca",
+      apiKey: "PK-KEY",
+      baseUrl: "https://custom-alpaca-endpoint.com/v2/",
+      isActive: true
+    });
+
+    const gateway1 = getAlpacaGateway(userId);
+    expect(((gateway1 as any).alpaca).configuration.baseUrl).toBe("https://custom-alpaca-endpoint.com");
+  });
 });
+
