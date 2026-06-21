@@ -28,7 +28,8 @@ import type {
   ChatTurn,
   ChatTurnRole,
   AccountCapabilities,
-  MemoryItem
+  MemoryItem,
+  LearnedContextRow
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -317,6 +318,26 @@ function migrate(database: Database.Database): void {
       superseded_by TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory (user_id, superseded_by);
+
+    CREATE TABLE IF NOT EXISTS learned_context (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'private' CHECK(scope IN ('private','shared')),
+      kind TEXT NOT NULL CHECK(kind IN ('pattern','decision','fact')),
+      subject TEXT NOT NULL,
+      symbol TEXT,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inferred',
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest')),
+      risk_tier TEXT NOT NULL DEFAULT 'fact' CHECK(risk_tier IN ('fact','risk','strategy-directive')),
+      confidence REAL NOT NULL DEFAULT 0.5,
+      contributor_user_id TEXT,
+      asserted_at TEXT NOT NULL,
+      superseded_by TEXT,
+      expires_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_learned_context_user ON learned_context (user_id, scope, superseded_by);
+    CREATE INDEX IF NOT EXISTS idx_learned_context_symbol ON learned_context (symbol, scope, superseded_by);
   `);
 
   // Migrate tables to include user_id
@@ -2766,4 +2787,133 @@ export function touchMemory(id: string, assertedAt: string, confidence: number):
 
 export function deleteMemory(userId: string, id: string): boolean {
   return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
+}
+
+// ── learned_context CRUD (userId-scoped; READ-ONLY toward the brain) ───────────
+interface RawLearnedContextRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  kind: string;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: string;
+  risk_tier: string;
+  confidence: number;
+  contributor_user_id: string | null;
+  asserted_at: string;
+  superseded_by: string | null;
+  expires_at: string | null;
+}
+
+function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    scope: row.scope as LearnedContextRow["scope"],
+    kind: row.kind as LearnedContextRow["kind"],
+    subject: row.subject,
+    symbol: row.symbol,
+    value: row.value,
+    source: row.source,
+    origin: row.origin as LearnedContextRow["origin"],
+    riskTier: row.risk_tier as LearnedContextRow["riskTier"],
+    confidence: row.confidence,
+    contributorUserId: row.contributor_user_id,
+    assertedAt: row.asserted_at,
+    supersededBy: row.superseded_by,
+    expiresAt: row.expires_at
+  };
+}
+
+export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow {
+  getDb()
+    .prepare(
+      `INSERT INTO learned_context
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      row.id,
+      row.userId,
+      row.scope,
+      row.kind,
+      row.subject,
+      row.symbol,
+      row.value,
+      row.source,
+      row.origin,
+      row.riskTier,
+      row.confidence,
+      row.contributorUserId,
+      row.assertedAt,
+      row.supersededBy,
+      row.expiresAt
+    );
+  return row;
+}
+
+export function findLiveLearnedContextBySubject(
+  userId: string,
+  kind: string,
+  subject: string,
+  symbol: string | null
+): LearnedContextRow | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM learned_context
+       WHERE user_id = ? AND kind = ? AND subject = ? AND ((symbol IS NULL AND ? IS NULL) OR symbol = ?)
+         AND superseded_by IS NULL
+       ORDER BY asserted_at DESC LIMIT 1`
+    )
+    .get(userId, kind, subject, symbol, symbol) as RawLearnedContextRow | undefined;
+  return row ? mapLearnedContext(row) : null;
+}
+
+/**
+ * Live FACT rows for a decision: the user's own private rows plus, when includeShared is set,
+ * other contributors' opted-in shared rows. Filtered to the given symbols (plus symbol-less
+ * rows, which are general facts) and to non-expired rows. READ-ONLY — never mutates.
+ *
+ * NOTE: in the fact-tier slice, only scope='private' rows are ever written, so includeShared
+ * has no effect yet; it is wired through so the later shared-fact slice needs no signature change.
+ */
+export function listLearnedContextForDecision(
+  userId: string,
+  symbols: string[],
+  includeShared = false
+): LearnedContextRow[] {
+  const nowIso = new Date().toISOString();
+  const normalizedSymbols = new Set(symbols.map((s) => s.toUpperCase()));
+  const rows = includeShared
+    ? (getDb()
+        .prepare(
+          `SELECT * FROM learned_context
+           WHERE superseded_by IS NULL AND risk_tier = 'fact'
+             AND (user_id = ? OR scope = 'shared')`
+        )
+        .all(userId) as RawLearnedContextRow[])
+    : (getDb()
+        .prepare(
+          `SELECT * FROM learned_context
+           WHERE superseded_by IS NULL AND risk_tier = 'fact' AND user_id = ?`
+        )
+        .all(userId) as RawLearnedContextRow[]);
+  return rows
+    .map(mapLearnedContext)
+    .filter((r) => r.expiresAt === null || r.expiresAt > nowIso)
+    .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
+}
+
+export function listLearnedContext(userId: string): LearnedContextRow[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM learned_context WHERE user_id = ? AND superseded_by IS NULL ORDER BY asserted_at DESC")
+    .all(userId) as RawLearnedContextRow[];
+  return rows.map(mapLearnedContext);
+}
+
+export function supersedeLearnedContext(oldId: string, newId: string): void {
+  getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
 }
