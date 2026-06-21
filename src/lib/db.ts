@@ -24,7 +24,9 @@ import type {
   PriceAlertStatus,
   WatchlistItem,
   NotifyPrefs,
-  NotifyChannelId
+  NotifyChannelId,
+  ChatTurn,
+  ChatTurnRole
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -281,6 +283,18 @@ function migrate(database: Database.Database): void {
       phone TEXT NOT NULL DEFAULT '',
       updated_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS chat_turns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+      text TEXT NOT NULL,
+      citations TEXT NOT NULL DEFAULT '[]',
+      intent TEXT,
+      redacted INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
   `);
 
   // Migrate tables to include user_id
@@ -2159,4 +2173,68 @@ export function setNotifyPrefs(
     });
   audit("notify.prefs.set", { userId, channels: next.channels }, userId);
   return next;
+}
+
+interface RawChatTurnRow {
+  id: string;
+  user_id: string;
+  role: string;
+  text: string;
+  citations: string;
+  intent: string | null;
+  redacted: number;
+  created_at: string;
+}
+
+function mapChatTurn(row: RawChatTurnRow): ChatTurn {
+  let citations: string[] = [];
+  try {
+    const parsed = JSON.parse(row.citations) as unknown;
+    if (Array.isArray(parsed)) citations = parsed.filter((c): c is string => typeof c === "string");
+  } catch {
+    citations = [];
+  }
+  const role: ChatTurnRole = row.role === "assistant" ? "assistant" : "user";
+  return {
+    id: row.id,
+    userId: row.user_id,
+    role,
+    text: row.text,
+    citations,
+    intent: row.intent,
+    redacted: row.redacted === 1,
+    createdAt: row.created_at
+  };
+}
+
+export function insertChatTurn(turn: ChatTurn): ChatTurn {
+  getDb()
+    .prepare(
+      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.createdAt);
+  return turn;
+}
+
+export function listChatTurns(userId: string, limit: number = 100): ChatTurn[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM chat_turns WHERE user_id = ? ORDER BY created_at ASC, rowid ASC")
+    .all(userId) as RawChatTurnRow[];
+  const mapped = rows.map(mapChatTurn);
+  return limit > 0 && mapped.length > limit ? mapped.slice(mapped.length - limit) : mapped;
+}
+
+/** Keep only the most recent `keep` turns for a user (FIFO cap); returns rows deleted. */
+export function trimChatTurns(userId: string, keep: number): number {
+  return getDb()
+    .prepare(
+      `DELETE FROM chat_turns WHERE user_id = ? AND id NOT IN (
+         SELECT id FROM chat_turns WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?
+       )`
+    )
+    .run(userId, userId, keep).changes;
+}
+
+export function clearChatTurns(userId: string): number {
+  return getDb().prepare("DELETE FROM chat_turns WHERE user_id = ?").run(userId).changes;
 }

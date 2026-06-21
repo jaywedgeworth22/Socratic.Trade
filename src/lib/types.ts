@@ -664,3 +664,18 @@ export interface NotifyChannelDescriptor {
   placeholder: string;
   hint: string;
 }
+
+// --- Conversation transcript (chat history, ported from Atlas) ---
+export type ChatTurnRole = "user" | "assistant";
+
+export interface ChatTurn {
+  id: string;
+  userId: string;
+  role: ChatTurnRole;
+  text: string;
+  citations: string[];
+  intent: string | null;
+  /** True when redact-on-write stripped a secret/PII from `text` before persistence. */
+  redacted: boolean;
+  createdAt: string;
+}
