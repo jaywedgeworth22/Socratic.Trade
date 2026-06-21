@@ -976,16 +976,60 @@ export function latestAuditByKind(kind: string, userId: string = "local"): { id:
   };
 }
 
-export function dailyExecutionStats(accountNumber: string, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
-  const dayStart = new Date(now);
-  dayStart.setHours(0, 0, 0, 0);
+/**
+ * IANA timezone whose civil midnight defines the daily-notional reset boundary. Made explicit so the
+ * daily cap resets deterministically regardless of the server process's local TZ — the old
+ * `setHours(0,0,0,0)` silently used `process.env.TZ`. US equities trade on the NYSE calendar, so the
+ * market day (America/New_York) is the natural boundary. (T13)
+ */
+export const DAILY_RESET_TIME_ZONE = "America/New_York";
+
+/** UTC instant of civil midnight, in `timeZone`, for the calendar day containing `now`. (T13) */
+export function startOfDayInTimeZone(now: Date, timeZone: string = DAILY_RESET_TIME_ZONE): Date {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    })
+      .formatToParts(now)
+      .map((part) => [part.type, part.value])
+  );
+  const hour = parts.hour === "24" ? 0 : Number(parts.hour); // some engines render midnight as "24"
+  const wallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour, Number(parts.minute), Number(parts.second));
+  const offsetMs = wallAsUTC - now.getTime(); // how far the tz wall-clock leads UTC at `now`
+  const midnightWallAsUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 0, 0, 0);
+  return new Date(midnightWallAsUTC - offsetMs);
+}
+
+/**
+ * Scope key for an account. A missing/blank account number maps to an explicit sentinel so
+ * the "unassigned" bucket is consistent between writes and reads, rather than relying on the
+ * `account_number` column's empty-string DEFAULT (which can silently merge contexts). (T14)
+ */
+function scopeAccount(accountNumber?: string | null): string {
+  return accountNumber && accountNumber.trim() !== "" ? accountNumber : "__unassigned__";
+}
+
+export function dailyExecutionStats(
+  accountNumber: string,
+  now = new Date(),
+  userId: string = "local",
+  timeZone: string = DAILY_RESET_TIME_ZONE
+): { orderCount: number; notional: number } {
+  const dayStart = startOfDayInTimeZone(now, timeZone);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
     .prepare(
       "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(dayStart.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -1013,7 +1057,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
     .prepare(
       "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
     )
-    .all(cutoff.toISOString(), accountNumber, userId) as Array<{ proposal: string; estimated_notional: number | null }>;
+    .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
   return rows.reduce(
     (acc, row) => {
@@ -1231,7 +1275,7 @@ export function insertProposal(input: {
       input.id,
       input.userId ?? "local",
       input.runId,
-      input.accountNumber,
+      scopeAccount(input.accountNumber),
       new Date().toISOString(),
       JSON.stringify(input.proposal),
       JSON.stringify(input.decision),

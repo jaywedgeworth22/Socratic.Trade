@@ -17,7 +17,7 @@ import {
   getThesisScorecard,
   recordFillFromProposal
 } from "../src/lib/performance";
-import type { FillEvent, MarketScan, OrderSide } from "../src/lib/types";
+import type { FillEvent, MarketScan, OrderSide, TradeProposal } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-performance-${randomUUID()}.db`)}`;
@@ -505,6 +505,52 @@ describe("calculatePnl — short/cover", () => {
     expect(pnl.closedLots[0].side).toBe("short");
     expect(pnl.openLots).toHaveLength(1);
     expect(pnl.openLots[0].side).toBe("long");
+  });
+});
+
+describe("recordFillFromProposal — T9 short/cover boundaries", () => {
+  const baseProposal = (over: Record<string, unknown>): TradeProposal =>
+    ({
+      type: "limit",
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      rationale: "t",
+      tradeThesisTag: "t",
+      entryMarketRegime: "t",
+      ...over
+    }) as TradeProposal;
+
+  it("records a short fill with the right side, quantity, price, and absolute notional", () => {
+    const f = recordFillFromProposal({
+      accountNumber: "T9_SHORT",
+      source: "paper",
+      proposal: baseProposal({ symbol: "TSLA", side: "short", quantity: 2, limitPrice: 100 }),
+      status: "filled"
+    });
+    expect(f.side).toBe("short");
+    expect(f.quantity).toBeCloseTo(2);
+    expect(f.price).toBeCloseTo(100);
+    expect(f.notional).toBeCloseTo(200); // notional is always recorded as a positive magnitude
+  });
+
+  it("books a cover fill as a partial short close in the projection", () => {
+    recordFillFromProposal({
+      accountNumber: "T9_COVER",
+      source: "paper",
+      proposal: baseProposal({ symbol: "TSLA", side: "short", quantity: 3, limitPrice: 100 }),
+      status: "filled"
+    });
+    const cover = recordFillFromProposal({
+      accountNumber: "T9_COVER",
+      source: "paper",
+      proposal: baseProposal({ symbol: "TSLA", side: "cover", quantity: 1, limitPrice: 90 }),
+      status: "filled"
+    });
+    expect(cover.side).toBe("cover");
+    expect(cover.quantity).toBeCloseTo(1);
+
+    const projection = getPaperPortfolioProjection({ accountNumber: "T9_COVER", startingCash: 1000, currentPrices: { TSLA: 95 } });
+    expect(projection.positions.find((p) => p.symbol === "TSLA")?.quantity).toBeCloseTo(-2); // short 3, covered 1
   });
 });
 

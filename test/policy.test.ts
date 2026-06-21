@@ -419,6 +419,45 @@ describe("evaluateTradeProposal", () => {
     );
     expect(decision.approved).toBe(true);
   });
+
+  // T10 — whole-portfolio gross/net exposure gates (previously silent no-ops).
+  it("maxGrossExposurePct blocks an opening buy that pushes gross over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "buy", dollarAmount: 9500 },
+      { ...context(9500), policy: { ...enabledPolicy, maxGrossExposurePct: 100 } }
+    );
+    // grossNow 1000 (AAPL) + 9500 = 10500 > 10000 cap → blocked.
+    expect(decision.reasons.join(" ")).toContain("gross exposure");
+  });
+
+  it("maxNetExposurePct blocks an opening buy that pushes net over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "buy", dollarAmount: 9500 },
+      { ...context(9500), policy: { ...enabledPolicy, maxNetExposurePct: 100 } }
+    );
+    expect(decision.reasons.join(" ")).toContain("net exposure");
+  });
+
+  it("gross/net caps do NOT block a risk-reducing sell even when already over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(1000), policy: { ...enabledPolicy, maxGrossExposurePct: 5, maxNetExposurePct: 5 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("gross exposure");
+    expect(decision.reasons.join(" ")).not.toContain("net exposure");
+  });
+
+  it("default 100% gross/net caps do not block a small in-policy order", () => {
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10
+    });
+    expect(decision.approved).toBe(true);
+  });
 });
 
 function context(estimatedNotional = 10) {
