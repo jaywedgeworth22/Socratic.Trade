@@ -24,6 +24,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20 (`agent/claude` → `main`): **Landed Claude lane to `main`; last `node:crypto` holdout reconciled.**
+  Merged `main` into `agent/claude` to catch up on the 6 Atlas ports + the committed `node:crypto`
+  instrumentation fix (`03c6f27`), then merged `agent/claude` → `main` (no-ff) to land the money-path
+  tranche-1 fixes below. Fixed the one holdout `03c6f27` missed — `src/lib/memory/store.ts` now imports
+  bare `crypto`, not `node:crypto` (mandatory: the `node:` scheme breaks the Next.js instrumentation
+  webpack build with `UnhandledSchemeError`). 4100 (PM2 `trading-claude`) verified serving 200; `main` +
+  `agent/claude` pushed to origin. See `docs/rollouts/2026-06-20-claude-lane-integration-and-node-crypto-reconcile.md`.
 - 2026-06-20 (`agent/claude`): **Money-path safety — tranche 1 (4 bug fixes + 20 tests).**
   From an adversarially-verified audit (38 findings → 12 confirmed → 14-task plan): fixed the
   side-blind per-symbol notional cap that could block automated de-risking exits (T1,
@@ -33,8 +40,8 @@ steps materially change.
   `synthetic-stops.ts`). Pinned with 20 regression tests (short/cover P&L signs, side-aware
   caps, enabled-path short guardrails, partial-fill booking, synthetic-stop cover exit). tsc
   clean, 327 tests, build green. Remaining: T5/T6/T9–T14 (coverage + cleanup; T10 = gross/net
-  exposure-gate design decision). On `origin/agent/claude`; merge to `main` deferred while the
-  integration worktree is active. See `docs/rollouts/2026-06-20-money-path-safety-fixes.md`.
+  exposure-gate design decision). Landed to `main` 2026-06-20 via integration merge (see entry above).
+  See `docs/rollouts/2026-06-20-money-path-safety-fixes.md`.
 - 2026-06-20: **Atlas public repo retired + 6 subsystems ported to TS.** Reviewed `jaywedgeworth22/public`
   (the "Atlas" BFF) via a 14-agent inventory, preserved it whole (git bundle of all 9 branches + source →
   `reference/atlas-public-src/`), retired its live deployment (uninstalled the `com.jays.trading` BFF + the
