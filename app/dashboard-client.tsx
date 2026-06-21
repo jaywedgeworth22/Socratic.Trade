@@ -2446,7 +2446,7 @@ function SettingsContent({
                     { value: "off", label: "Off" }
                   ]}
                 />
-                {tickerLogoDisplay !== "off" && (
+                {tickerLogoDisplay === "tile" && (
                   <div className="flex items-center gap-2 pl-0.5">
                     <span className="text-xs text-faint">Source</span>
                     <LogoSourceSegmented />
@@ -2805,8 +2805,8 @@ function LogoSourceSegmented() {
       value={source}
       onChange={setLogoSourcePref}
       options={[
-        { value: "github", label: "GitHub", title: "GitHub — davidepalazzo/ticker-logos (transparent PNGs; falls back to logo.dev)" },
-        { value: "logodev", label: "logo.dev", title: "logo.dev — colored tile icons with monogram fallback; falls back to GitHub" }
+        { value: "github", label: "Option 1", title: "GitHub — davidepalazzo/ticker-logos" },
+        { value: "logodev", label: "Option 2", title: "logo.dev — colored tile icons with monogram fallback" }
       ]}
     />
   );
