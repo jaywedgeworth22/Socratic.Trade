@@ -30,18 +30,20 @@ steps materially change.
   state; removed the redundant "Test Mode" brand-block line + dead
   `executionTone()`; fixed the "too thin"/clipped command bar (`xl:h-14`/`xl:py-0`
   → `min-h-16`). (Part 2, backend) New `src/lib/proposal-revalidation.ts`:
-  **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 1440;
-  runs at run-start AND every scheduler tick → status `expired`) and an **on-run
-  LLM re-check** (`policy.revalidatePendingOnRun` default on,
-  `proposalRevalidateAfterMinutes` default 60) that, inside `runStrategyOnce`,
-  asks the LLM whether each old still-pending proposal still stands —
+  **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 2880 =
+  2 days; runs at run-start AND every scheduler tick → status `expired`) and a
+  **cadence-gated on-run LLM re-check** (`policy.revalidatePendingOnRun` default
+  on, `proposalRevalidateCadenceHours` default 3) that, inside `runStrategyOnce`,
+  asks the LLM whether each *due* still-pending proposal still stands — **regular
+  market hours only** (no overnight checks), each one re-checked every N hours.
   `reaffirm` stamps `last_revalidated_at` (UI: "Re-checked X ago — still
   advised"), `withdraw` → status `withdrawn` + `proposal_withdrawn` notification.
-  Safe-by-default: ambiguous LLM output keeps the proposal; no `OPENAI_API_KEY`
-  ⇒ LLM pass skips but deterministic expiry still runs. New policy knobs + a
-  notification toggle in Settings → Risk. The **Flow** button was a question
-  (static React Flow pipeline visualizer, `app/ui/strategy-flow.tsx`) — left in
-  place. tsc clean, **313 tests** (+6), build green. See
+  Safe-by-default: ambiguous LLM output keeps the proposal; market closed / no
+  `OPENAI_API_KEY` ⇒ LLM pass skips but deterministic expiry still runs. Both
+  surfaced as **dropdowns** + a notification toggle in Settings → Risk. The
+  **Flow** button was a question (static React Flow pipeline visualizer,
+  `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
+  build green. See
   `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
 - 2026-06-20: **Branch hygiene + Cursor Cloud docs integrated.** Cherry-picked the Cursor
   Cloud setup docs onto `main` (`55213d2`) and pruned branches → the tree is now `main` plus

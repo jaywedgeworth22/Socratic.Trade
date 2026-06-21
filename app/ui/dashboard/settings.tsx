@@ -228,17 +228,43 @@ export function SettingsContent({
           <NumberField label="Max symbol (%)" value={policy.maxSymbolExposurePct} onCommit={(v) => updatePolicy({ maxSymbolExposurePct: v })} />
           <NumberField label="Max proposals/run" value={policy.maxProposalsPerRun} onCommit={(v) => updatePolicy({ maxProposalsPerRun: Math.round(v) })} />
           <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
-          <NumberField label="Proposal expiry (min)" value={policy.proposalExpiryMinutes ?? 0} onCommit={(v) => updatePolicy({ proposalExpiryMinutes: Math.max(0, Math.round(v)) })} />
-          <NumberField label="Re-check pending after (min)" value={policy.proposalRevalidateAfterMinutes ?? 60} onCommit={(v) => updatePolicy({ proposalRevalidateAfterMinutes: Math.max(0, Math.round(v)) })} />
-          <div className="space-y-1 sm:col-span-2">
-            <label className="flex items-center gap-2 text-sm text-muted">
-              <input type="checkbox" checked={policy.revalidatePendingOnRun !== false} onChange={(e) => updatePolicy({ revalidatePendingOnRun: e.target.checked })} />
-              Re-check pending proposals on each run (LLM)
-            </label>
-            <p className="text-xs leading-relaxed text-faint">
-              Pending proposals sit in the approval queue until you act on them. Each strategy run re-asks the LLM whether every still-pending proposal older than the window above still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors "re-checked". <span className="text-muted">Proposal expiry</span> is a deterministic backstop: anything pending longer than that many minutes is auto-expired (0 = never expire).
-            </p>
-          </div>
+          <Field label="Re-check pending (market hours)">
+            <select
+              className={inputClass}
+              value={policy.revalidatePendingOnRun === false ? "off" : String(policy.proposalRevalidateCadenceHours ?? 3)}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "off") updatePolicy({ revalidatePendingOnRun: false });
+                else updatePolicy({ revalidatePendingOnRun: true, proposalRevalidateCadenceHours: Number(v) });
+              }}
+            >
+              <option value="off">Off — don&apos;t re-check</option>
+              <option value="1">Every 1 hour</option>
+              <option value="2">Every 2 hours</option>
+              <option value="3">Every 3 hours</option>
+              <option value="4">Every 4 hours</option>
+              <option value="6">Every 6 hours</option>
+            </select>
+          </Field>
+          <Field label="Pending proposals expire after">
+            <select
+              className={inputClass}
+              value={String(policy.proposalExpiryMinutes ?? 0)}
+              onChange={(e) => updatePolicy({ proposalExpiryMinutes: Number(e.target.value) })}
+            >
+              <option value="180">3 hours</option>
+              <option value="360">6 hours</option>
+              <option value="720">12 hours</option>
+              <option value="1440">1 day</option>
+              <option value="2880">2 days</option>
+              <option value="7200">5 days</option>
+              <option value="14400">10 days</option>
+              <option value="0">Never</option>
+            </select>
+          </Field>
+          <p className="text-xs leading-relaxed text-faint sm:col-span-2">
+            Proposals sit in the approval queue until you act on them. <span className="text-muted">Re-check</span> has each strategy run ask the LLM whether every still-pending proposal still stands against the fresh scan — withdrawing the ones it no longer advises and stamping the survivors &ldquo;re-checked&rdquo;. It runs only during regular market hours (no overnight checks) and re-checks each proposal on the cadence above. <span className="text-muted">Expire after</span> is a deterministic backstop: anything pending longer than that is auto-expired regardless.
+          </p>
           <NumberField label="Stop loss (%)" value={policy.riskRules.stopLossPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} />
           <NumberField label="Take profit (%)" value={policy.riskRules.takeProfitPct ?? 0} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} />
           <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">

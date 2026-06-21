@@ -74,23 +74,29 @@ Follow-on to the staleness UI above: the operator asked for (1) a real expiry
 **policy**, and (2) a supplemental task on each run that asks the LLM whether
 each old, still-pending proposal *still stands*.
 
-1. **Deterministic hard expiry** (`policy.proposalExpiryMinutes`, default **1440**
-   = 24h; 0 disables). Any pending proposal older than the TTL is moved to status
+1. **Deterministic hard expiry** (`policy.proposalExpiryMinutes`, default **2880**
+   = 2 days; 0 = Never). Any pending proposal older than the TTL is moved to status
    `expired`, with an audit event + a `proposal_withdrawn` notification + an SSE
    `proposal` event so open dashboards refresh. Runs at the **start of every
    strategy run** AND on **every scheduler tick** (even while halted / market
-   closed), so the queue self-clears regardless of run cadence.
-2. **On-run LLM re-validation** (`policy.revalidatePendingOnRun`, default **on**;
-   `policy.proposalRevalidateAfterMinutes`, default **60**). As a supplemental
-   step inside `runStrategyOnce` — before generating new ideas — every
-   still-pending proposal older than the window is sent to the LLM in one batched
-   call against the fresh scan + current regime. Verdict per proposal:
-   `reaffirm` → stamped `last_revalidated_at` + note (UI shows "Re-checked X ago —
-   still advised", and the staleness clock resets); `withdraw` → status
-   `withdrawn` + notification + SSE. Missing/unknown/garbled output defaults to
-   *keep* (never silently drops an idea). Degrades to a skip (deterministic expiry
-   still applies) when `OPENAI_API_KEY` is absent or the call fails. The run
-   summary gains "Expired N stale… Re-checked N pending: kept X, withdrew Y."
+   closed), so the queue self-clears regardless of run cadence. Exposed as a
+   **dropdown** (3h / 6h / 12h / 1d / 2d / 5d / 10d / Never).
+2. **On-run LLM re-validation, cadence-gated to market hours**
+   (`policy.revalidatePendingOnRun`, default **on**;
+   `policy.proposalRevalidateCadenceHours`, default **3**). As a supplemental step
+   inside `runStrategyOnce`, each still-pending proposal that is **due** — i.e.
+   ≥ cadence hours since it was created or last re-checked — is sent to the LLM in
+   one batched call against the fresh scan + current regime. It runs **only during
+   the regular US session** (`currentMarketSession === "regular"`), so a proposal
+   is re-checked a few times across a trading day and **never overnight** when
+   nothing can be acted on. Verdict per proposal: `reaffirm` → stamped
+   `last_revalidated_at` + note (UI shows "Re-checked X ago — still advised", and
+   the staleness clock resets); `withdraw` → status `withdrawn` + notification +
+   SSE. Missing/unknown/garbled output defaults to *keep* (never silently drops an
+   idea). Skips (deterministic expiry still applies) when the market is closed,
+   `OPENAI_API_KEY` is absent, or the call fails. Exposed as a **dropdown**
+   (Off / every 1h / 2h / 3h / 4h / 6h). The run summary gains "Expired N stale…
+   Re-checked N pending: kept X, withdrew Y."
 
 ## Why
 

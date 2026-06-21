@@ -100,7 +100,7 @@ describe("revalidatePendingProposals", () => {
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-LLM";
     process.env.OPENAI_API_KEY = "test-key";
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateAfterMinutes: 60 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 1 };
     setPolicy(policy);
     await seedPending(account, "keep-1", { symbol: "MSFT" });
     await seedPending(account, "drop-1", { symbol: "TSLA" });
@@ -120,7 +120,7 @@ describe("revalidatePendingProposals", () => {
     );
 
     const future = Date.now() + 3 * 60 * 60 * 1000;
-    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: future });
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: future, marketOpen: true });
     expect(res).toMatchObject({ checked: 2, reaffirmed: 1, withdrawn: 1, skipped: false });
 
     expect(getProposal("drop-1")?.status).toBe("withdrawn");
@@ -137,30 +137,49 @@ describe("revalidatePendingProposals", () => {
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-NOKEY";
     delete process.env.OPENAI_API_KEY;
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateAfterMinutes: 60 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 1 };
     setPolicy(policy);
     await seedPending(account, "nokey-1");
 
-    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() + 3 * 60 * 60 * 1000 });
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() + 3 * 60 * 60 * 1000, marketOpen: true });
     expect(res.skipped).toBe(true);
     expect(res.withdrawn).toBe(0);
     expect(getProposal("nokey-1")?.status).toBe("proposed");
   });
 
-  it("does not touch proposals younger than the re-check window", async () => {
+  it("does not touch proposals younger than the re-check cadence", async () => {
     const { setPolicy, getProposal } = await import("../src/lib/db");
     const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
     const account = "REVAL-YOUNG";
     process.env.OPENAI_API_KEY = "test-key";
-    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateAfterMinutes: 60 };
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 3 };
     setPolicy(policy);
     await seedPending(account, "young-1");
 
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() });
+    // Just inserted ⇒ ~0 min old, well under the 3h cadence ⇒ not due for a re-check.
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now(), marketOpen: true });
     expect(res).toMatchObject({ checked: 0, withdrawn: 0, reaffirmed: 0 });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(getProposal("young-1")?.status).toBe("proposed");
+  });
+
+  it("skips overnight — no re-check when the market is closed", async () => {
+    const { setPolicy, getProposal } = await import("../src/lib/db");
+    const { revalidatePendingProposals } = await import("../src/lib/proposal-revalidation");
+    const account = "REVAL-CLOSED";
+    process.env.OPENAI_API_KEY = "test-key";
+    const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, revalidatePendingOnRun: true, proposalRevalidateCadenceHours: 1 };
+    setPolicy(policy);
+    await seedPending(account, "closed-1");
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    // Old enough to be due, but the market is closed ⇒ the LLM pass is skipped entirely.
+    const res = await revalidatePendingProposals({ userId: "local", policy, accountNumber: account, now: Date.now() + 3 * 60 * 60 * 1000, marketOpen: false });
+    expect(res.skipped).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(getProposal("closed-1")?.status).toBe("proposed");
   });
 });

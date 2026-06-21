@@ -7,8 +7,11 @@
 //      Runs on every scheduler tick AND at the start of each strategy run, so stale
 //      proposals get cleared even when no full run happens (halted / market closed).
 //   2. revalidatePendingProposals — a supplemental LLM task on each run that re-checks
-//      every still-pending proposal against the fresh scan ("does this still stand?"),
-//      withdrawing the ones it no longer advises and stamping the survivors as re-validated.
+//      pending proposals against the fresh scan ("does this still stand?"), withdrawing the
+//      ones it no longer advises and stamping the survivors. It only runs during regular
+//      market hours and only re-checks a proposal once policy.proposalRevalidateCadenceHours
+//      have elapsed since it was created/last re-checked — so each is re-validated a few
+//      times across a trading day, never overnight when nothing can be acted on.
 //
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
@@ -17,13 +20,14 @@ import { audit, listPendingProposals, markProposalRevalidated, resolveApiKey, up
 import { emitDashboardEvent } from "./events";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { determineMarketRegime, fetchMacroData } from "./macro";
+import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketScan, PendingProposal, TradingPolicy } from "./types";
 
-const DEFAULT_REVALIDATE_AFTER_MINUTES = 60;
+const DEFAULT_REVALIDATE_CADENCE_HOURS = 3;
 
 export interface RevalidationAssessment {
   proposalId: string;
@@ -159,18 +163,30 @@ export async function revalidatePendingProposals(input: {
   accountNumber?: string;
   marketScan?: MarketScan;
   now?: number;
+  /** Override the market-hours gate (defaults to "is the regular US session open now"). */
+  marketOpen?: boolean;
 }): Promise<RevalidationResult> {
   const { userId, policy } = input;
   const accountNumber = input.accountNumber ?? policy.accountNumber;
   const now = input.now ?? Date.now();
+  const cadenceHours = policy.proposalRevalidateCadenceHours ?? DEFAULT_REVALIDATE_CADENCE_HOURS;
 
-  // Default ON: only the explicit `false` disables it.
-  if (policy.revalidatePendingOnRun === false || !accountNumber) {
+  // Default ON: the explicit `false` or a 0 cadence disables the LLM re-check.
+  if (policy.revalidatePendingOnRun === false || !(cadenceHours > 0) || !accountNumber) {
     return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: true };
   }
 
-  const minAge = policy.proposalRevalidateAfterMinutes ?? DEFAULT_REVALIDATE_AFTER_MINUTES;
-  const pending = listPendingProposals(accountNumber, userId).filter((p) => ageMinutes(p.createdAt, now) >= minAge);
+  // Market-hours gate: re-checking overnight is wasted work — nothing can be acted on until
+  // the open, and the scan would be stale. Only re-validate during the regular US session.
+  const marketOpen = input.marketOpen ?? currentMarketSession(new Date(now)) === "regular";
+  if (!marketOpen) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: true };
+
+  // A proposal is due for re-check once `cadenceHours` have elapsed since it was created or
+  // last re-checked — so each one is re-validated a few times across a trading day.
+  const cadenceMinutes = cadenceHours * 60;
+  const pending = listPendingProposals(accountNumber, userId).filter(
+    (p) => ageMinutes(p.lastRevalidatedAt ?? p.createdAt, now) >= cadenceMinutes
+  );
   if (pending.length === 0) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: false };
 
   const openaiKey = resolveApiKey("openai", userId);

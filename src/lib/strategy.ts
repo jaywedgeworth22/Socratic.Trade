@@ -119,8 +119,9 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // Supplemental tasks before generating new ideas — keep the approval queue honest so a
     // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
     //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
-    //   (2) an LLM re-check ("does this still stand?") of every still-pending proposal against
-    //       this run's fresh scan — withdrawing what no longer holds, stamping the survivors.
+    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their
+    //       cadence (regular market hours only) against this run's fresh scan — withdrawing
+    //       what no longer holds, stamping the survivors as re-validated.
     const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber });
     const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
       .catch((e) => {
