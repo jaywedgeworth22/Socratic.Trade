@@ -32,6 +32,10 @@ export interface ClosedLot {
   confidence?: number;
   /** Sector the position was opened in (stamped at fill time), for the sector dimension. */
   sector?: string;
+  /** Max Adverse Excursion (% from entry price, typically negative for longs) persisted after post-mortem. */
+  mae?: number;
+  /** Max Favorable Excursion (% from entry price, typically positive for longs) persisted after post-mortem. */
+  mfe?: number;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */

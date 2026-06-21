@@ -15,6 +15,7 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { stripClientIdentityHeaders } from "./src/lib/auth/strip-identity";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
 const ALLOWED = (process.env.ALLOWED_EMAILS || "")
@@ -42,7 +43,10 @@ function authenticatedEmail(req: NextRequest): string | null {
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
   if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    return NextResponse.next();
+    // Public (no auth) — but still strip client-supplied identity headers so an external caller
+    // (e.g. a webhook sender) can never hand a forged identity to a handler that reads it.
+    const headers = stripClientIdentityHeaders(new Headers(req.headers));
+    return NextResponse.next({ request: { headers } });
   }
 
   const isProd = process.env.NODE_ENV === "production";
@@ -68,10 +72,9 @@ export function middleware(req: NextRequest): NextResponse {
       : NextResponse.redirect(new URL("/access-denied", req.url));
   }
 
-  // Forward a trusted identity; strip spoofable client-supplied identity hints.
-  const headers = new Headers(req.headers);
+  // Strip any spoofable client-supplied identity hints, then forward the VERIFIED identity.
+  const headers = stripClientIdentityHeaders(new Headers(req.headers));
   headers.set("x-authenticated-user-email", trustedEmail);
-  headers.delete("x-user-id");
   return NextResponse.next({ request: { headers } });
 }
 

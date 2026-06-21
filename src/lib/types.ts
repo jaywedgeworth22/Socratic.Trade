@@ -587,6 +587,7 @@ export interface PendingProposal {
   lastRevalidatedAt?: string;
   /** The LLM's most recent re-validation note (why it still stands). */
   revalidationNote?: string;
+  accountNumber?: string;
 }
 
 export interface StrategyOutcome {

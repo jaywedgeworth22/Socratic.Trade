@@ -300,10 +300,124 @@ export class AnthropicLLM implements ChatLLM {
   }
 }
 
-export function getLLM(opts: { transport?: Transport } = {}): ChatLLM {
-  const key = resolveApiKey("anthropic");
-  if (process.env.CHAT_LLM === "anthropic" && key) {
-    return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport);
+// OpenAI Chat Completions transport — injectable for offline testing.
+type OpenAITransport = (body: any, apiKey: string) => Promise<any>;
+
+async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
+  const url = process.env.OPENAI_CHAT_URL ?? "https://api.openai.com/v1/chat/completions";
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`openai ${res.status}: ${detail.slice(0, 300)}`);
+  }
+  return res.json();
+}
+
+/**
+ * OpenAI Chat Completions tool loop for the chat assistant. Models the same
+ * injectable-transport approach as AnthropicLLM so it is fully testable offline.
+ *
+ * Tool calling follows the OpenAI function-calling protocol (tools/tool_calls).
+ * CHAT_LLM_MODEL defaults to gpt-4o-mini when CHAT_LLM=openai.
+ */
+export class OpenAILLM implements ChatLLM {
+  constructor(
+    private apiKey: string,
+    private model: string,
+    private transport: OpenAITransport = defaultOpenAITransport
+  ) {}
+
+  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+    // Build OpenAI messages array. Prior user/assistant turns first, then the current message.
+    const messages: any[] = [];
+    if (system) messages.push({ role: "system", content: system });
+    const prior = (history ?? []).slice();
+    // OpenAI requires alternating user/assistant; drop a leading assistant turn if present.
+    while (prior.length && prior[0].role !== "user") prior.shift();
+    for (const h of prior) messages.push({ role: h.role, content: h.text });
+    messages.push({ role: "user", content: message });
+
+    // Convert ChatLLM ToolSchema → OpenAI function-calling format.
+    const oaiTools =
+      tools && tools.length
+        ? tools.map((t) => ({
+            type: "function",
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: t.input_schema
+            }
+          }))
+        : undefined;
+
+    const toolCalls: ToolCall[] = [];
+    let text = "";
+
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const resp = await this.transport(
+        {
+          model: this.model,
+          max_tokens: 1024,
+          messages,
+          ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
+        },
+        this.apiKey
+      );
+
+      const choice = resp.choices?.[0];
+      if (!choice) break;
+      const assistantMsg = choice.message ?? {};
+      messages.push({ role: "assistant", content: assistantMsg.content ?? null, ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } : {}) });
+      text = typeof assistantMsg.content === "string" ? assistantMsg.content : "";
+
+      const calls: any[] = assistantMsg.tool_calls ?? [];
+      if (choice.finish_reason !== "tool_calls" || calls.length === 0) break;
+
+      const toolResults: any[] = [];
+      for (const tc of calls) {
+        const name: string = tc.function?.name ?? "";
+        let input: any;
+        try {
+          input = JSON.parse(tc.function?.arguments ?? "{}");
+        } catch {
+          input = {};
+        }
+        let result: any;
+        try {
+          result = await executeTool(name, input);
+        } catch (e) {
+          result = { error: "TOOL_FAILED", message: e instanceof Error ? e.message : String(e) };
+        }
+        toolCalls.push({ name, input, result });
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
+      }
+      // Push all tool results as individual messages (OpenAI requires one per tool_call_id).
+      for (const tr of toolResults) messages.push(tr);
+    }
+
+    const citations: Citation[] = toolCalls
+      .filter((c) => c.name === "get_quote" && c.result && !c.result.error)
+      .map((c) => ({ source: "get_quote", as_of: c.result.as_of }));
+    for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
+      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
+    }
+    return { text: text || DISCLAIMER, toolCalls, citations };
+  }
+}
+
+export function getLLM(opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
+  const chatLlm = process.env.CHAT_LLM;
+  if (chatLlm === "anthropic") {
+    const key = resolveApiKey("anthropic");
+    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport);
+  }
+  if (chatLlm === "openai") {
+    const key = resolveApiKey("openai");
+    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", opts.openAITransport ?? defaultOpenAITransport);
   }
   return new MockLLM();
 }

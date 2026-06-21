@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    deleteConnectedAccount(id, resolveRequestUserId(req));
+    const deleted = deleteConnectedAccount(id, resolveRequestUserId(req));
+    if (!deleted) return new NextResponse("Connected account not found.", { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return new NextResponse(err instanceof Error ? err.message : "Error", { status: 400 });

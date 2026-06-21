@@ -24,6 +24,8 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     }, userId);
     return NextResponse.json(profile);
   } catch (error) {
-    return new NextResponse(error instanceof Error ? error.message : "Profile update failed.", { status: 400 });
+    const message = error instanceof Error ? error.message : "Profile update failed.";
+    if (message === "Strategy profile not found.") return new NextResponse(message, { status: 404 });
+    return new NextResponse(message, { status: 400 });
   }
 }

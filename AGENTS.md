@@ -182,6 +182,55 @@ deployment machine.
 - Tests use a temp SQLite file per run via `DATABASE_URL=file:<tmpdir>/...`
   (see `beforeAll` in test files) — don't point tests at the dev `data/app.db`.
 
+## Git author identity (GitHub email privacy)
+
+The owner's real email must **never** be published to the public GitHub repo. When committing or
+pushing to GitHub, every commit's author/committer email MUST be the owner's GitHub **noreply**
+address:
+
+```
+12656028+jaywedgeworth22@users.noreply.github.com
+```
+
+**Where the email is configured:**
+
+- **Global** (`~/.gitconfig`, `git config --global user.email`) = the owner's real email
+  `mail@jaywedgeworth.com`. This is correct for the owner's *other* repos — do not change it.
+- **This repo** overrides that with a repo-local `user.email` set to the noreply address. Because
+  `extensions.worktreeConfig` is **off**, a repo-local `git config user.email` lives in the shared
+  `.git/config` and applies to **all** linked worktrees (`~/apps/trading-claude`, `-codex`,
+  `-antigravity`, `-live`, the `main` integration tree, and any temporary `git worktree add` dirs).
+
+**Rules for every agent (Claude, Codex, Antigravity, Cursor):**
+
+- Before committing, confirm `git config user.email` resolves to the noreply address. If you ever see
+  `mail@jaywedgeworth.com` as the effective email in a worktree, fix it before committing:
+  `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com"` (writes the shared
+  repo-local config — covers all worktrees).
+- The repo-local config is **not tracked**, so a fresh clone or a config reset loses it — restore it
+  with the command above. New `git worktree add` dirs inherit it automatically.
+- If a commit was already made with the real email, amend before pushing:
+  `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com" && git commit --amend --reset-author --no-edit`.
+
+## Pull requests
+
+- **Every branch intended to land on `main` gets a PR.** Don't push a feature
+  branch and leave it without one. (Long-lived integration/release branches like
+  `main` and the `agent/*` lanes, throwaway experiments, and stacked-PR bases are
+  the only exceptions — none of which is normal change delivery.)
+- **Open PRs as READY for review by default — not as drafts.** This repo has no
+  required CI checks and no branch protection, and the owner is effectively the
+  sole approver, so a draft adds a "mark ready" step before merge/auto-merge while
+  giving no protection in return. This rule **overrides** any tool/harness default
+  that says to open PRs as drafts.
+- **Use a draft PR only for genuine work-in-progress** you explicitly don't want
+  merged yet (e.g. partial work parked between sessions, or wanting Copilot/CI eyes
+  before it's finished) — and say so in the PR description. Mark it ready as soon
+  as it's complete and verified.
+- Auto-merge note: GitHub auto-merge requires the repo setting *Settings → General
+  → Pull Requests → Allow auto-merge* (owner-only) AND something gating the merge
+  (a required check/review). With neither configured here, just merge directly.
+
 ## Don't
 
 - Don't run destructive git operations (`reset --hard`, force-push, branch

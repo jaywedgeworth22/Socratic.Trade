@@ -1,12 +1,13 @@
 import { audit, addWatchlistSymbol, listWatchlistSymbols, removeWatchlistSymbol } from "./db";
 import { normalizeSymbol } from "./money";
+import { isValidAppSymbol } from "./index-universes";
 import type { WatchlistItem } from "./types";
-
-const SYMBOL_RE = /^[A-Z.]{1,10}$/;
 
 function validateSymbol(symbol: string): string {
   const normalized = normalizeSymbol(symbol);
-  if (!SYMBOL_RE.test(normalized)) throw new Error(`invalid symbol: ${symbol}`);
+  if (!normalized || !isValidAppSymbol(normalized)) {
+    throw new Error(`invalid symbol: ${symbol}`);
+  }
   return normalized;
 }
 
