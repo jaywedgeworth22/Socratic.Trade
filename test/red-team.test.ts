@@ -101,7 +101,7 @@ describe("debateProposal LLM request bounds", () => {
       true
     );
 
-    expect(result).toEqual({ rejected: false, reason: "No fatal flaw found." });
+    expect(result).toEqual({ rejected: false, available: true, reason: "No fatal flaw found." });
     expect(bodies).toHaveLength(1);
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.redTeamDebate);
     expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);

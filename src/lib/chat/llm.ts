@@ -14,7 +14,7 @@ import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types
 const MAX_STEPS = 5;
 
 export interface Intent {
-  intent: "alert" | "order" | "watchlist_add" | "kb" | "advice" | "quote" | "chat";
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "chat";
   symbol?: string;
   alert?: { symbol: string; op: "<" | ">"; price: number };
   order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
@@ -63,6 +63,12 @@ export function classifyIntent(message: string): Intent {
       symbol: sym,
       doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
     };
+  if (
+    /\b(my (positions?|portfolio|holdings)|how (?:am i|is my account|are my (?:positions|holdings)) doing|how (?:'?s|is) my [a-z. ]*position|my (?:p&l|pnl|p ?and ?l|gains?|losses?))\b/.test(lc)
+  )
+    return { intent: "positions" };
+  if (/\b(my watchlist|what'?s on my watchlist|show (?:me )?my watchlist)\b/.test(lc)) return { intent: "watchlist_view" };
+  if (/\b(my alerts?|what alerts|active alerts?|show (?:me )?my alerts?)\b/.test(lc)) return { intent: "alerts_view" };
   if (/\b(should i|is it a good (buy|time)|recommend|what should i do|allocate)\b/.test(lc)) return { intent: "advice", symbol: sym };
   if (/\b(price|quote|trading at|how much is|what'?s)\b/.test(lc) && sym) return { intent: "quote", symbol: sym };
   if (sym) return { intent: "quote", symbol: sym };
@@ -86,6 +92,10 @@ function narrateQuote(quote: any, advice: boolean): string {
       ` I can't tell you whether to buy or sell — that depends on your full financial picture, ` +
       `and I'm not a licensed advisor. I can lay out the trade-offs and you decide.`;
   return text;
+}
+
+function fmt(n: unknown): string {
+  return typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
 function groundedChat(message: string, memorySummary?: string): string {
@@ -173,6 +183,41 @@ export class MockLLM implements ChatLLM {
       if (result?.error) return { text: `I couldn't add that symbol to your watchlist: ${result.error}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
       const tag = result.item?.deduped ? "was already" : "is now";
       return { text: `${result.item.symbol} ${tag} on your watchlist.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "positions") {
+      const positionsResult = await executeTool("get_positions", {});
+      const portfolioResult = await executeTool("get_portfolio", {});
+      toolCalls.push({ name: "get_positions", input: {}, result: positionsResult });
+      toolCalls.push({ name: "get_portfolio", input: {}, result: portfolioResult });
+      const positions = positionsResult?.positions ?? [];
+      const portfolio = portfolioResult?.portfolio;
+      const parts: string[] = [];
+      if (portfolio) parts.push(`Account value $${fmt(portfolio.totalMarketValue)}, cash $${fmt(portfolio.cash)}.`);
+      parts.push(
+        positions.length
+          ? `Positions: ${positions.map((p: any) => `${p.symbol} ${p.quantity} (~$${fmt(p.marketValue)})`).join(", ")}.`
+          : "No open positions."
+      );
+      return { text: `${parts.join(" ")}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "watchlist_view") {
+      const result = await executeTool("list_watchlist", {});
+      toolCalls.push({ name: "list_watchlist", input: {}, result });
+      const wl = result?.watchlist ?? [];
+      const text = wl.length ? `Your watchlist: ${wl.map((w: any) => w.symbol).join(", ")}.` : "Your watchlist is empty.";
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "alerts_view") {
+      const result = await executeTool("list_alerts", {});
+      toolCalls.push({ name: "list_alerts", input: {}, result });
+      const al = result?.alerts ?? [];
+      const text = al.length
+        ? `Your armed alerts: ${al.map((a: any) => `${a.symbol} ${a.op} $${a.price}`).join(", ")}.`
+        : "You have no armed alerts.";
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
     }
 
     return { text: `${groundedChat(message, context.memorySummary)}\n\n${DISCLAIMER}`, toolCalls, citations: [] };

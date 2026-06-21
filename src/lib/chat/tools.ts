@@ -6,6 +6,7 @@
 import { randomUUID } from "crypto";
 import { canonicalTicker } from "../rag/chunk";
 import type { ChatDraft, ChatQuote, KbChunk } from "./types";
+import type { EquityPosition, PendingProposal, Portfolio, PriceAlert, WatchlistItem } from "../types";
 
 export type AlertResult = { symbol: string; op: string; price: number } | { error: string };
 export type WatchlistResult = { ok: boolean; item: { symbol: string; deduped: boolean } } | { error: string };
@@ -15,6 +16,12 @@ export interface ToolDeps {
   searchKnowledge(args: { query: string; ticker?: string; doc_type?: string; as_of?: string; k?: number }, userId: string): Promise<KbChunk[]>;
   createAlert(userId: string, input: { symbol: string; op: string; price: number; note?: string }): AlertResult;
   watchlistAdd(userId: string, symbol: string): WatchlistResult;
+  // Read-only state (optional; the tool returns empty when a dep isn't wired). One-way: chat READS app state.
+  getPositions?(userId: string): Promise<EquityPosition[]>;
+  getPortfolio?(userId: string): Promise<Portfolio | null>;
+  listWatchlist?(userId: string): WatchlistItem[];
+  listAlerts?(userId: string): PriceAlert[];
+  listOpenProposals?(userId: string): PendingProposal[];
   accountLabel?: string;
 }
 
@@ -148,6 +155,51 @@ export function buildTools(): Record<string, ToolDef> {
       input_schema: { type: "object", additionalProperties: false, required: ["symbol"], properties: { symbol: { type: "string" } } },
       async execute(input, ctx) {
         return ctx.deps.watchlistAdd(ctx.userId, String(input.symbol ?? ""));
+      }
+    },
+
+    get_positions: {
+      readOnly: true,
+      description: "List the user's current open equity positions (symbol, quantity, market value). Call for 'my positions/portfolio/holdings' questions.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return { positions: ctx.deps.getPositions ? await ctx.deps.getPositions(ctx.userId) : [] };
+      }
+    },
+
+    get_portfolio: {
+      readOnly: true,
+      description: "Get the user's account value, cash, and buying power.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return { portfolio: ctx.deps.getPortfolio ? await ctx.deps.getPortfolio(ctx.userId) : null };
+      }
+    },
+
+    list_watchlist: {
+      readOnly: true,
+      description: "List the symbols on the user's watchlist.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return { watchlist: ctx.deps.listWatchlist ? ctx.deps.listWatchlist(ctx.userId) : [] };
+      }
+    },
+
+    list_alerts: {
+      readOnly: true,
+      description: "List the user's armed price alerts.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return { alerts: ctx.deps.listAlerts ? ctx.deps.listAlerts(ctx.userId) : [] };
+      }
+    },
+
+    list_open_proposals: {
+      readOnly: true,
+      description: "List the user's open (pending-approval) trade proposals.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        return { proposals: ctx.deps.listOpenProposals ? ctx.deps.listOpenProposals(ctx.userId) : [] };
       }
     }
   };

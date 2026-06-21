@@ -97,3 +97,42 @@ describe("chat orchestrator — NOW-tranche fixes (I1/I2/I3)", () => {
     expect(captured[0]!.role).toBe("user"); // history must start with a user turn (Anthropic requirement)
   });
 });
+
+describe("chat read-only state tools (I6)", () => {
+  beforeAll(() => {
+    process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/chat-state-tools-${Date.now()}.db`;
+    getDb();
+  });
+
+  const stateDeps: ToolDeps = {
+    ...deps,
+    getPositions: async () => [{ symbol: "AAPL", quantity: 10, averageCost: 150, marketValue: 1800 }],
+    getPortfolio: async () => ({ accountNumber: "T", totalMarketValue: 10000, buyingPower: 8000, equityMarketValue: 1800, optionMarketValue: 0, cash: 8200 }),
+    listWatchlist: () => [
+      { symbol: "NVDA", addedAt: "2024-01-01" },
+      { symbol: "TSLA", addedAt: "2024-01-02" }
+    ],
+    listAlerts: () => [
+      { id: "a1", userId: "s", symbol: "AAPL", op: "<", price: 180, note: "", status: "armed", createdAt: "2024-01-01", triggeredAt: null, triggeredPrice: null }
+    ],
+    listOpenProposals: () => []
+  };
+  const orch = makeOrchestrator(stateDeps, new MockLLM());
+
+  it("reads positions + portfolio for a 'my positions' query", async () => {
+    const r = await orch({ userId: "s1", message: "how are my positions doing?" });
+    expect(r.text).toMatch(/AAPL/);
+    expect(r.text).toMatch(/Account value/i);
+  });
+
+  it("reads the watchlist", async () => {
+    const r = await orch({ userId: "s2", message: "what's on my watchlist?" });
+    expect(r.text).toMatch(/NVDA/);
+    expect(r.text).toMatch(/TSLA/);
+  });
+
+  it("reads armed alerts", async () => {
+    const r = await orch({ userId: "s3", message: "show me my alerts" });
+    expect(r.text).toMatch(/AAPL/);
+  });
+});
