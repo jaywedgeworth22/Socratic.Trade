@@ -7,7 +7,7 @@ type ButtonVariant = "primary" | "ghost" | "subtle" | "danger" | "accentSoft";
 type ButtonSize = "sm" | "md";
 
 const buttonBase =
-  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2";
+  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-colors touch-manipulation disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2";
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-fg hover:brightness-110 shadow-sm",
@@ -41,7 +41,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-muted transition-colors hover:text-fg hover:bg-surface-2",
+        "inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg border border-line bg-surface text-muted transition-colors hover:text-fg hover:bg-surface-2",
         className
       )}
       {...props}
@@ -211,8 +211,10 @@ export function Tabs<T extends string>({
         return (
           <button
             key={tab.id}
+            id={`tab-${tab.id}`}
             role="tab"
             aria-selected={active}
+            aria-controls={`tabpanel-${tab.id}`}
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(tab.id)}
             onKeyDown={(e) => {
@@ -223,7 +225,7 @@ export function Tabs<T extends string>({
               }
             }}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors",
+              "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors touch-manipulation max-sm:min-h-[44px]",
               active ? "bg-surface-3 text-fg shadow-sm" : "text-muted hover:text-fg"
             )}
           >
@@ -274,7 +276,7 @@ export function StatTile({
   icon?: React.ReactNode;
   title?: string;
 }) {
-  const valueTone = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
+  const valueTone = tone === "up" ? "text-up" : tone === "down" ? "text-down" : tone === "warn" ? "text-warn" : "text-fg";
   return (
     <Card className="px-4 py-3" title={title}>
       <div className="flex items-center justify-between text-muted">

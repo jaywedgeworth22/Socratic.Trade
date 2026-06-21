@@ -110,13 +110,19 @@ export function SymbolDrilldown({ quote, logoDisplay = "tile" }: { quote: Market
       {/* Header Info */}
       <div className="flex items-center gap-4 border-b border-line pb-4">
         <TickerLogo symbol={quote.symbol} display={logoDisplay} size="lg" fallback={logoFallback} />
-        <div className="flex-1">
-          <h2 className="text-xl font-semibold text-fg">{quote.companyName || quote.symbol}</h2>
-          <div className="text-faint flex items-center gap-2 mt-1">
-            <span>{quote.sector || "Unknown Sector"}</span> &middot; <span>{quote.industry || "Unknown Industry"}</span>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-xl font-semibold text-fg">{quote.companyName || quote.symbol}</h2>
+          <div className="text-faint flex items-center gap-2 mt-1 truncate">
+            <span className="truncate">{quote.sector || "Unknown Sector"}</span>
+            {quote.industry && quote.industry !== quote.sector && (
+              <>
+                <span>&middot;</span>
+                <span className="truncate">{quote.industry}</span>
+              </>
+            )}
           </div>
         </div>
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <div className="text-xl font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(quote.price)}</div>
           <div className={`text-sm ${quote.intradayChangePct >= 0 ? "text-up" : "text-down"}`}>
             {quote.intradayChangePct >= 0 ? "+" : ""}{new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 2 }).format(quote.intradayChangePct / 100)}

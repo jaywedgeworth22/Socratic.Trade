@@ -42,6 +42,7 @@ import {
   recordPortfolioSnapshot
 } from "./performance";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
+import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
@@ -114,6 +115,23 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       : { portfolio, positions };
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
+
+    // Supplemental tasks before generating new ideas — keep the approval queue honest so a
+    // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
+    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
+    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their
+    //       cadence (regular market hours only) against this run's fresh scan — withdrawing
+    //       what no longer holds, stamping the survivors as re-validated.
+    const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
+      .catch((e) => {
+        console.error("[expiry] run error:", e);
+        return { expired: 0 };
+      });
+    const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+      .catch((e) => {
+        console.error("[revalidation] run error:", e);
+        return null;
+      });
 
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
 
@@ -352,7 +370,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
       paperCount > 0 ? `Test: ${paperCount}.` : "",
-      proposed > 0 ? `Awaiting approval: ${proposed}.` : ""
+      proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
+      expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
+      revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
+        ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
+        : ""
     ]
       .filter(Boolean)
       .join(" ");
@@ -554,6 +576,16 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     );
     autoRevertOnCapBreach(decision.reasons, policy, userId);
     return { status: "blocked", reasons: decision.reasons };
+  }
+
+  // Re-assert the proposal is still pending immediately before we act on it. The awaits above
+  // (scan, broker review) take time, during which deterministic expiry (scheduler tick) or a
+  // concurrent run's LLM re-validation could have retired this proposal to expired/withdrawn —
+  // we must not place an order for an idea the system already pulled from the queue.
+  const stillPending = getProposal(proposalId, userId);
+  if (!stillPending || stillPending.status !== "proposed") {
+    const current = stillPending?.status ?? "removed";
+    return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
   }
 
   if (executionState.usesLocalSimulation) {

@@ -25,6 +25,49 @@ steps materially change.
 ## Active Focus
 
 - 2026-06-21: **Responsive header command buttons.** Restructured header buttons to shrink gracefully on narrow screens and wrap cleanly into exactly 2 lines below the `md` (768px) breakpoint.
+- 2026-06-21: **UI/UX + iPad/iPhone audit and quick-win implementation.** Ran two
+  multi-agent audits (real-Chrome desktop walkthrough → 64-agent review/verify/synthesis; source-grounded
+  iPad/iPhone → 27-agent) and shipped the quick wins + high-severity fixes: Market Scan **Score → column 2**
+  + horizontal scroll; **zero P&L/tax values now neutral** (`pnlTone`); **light-mode ticker logos fixed**
+  (dark tile); **reduced-motion guard** + **iOS 16px inputs**; **macro sparkline polarity** + "Broad USD"
+  relabel; Settings tab overflow + no-jump min-height; drilldown header truncation/dedup; a11y (select
+  labels, tabpanel ARIA, ≥44px touch targets); chart vertical-touch-scroll; **iPad cockpit shell `xl`→`lg`**;
+  and **setup-state run failures render amber** instead of red. Verified: tsc clean, **386 tests**, build
+  green; live-confirmed on :4100. Full reports:
+  `docs/reviews/2026-06-20-ui-ux-and-mobile-audit.md`; **itemized status-tagged backlog of every
+  issue:** `docs/reviews/2026-06-21-ui-ux-issue-register.md`; rollout:
+  `docs/rollouts/2026-06-20-ui-ux-audit-and-quick-wins.md`. **Deferred:** F1 backend root cause
+  (`src/lib/strategy.ts` `policy.accountNumber` wiring — UI softened only); deleting the **dead
+  `app/ui/dashboard/{views,components,utils,settings}.tsx`** parallel implementation; header overflow menu;
+  full safe-area/`viewport-fit=cover`. Merged to `main` (2026-06-21).
+- 2026-06-21 (`claude/minor-cleanups-data-providers`): **Minor cleanup, zero behavior change.**
+  Removed the unused `export const fallbackProvider` alias in `src/lib/data-providers.ts` (confirmed
+  referenced nowhere else; `noopProvider` kept — used by tests). Added clarifying one-line comments in
+  `src/lib/db.ts` `dailyExecutionStats` / `notionalInLastMinutes` explaining notional caps intentionally
+  count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt
+  (notional = 0) — comments only, no logic change. tsc clean, 371 tests pass, build OK. See
+  `docs/rollouts/2026-06-21-data-providers-cleanup.md`.
+- 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal staleness —
+  UI + expiry policy + on-run LLM re-validation.** (Part 1, UI) Pending-approval
+  cards show `Proposed <date, time> · <relative age>` with an escalating staleness
+  state; removed the redundant "Test Mode" brand-block line + dead
+  `executionTone()`; fixed the "too thin"/clipped command bar (`xl:h-14`/`xl:py-0`
+  → `min-h-16`). (Part 2, backend) New `src/lib/proposal-revalidation.ts`:
+  **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 2880 =
+  2 days; runs at run-start AND every scheduler tick → status `expired`) and a
+  **cadence-gated on-run LLM re-check** (`proposalRevalidateCadenceHours`, default
+  0 = every run; not optional) that, inside `runStrategyOnce`, asks the LLM whether
+  each *due* still-pending proposal still stands — **regular market hours only** (no
+  overnight checks). Dropdown: Every run / Once per day / Every 5 days.
+  `reaffirm` stamps `last_revalidated_at` (UI: "Re-checked X ago — still
+  advised"), `withdraw` → status `withdrawn` + `proposal_withdrawn` notification.
+  Safe-by-default: ambiguous LLM output keeps the proposal; market closed / no
+  `OPENAI_API_KEY` ⇒ LLM pass skips but deterministic expiry still runs. Both
+  surfaced as **dropdowns** + a notification toggle in Settings → Risk. The
+  **Flow** button was a question (static React Flow pipeline visualizer,
+  `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
+  build green. See
+  `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
 - 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
 - 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
 - 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:

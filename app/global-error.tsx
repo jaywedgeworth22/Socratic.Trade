@@ -6,7 +6,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
       <body>
         <main
           style={{
-            minHeight: "100vh",
+            minHeight: "100dvh",
             display: "grid",
             placeItems: "center",
             padding: 24,

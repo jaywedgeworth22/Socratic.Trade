@@ -40,7 +40,9 @@ export function TickerLogo({
       className={cn(
         "inline-flex shrink-0 items-center justify-center overflow-hidden",
         sizeClass[size],
-        display === "tile" ? "rounded-md border border-line bg-surface-2/80 p-0.5" : "rounded-sm",
+        // Dark tile in light mode so white/transparent-glyph logos (e.g. AAPL) stay
+        // visible; keep the translucent surface tile in dark mode.
+        display === "tile" ? "rounded-md border border-line bg-slate-700 p-0.5 dark:bg-surface-2/80" : "rounded-sm",
         className
       )}
       title={title}

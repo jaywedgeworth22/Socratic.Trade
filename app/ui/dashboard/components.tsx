@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DashboardSnapshot } from "../../dashboard-types";
-import { formatPct, money, signedMoney } from "../../dashboard-widgets";
+import { formatPct, money, pnlTone, signedMoney } from "../../dashboard-widgets";
 import { cn } from "../../ui/cn";
 import {
     Card,
@@ -100,13 +100,13 @@ export function SymbolButton({
 export function SentimentChip({ value }: { value: number }) {
   const tone = value >= 60 ? "up" : value <= 40 ? "down" : "neutral";
   const label = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
-  return <Chip tone={tone}>{label} {value}</Chip>;
+  return <Chip tone={tone}>{label} · {value}</Chip>;
 }
 
 export function RatingChip({ score, label }: { score?: number; label: string }) {
   // Mirror the Sentiment chip: green for Buy-ish, red for Sell-ish, neutral for Hold.
   const tone = score === undefined ? "neutral" : score >= 65 ? "up" : score <= 40 ? "down" : "neutral";
-  return <Chip tone={tone}>{typeof score === "number" ? `${label} ${score}` : label}</Chip>;
+  return <Chip tone={tone}>{typeof score === "number" ? `${label} · ${score}` : label}</Chip>;
 }
 
 export function KeyVal({ label, value }: { label: string; value: string }) {
@@ -284,7 +284,7 @@ export function PortfolioRail({
       <PanelHeader title="Portfolio" subtitle={mode === "paper" ? "Test account" : "Live account"} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         <StatTile label="Value" value={money(total)} />
-        <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
+        <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
       </div>
       <div className="px-4 py-3">
         {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No allocation yet" />}
@@ -309,7 +309,7 @@ export function PortfolioRail({
                     <div className="tnum text-[11px] text-faint">{formatShareQuantity(p.quantity, p.symbol)} sh · {p.allocPct.toFixed(1)}%</div>
                   </td>
                   <td className="px-2 py-1.5 text-right tnum text-fg">{money(p.marketValue)}</td>
-                  <td className={cn("px-2 py-1.5 text-right tnum", p.pnl >= 0 ? "text-up" : "text-down")}>
+                  <td className={cn("px-2 py-1.5 text-right tnum", p.pnl > 0 ? "text-up" : p.pnl < 0 ? "text-down" : "text-fg")}>
                     <div>{signedMoney(p.pnl)}</div>
                     <div className="text-[11px]">{formatPct(p.returnPct)}</div>
                   </td>

@@ -54,6 +54,50 @@ export function freshness(fetchedAt?: string): string {
   return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
 }
 
+// ── Pending-proposal age + staleness ───────────────────────────────────────
+// Proposals sit in the approval queue until a human acts on them, so an old one
+// keeps looking "current" long after the scan and market conditions that produced
+// it have moved on. We always show the exact proposal time, and escalate a
+// staleness level so nobody approves a stale idea thinking the agent just made it.
+export const PROPOSAL_STALE_AFTER_MS = 60 * 60 * 1000; // 1h → "Aging"
+export const PROPOSAL_VERY_STALE_AFTER_MS = 24 * 60 * 60 * 1000; // 24h → "Stale"
+
+export type ProposalAge = {
+  absolute: string;
+  relative: string;
+  staleness: "fresh" | "aging" | "stale";
+};
+
+function relativeAge(ms: number): string {
+  const min = Math.round(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return `${Math.floor(day / 7)}w ago`;
+}
+
+export function proposalAge(createdAt?: string, now: number = Date.now()): ProposalAge | null {
+  if (!createdAt) return null;
+  const t = new Date(createdAt).getTime();
+  if (Number.isNaN(t)) return null;
+  const ageMs = Math.max(0, now - t);
+  const staleness =
+    ageMs >= PROPOSAL_VERY_STALE_AFTER_MS ? "stale" : ageMs >= PROPOSAL_STALE_AFTER_MS ? "aging" : "fresh";
+  return {
+    absolute: new Date(t).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    }),
+    relative: relativeAge(ageMs),
+    staleness
+  };
+}
+
 export function marketStatusFor(session?: string): { tone: "up" | "warn" | "neutral"; label: string } {
   switch (session) {
     case "regular":
@@ -69,7 +113,7 @@ export function marketStatusFor(session?: string): { tone: "up" | "warn" | "neut
 
 export function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
   if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
-  if (status === "blocked" || status === "rejected" || status === "failed") return "down";
+  if (status === "blocked" || status === "rejected" || status === "failed" || status === "expired" || status === "withdrawn") return "down";
   if (status === "pending_approval" || status === "pending" || status === "proposed") return "warn";
   return "neutral";
 }
@@ -192,6 +236,8 @@ export function renderActionTitle(title: string) {
 export const SCAN_COLUMNS: ScanColumn[] = [
       { id: "symbol", label: "Symbol", title: "Ticker symbol. Hover a row for the company name.", sortKey: "symbol",
         render: (q) => <span className="font-semibold text-fg">{q.symbol}</span>, cellTitle: (q) => q.companyName },
+      { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
+        render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> },
       { id: "price", label: "Price", title: "Last traded price (delayed). Source: NASDAQ delayed screener, refined by Yahoo / broker quotes when available.", align: "right", sortKey: "price",
         render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
       { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
@@ -256,9 +302,7 @@ export const SCAN_COLUMNS: ScanColumn[] = [
       { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
         render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
       { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", sortKey: "sector",
-        render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) },
-      { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
-        render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
+        render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) }
     ];
 export const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
 export const SCAN_COLS_KEY = "scan-visible-cols";

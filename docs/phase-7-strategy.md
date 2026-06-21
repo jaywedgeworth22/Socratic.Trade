@@ -106,6 +106,12 @@ While the strategy evaluates trades across the strategy lenses, it must also res
 - **Short Selling Risk Cap:** Short positions must be heavily scrutinized. The maximum allowable portfolio allocation for any single short position will be strictly capped (e.g., lower than long positions).
 - **Hard Stop-Losses:** Any short proposal must carry an absolute, non-negotiable stop-loss logic (e.g., max 5% adverse excursion) to prevent runaway losses.
 
+### C.1 Pending-Proposal Staleness (Expiry + On-Run Re-Validation)
+Proposals stay in the approval queue until a human approves or rejects them, so an old one can keep looking like a current recommendation. Two mechanisms keep the queue honest (`src/lib/proposal-revalidation.ts`):
+
+1. **Deterministic hard expiry** — `policy.proposalExpiryMinutes` (default 2880 = 2 days; 0 = Never). A pending proposal older than the TTL is moved to status `expired` with an audit event, a `proposal_withdrawn` notification, and an SSE refresh. It runs at the **start of every strategy run** and on **every scheduler tick** (even while halted or the market is closed), so the queue self-clears regardless of run cadence. UI: a dropdown (3h / 6h / 12h / 1d / 2d / 5d / 10d / Never).
+2. **On-run LLM re-validation, cadence-gated to market hours** — `policy.proposalRevalidateCadenceHours` (default 0 = every run). It is not optional (no on/off switch) — it rides on strategy runs. Inside `runStrategyOnce`, each still-pending proposal that is **due** (≥ cadence hours since it was created or last re-checked; 0 = always) is re-checked against the fresh scan + current regime in one batched LLM call ("does this still stand?"). It runs **only during the regular US session** (`currentMarketSession === "regular"`), so it never re-checks overnight — re-checking when nothing can be acted on is wasted work and the scan would be stale. `reaffirm` stamps `last_revalidated_at` (the dashboard then shows "Re-checked X ago — still advised" and the staleness clock resets); `withdraw` moves it to status `withdrawn`. Ambiguous/missing output defaults to *keep*; the pass is skipped (deterministic expiry still applies) when the market is closed, `OPENAI_API_KEY` is absent, or the call fails. UI: a dropdown (Every run / Once per day / Every 5 days).
+
 ### D. Token Efficiency & Asynchronous Post-Mortems
 Feeding dozens of raw rationales, P&L lines, and redundant daily news into the trading prompt wastes massive amounts of tokens and degrades LLM reasoning. To optimize this:
 

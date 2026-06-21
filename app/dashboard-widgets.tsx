@@ -10,13 +10,25 @@ export function money(value?: number): string {
 }
 
 export function signedMoney(value?: number): string {
-  if (value === undefined) return "$0.00";
-  return value >= 0 ? `+${money(value)}` : money(value);
+  // Zero is neutral — no leading "+" so a flat/empty account doesn't read as a gain.
+  if (value === undefined || value === 0) return money(value ?? 0);
+  return value > 0 ? `+${money(value)}` : money(value);
 }
 
 export function formatPct(value?: number): string {
   if (typeof value !== "number") return "0.00%";
-  return value >= 0 ? `+${value.toFixed(2)}%` : `(${Math.abs(value).toFixed(2)}%)`;
+  if (value === 0) return "0.00%";
+  return value > 0 ? `+${value.toFixed(2)}%` : `(${Math.abs(value).toFixed(2)}%)`;
+}
+
+/**
+ * Tone for a gain/loss value: positive → "up", negative → "down", and
+ * exactly zero → "neutral" (so $0.00 / 0.00% renders in the default color,
+ * not green or red). Use everywhere P&L / returns are colored.
+ */
+export function pnlTone(value?: number): "up" | "down" | "neutral" {
+  if (typeof value !== "number" || value === 0) return "neutral";
+  return value > 0 ? "up" : "down";
 }
 
 export function compactNum(value: number): string {

@@ -10,7 +10,8 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
   strategyCritique: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   strategyTuning: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   redTeamDebate: LLM_REQUEST_DEFAULTS.maxOutputTokens,
-  postMortemReflection: LLM_REQUEST_DEFAULTS.maxOutputTokens
+  postMortemReflection: LLM_REQUEST_DEFAULTS.maxOutputTokens,
+  proposalRevalidation: LLM_REQUEST_DEFAULTS.maxOutputTokens
 } as const;
 
 type RequestBounds = {
