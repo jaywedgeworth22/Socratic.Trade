@@ -797,7 +797,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       </Modal>
 
       <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect and switch supported accounts" icon={<Wallet size={18} />} size="lg">
-        <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
+        <IntegrationsSection accounts={snapshot.connectedAccounts || []} policy={policy} onSaved={load} />
       </Modal>
 
       <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="Safety limits, tax logic, pricing & MCP" icon={<HelpCircle size={18} />} size="lg">
@@ -2899,11 +2899,45 @@ function ApiKeysSection() {
   );
 }
 
-function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapshot["connectedAccounts"], onSaved: () => Promise<void> }) {
+function IntegrationsSection({
+  accounts,
+  policy,
+  onSaved
+}: {
+  accounts: DashboardSnapshot["connectedAccounts"];
+  policy: TradingPolicy;
+  onSaved: () => Promise<void>;
+}) {
   const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
+
+  const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
+    if (acc.broker === "test") {
+      return {
+        title: "Test",
+        subtitle: "Local · Temporary",
+        showBadges: false
+      };
+    }
+    if (acc.broker === "robinhood") {
+      return {
+        title: acc.label || "Agentic Robinhood",
+        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}`,
+        showBadges: true
+      };
+    }
+    // Alpaca & Alpaca MCP
+    const isMCP = acc.broker === "alpaca-mcp";
+    const brokerName = isMCP ? "Alpaca MCP" : "Alpaca";
+    const isPaper = acc.environment === "paper";
+    return {
+      title: isPaper ? "Paper" : "Brokerage",
+      subtitle: `${brokerName} · ${acc.accountNumber || "No account number"}`,
+      showBadges: true
+    };
+  };
 
   const refreshMcpHealth = useCallback(async () => {
     setMcpBusy(true);
@@ -2964,7 +2998,18 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
   }
 
   async function save() {
-    if (!editing?.broker || !editing?.environment) return;
+    if (!editing?.broker) return;
+    const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
+    if (isAlpaca) {
+      if (!editing.accountNumber?.trim()) {
+        toast.error("Account Number is required for Alpaca.");
+        return;
+      }
+      const isPaper = editing.accountNumber.trim().toUpperCase().startsWith("PA");
+      editing.environment = isPaper ? "paper" : "live";
+    } else {
+      editing.environment = editing.environment || "live";
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/connected-accounts", {
@@ -2999,29 +3044,59 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
   }
 
   if (editing) {
+    const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
-        <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : `Add ${editing.broker === "alpaca" ? "Alpaca" : "Robinhood"} Account`}</h4>
+        <h4 className="text-sm font-semibold text-fg">
+          {editing.id
+            ? "Edit Account"
+            : editing.broker === "robinhood"
+              ? "Add Robinhood Account"
+              : editing.broker === "alpaca-mcp"
+                ? "Add Alpaca MCP Account"
+                : "Add Alpaca Account"}
+        </h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          {editing.broker === "alpaca" ? (
-            <Field label="Environment">
-              <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-                <option value="paper">Alpaca Paper</option>
-                <option value="live">Alpaca Brokerage (Real Money)</option>
-              </select>
-            </Field>
+          {isAlpaca ? (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
+              For Alpaca, environment (Paper vs Brokerage) is derived automatically from the account number (Paper accounts start with &quot;PA&quot;).
+            </div>
           ) : (
-            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted">
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
               Robinhood uses OAuth through MCP and syncs the agentic Brokerage account. No API key fields are required here.
             </div>
           )}
           <Field label="Label (Optional)">
-            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder={editing.broker === "alpaca" ? "e.g. Alpaca Paper" : "e.g. Robinhood Agentic"} />
+            <input
+              className={inputClass}
+              value={editing.label || ""}
+              onChange={e => setEditing({ ...editing, label: e.target.value })}
+              placeholder={
+                editing.broker === "robinhood"
+                  ? "e.g. Robinhood Agentic"
+                  : editing.broker === "alpaca-mcp"
+                    ? "e.g. Alpaca MCP Paper"
+                    : "e.g. Alpaca Paper"
+              }
+            />
           </Field>
-          <Field label="Account Number (Optional)">
-            <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
+          <Field label={isAlpaca ? "Account Number (Required)" : "Account Number (Optional)"}>
+            <input
+              className={inputClass}
+              value={editing.accountNumber || ""}
+              onChange={e => {
+                const val = e.target.value;
+                const isPaper = val.trim().toUpperCase().startsWith("PA");
+                setEditing({
+                  ...editing,
+                  accountNumber: val,
+                  environment: isPaper ? "paper" : "live"
+                });
+              }}
+              placeholder="e.g. PA12345"
+            />
           </Field>
-          {editing.broker === "alpaca" && (
+          {isAlpaca && (
             <>
               <Field label="API Key">
                 <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
@@ -3030,9 +3105,17 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
               <Field label="API Endpoint URL (Optional)">
-                <input className={inputClass} value={editing.baseUrl || ""} onChange={e => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="e.g. https://paper-api.alpaca.markets/v2" />
+                <input
+                  className={inputClass}
+                  value={editing.baseUrl || ""}
+                  onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                  placeholder={
+                    editing.broker === "alpaca-mcp"
+                      ? "e.g. http://localhost:8000/sse"
+                      : "e.g. https://paper-api.alpaca.markets/v2"
+                  }
+                />
               </Field>
-
             </>
           )}
         </div>
@@ -3053,19 +3136,17 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
           Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {!accounts?.some(a => a.broker === "robinhood") && (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
-              if (mcpHealth?.authenticated) { void syncRobinhood(); }
-              else { window.location.href = "/api/auth/robinhood/start"; }
-            }}>
-              <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
-            <Plus size={14} className="mr-1" /> Connect Alpaca Paper Account
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+            if (mcpHealth?.authenticated) { void syncRobinhood(); }
+            else { window.location.href = "/api/auth/robinhood/start"; }
+          }}>
+            <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "live" })}>
-            <Plus size={14} className="mr-1" /> Connect Alpaca Brokerage Account
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca Account
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca-mcp", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca MCP Account
           </Button>
         </div>
       </div>
@@ -3076,52 +3157,61 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
         </div>
       ) : (
         <div className="space-y-2">
-          {accounts.map(acc => (
-            <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-fg">{acc.label || acc.broker}</span>
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${acc.environment === "live" ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"}`}>
-                    {acc.environment}
-                  </span>
-                  {acc.isActive && <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Active</span>}
+          {accounts.map(acc => {
+            const info = formatAccountInfo(acc);
+            return (
+              <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-fg">{info.title}</span>
+                    {info.showBadges && acc.isActive && (
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                        CONNECTED
+                      </span>
+                    )}
+                    {info.showBadges && acc.isActive && policy?.strategyAuthority === "decide" && (
+                      <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-400">
+                        AUTONOMOUS
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-faint">
+                    {info.subtitle}
+                    {acc.capabilities && (
+                      <span className="ml-2">
+                        {acc.capabilities.accountType !== "brokerage" && (
+                          <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400 uppercase">
+                            {acc.capabilities.accountType === "roth_ira" ? "Roth IRA" : "Trad IRA"}
+                          </span>
+                        )}
+                        {acc.capabilities.marginEnabled && (
+                          <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400 uppercase">Margin</span>
+                        )}
+                        {acc.capabilities.shortSelling && (
+                          <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400 uppercase">Short</span>
+                        )}
+                        {acc.capabilities.optionsTrading && (
+                          <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400 uppercase">
+                            Options{acc.capabilities.optionsLevel !== undefined ? ` L${acc.capabilities.optionsLevel}` : ""}
+                          </span>
+                        )}
+                        {acc.capabilities.cryptoTrading && (
+                          <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400 uppercase">Crypto</span>
+                        )}
+                        {acc.capabilities.futuresTrading && (
+                          <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400 uppercase">Futures</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-faint capitalize">
-                  {acc.broker} &middot; {acc.accountNumber || "No account number"}
-                  {acc.capabilities && (
-                    <span className="ml-2 not-capitalize">
-                      {acc.capabilities.accountType !== "brokerage" && (
-                        <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400 uppercase">
-                          {acc.capabilities.accountType === "roth_ira" ? "Roth IRA" : "Trad IRA"}
-                        </span>
-                      )}
-                      {acc.capabilities.marginEnabled && (
-                        <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400 uppercase">Margin</span>
-                      )}
-                      {acc.capabilities.shortSelling && (
-                        <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400 uppercase">Short</span>
-                      )}
-                      {acc.capabilities.optionsTrading && (
-                        <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400 uppercase">
-                          Options{acc.capabilities.optionsLevel !== undefined ? ` L${acc.capabilities.optionsLevel}` : ""}
-                        </span>
-                      )}
-                      {acc.capabilities.cryptoTrading && (
-                        <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400 uppercase">Crypto</span>
-                      )}
-                      {acc.capabilities.futuresTrading && (
-                        <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400 uppercase">Futures</span>
-                      )}
-                    </span>
-                  )}
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
+                  <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
-                <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
