@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
+  chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
+  red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`
+  WorkspaceTab: a chat draft from `/api/chat` is bridged via a new `POST /api/proposals/from-draft`
+  (dry-run preview, or insert a `proposed` row — idempotent on `runId='chat:'+draftId`) into the
+  UNCHANGED approve → `executeProposal` rail, so the chat module gains **no** execution capability. The
+  destination pill derives from the live `executionState`; the mapper (`src/lib/chat/promote-draft.ts`)
+  sets the required `TradeProposal` fields and rejects non-buy/sell. tsc clean, 371 tests, build OK,
+  verified live (a halted system correctly blocks at the dry-run before any row is minted). See
+  `docs/rollouts/2026-06-20-ai-order-drafting-assistant-tab.md`.
 - 2026-06-20 (`agent/claude`): **Codex lane reconciled + money-path T5 (paper-projection guards).**
   Codex is usage-capped for days, so Claude took over its lane: a 3-agent parity audit had already
   confirmed Codex's only unmerged commit (tax-treatment + hourly-cap WIP) is fully superseded by
