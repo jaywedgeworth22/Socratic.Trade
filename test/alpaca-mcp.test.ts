@@ -73,7 +73,22 @@ describe("Alpaca MCP gateway adapter", () => {
     const gateway = getAlpacaGateway("local");
     const accounts = await gateway.getAccounts();
 
-    expect(accounts).toEqual([{ accountNumber: "MCP_ACC_1", label: "Alpaca Paper", agenticAllowed: true }]);
+    expect(accounts).toEqual([
+      {
+        accountNumber: "MCP_ACC_1",
+        label: "Alpaca Paper",
+        agenticAllowed: true,
+        capabilities: {
+          equityTrading: true,
+          shortSelling: false,
+          optionsTrading: false,
+          futuresTrading: false,
+          cryptoTrading: false,
+          marginEnabled: false,
+          accountType: "brokerage"
+        }
+      }
+    ]);
     expect(calls[0].url).toBe("http://localhost:8000/sse");
     expect(calls[0].body.params.name).toBe("get_account_info");
   });
@@ -136,6 +151,7 @@ describe("Alpaca MCP gateway adapter", () => {
       type: "market",
       quantity: 5,
       timeInForce: "gfd",
+      marketHours: "regular_hours",
       refId: "client-ref-123"
     });
 
@@ -155,6 +171,21 @@ describe("Alpaca MCP gateway adapter", () => {
     
     // getAccounts will fall back to REST (which returns mock REST account MOCK_REST_ACC_1)
     const accounts = await gateway.getAccounts();
-    expect(accounts).toEqual([{ accountNumber: "MOCK_REST_ACC_1", label: "Alpaca Paper", agenticAllowed: true }]);
+    expect(accounts).toEqual([
+      {
+        accountNumber: "MOCK_REST_ACC_1",
+        label: "Alpaca Paper",
+        agenticAllowed: true,
+        capabilities: {
+          equityTrading: true,
+          shortSelling: false,
+          optionsTrading: false,
+          futuresTrading: false,
+          cryptoTrading: false,
+          marginEnabled: false,
+          accountType: "brokerage"
+        }
+      }
+    ]);
   });
 });
