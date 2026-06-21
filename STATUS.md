@@ -24,6 +24,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`claude/minor-cleanups-data-providers`): **Minor cleanup, zero behavior change.**
+  Removed the unused `export const fallbackProvider` alias in `src/lib/data-providers.ts` (confirmed
+  referenced nowhere else; `noopProvider` kept — used by tests). Added clarifying one-line comments in
+  `src/lib/db.ts` `dailyExecutionStats` / `notionalInLastMinutes` explaining notional caps intentionally
+  count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt
+  (notional = 0) — comments only, no logic change. tsc clean, 371 tests pass, build OK. See
+  `docs/rollouts/2026-06-21-data-providers-cleanup.md`.
 - 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal staleness —
   UI + expiry policy + on-run LLM re-validation.** (Part 1, UI) Pending-approval
   cards show `Proposed <date, time> · <relative age>` with an escalating staleness
