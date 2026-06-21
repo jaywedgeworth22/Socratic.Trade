@@ -363,6 +363,15 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN last_revalidated_at TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN revalidation_note TEXT");
   }
+  // MAE/MFE persistence: add excursion columns to fill_events (additive, guarded).
+  const fillEventColumns = database.prepare("PRAGMA table_info(fill_events)").all() as Array<{ name: string }>;
+  if (!fillEventColumns.some((c) => c.name === "mae")) {
+    database.exec("ALTER TABLE fill_events ADD COLUMN mae REAL");
+  }
+  if (!fillEventColumns.some((c) => c.name === "mfe")) {
+    database.exec("ALTER TABLE fill_events ADD COLUMN mfe REAL");
+  }
+
   // R3: per-account tax treatment (taxable vs Roth/Traditional IRA) on existing DBs.
   const connectedAccountColumns = database.prepare("PRAGMA table_info(connected_accounts)").all() as Array<{ name: string }>;
   if (!connectedAccountColumns.some((column) => column.name === "taxation_type")) {
@@ -1488,6 +1497,42 @@ export function updateFillEvent(id: string, patch: Partial<FillEvent>, userId: s
 
   args.push(id, userId);
   database.prepare(`UPDATE fill_events SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`).run(...args);
+}
+
+/**
+ * Persist MAE/MFE excursion values for a fill event by id.
+ * Additive only — never touches other columns. Used by the background
+ * post-mortem path; never called from the synchronous order hot path.
+ */
+export function upsertFillExcursions(
+  id: string,
+  mae: number,
+  mfe: number,
+  userId: string = "local"
+): void {
+  getDb()
+    .prepare("UPDATE fill_events SET mae = ?, mfe = ? WHERE id = ? AND user_id = ?")
+    .run(mae, mfe, id, userId);
+}
+
+/**
+ * Persist MAE/MFE excursion values for a fill event matched by
+ * (accountNumber, symbol, filledAt). Used when only the lot's exit context
+ * (symbol + exitAt) is available, not the raw fill id. Additive only.
+ */
+export function upsertFillExcursionsByKey(
+  accountNumber: string,
+  symbol: string,
+  filledAt: string,
+  mae: number,
+  mfe: number,
+  userId: string = "local"
+): void {
+  getDb()
+    .prepare(
+      "UPDATE fill_events SET mae = ?, mfe = ? WHERE account_number = ? AND symbol = ? AND filled_at = ? AND user_id = ?"
+    )
+    .run(mae, mfe, accountNumber, symbol, filledAt, userId);
 }
 
 export function insertNotificationEvent(input: {

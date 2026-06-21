@@ -1,6 +1,6 @@
-import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
-import { getRegimeScorecard, getThesisScorecard } from "./performance";
-import { getExcursionsByThesis } from "./learning-loop";
+import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey, upsertFillExcursionsByKey } from "./db";
+import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
+import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
@@ -161,6 +161,36 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
+
+  // Background: enrich closed lots with MAE/MFE and persist back to fill_events.
+  // Runs unconditionally (no openaiKey required) in the background — never blocks
+  // the reflection LLM call above, never called from any synchronous order path.
+  persistExcursionsBackground(accountNumber, source, userId);
+}
+
+/**
+ * Fire-and-forget: enrich closed lots with MAE/MFE excursions (async network
+ * calls to Yahoo Finance) then write them back to fill_events so historical
+ * analysis panels can read them without re-fetching on every page load.
+ */
+function persistExcursionsBackground(
+  accountNumber: string,
+  source: "paper" | "live",
+  userId: string
+): void {
+  (async () => {
+    try {
+      const lots = getClosedLotsDetailed(accountNumber, source, userId);
+      const enriched = await enrichClosedLotsWithExcursions(lots);
+      for (const lot of enriched) {
+        if (lot.mae !== undefined && lot.mfe !== undefined && lot.symbol && lot.exitAt) {
+          upsertFillExcursionsByKey(accountNumber, lot.symbol, lot.exitAt, lot.mae, lot.mfe, userId);
+        }
+      }
+    } catch (err) {
+      console.error("persistExcursionsBackground failed:", err);
+    }
+  })();
 }
 
 function truncate(value: unknown, max: number): string | undefined {
