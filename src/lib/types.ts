@@ -679,3 +679,33 @@ export interface ChatTurn {
   redacted: boolean;
   createdAt: string;
 }
+
+// --- Salience-gated per-user memory (Atlas Deep Dive 12) ---
+export type MemoryKind = "constraint" | "preference" | "goal" | "correction" | "pattern" | "decision" | "oneoff";
+export type MemoryDecision = "WRITE" | "HOLD" | "SKIP";
+
+/** A scored extraction candidate (pre-persistence). */
+export interface MemoryCandidate {
+  kind: MemoryKind;
+  subject: string;
+  value: string;
+  source: string;
+  confidence: number;
+  hard: boolean;
+  specificity: number;
+  pii: boolean;
+}
+
+/** A persisted memory. `supersededBy` non-null means it was reconciled away by a newer value. */
+export interface MemoryItem {
+  id: string;
+  userId: string;
+  kind: MemoryKind;
+  subject: string;
+  value: string;
+  source: string;
+  confidence: number;
+  hard: boolean;
+  assertedAt: string;
+  supersededBy: string | null;
+}

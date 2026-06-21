@@ -26,7 +26,8 @@ import type {
   NotifyPrefs,
   NotifyChannelId,
   ChatTurn,
-  ChatTurnRole
+  ChatTurnRole,
+  MemoryItem
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -295,6 +296,20 @@ function migrate(database: Database.Database): void {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS user_memory (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'user_stated',
+      confidence REAL NOT NULL DEFAULT 0.5,
+      hard INTEGER NOT NULL DEFAULT 0,
+      asserted_at TEXT NOT NULL,
+      superseded_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory (user_id, superseded_by);
   `);
 
   // Migrate tables to include user_id
@@ -2237,4 +2252,71 @@ export function trimChatTurns(userId: string, keep: number): number {
 
 export function clearChatTurns(userId: string): number {
   return getDb().prepare("DELETE FROM chat_turns WHERE user_id = ?").run(userId).changes;
+}
+
+interface RawMemoryRow {
+  id: string;
+  user_id: string;
+  kind: string;
+  subject: string;
+  value: string;
+  source: string;
+  confidence: number;
+  hard: number;
+  asserted_at: string;
+  superseded_by: string | null;
+}
+
+function mapMemory(row: RawMemoryRow): MemoryItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    kind: row.kind as MemoryItem["kind"],
+    subject: row.subject,
+    value: row.value,
+    source: row.source,
+    confidence: row.confidence,
+    hard: row.hard === 1,
+    assertedAt: row.asserted_at,
+    supersededBy: row.superseded_by
+  };
+}
+
+export function insertMemory(item: MemoryItem): MemoryItem {
+  getDb()
+    .prepare(
+      "INSERT INTO user_memory (id, user_id, kind, subject, value, source, confidence, hard, asserted_at, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(item.id, item.userId, item.kind, item.subject, item.value, item.source, item.confidence, item.hard ? 1 : 0, item.assertedAt, item.supersededBy);
+  return item;
+}
+
+export function findLiveMemoryBySubject(userId: string, kind: string, subject: string): MemoryItem | null {
+  const row = getDb()
+    .prepare(
+      "SELECT * FROM user_memory WHERE user_id = ? AND kind = ? AND subject = ? AND superseded_by IS NULL ORDER BY asserted_at DESC LIMIT 1"
+    )
+    .get(userId, kind, subject) as RawMemoryRow | undefined;
+  return row ? mapMemory(row) : null;
+}
+
+export function listLiveMemory(userId: string): MemoryItem[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM user_memory WHERE user_id = ? AND superseded_by IS NULL ORDER BY asserted_at DESC")
+    .all(userId) as RawMemoryRow[];
+  return rows.map(mapMemory);
+}
+
+export function supersedeMemory(oldId: string, newId: string): void {
+  getDb().prepare("UPDATE user_memory SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+export function touchMemory(id: string, assertedAt: string, confidence: number): MemoryItem | null {
+  getDb().prepare("UPDATE user_memory SET asserted_at = ?, confidence = ? WHERE id = ?").run(assertedAt, confidence, id);
+  const row = getDb().prepare("SELECT * FROM user_memory WHERE id = ?").get(id) as RawMemoryRow | undefined;
+  return row ? mapMemory(row) : null;
+}
+
+export function deleteMemory(userId: string, id: string): boolean {
+  return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
 }
