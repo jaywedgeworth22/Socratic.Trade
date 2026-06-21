@@ -143,17 +143,34 @@ describe("macro.ts cache-provenance", () => {
     expect(callsAfterB).toBe(callsAfterA); // served from shared cache
   });
 
-  it("no-key path returns the DEFAULT_MACRO sentinel (asOf=unavailable) without any network call", async () => {
+  it("no-key path tries Yahoo VIX; falls back to asOf=unavailable when Yahoo also fails", async () => {
     delete process.env.FRED_API_KEY;
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
+    // Stub fetch to simulate a failing Yahoo response (network error).
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network error")));
 
     const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
     clearMacroCacheForTests();
 
     const result = await fetchMacroData(undefined);
     expect(result.asOf).toBe("unavailable");
-    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("no-key path returns a live regime when Yahoo VIX fetch succeeds", async () => {
+    delete process.env.FRED_API_KEY;
+    // Stub fetch to return a valid Yahoo VIX chart response with VIX = 22.5.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        chart: { result: [{ indicators: { quote: [{ close: [21.0, 22.5] }] } }] }
+      })
+    }));
+
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const result = await fetchMacroData(undefined);
+    expect(result.asOf).not.toBe("unavailable");
+    expect(parseFloat(result.vix)).toBeCloseTo(22.5, 1);
   });
 });
 

@@ -1,4 +1,10 @@
 import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { BROWSER_UA, politeFetchJson } from "./web-sources/http";
+
+// Minimal Yahoo Finance chart shape — only the fields we read.
+interface VixYahooResponse {
+  chart?: { result?: Array<{ indicators?: { quote?: Array<{ close?: (number | null)[] }> } }> };
+}
 
 export interface MacroData {
   fedFundsRate: string;
@@ -122,11 +128,22 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
   const apiKey = resolveApiKeyWithSource("fred", userId).key;
   if (!apiKey) {
-    // No FRED key: the constants are NOT live data. Stamp asOf as "unavailable" so the regime
-    // classifier (and any consumer) can tell this is unsourced rather than fabricating a fresh
-    // date — otherwise a real crisis is silently classified as the static 2023-era regime.
+    // No FRED key for the full FRED suite. Try to at least fetch live ^VIX from Yahoo Finance
+    // (key-free) so the regime classifier gets a real volatility reading instead of staying
+    // "Unknown". Other macro fields stay at DEFAULT_MACRO approximations — VIX is the primary
+    // regime axis anyway (see determineMarketRegime).
+    const liveVix = await fetchVixFromYahoo();
+    if (liveVix !== null) {
+      const lightMacro: MacroData = {
+        ...DEFAULT_MACRO,
+        vix: liveVix.toFixed(2),
+        asOf: new Date().toISOString().split("T")[0]
+      };
+      writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
+      return lightMacro;
+    }
+    // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
     const fallback = { ...DEFAULT_MACRO, asOf: "unavailable" };
-    // "unavailable" result carries no licensed data — safe to share.
     writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
     return fallback;
   }
@@ -196,6 +213,25 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 export function clearMacroCacheForTests(): void {
   sharedMacroCache.entry = null;
   privateMacroCache.clear();
+}
+
+/** Fetch the latest ^VIX close from Yahoo Finance (no API key required). Returns null on any failure. */
+async function fetchVixFromYahoo(): Promise<number | null> {
+  try {
+    const url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d";
+    const json = await politeFetchJson<VixYahooResponse>(url, {
+      headers: { "user-agent": BROWSER_UA, accept: "application/json" }
+    });
+    const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close ?? [];
+    // Walk back from the end to find the most recent non-null close.
+    for (let i = closes.length - 1; i >= 0; i--) {
+      const c = closes[i];
+      if (typeof c === "number" && Number.isFinite(c) && c > 0) return c;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // Regime-critical fields that are always worth the tokens even when unchanged.

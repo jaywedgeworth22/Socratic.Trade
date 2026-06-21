@@ -271,19 +271,33 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
   const alpacaKey = resolveApiKeyWithSource("alpaca_paper_api_key", userId);
   const alpacaSecret = resolveApiKey("alpaca_paper_secret_key", userId);
+  // ── Freshness-tier ordering (first-wins cascade) ──────────────────────────
+  // The cascade below is first-wins per field (takeScalar keeps the first non-undefined
+  // value). So provider ORDER decides which source wins the price-family fields
+  // (price / bid / ask / volume / vwap / intradayChangePct). To make the MOST CURRENT
+  // source win those fields, the real-time market-data provider must resolve FIRST —
+  // ahead of delayed sources (webull/robinhood/finnhub/etc.).
+  //
+  // Tier 1 — REAL-TIME market data: Alpaca's IEX snapshot. It supplies ONLY the
+  // price-family fields (price/bid/ask/volume/vwap/intradayChangePct) and no
+  // fundamentals/analyst/sentiment, so seating it first wins real-time quotes
+  // WITHOUT disturbing fundamentals sourcing (still finnhub/fmp/yahoo below). It
+  // self-skips when either Alpaca key is absent — then the delayed sources fill these
+  // fields in exactly the same order they would today.
+  if (alpacaKey.key && alpacaSecret) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaKey.key, alpacaSecret, alpacaKey.source, userId));
+  // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
   // AND ROBINHOOD_ENRICHMENT_ENABLED, because the broker field set/units should be verified
   // against /api/admin/robinhood-probe before trusting them next to other real numbers.
+  // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
+  // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider());
   if (fintech.key) providers.push(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId));
   if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaKey.key) providers.push(new AlpacaNewsEnrichmentProvider(alpacaKey.key, alpacaSecret || undefined, alpacaKey.source, userId));
-  // Alpaca snapshot: real bid/ask + price + volume + intraday change (replaces fabricated spreads).
-  // Needs both the key id and secret; self-skips when either is absent.
-  if (alpacaKey.key && alpacaSecret) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaKey.key, alpacaSecret, alpacaKey.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
   providers.push(new YahooFinanceEnrichmentProvider());

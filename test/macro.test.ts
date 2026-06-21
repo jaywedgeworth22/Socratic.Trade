@@ -41,6 +41,20 @@ describe("determineMarketRegime", () => {
   });
 });
 
+describe("determineMarketRegime — VIX fallback light-macro", () => {
+  it("returns a real regime when asOf is a date (VIX light-macro path)", () => {
+    // When fetchVixFromYahoo succeeds, asOf is today's date (not 'unavailable').
+    // The regime should be derived from the live VIX.
+    const lightMacro: MacroData = { ...base, vix: "28.50", asOf: "2026-06-21" };
+    expect(determineMarketRegime(lightMacro)).toBe("Risk-Off (High Volatility)");
+  });
+
+  it("returns Unknown when asOf is 'unavailable' (no FRED key AND VIX fetch failed)", () => {
+    const noMacro: MacroData = { ...base, asOf: "unavailable" };
+    expect(determineMarketRegime(noMacro)).toBe("Unknown (no macro feed)");
+  });
+});
+
 describe("pruneMacro", () => {
   it("sends every field on the first run (no previous snapshot)", () => {
     const { macro, omitted } = pruneMacro(base);

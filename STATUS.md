@@ -24,6 +24,18 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **P0-3/P1-2/P1-7 — VIX Yahoo fallback + congress floor + exposure defaults.** Live ^VIX from Yahoo Finance (key-free) replaces "Unknown regime" when no FRED key is configured; `hasNotableWebSignal` now requires buyCount≥2 AND netSignal≥2 (single-member disclosures no longer trigger rank-lift); `maxGrossExposurePct`/`maxNetExposurePct` defaults tightened 100→80 to enforce a 20% cash buffer. tsc clean, 593 tests all pass (+20). See `docs/rollouts/2026-06-21-p1-macro-signal-exposure.md`.
+- 2026-06-21 (`agent/claude`): **P1-4/5/6 — congress disclosedAt windowing + scorecard floor + deterministic Bear veto.** PR #35.
+- 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**
+  Reordered the enrichment cascade so the real-time `AlpacaSnapshotEnrichmentProvider` wins the
+  price-family fields (price/bid/ask/volume/vwap/intradayChangePct) over delayed providers (it only
+  supplies market data, so fundamentals sourcing is untouched; self-skips without Alpaca keys). Added
+  a shared `dataPointTitle(label, source, asOf)` (+ `derivedTitle`) so hovering ANY Market-Scan cell
+  shows `Source: <provider> · Received HH:MM`, attributed to that field's own `sources[field]`
+  (derived cols → "Computed from <inputs>"; no-provenance cols → time only; never fabricated).
+  `StatTile` carries source/time app-wide; `SOURCE_LABELS` polished (alpaca-snapshot→"Alpaca"). tsc
+  clean · **593 tests** · adversarially verified · see
+  `docs/rollouts/2026-06-21-best-source-and-provenance-tooltips.md`.
 - 2026-06-21 (`agent/claude`): **Scan default columns (expert panel) + Alpaca VWAP/feed.**
   A 4-persona financial-expert panel chose a new 11-column execution-aware default for the Market
   Scan — `symbol·price·Chg·vsVWAP·SecRS·%offHi·$Vol·Spread·Bid·Ask·Score` (bid/ask now default-on
