@@ -542,6 +542,7 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
 
   // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
   const stat = comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
+  const sampleTrades = stat?.trades ?? 0;
   const winRate = stat?.shrunkWinRate ?? 50;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
   const conviction = (proposal.confidenceScore ?? 50) / 100;
@@ -556,7 +557,15 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
   // Bounds are configurable (policy.tuning.sizingFloorPct / sizingCeilingPct); default 10–100%.
   const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
   const ceiling = (policy.tuning?.sizingCeilingPct ?? 100) / 100;
-  const boundedMultiplier = Math.max(floor, Math.min(ceiling, multiplier));
+
+  // Evidence floor: an UNPROVEN thesis (fewer than minLots closed lots) has no realized edge to
+  // justify a data-driven size — its shrunk win-rate/avgReturn are dominated by the neutral prior,
+  // so the raw multiplier would still allocate ~28% on AI conviction alone. Hold it at the floor
+  // (exploratory) until it accumulates a real sample, rather than sizing up on faith. Mirrors the
+  // auto-tuner's closed-lot gate so the fast (sizing) path is held to the same bar as weight shifts.
+  const minLotsForSizing = policy.tuning?.minClosedLotsForWeightShift ?? 20;
+  const unproven = sampleTrades < minLotsForSizing;
+  const boundedMultiplier = unproven ? floor : Math.max(floor, Math.min(ceiling, multiplier));
   
   const effectiveMaxOrderNotional = Math.min(
     policy.maxOrderNotional ?? Infinity,
@@ -568,7 +577,9 @@ function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + `\n\n[Sizing] Sized to $${targetNotional} (${Math.round(boundedMultiplier * 100)}% of max) from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`
+    rationale: proposal.rationale + `\n\n[Sizing] Sized to $${targetNotional} (${Math.round(boundedMultiplier * 100)}% of max)` + (unproven
+      ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`)
   };
 }
 
