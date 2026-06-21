@@ -9,7 +9,14 @@ Format: `### Qn — <short title>` · **Context** · **Options** · **My default
 
 ---
 
-### Q0 — ⚠️ Worktree collision: where should I keep working? (BLOCKER)
+### Q0 — ✅ RESOLVED (2026-06-21): Worktree collision — work in your own worktree, land via PR
+**✅ Resolution — option (a):** One agent per worktree; agents NEVER edit/build/`npm install`/switch-branch
+in the `main` integration worktree (`~/Code/Agentic Trading`) — it is review/merge only; land via
+`scripts/land.sh` → PR, and the human integrator merges. This is now **enforced**: `scripts/githooks/pre-push`
+blocks direct pushes to `main` and pushes from the main worktree; `scripts/land.sh` runs the verify gate
+and opens a PR; AGENTS.md has a "Multi-agent landing protocol" section. Honest limits (no server-side branch
+protection on this private repo; `--no-verify` bypass; hooks guard pushes not file-writes) are documented in
+`docs/reviews/2026-06-21-multi-agent-coordination-review.md`. _(Original question retained below for context.)_
 **Context:** This session works in the `main` integration worktree (`~/Code/Agentic Trading`), but a
 concurrent agent is actively editing core files here (`strategy.ts`, `db.ts`, `policy.ts`, `types.ts`,
 `red-team.ts` + a new `risk-breaker.ts`) — a drawdown/risk-breaker feature, currently in a broken

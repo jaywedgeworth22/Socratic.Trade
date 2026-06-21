@@ -89,11 +89,24 @@ Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-pre
   your `agent/<name>` branch. Your **live in-progress edits** appear at your port via HMR —
   open it in a browser; no refresh/rebuild needed.
 - **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
-- **Land work via git:** commit on your `agent/<name>` branch, then merge to `main` (in the
-  integration worktree; ff or PR). `git merge origin/main` into your branch to stay current.
-- **`npm run build` only affects YOUR worktree.** Verify with `npx tsc --noEmit` + `npm test`;
-  if a build wipes your `.next` and your live preview starts erroring (`ENOENT .next/...`),
-  just `pm2 restart trading-<you>`. It never affects another agent or production.
+- **Land work via the landing script — never push directly to main:**
+  ```bash
+  bash scripts/land.sh
+  ```
+  This script: (1) refuses to run from the main integration worktree or on branch `main`;
+  (2) fetches origin; (3) merges `origin/main` — aborts on conflict so you can resolve;
+  (4) runs `npx tsc --noEmit` → `npm test` → `npm run build` — aborts on any failure;
+  (5) refuses if your diff includes `.github/workflows/` (token lacks workflow scope — use
+  `ci-pending/` staging instead); (6) pushes your agent branch and opens a PR via `gh`.
+  After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
+- **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
+  by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
+  - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
+    and `git push origin agent/foo:main`).
+  - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
+  - Emergency human override (use sparingly): `HOOKS_ALLOW_MAIN_PUSH=1 git push origin ...`
+- **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and your live
+  preview starts erroring (`ENOENT .next/...`), restart it: `pm2 restart trading-<you>`.
 - **PM2:** `pm2 restart trading-<you>` / `pm2 list` are fine; do **not** `pm2 delete`/rename
   another agent's app or `trading`; run `pm2 save` after intentional changes. Never run a
   build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
