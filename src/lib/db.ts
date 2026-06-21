@@ -388,22 +388,67 @@ function migrate(database: Database.Database): void {
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
 
   const now = new Date().toISOString();
-  const ensure = database.prepare("INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)");
-  ensure.run("policy", JSON.stringify(DEFAULT_POLICY), now);
-  ensure.run("strategyPrompt", JSON.stringify(DEFAULT_STRATEGY_PROMPT), now);
+  // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
+  // These global rows are never read at runtime (all reads go through user_settings and
+  // strategy_profiles by userId). The legacy seeds were removed in M3 (2026-06-21).
+  migrateGlobalPolicyToLocalUser(database, now);
   ensureDefaultProfile(database, now);
   applySp500DefaultUniverseMigration(database, now);
+}
+
+/**
+ * ONE-TIME migration (M3, 2026-06-21): copy any existing global-only 'policy' / 'strategyPrompt'
+ * rows from the `settings` table into `user_settings` for the 'local' user, so that single-user
+ * DBs that were seeded before the per-user migration lose nothing.
+ *
+ * Guard key prevents the copy from running more than once. After this runs, the global rows
+ * become dead weight (never read at runtime) but are not deleted — they are harmless and their
+ * presence cannot cause confusion because no runtime code reads them.
+ */
+const GLOBAL_POLICY_TO_LOCAL_MIGRATION_KEY = "migration:global_policy_to_local_user:2026-06-21";
+
+function migrateGlobalPolicyToLocalUser(database: Database.Database, now: string): void {
+  const applied = database.prepare("SELECT value FROM settings WHERE key = ?").get(GLOBAL_POLICY_TO_LOCAL_MIGRATION_KEY);
+  if (applied) return;
+
+  const userId = "local";
+  const policyRow = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
+  const promptRow = database.prepare("SELECT value FROM settings WHERE key = 'strategyPrompt'").get() as { value: string } | undefined;
+
+  // Only copy if the user doesn't already have their own user_settings row.
+  if (policyRow) {
+    const existing = database.prepare("SELECT id FROM user_settings WHERE user_id = ? AND key = 'policy'").get(userId);
+    if (!existing) {
+      database
+        .prepare("INSERT OR IGNORE INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(`${userId}_policy`, userId, "policy", policyRow.value, now);
+    }
+  }
+  if (promptRow) {
+    const existing = database.prepare("SELECT id FROM user_settings WHERE user_id = ? AND key = 'strategyPrompt'").get(userId);
+    if (!existing) {
+      database
+        .prepare("INSERT OR IGNORE INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(`${userId}_strategyPrompt`, userId, "strategyPrompt", promptRow.value, now);
+    }
+  }
+
+  database
+    .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+    .run(GLOBAL_POLICY_TO_LOCAL_MIGRATION_KEY, JSON.stringify({ appliedAt: now }), now);
 }
 
 function ensureDefaultProfile(database: Database.Database, now: string): void {
   const userId = "local";
   const existing = database.prepare("SELECT COUNT(*) AS count FROM strategy_profiles WHERE user_id = ?").get(userId) as { count: number };
   if (existing.count === 0) {
-    const policyRow = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
-    const promptRow = database.prepare("SELECT value FROM settings WHERE key = 'strategyPrompt'").get() as { value: string } | undefined;
-    const rawPolicy = policyRow?.value ?? JSON.stringify(DEFAULT_POLICY);
+    // Seed from user_settings (which migrateGlobalPolicyToLocalUser may have just populated)
+    // or fall back to the compiled-in defaults. We no longer read from the global settings table.
+    const userPolicyRow = database.prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = 'policy'").get(userId) as { value: string } | undefined;
+    const userPromptRow = database.prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = 'strategyPrompt'").get(userId) as { value: string } | undefined;
+    const rawPolicy = userPolicyRow?.value ?? JSON.stringify(DEFAULT_POLICY);
     const policy = mergePolicy(JSON.parse(rawPolicy) as Partial<TradingPolicy>);
-    const prompt = promptRow ? (JSON.parse(promptRow.value) as string) : DEFAULT_STRATEGY_PROMPT;
+    const prompt = userPromptRow ? (JSON.parse(userPromptRow.value) as string) : DEFAULT_STRATEGY_PROMPT;
     database
       .prepare(
         "INSERT INTO strategy_profiles (id, user_id, name, policy, prompt, scoring_weights, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -434,13 +479,9 @@ function applySp500DefaultUniverseMigration(database: Database.Database, now: st
     }
   };
 
-  const settingsPolicy = database.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string } | undefined;
-  const migratedSettingsPolicy = settingsPolicy ? migratePolicyJson(settingsPolicy.value) : undefined;
-  if (migratedSettingsPolicy) {
-    database
-      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'policy'")
-      .run(JSON.stringify(migratedSettingsPolicy), now);
-  }
+  // NOTE: The global settings.policy row is no longer updated here (M3, 2026-06-21).
+  // It is a dead row after the migrateGlobalPolicyToLocalUser migration; the canonical
+  // policy for each user lives in user_settings and strategy_profiles.
 
   const userSettingsPolicies = database
     .prepare("SELECT id, value FROM user_settings WHERE key = 'policy'")
@@ -1026,6 +1067,35 @@ export function activateStrategyProfile(id: string, userId: string = "local"): S
   activate();
   audit("profile_change", { action: "activate", id, name: profile.name }, userId);
   return getStrategyProfile(id, userId)!;
+}
+
+/**
+ * Delete a strategy profile owned by `userId`.
+ *
+ * Decision (M3, 2026-06-21): if the deleted profile was the active one, the active flag is
+ * reassigned to the OLDEST remaining profile (by created_at). If there are no remaining profiles
+ * the user is left with none active — callers should create a new profile in that case.
+ * The function throws if the profile does not exist or does not belong to `userId`.
+ */
+export function deleteStrategyProfile(id: string, userId: string = "local"): void {
+  const existing = getStrategyProfile(id, userId);
+  if (!existing) throw new Error("Strategy profile not found.");
+  const database = getDb();
+  const now = new Date().toISOString();
+  const wasActive = existing.active;
+  const del = database.transaction(() => {
+    database.prepare("DELETE FROM strategy_profiles WHERE id = ? AND user_id = ?").run(id, userId);
+    if (wasActive) {
+      // Reassign the active flag to the oldest remaining profile for this user.
+      database
+        .prepare(
+          "UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = (SELECT id FROM strategy_profiles WHERE user_id = ? ORDER BY created_at ASC LIMIT 1)"
+        )
+        .run(now, userId);
+    }
+  });
+  del();
+  audit("profile_change", { action: "delete", id, name: existing.name, wasActive }, userId);
 }
 
 export function latestAuditByKind(kind: string, userId: string = "local"): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
