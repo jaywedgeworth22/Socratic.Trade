@@ -7,11 +7,11 @@
 //   5. Return { text, draft?, citations, usedMemories } — never executes a trade.
 // Ported from reference/atlas-public-src/bff/orchestrator.mjs.
 
-import { audit, getPolicy } from "../db";
+import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
 import { retrieveContext } from "../vector-db";
-import { createAlert as alertsCreateAlert } from "../alerts";
-import { addToWatchlist } from "../watchlist";
+import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
+import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
@@ -119,6 +119,35 @@ export function buildProductionDeps(): ToolDeps {
       } catch (e) {
         return { error: e instanceof Error ? e.message : "WATCHLIST_FAILED" };
       }
+    },
+    async getPositions(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return [];
+      try {
+        return await getBrokerGateway(policy, userId).getEquityPositions(policy.accountNumber);
+      } catch {
+        return [];
+      }
+    },
+    async getPortfolio(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return null;
+      try {
+        return await getBrokerGateway(policy, userId).getPortfolio(policy.accountNumber);
+      } catch {
+        return null;
+      }
+    },
+    listWatchlist(userId) {
+      return wlList(userId);
+    },
+    listAlerts(userId) {
+      return alertsListAlerts(userId, "armed");
+    },
+    listOpenProposals(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return [];
+      return listPendingProposals(policy.accountNumber, userId);
     },
     accountLabel: "Test (local)"
   };
