@@ -57,6 +57,57 @@ export interface ScoringWeights {
  */
 export type TaxationType = "taxable" | "roth_ira" | "traditional_ira";
 
+/**
+ * What a brokerage account can actually do. Populated from the broker API on
+ * connect and stored as a JSON blob alongside the account row. Every boolean
+ * field defaults to false so legacy/unpopulated rows are never accidentally
+ * granted a capability the broker hasn't confirmed.
+ *
+ * Future asset classes (futures, crypto) are included here so policy checks
+ * can reference capabilities.futuresTrading without a later schema change —
+ * they will simply read false until the broker gateway sets them.
+ */
+export interface AccountCapabilities {
+  /** Equity (stock/ETF) buying and selling. True for all current brokers. */
+  equityTrading: boolean;
+  /**
+   * Equity short selling (borrowing shares to sell).
+   * Robinhood MCP: always false — the MCP's review_equity_order explicitly
+   * prohibits short sells. Alpaca: parsed from account.shorting_enabled.
+   */
+  shortSelling: boolean;
+  /** Options contracts allowed at all. */
+  optionsTrading: boolean;
+  /**
+   * CBOE/broker options approval tier:
+   *   0 = none  1 = covered calls + cash-secured puts
+   *   2 = long calls/puts  3 = spreads/straddles  4 = naked/uncovered
+   * Undefined when optionsTrading is false or the broker does not report a level.
+   */
+  optionsLevel?: 0 | 1 | 2 | 3 | 4;
+  /** Futures/commodities contracts. Not supported by any current broker. */
+  futuresTrading: boolean;
+  /**
+   * Cryptocurrency spot trading. Not supported by current stock brokers.
+   * Reserved for future crypto-exchange connections — wire a crypto gateway
+   * and set this true there; stock brokers remain false.
+   */
+  cryptoTrading: boolean;
+  /** Whether the account has margin (borrowing) enabled. */
+  marginEnabled: boolean;
+  /** Broker's required maintenance margin percentage (e.g. 25 = 25%). */
+  marginRequirementPct?: number;
+  /**
+   * Account structure, which determines the applicable tax regime:
+   *   "brokerage"       → standard taxable account
+   *   "traditional_ira" → tax-deferred (contributions pre-tax; withdrawals taxed as income)
+   *   "roth_ira"        → tax-free growth (contributions post-tax; qualified withdrawals free)
+   *   "crypto_exchange" → crypto-only venue; taxable but no equity trading
+   * For new accounts this supersedes the separate taxationType field on ConnectedAccount.
+   */
+  accountType: "brokerage" | "traditional_ira" | "roth_ira" | "crypto_exchange";
+}
+
 export interface TaxSettings {
   /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
   taxationType?: TaxationType;
@@ -106,9 +157,17 @@ export interface NotificationSettings {
 export interface ConnectedAccount {
   id: string;
   userId: string;
+  /**
+   * Broker identifier. Add new values here when connecting a new venue
+   * (e.g. "coinbase" for a crypto exchange) and wire a matching BrokerGateway.
+   */
   broker: "alpaca" | "robinhood" | "test";
   environment: "paper" | "live";
-  /** Tax treatment of this account (taxable vs Roth/Traditional IRA). Defaults to "taxable". */
+  /**
+   * @deprecated Use capabilities.accountType instead for new accounts.
+   * Retained for backwards compatibility with existing rows that predate
+   * the AccountCapabilities field.
+   */
   taxationType?: TaxationType;
   accountNumber?: string;
   label: string;
@@ -116,7 +175,12 @@ export interface ConnectedAccount {
   apiSecret?: string;
   baseUrl?: string;
   isActive: boolean;
-
+  /**
+   * Persisted snapshot of the capabilities last reported by the broker for
+   * this account. Populated on connect/re-sync; undefined for legacy rows
+   * (treat all capabilities as false when absent).
+   */
+  capabilities?: AccountCapabilities;
   createdAt: string;
   updatedAt: string;
 }
@@ -125,6 +189,8 @@ export interface BrokerageAccount {
   accountNumber: string;
   label: string;
   agenticAllowed: boolean;
+  /** Live capabilities reported by the broker for this account. */
+  capabilities?: AccountCapabilities;
 }
 
 export interface Portfolio {

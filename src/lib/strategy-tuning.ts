@@ -12,7 +12,7 @@ import { symbolsForPolicyUniverse } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
-import { getClosedLotCount, getPerformanceSummary, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
+import { getClosedLotCount, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type {
   FillEvent,
@@ -61,6 +61,64 @@ type LlmTuningPayload = {
   confidenceScore: number;
 };
 
+/** A skipped candidate's realized outcome, as needed to reason about factor weighting. */
+export interface MissedOpportunityInput {
+  symbol: string;
+  returnPct: number;
+  score?: number;
+  sector?: string;
+  regime?: string;
+  dominantFactor?: string;
+  ageDays?: number;
+}
+
+export interface MissedOpportunitySummary {
+  items: Array<{ symbol: string; returnPct: number; score?: number; sector?: string; regime?: string; dominantFactor?: string; ageDays?: number }>;
+  /** Count of positive-return skipped names in the window. */
+  count: number;
+  /** The dominant factor that recurred across >= 2 missed winners, if any. */
+  recurringFactor?: string;
+  recurringFactorCount?: number;
+}
+
+/**
+ * Compact matured "missed opportunity" evidence for the auto-tuner: high-scoring
+ * candidates the strategy SKIPPED that subsequently rose over their horizon. When one
+ * dominant factor keeps showing up among the missed winners, the tuner can weigh whether
+ * the current `scoringWeights` under-weight that factor — still gated by the closed-lot
+ * sample-size guardrail before any weight actually changes. Pure (no I/O) so it is unit
+ * testable; callers pass already-sorted rows from `getSkippedCandidateReturns`.
+ */
+export function summarizeMissedOpportunities(rows: MissedOpportunityInput[], limit = 8): MissedOpportunitySummary {
+  const winners = rows.filter((row) => typeof row.returnPct === "number" && row.returnPct > 0);
+  const factorCounts = new Map<string, number>();
+  for (const row of winners) {
+    if (row.dominantFactor) factorCounts.set(row.dominantFactor, (factorCounts.get(row.dominantFactor) ?? 0) + 1);
+  }
+  let recurringFactor: string | undefined;
+  let recurringFactorCount = 0;
+  for (const [factor, count] of factorCounts) {
+    if (count > recurringFactorCount) {
+      recurringFactor = factor;
+      recurringFactorCount = count;
+    }
+  }
+  const items = winners.slice(0, limit).map((row) => ({
+    symbol: row.symbol,
+    returnPct: row.returnPct,
+    ...(typeof row.score === "number" ? { score: row.score } : {}),
+    ...(row.sector ? { sector: row.sector } : {}),
+    ...(row.regime ? { regime: row.regime } : {}),
+    ...(row.dominantFactor ? { dominantFactor: row.dominantFactor } : {}),
+    ...(typeof row.ageDays === "number" ? { ageDays: row.ageDays } : {})
+  }));
+  return {
+    items,
+    count: winners.length,
+    ...(recurringFactor && recurringFactorCount >= 2 ? { recurringFactor, recurringFactorCount } : {})
+  };
+}
+
 export async function proposeStrategyTuning(userId: string = "local"): Promise<StrategyTuningProposal> {
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
@@ -75,6 +133,11 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, source, userId) : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
   const runs = listStrategyRuns(10, userId);
+  // Matured skipped-candidate counterfactuals (empty price map => realized rows only,
+  // no live quotes needed). Lets the tuner learn from high-scoring names it passed on.
+  const missedOpportunities = summarizeMissedOpportunities(
+    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30 })
+  );
   const executionMode = llmExecutionMode(executionState);
   const context = {
     currentDate: new Date().toISOString(),
@@ -110,12 +173,13 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
           }))
         }
       : undefined,
+    ...(missedOpportunities.count > 0 ? { missedOpportunities } : {}),
     macro
   };
 
   const openaiKey = resolveApiKey("openai", userId);
   if (!openaiKey) {
-    return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount });
+    return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities });
   }
 
   const payload = await requestLlmTuning(context, openaiKey, userId);
@@ -226,6 +290,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
     "Suggest conservative improvements that can be manually reviewed before being applied.",
     "Do not propose placing trades. Do not remove explicit safety controls.",
     `Sample-size guardrail: only propose scoringWeights (factor weight) changes when closedLotCount >= minClosedLotsForWeightShift (${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots). Below that the realized sample is too thin to attribute P&L to factors — set EVERY scoringWeights field to null and instead focus on prompt clarity and risk sizing, noting the small sample in cautions.`,
+    "`missedOpportunities` (when present): high-scoring candidates the strategy SKIPPED that then rose over their horizon — each with realized returnPct, score, sector, regime, and dominantFactor; `recurringFactor` flags a factor that dominated multiple missed winners. If it appears, weigh whether scoringWeights under-weight that factor, but still obey the sample-size guardrail above before changing any weight.",
     "Return strict JSON only."
   ].join("\n");
 
@@ -446,6 +511,7 @@ function localRulesProposal(input: {
   fills: FillEvent[];
   latestDecision?: LatestDecisionPayload;
   closedLotCount: number;
+  missedOpportunities?: MissedOpportunitySummary;
 }): StrategyTuningProposal {
   const perf = compactPerformance(input.performance, input.policy.paperMode);
   const weakPerformance = typeof perf?.averageReturnPct === "number" && perf.averageReturnPct < 0;
@@ -507,7 +573,10 @@ function localRulesProposal(input: {
       enoughLotsForWeights
         ? "Validate with another test/local run after applying changes."
         : `Only ${input.closedLotCount}/${minLotsForWeights} closed lots — withholding factor-weight changes until the realized sample is large enough to trust.`,
-      ...(lowSample ? ["The trade sample is still small, so avoid overfitting."] : [])
+      ...(lowSample ? ["The trade sample is still small, so avoid overfitting."] : []),
+      ...(input.missedOpportunities?.recurringFactor && input.missedOpportunities.recurringFactorCount
+        ? [`Missed-opportunity signal: ${input.missedOpportunities.count} skipped name(s) rose; '${input.missedOpportunities.recurringFactor}' was the recurring dominant factor in ${input.missedOpportunities.recurringFactorCount} of them — consider whether scoringWeights under-weight it (subject to the closed-lot gate).`]
+        : [])
     ],
     confidenceScore: lowSample ? 45 : weakPerformance ? 65 : 55,
     generatedBy: "local_rules"

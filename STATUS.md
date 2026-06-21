@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude`): **Best-of-each branch reconciliation landed on `main`.** A 7-agent
+  comparison (`docs/reviews/2026-06-21-branch-reconciliation-best-of-each.md`) resolved the parallel
+  agent lanes; the recommended picks were cherry-picked + verified: **tuner missed-opportunity
+  counterfactuals** (`6fa51b5`), **SQLite/LLM safety hardening** (`877bb45`, incl. a `\n` prompt bug),
+  **AccountCapabilities + two-layer short gate + CI workflow activation** (`d014842`), **logo.dev
+  cascade fallback** (`e5dd681`, complementary to main's tile-contrast fix), and **lucide-react 1.21**.
+  The antigravity responsive header was already correctly merged to `main` (no regressions — `lg:`
+  shell / `min-h-16` / aria-labels / Score-col-2 all intact). **Held:** @types/node 26 (tsc break),
+  eslint 10 (peer conflict), zod 4 + next 16 (need migrations). Verified: tsc clean, **404 tests**,
+  build green. See `docs/rollouts/2026-06-21-best-of-each-integration.md`.
 - 2026-06-21: **Chat/RAG/learning advisory — HYBRID decision + issue log + roadmap.** A 5-agent expert
   panel (RAG, NL-finance-chat, onboarding, prompt/tools, LLM-learning) reviewed the chat assistant and
   unanimously landed on **HYBRID**: ISOLATE write surfaces (execution, strategy weight/risk tuning,
@@ -80,6 +90,26 @@ steps materially change.
   `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
   build green. See
   `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
+- 2026-06-21 (`chore/safety-quick-wins`): **Failure-mode review + first safety quick-wins.**
+  A 12-agent failure-mode brainstorm (114 findings → ~70 distinct) plus a 5-agent
+  adversarial verification of the Top 5 (4 confirmed, 1 — "synthetic stops are an
+  ungated real-trade cannon" — substantially overstated, crit→low). Full writeup:
+  `docs/reviews/2026-06-20-failure-mode-brainstorm.md`. Landed the first quick-win
+  batch (no behavior change to the money path): SQLite `busy_timeout=5000` +
+  `synchronous=NORMAL` PRAGMAs, bull/bear `JSON.parse` guards (degrade instead of
+  crashing the run), `bearSystemPrompt` `\n` join fix, `confidenceScore` clamp +
+  schema bounds, and **CI activation** (`ci-pending/*.yml` → `.github/workflows/`).
+  tsc clean, 390 tests, build green. NOTE: pushing the CI workflows needs the
+  GitHub token re-scoped (`gh auth refresh -h github.com -s workflow`). Deep fixes
+  still open: auth layer (T1), execution-section CAS/atomicity (T4/T5), portfolio
+  circuit breaker (#7), boot-time autonomy interlock (T3). See
+  `docs/rollouts/2026-06-21-safety-quick-wins.md`.
+- 2026-06-21: **AccountCapabilities classifier.** Added `AccountCapabilities` interface
+  covering equity, shortSelling, options (CBOE level 0–4), futures, crypto, margin, and
+  accountType (brokerage/IRA/crypto_exchange). Wired into Robinhood and Alpaca gateways,
+  DB persistence (JSON column + migration), policy two-layer short gate, strategy context,
+  and coloured capability badges on account cards. Robinhood MCP confirmed: shortSelling
+  always false. tsc clean · 390 tests · build OK. See `docs/rollouts/2026-06-21-account-capabilities.md`.
 - 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
 - 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
 - 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
