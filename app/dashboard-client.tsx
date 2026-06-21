@@ -1222,8 +1222,6 @@ function vwapTitle(q: MarketQuote): string | undefined {
 const SCAN_COLUMNS: ScanColumn[] = [
   { id: "symbol", label: "Symbol", title: "Ticker symbol. Hover a row for the company name.", sortKey: "symbol",
     render: (q) => <span className="font-semibold text-fg">{q.symbol}</span>, cellTitle: (q) => q.companyName },
-  { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
-    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> },
   { id: "price", label: "Price", title: "Last traded price (delayed). Source: NASDAQ delayed screener, refined by Yahoo / broker quotes when available.", align: "right", sortKey: "price",
     render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
   { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
@@ -1287,12 +1285,22 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => (q.analystRating ? <RatingChip score={q.analystScore} label={q.analystRating} /> : DASH), cellTitle: (q) => ratingTitle(q) },
   { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
     render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
-  { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", sortKey: "sector",
-    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) }
+  { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
+    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) },
+  // Score is intentionally LAST so it renders at the far right — the "verdict" column the eye
+  // lands on after scanning a row. Default sort is by score desc.
+  { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
+    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
 ];
 
-const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
-const SCAN_COLS_KEY = "scan-visible-cols";
+// Default-visible columns — chosen by a 2-expert review (2026-06-21) for fast at-a-glance triage:
+// identity → price → momentum (Chg) → liquidity ($Vol) → sector relative strength → reward:risk →
+// external rating → Score (far-right "verdict"). Everything else is one click away via "Configure
+// columns". This explicit list is the source of truth; the per-column `defaultHidden` flags are
+// legacy and no longer consulted for the default set.
+const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "dollarVolM", "sectorRelStrength", "rr52w", "analystScore", "score"];
+// v2: bumped so the slimmer default replaces a saved column set from the old (dense) layout.
+const SCAN_COLS_KEY = "scan-visible-cols-v2";
 
 function MarketScanView({
   snapshot,
@@ -1344,7 +1352,12 @@ function MarketScanView({
       const data = (await res.json()) as MarketScan;
       if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
     } catch (error) {
-      setScanError(error instanceof Error ? error.message : "Market scan failed.");
+      // A network-level fetch rejection surfaces an unhelpful, browser-specific message
+      // ("Load failed" on WebKit/Safari, "Failed to fetch" on Chromium). Translate those to a
+      // plain sentence; pass through real server messages (a non-OK response with body text).
+      const raw = error instanceof Error ? error.message : "";
+      const isNetwork = /load failed|failed to fetch|networkerror|the network connection was lost|aborted/i.test(raw);
+      setScanError(isNetwork ? "Couldn't reach the scan service." : raw || "Market scan failed.");
     } finally {
       setScanLoading(false);
     }
@@ -1425,7 +1438,13 @@ function MarketScanView({
         }
       />
       {scanError && (
-        <p className="mx-4 mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">{scanError}</p>
+        // We're past the no-data guard, so the table below is showing a valid (captured/last)
+        // scan — a failed live refresh is non-critical here. Show a subtle muted note, not an
+        // alarming red banner, so "Couldn't reach the scan service" never contradicts a populated
+        // table (the previous behavior the user flagged).
+        <p className="mx-4 mt-3 rounded-lg border border-line bg-surface-2/40 px-3 py-1.5 text-[12px] text-faint">
+          {scanError} Showing the last scan from {new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+        </p>
       )}
       {sorted.length === 0 ? (
         <div className="px-4 pb-4">
@@ -2477,25 +2496,34 @@ function SettingsContent({
         {section === "display" && (
           <div className="space-y-3">
             <Field label="Ticker Logos" hint="Applies to portfolio symbols, Market Scan rows, and symbol intelligence headers">
-              <Segmented<TickerLogoDisplay>
-                value={tickerLogoDisplay}
-                onChange={setTickerLogoDisplay}
-                options={[
-                  { value: "tile", label: "Small Tile" },
-                  { value: "transparent", label: "Medium" },
-                  { value: "off", label: "Off" }
-                ]}
-              />
+              <div className="space-y-2">
+                <Segmented<TickerLogoDisplay>
+                  value={tickerLogoDisplay}
+                  onChange={setTickerLogoDisplay}
+                  options={[
+                    { value: "tile", label: "Small Tile" },
+                    { value: "transparent", label: "Medium" },
+                    { value: "off", label: "Off" }
+                  ]}
+                />
+                {tickerLogoDisplay === "tile" && (
+                  <div className="flex items-center gap-2 pl-0.5">
+                    <span className="text-xs text-faint">Source</span>
+                    <LogoSourceSegmented />
+                  </div>
+                )}
+              </div>
             </Field>
-            <LogoSourceField />
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
-              {(["AAPL", "MSFT", "NVDA", "BRK.B"] as const).map((symbol) => (
-                <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
-                  <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
-                  <span>{symbol}</span>
-                </div>
-              ))}
-            </div>
+            {tickerLogoDisplay !== "off" && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
+                {(["AAPL", "MSFT", "NVDA", "BRK.B"] as const).map((symbol) => (
+                  <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
+                    <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
+                    <span>{symbol}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2899,6 +2927,20 @@ type ApiKeyStatus = {
   source: "user" | "env" | "none";
   updatedAt?: string;
 };
+
+function LogoSourceSegmented() {
+  const source = useLogoSource();
+  return (
+    <Segmented<LogoSource>
+      value={source}
+      onChange={setLogoSourcePref}
+      options={[
+        { value: "github", label: "Option 1", title: "GitHub — davidepalazzo/ticker-logos" },
+        { value: "logodev", label: "Option 2", title: "logo.dev — colored tile icons with monogram fallback" }
+      ]}
+    />
+  );
+}
 
 function ApiKeysSection() {
   const [keys, setKeys] = useState<ApiKeyStatus[]>([]);

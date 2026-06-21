@@ -1,4 +1,5 @@
 import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots } from "./db";
+import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
@@ -113,13 +114,43 @@ export function recordFillFromProposal(input: {
   const quantityInput = positiveNumber(input.execution?.filledQuantity) ?? positiveNumber(input.proposal.quantity);
   const impliedPrice = quantityInput && notional > 0 ? notional / quantityInput : undefined;
   const reviewPrice = priceFromReview(input.review?.raw);
-  const price =
+  const basePrice =
     positiveNumber(executionPrice) ??
     positiveNumber(proposedPrice) ??
     positiveNumber(marketPrice) ??
     positiveNumber(reviewPrice) ??
     positiveNumber(impliedPrice) ??
     0;
+  // Deterministic execution-cost model for SIMULATED fills (default OFF). Real broker (live) fills
+  // already carry their realized price, so only frictionless paper fills are adjusted — this makes
+  // the learning loop net-of-cost rather than certifying a frictionless edge that won't survive a
+  // live fill. With no env configured this is a no-op (price === basePrice), so existing P&L is
+  // untouched.
+  const costCfg = executionCostConfig();
+  let price = basePrice;
+  if (costCfg.enabled && input.source === "paper" && basePrice > 0) {
+    // bid/ask come from either the trimmed summary or the full candidate; daily volume (for the
+    // sqrt-impact term) is only on the full topCandidates quote. When the symbol isn't a scan
+    // candidate (e.g. an exit of a held name) the impact term is simply omitted.
+    const full = input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+    const summary = input.marketScan?.quotesBySymbol[symbol];
+    const bid = full?.bid ?? summary?.bid;
+    const ask = full?.ask ?? summary?.ask;
+    const spreadBps =
+      typeof bid === "number" && typeof ask === "number" && bid > 0 && ask > 0
+        ? ((ask - bid) / ((ask + bid) / 2)) * 1e4
+        : undefined;
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    const orderNotional = (quantityInput && quantityInput > 0 ? quantityInput * basePrice : notional) || 0;
+    const costBps = estimateExecutionCostBps({
+      spreadBps,
+      orderNotional,
+      dollarVol,
+      baseSlippageBps: costCfg.baseSlippageBps,
+      impactCoeff: costCfg.impactCoeff
+    });
+    price = applyExecutionCost(basePrice, input.proposal.side, costBps);
+  }
   const quantity =
     quantityInput ?? (price > 0 && notional > 0 ? notional / price : 0);
   const finalNotional =

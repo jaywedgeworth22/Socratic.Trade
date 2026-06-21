@@ -147,6 +147,18 @@ export interface RiskRules {
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
+  /**
+   * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
+   * before the system auto-halts new entries (systemState → "close_only") and fires a
+   * kill-switch notification. Undefined or <=0 disables. Unlike the per-position stopLossPct,
+   * this bounds the whole account's bleed, not one name's. Evaluated at the top of each run.
+   */
+  maxDrawdownPct?: number;
+  /**
+   * Account-level circuit breaker: max single-day equity loss (account currency) from the day's
+   * starting equity before auto-halting new entries. Undefined or <=0 disables.
+   */
+  maxDailyLossNotional?: number;
 }
 
 export interface NotificationSettings {

@@ -30,6 +30,25 @@ I stay here · (c) I pause until their WIP lands.
 unaffected. Tell me (a)/(b)/(c) and I'll resume.
 **Blocks:** all further autonomous code work.
 
+### 2026-06-21 — Q2/Q3/Q4 answered (full design: `docs/chat-multiuser-learning-design.md`)
+- **Q2 → ✅ (b) full-filing ingestion** with a paid Voyage key. Build EDGAR-body fetch → the existing
+  `storeDocument`/`chunkDocument` path (currently dead) → `ingested_accessions` de-dup, app-funded
+  `scope:'shared'`. Scheduled LATER (after auth + the learning loop). [design §3]
+- **Q3 → ✅ GO multi-user; ship-today = auth.** ⚠️ The design found **no auth + a universal IDOR**: `userId`
+  is spoofable (`x-user-id`/`?userId`, default `'local'`) so anyone can read/overwrite another user's
+  encrypted API keys or place trades as them. Ship-today slice = session auth (`middleware.ts` + signed
+  cookie), drop the spoofable fallbacks, remove the `'local'` default (fail closed), route-ownership
+  assertions, migrate `'local'` → the first real user. [design §2, §4]
+- **Q4 → ✅ shared facts + tiered crossover learning.** Winner = **A3-core + A2/A1 grafts**: a
+  `learned_context` store where the `fact` tier passes silently (advisory prompt DATA, *structurally* unable
+  to move risk/sizing), `strategy-directive` is an AI-authored diff-able `<!-- AI-LEARNED -->` prompt block
+  the user approves, and `risk` is confirmation-gated via the existing `applyStrategyTuning → PUT /api/policy`
+  rail. Facts shared cross-user (opt-out) only at the `fact` tier; strategy/memory/transcripts never shared.
+  [design §1]
+- **Q1 (LLM provider)** — your answer (users choose among multiple frontier LLMs; app-paid-vs-BYOK decided
+  later) is recorded; the provider-agnostic `ChatLLM` + model selector stands. Still open: which 2nd provider
+  to wire first.
+
 ### Q1 — LLM provider provisioning & which to ship first
 **Context:** The chat is provider-agnostic (`ChatLLM`); today only `AnthropicLLM` + `MockLLM` exist.
 You want users to choose between multiple frontier LLMs.

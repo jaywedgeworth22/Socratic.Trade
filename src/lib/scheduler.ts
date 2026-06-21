@@ -5,7 +5,7 @@
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
 import { checkAllUserPriceAlerts } from "./alerts";
-import { getPolicy, listUsers } from "./db";
+import { getPolicy, listUsers, setInternalSetting } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
@@ -41,6 +41,15 @@ export function startScheduler(): void {
 }
 
 async function tick(): Promise<void> {
+  // Liveness heartbeat for /api/health: a persisted timestamp each tick lets an external
+  // supervisor (PM2/uptime monitor) detect a dead/hung scheduler — i.e. autonomy and the
+  // synthetic-stop monitor silently not running. Self-guarded so it can never break a tick.
+  try {
+    setInternalSetting("scheduler:lastTick", new Date().toISOString());
+  } catch (err) {
+    console.error("[scheduler] heartbeat write error:", err);
+  }
+
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
   // keep the dashboard + agent context fresh even while autonomous trading is paused.

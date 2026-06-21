@@ -1,36 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_REQUEST_USER_ID, resolveRequestUserId } from "../src/lib/request-user";
+import { userIdForEmail } from "../src/lib/auth/identity";
 
-describe("resolveRequestUserId", () => {
-  it("defaults to the local user when a request has no user hint", () => {
-    expect(resolveRequestUserId(new Request("http://localhost/api/dashboard"))).toBe(DEFAULT_REQUEST_USER_ID);
-  });
-
-  it("resolves the x-user-id header before other request hints", () => {
-    const request = new Request("http://localhost/api/dashboard?userId=query-user", {
-      headers: { "x-user-id": " header-user " }
+// Identity is established by middleware (verified Cloudflare Access email) and forwarded as the trusted
+// `x-authenticated-user-email` header. resolveRequestUserId must trust ONLY that header — never the old
+// spoofable `x-user-id` / `?userId` / body hints (the closed IDOR vectors).
+describe("resolveRequestUserId (post-auth)", () => {
+  it("maps the trusted authenticated-email header to a stable userId", () => {
+    const req = new Request("http://localhost/api/dashboard", {
+      headers: { "x-authenticated-user-email": "alice@example.com" }
     });
-
-    expect(resolveRequestUserId(request, { userId: "body-user" })).toBe("header-user");
+    expect(resolveRequestUserId(req)).toBe(userIdForEmail("alice@example.com"));
   });
 
-  it("resolves the userId query parameter when no header is present", () => {
-    const request = new Request("http://localhost/api/keys?userId=query-user");
-
-    expect(resolveRequestUserId(request)).toBe("query-user");
-  });
-
-  it("resolves an optional body userId when header and query hints are absent", () => {
-    const request = new Request("http://localhost/api/keys", { method: "POST" });
-
-    expect(resolveRequestUserId(request, { userId: "body-user" })).toBe("body-user");
-  });
-
-  it("ignores empty user hints and falls back to local", () => {
-    const request = new Request("http://localhost/api/keys?userId=%20", {
-      headers: { "x-user-id": " " }
+  it("IGNORES client-supplied x-user-id, ?userId, and body userId (no IDOR)", () => {
+    const req = new Request("http://localhost/api/keys?userId=victim", {
+      headers: { "x-user-id": "victim", "x-authenticated-user-email": "alice@example.com" }
     });
+    expect(resolveRequestUserId(req, { userId: "victim" })).toBe(userIdForEmail("alice@example.com"));
+    expect(resolveRequestUserId(req, { userId: "victim" })).not.toBe("victim");
+  });
 
-    expect(resolveRequestUserId(request, { userId: "" })).toBe(DEFAULT_REQUEST_USER_ID);
+  it("falls back to the dev user (NOT a client hint) when no verified identity is present", () => {
+    const req = new Request("http://localhost/api/keys?userId=victim", { headers: { "x-user-id": "victim" } });
+    expect(resolveRequestUserId(req, { userId: "victim" })).toBe(DEFAULT_REQUEST_USER_ID);
   });
 });

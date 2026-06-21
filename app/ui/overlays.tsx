@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { cn } from "./cn";
@@ -75,26 +75,36 @@ export function Modal({
   children: React.ReactNode;
 }) {
   const ref = useDismissable(open, onClose);
+  const dragControls = useDragControls();
+  const constrainRef = useRef<HTMLDivElement>(null);
+
   return (
     <AnimatePresence>
       {open && (
         <motion.div
+          ref={constrainRef}
           className="fixed inset-0 z-[1000] flex items-center justify-center p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) onClose();
-          }}
         >
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
+          {/* Backdrop — click to close */}
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+            onClick={onClose}
+          />
           <motion.div
             ref={ref}
             role="dialog"
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
+            drag
+            dragControls={dragControls}
+            dragConstraints={constrainRef}
+            dragMomentum={false}
+            dragElastic={0}
             initial={{ opacity: 0, scale: 0.97, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98, y: 6 }}
@@ -103,8 +113,13 @@ export function Modal({
               "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)]",
               sizeClass[size]
             )}
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
+            {/* Header — drag handle */}
+            <div
+              className="flex cursor-move select-none items-center justify-between gap-3 border-b border-line px-5 py-4"
+              onPointerDown={(e) => dragControls.start(e)}
+            >
               <div className="flex items-center gap-2.5 min-w-0">
                 {icon && <span className="text-accent">{icon}</span>}
                 <div className="min-w-0">
@@ -115,7 +130,8 @@ export function Modal({
               <button
                 onClick={onClose}
                 aria-label="Close dialog"
-                className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+                className="cursor-pointer inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+                onPointerDown={(e) => e.stopPropagation()}
               >
                 <X size={18} />
               </button>
