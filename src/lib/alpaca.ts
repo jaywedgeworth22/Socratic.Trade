@@ -296,25 +296,53 @@ class AlpacaBrokerGateway implements BrokerGateway {
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
+    const isBracket = !!(input.bracketTakeProfit || input.bracketStopLoss);
+
+    // Alpaca does not support notional (dollar) bracket orders — only qty-based.
+    // When dollarAmount is set on a bracket order, convert it to qty using the
+    // reviewed price estimate (limitPrice || stopPrice || 1). Callers should prefer
+    // passing qty directly for bracket orders to avoid price-estimate drift.
+    let bracketQty: number | undefined;
+    if (isBracket && input.dollarAmount && !input.quantity) {
+      const estPrice = input.limitPrice ?? input.stopPrice ?? 1;
+      bracketQty = Math.floor(input.dollarAmount / estPrice);
+    }
+
     const fallbackFn = async () => {
       try {
         const orderOptions: Record<string, unknown> = {
           symbol: input.symbol,
           side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
           type: input.type,
-          time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
+          // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
+          time_in_force: isBracket ? "day" : (input.timeInForce === "gfd" ? "day" : "gtc"),
           client_order_id: input.refId
         };
 
-        if (input.quantity) {
+        if (bracketQty != null) {
+          orderOptions.qty = bracketQty;
+        } else if (input.quantity) {
           orderOptions.qty = input.quantity;
-        } else if (input.dollarAmount) {
+        } else if (input.dollarAmount && !isBracket) {
           orderOptions.notional = input.dollarAmount;
         }
 
         if (input.limitPrice) orderOptions.limit_price = input.limitPrice;
         if (input.stopPrice) orderOptions.stop_price = input.stopPrice;
         if (input.marketHours === "extended_hours") orderOptions.extended_hours = true;
+
+        if (isBracket) {
+          orderOptions.order_class = "bracket";
+          if (input.bracketTakeProfit != null) {
+            orderOptions.take_profit = { limit_price: input.bracketTakeProfit };
+          }
+          if (input.bracketStopLoss != null) {
+            orderOptions.stop_loss = {
+              stop_price: input.bracketStopLoss,
+              ...(input.bracketStopLimit != null ? { limit_price: input.bracketStopLimit } : {})
+            };
+          }
+        }
 
         const raw = await this.alpaca.createOrder(orderOptions);
         return {
@@ -344,14 +372,30 @@ class AlpacaBrokerGateway implements BrokerGateway {
       symbol: input.symbol,
       side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
       type: input.type,
-      time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
+      // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
+      time_in_force: isBracket ? "day" : (input.timeInForce === "gfd" ? "day" : "gtc"),
       client_order_id: input.refId
     };
-    if (input.quantity) orderArgs.qty = String(input.quantity);
-    else if (input.dollarAmount) orderArgs.notional = String(input.dollarAmount);
+
+    if (bracketQty != null) orderArgs.qty = String(bracketQty);
+    else if (input.quantity) orderArgs.qty = String(input.quantity);
+    else if (input.dollarAmount && !isBracket) orderArgs.notional = String(input.dollarAmount);
 
     if (input.limitPrice) orderArgs.limit_price = String(input.limitPrice);
     if (input.stopPrice) orderArgs.stop_price = String(input.stopPrice);
+
+    if (isBracket) {
+      orderArgs.order_class = "bracket";
+      if (input.bracketTakeProfit != null) {
+        orderArgs.take_profit = { limit_price: input.bracketTakeProfit };
+      }
+      if (input.bracketStopLoss != null) {
+        orderArgs.stop_loss = {
+          stop_price: input.bracketStopLoss,
+          ...(input.bracketStopLimit != null ? { limit_price: input.bracketStopLimit } : {})
+        };
+      }
+    }
 
     return this.callMcp<any>(toolName, orderArgs, fallbackFn).then((res: any) => {
       if (res && res.id) {
