@@ -76,19 +76,33 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
   { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
 ];
 
+/** Provider options shown in the model-selector. The env var (CHAT_LLM) sets the initial value;
+ *  the selection is sent as a per-request hint to the API (stored client-side only — no DB migration). */
+type ChatProvider = "mock" | "anthropic" | "openai";
+
+const PROVIDER_LABELS: Record<ChatProvider, string> = {
+  mock: "Mock (offline)",
+  anthropic: "Anthropic",
+  openai: "OpenAI"
+};
+
 export function AssistantView({
   executionState,
   approveProposal,
-  rejectProposal
+  rejectProposal,
+  defaultProvider
 }: {
   executionState: ExecutionState;
   approveProposal: (proposalId: string) => Promise<void>;
   rejectProposal: (proposalId: string) => Promise<void>;
+  /** Initial provider; matches the server-side CHAT_LLM env var. Defaults to "mock". */
+  defaultProvider?: ChatProvider;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [provider, setProvider] = useState<ChatProvider>(defaultProvider ?? "mock");
   const scrollRef = useRef<HTMLDivElement>(null);
   const dest = destination(executionState);
 
@@ -127,7 +141,7 @@ export function AssistantView({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, provider })
       });
       if (!res.ok) throw new Error(await res.text());
       const reply = (await res.json()) as ChatReply;
@@ -217,7 +231,19 @@ export function AssistantView({
           <span className="text-sm font-medium text-fg">Assistant</span>
           <span className="text-xs text-muted">drafts orders you confirm — it never places on its own</span>
         </div>
-        <Chip tone={dest.tone}>{dest.text}</Chip>
+        <div className="flex items-center gap-2">
+          <select
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as ChatProvider)}
+            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+            title="Chat LLM provider"
+          >
+            {(Object.keys(PROVIDER_LABELS) as ChatProvider[]).map((p) => (
+              <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
+            ))}
+          </select>
+          <Chip tone={dest.tone}>{dest.text}</Chip>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">

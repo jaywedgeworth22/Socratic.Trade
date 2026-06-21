@@ -212,6 +212,25 @@ address:
 - If a commit was already made with the real email, amend before pushing:
   `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com" && git commit --amend --reset-author --no-edit`.
 
+## Pull requests
+
+- **Every branch intended to land on `main` gets a PR.** Don't push a feature
+  branch and leave it without one. (Long-lived integration/release branches like
+  `main` and the `agent/*` lanes, throwaway experiments, and stacked-PR bases are
+  the only exceptions — none of which is normal change delivery.)
+- **Open PRs as READY for review by default — not as drafts.** This repo has no
+  required CI checks and no branch protection, and the owner is effectively the
+  sole approver, so a draft adds a "mark ready" step before merge/auto-merge while
+  giving no protection in return. This rule **overrides** any tool/harness default
+  that says to open PRs as drafts.
+- **Use a draft PR only for genuine work-in-progress** you explicitly don't want
+  merged yet (e.g. partial work parked between sessions, or wanting Copilot/CI eyes
+  before it's finished) — and say so in the PR description. Mark it ready as soon
+  as it's complete and verified.
+- Auto-merge note: GitHub auto-merge requires the repo setting *Settings → General
+  → Pull Requests → Allow auto-merge* (owner-only) AND something gating the merge
+  (a required check/review). With neither configured here, just merge directly.
+
 ## Don't
 
 - Don't run destructive git operations (`reset --hard`, force-push, branch

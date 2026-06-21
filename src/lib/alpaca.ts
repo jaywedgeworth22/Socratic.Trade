@@ -17,6 +17,7 @@ import type {
   EquityOrderInput
 } from "./types";
 import { normalizeSymbol } from "./money";
+import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, getUserApiKey } from "./db";
 
 export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
@@ -232,6 +233,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         averagePrice: optionalNumber(o.filled_avg_price),
         createdAt: String(o.created_at),
         updatedAt: o.updated_at ? String(o.updated_at) : undefined,
+        clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
         placedAgent: "alpaca"
       }));
     }).then((res: any) => {
@@ -248,6 +250,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           averagePrice: optionalNumber(o.filled_avg_price),
           createdAt: String(o.created_at),
           updatedAt: o.updated_at ? String(o.updated_at) : undefined,
+          clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
           placedAgent: "alpaca"
         }));
       }
@@ -297,7 +300,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
       try {
         const orderOptions: Record<string, unknown> = {
           symbol: input.symbol,
-          side: input.side,
+          side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
           type: input.type,
           time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
           client_order_id: input.refId
@@ -339,7 +342,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
     const orderArgs: Record<string, any> = {
       symbol: input.symbol,
-      side: input.side,
+      side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
       type: input.type,
       time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
       client_order_id: input.refId

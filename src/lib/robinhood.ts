@@ -17,6 +17,7 @@ import type {
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
+import { isShortIntent } from "./broker-side";
 
 export const ROBINHOOD_TRADING_MCP_URL = "https://agent.robinhood.com/mcp/trading";
 const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
@@ -157,6 +158,7 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
       averagePrice: optionalNumber(item.average_price ?? item.averagePrice),
       createdAt: String(item.created_at ?? item.createdAt ?? ""),
       updatedAt: optionalString(item.last_transaction_at ?? item.updated_at ?? item.updatedAt),
+      clientOrderId: optionalString(item.ref_id ?? item.client_order_id ?? item.clientOrderId),
       placedAgent: optionalString(item.placed_agent ?? item.placedAgent)
     }));
   }
@@ -575,12 +577,18 @@ class TestBrokerGateway implements BrokerGateway {
 }
 
 // SHORT_SELLING: Robinhood's MCP place_equity_order only accepts side "buy" or
-// "sell" (review_equity_order docs explicitly state "no short sells"). If
-// Robinhood adds equity shorting, this function will need to translate "short"
-// to whatever broker-side value they use, and may require additional parameters
-// (e.g. borrow/locate confirmation). Until then, policy.ts blocks short/cover
-// before this code is reached.
-function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
+// "sell" (review_equity_order docs explicitly state "no short sells"). policy.ts
+// blocks short/cover before this code is reached, but the synthetic-stops engine
+// can emit a "cover" exit OUTSIDE the policy/approval path, so we fail closed here
+// too: a short/cover must never silently reach the broker as an invalid side. If
+// Robinhood adds equity shorting, translate the side here (and likely add
+// borrow/locate parameters) instead of throwing.
+export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
+  if (isShortIntent(input.side)) {
+    throw new Error(
+      `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
+    );
+  }
   return {
     account_number: input.accountNumber,
     symbol: normalizeSymbol(input.symbol),

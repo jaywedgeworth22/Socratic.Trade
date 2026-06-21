@@ -236,6 +236,12 @@ export interface EquityOrder {
   createdAt: string;
   updatedAt?: string;
   placedAgent?: string;
+  /**
+   * The idempotency key we sent at placement (Alpaca `client_order_id`, Robinhood `ref_id`).
+   * Lets the run-start sweep match a stale "placing" intent against the broker's order list to
+   * recover an order whose placement response was lost (broker-truth-first reconciliation).
+   */
+  clientOrderId?: string;
 }
 
 export interface BrokerQuote {

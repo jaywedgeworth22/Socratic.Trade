@@ -75,7 +75,7 @@ import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
-import { TickerLogo, useLogoSource, setLogoSourcePref, type LogoSource } from "./ui/ticker-logo";
+import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import {
   Button,
@@ -704,12 +704,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             {workspaceTab === "market" && (
               <div className="space-y-3">
                 <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} tickerLogoDisplay={tickerLogoDisplay} />
-                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
+                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
             {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
-            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
+            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "strategy" && (
               <StrategyView
                 snapshot={snapshot}
@@ -1176,6 +1176,7 @@ function DecisionView({
                 </div>
               );
             })}
+            <p className="text-[11px] text-faint">Automated, for this single owner account — not investment advice. Past performance is not indicative of future results.</p>
           </div>
         )}
       </Card>
@@ -1186,6 +1187,21 @@ function DecisionView({
 /* ───────────────────────── Market scan view ───────────────────────── */
 
 const DASH = <span className="text-faint">—</span>;
+
+// Sticky-right treatment for the Score "verdict" column (header + body cells). `right-0` pins it
+// to the right edge of the horizontally-scrolling table; the solid `--bg` base (theme-reactive in
+// light/dark) keeps it opaque so scrolled cells don't show through the table's translucent
+// `--surface` tints; the left border + shadow separate the pinned cell from the content sliding
+// under it. `z-[1]` keeps the pinned column above its scrolling row siblings without fighting the
+// header's own stacking.
+//
+// Hover: the row's translucent `hover:bg-surface-2/50` can't show through this cell's opaque base,
+// so we re-create the highlight as an OPAQUE composite — `--surface-2` layered over `--bg` via a
+// background-image gradient — applied on the row's `group` hover. This keeps the pinned cell in
+// sync with its row's highlight while never going see-through (so scrolled cells never bleed in).
+const SCAN_PINNED_RIGHT_CLASS =
+  "sticky right-0 z-[1] bg-[var(--bg)] border-l border-line shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.18)] " +
+  "group-hover:bg-[linear-gradient(var(--surface-2),var(--surface-2)),linear-gradient(var(--bg),var(--bg))]";
 
 type ScanColumn = {
   id: string;
@@ -1464,34 +1480,64 @@ function MarketScanView({
             components={{
               Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
-              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
+              // `group` lets the right-pinned Score cell mirror the row hover tint (it has its own
+              // opaque base bg, so it can't inherit the row's translucent hover directly).
+              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="group cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
             }}
             fixedHeaderContent={() => (
               <tr className="border-b border-line bg-surface/50 text-[11px] uppercase text-faint shadow-sm backdrop-blur-xl">
-                {cols.map((c) => (
+                {cols.map((c) => {
+                  // Score is pinned to the right edge so the "verdict" column stays visible even
+                  // when many columns are toggled on and the table scrolls horizontally. The solid
+                  // --bg base (theme-reactive) keeps the pinned cell opaque so scrolled content
+                  // doesn't bleed through the translucent --surface tint; SCAN_PINNED_RIGHT_CLASS
+                  // adds the left divider + shadow that separates it from the scrolled body.
+                  const pinned = c.id === "score";
+                  return (
                   <th
                     key={c.id}
                     title={c.title}
                     onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
-                    className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
+                    className={cn(
+                      "cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg",
+                      c.align === "right" ? "text-right" : "text-left",
+                      pinned && SCAN_PINNED_RIGHT_CLASS
+                    )}
                   >
                     {c.label}
                     <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                   </th>
-                ))}
+                  );
+                })}
               </tr>
             )}
             itemContent={(index, q) => (
               <>
-                {cols.map((c) => (
-                  <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
+                {cols.map((c) => {
+                  const pinned = c.id === "score";
+                  return (
+                  <td
+                    key={c.id}
+                    title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined}
+                    className={cn(
+                      "px-2.5 py-1.5",
+                      c.align === "right" && "text-right",
+                      c.cellClass?.(q),
+                      // Mirror the header: pin Score to the right edge with the same opaque base
+                      // (rows have no base bg of their own, only a hover tint). The row's hover
+                      // highlight is re-created as an opaque composite via group-hover inside
+                      // SCAN_PINNED_RIGHT_CLASS so the pinned cell tracks its row.
+                      pinned && SCAN_PINNED_RIGHT_CLASS
+                    )}
+                  >
                     {c.id === "symbol" ? (
                       <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} logoDisplay={tickerLogoDisplay} showLogo />
                     ) : (
                       c.render(q)
                     )}
                   </td>
-                ))}
+                  );
+                })}
               </>
             )}
           />
@@ -1518,7 +1564,7 @@ function freshness(fetchedAt?: string): string {
 
 /** Surfaces the full scraped congressional + insider datasets (the scan's Congress column
  *  only shows symbols that overlap the scan; this shows everything recently disclosed). */
-function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void }) {
+function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void; tickerLogoDisplay: TickerLogoDisplay }) {
   const sm = snapshot.smartMoney;
   const ws = snapshot.webSources;
   const congress = sm?.congress ?? [];
@@ -1538,7 +1584,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
             {congress.map((t, i) => (
               <div key={`${t.symbol}-${t.member}-${t.tradedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                 <Chip tone={t.side === "buy" ? "up" : "down"}>{t.side === "buy" ? "BUY" : "SELL"}</Chip>
-                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} />
+                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} logoDisplay={tickerLogoDisplay} showLogo />
                 <span className="truncate text-muted" title={`${t.member} (${t.chamber})`}>{t.member}</span>
                 <span className="ml-auto whitespace-nowrap text-faint">{t.tradedAt}</span>
               </div>
@@ -1562,7 +1608,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
               return (
                 <div key={`${f.symbol}-${f.owner}-${f.filedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                   <Chip tone={net > 0 ? "up" : net < 0 ? "down" : "neutral"}>{net > 0 ? "BUY" : net < 0 ? "SELL" : "MIXED"}</Chip>
-                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} />
+                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="truncate text-muted" title={f.owner}>{f.owner}</span>
                   <span className="ml-auto whitespace-nowrap text-faint">{f.filedAt}</span>
                 </div>
@@ -1659,12 +1705,14 @@ function TaxView({
   snapshot,
   symbolMetaBySymbol,
   scan,
-  onDrilldown
+  onDrilldown,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const tax = snapshot.tax;
   if (!tax) {
@@ -1711,7 +1759,7 @@ function TaxView({
               <span className="text-xs font-medium text-muted">Wash sales detected this year</span>
               {tax.washSales.slice(0, 6).map((w, i) => (
                 <div key={`${w.symbol}-${i}`} className="flex items-center justify-between text-[13px]">
-                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} />
+                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="tnum text-faint">{new Date(w.soldAt).toLocaleDateString()} · {money(w.disallowedLoss)} disallowed</span>
                 </div>
               ))}
@@ -1730,7 +1778,7 @@ function TaxView({
               <tbody>
                 {tax.harvestCandidates.map((h) => (
                   <tr key={h.symbol} className="border-b border-line/50">
-                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} /></td>
+                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo /></td>
                     <td className="py-1.5 text-right tnum text-muted">{formatShareQuantity(h.quantity, h.symbol)} sh</td>
                     <td className="py-1.5 text-right tnum text-down">{signedMoney(h.unrealizedLoss)}</td>
                   </tr>
@@ -1760,7 +1808,7 @@ function TaxView({
               <tbody>
                 {tax.openLots.map((lot, i) => (
                   <tr key={`${lot.symbol}-${i}`} className="border-b border-line/50">
-                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} /></td>
+                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo /></td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{formatShareQuantity(lot.quantity, lot.symbol)}</td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{lot.daysHeld}</td>
                     <td className="px-2 py-1.5">
@@ -2495,7 +2543,7 @@ function SettingsContent({
 
         {section === "display" && (
           <div className="space-y-3">
-            <Field label="Ticker Logos" hint="Applies to portfolio symbols, Market Scan rows, and symbol intelligence headers">
+            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
               <div className="space-y-2">
                 <Segmented<TickerLogoDisplay>
                   value={tickerLogoDisplay}
@@ -2904,20 +2952,6 @@ type ApiKeyStatus = {
   updatedAt?: string;
 };
 
-function LogoSourceSegmented() {
-  const source = useLogoSource();
-  return (
-    <Segmented<LogoSource>
-      value={source}
-      onChange={setLogoSourcePref}
-      options={[
-        { value: "github", label: "Option 1", title: "GitHub — davidepalazzo/ticker-logos" },
-        { value: "logodev", label: "Option 2", title: "logo.dev — colored tile icons with monogram fallback" }
-      ]}
-    />
-  );
-}
-
 function ApiKeysSection() {
   const [keys, setKeys] = useState<ApiKeyStatus[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -2927,7 +2961,7 @@ function ApiKeysSection() {
   const loadKeys = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/keys?userId=local", { cache: "no-store" });
+      const res = await fetch("/api/keys", { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       const body = (await res.json()) as { keys?: ApiKeyStatus[] };
       setKeys(body.keys ?? []);
@@ -2966,7 +3000,7 @@ function ApiKeysSection() {
   async function clearKey(row: ApiKeyStatus) {
     setBusyService(row.service);
     try {
-      const res = await fetch(`/api/keys?userId=local&service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
+      const res = await fetch(`/api/keys?service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(await res.text());
       toast.success(`${row.label} saved key cleared.`);
       await loadKeys();
