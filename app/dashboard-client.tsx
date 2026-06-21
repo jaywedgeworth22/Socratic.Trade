@@ -2889,31 +2889,7 @@ function renderActionTitle(title: string) {
   );
 }
 
-function LogoSourceField() {
-  const source = useLogoSource();
-  return (
-    <Field
-      label="Logo source"
-      hint={
-        source === "logodev"
-          ? "Option 3 (logo.dev only) active — CDN-hosted logos with monogram fallback"
-          : source === "github"
-            ? "Option 2 (GitHub only) active — logo.dev skipped even when a token is configured"
-            : "Option 1 (Auto) active — GitHub first (free, no key), logo.dev when GitHub has no match"
-      }
-    >
-      <Segmented<LogoSource>
-        value={source}
-        onChange={setLogoSourcePref}
-        options={[
-          { value: "auto", label: "Option 1" },
-          { value: "github", label: "Option 2" },
-          { value: "logodev", label: "Option 3" }
-        ]}
-      />
-    </Field>
-  );
-}
+
 
 type ApiKeyStatus = {
   service: string;
