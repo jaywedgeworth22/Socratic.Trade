@@ -30,9 +30,8 @@ steps materially change.
   red-team fail-open (T11), tax long-only pin (T12), explicit daily-reset timezone (T13),
   `account_number → __unassigned__` sentinel (T14-db). 386 tests, tsc clean, build clean.
   See rollout `docs/rollouts/2026-06-20-money-path-merge-gate.md`.
-- **Pending (user-approved):**
-  - Gross/net exposure caps in Settings UI (user-configurable risk tolerance)
-  - Signed `OpenLot.quantity` for shorts (align with `EquityPosition` convention)
+- **Completed follow-ups:** gross/net exposure caps added to Settings UI (NumberField + RangeField
+  sliders; 0 = no cap); `OpenLot.quantity` now signed (negative for shorts, matches `EquityPosition`).
 - 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
   chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
   red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`
