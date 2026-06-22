@@ -16,10 +16,11 @@
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
 
-import { audit, listPendingProposals, markProposalRevalidated, resolveLlmCredential, updateProposalStatus } from "./db";
+import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -189,10 +190,8 @@ export async function revalidatePendingProposals(input: {
   );
   if (pending.length === 0) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: false };
 
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
   if (!openaiKey) return { checked: pending.length, reaffirmed: 0, withdrawn: 0, skipped: true };
-  const keySource = cred.source === "operator" ? "operator" : "user";
 
   const currentMarketRegime = determineMarketRegime(await fetchMacroData(userId));
 
@@ -249,10 +248,7 @@ export async function revalidatePendingProposals(input: {
     }
   };
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = resolveOpenAiModel(policy);
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const isChatCompletions = transport === "chat-completions";
 
   const body = withLlmRequestBounds(
     isChatCompletions
@@ -299,7 +295,7 @@ export async function revalidatePendingProposals(input: {
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "proposal-revalidation", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, ...extractLlmUsage(payload) });
         const text = extractText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };

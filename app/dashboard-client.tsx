@@ -2988,12 +2988,18 @@ function SettingsContent({
               <option value="decide">Autonomous — auto-executes approved orders</option>
             </select>
           </Field>
-          <Field label="AI model" hint="Which OpenAI model powers the agent. Your connected OpenAI key/project must have access to the chosen model." className="sm:col-span-2">
+          <Field label="AI model" hint="Which model powers the agent. OpenAI models use your OpenAI key; grok-* models use your xAI (Grok) key from API Keys settings." className="sm:col-span-2">
             <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
-              <option value="gpt-5.4-nano">gpt-5.4-nano — cheapest, lightest reasoning</option>
-              <option value="gpt-5.4-mini">gpt-5.4-mini — balanced (recommended)</option>
-              <option value="gpt-5.5">gpt-5.5 — strongest, most expensive</option>
-              <option value="gpt-4.1-mini">gpt-4.1-mini — legacy non-reasoning</option>
+              <optgroup label="OpenAI">
+                <option value="gpt-5.4-nano">gpt-5.4-nano — cheapest, lightest reasoning</option>
+                <option value="gpt-5.4-mini">gpt-5.4-mini — balanced (recommended)</option>
+                <option value="gpt-5.5">gpt-5.5 — strongest, most expensive</option>
+                <option value="gpt-4.1-mini">gpt-4.1-mini — legacy non-reasoning</option>
+              </optgroup>
+              <optgroup label="xAI (Grok) — requires xAI key in API Keys settings">
+                <option value="grok-4.3">grok-4.3 (xAI)</option>
+                <option value="grok-build-0.1">grok-build-0.1 (xAI)</option>
+              </optgroup>
             </select>
           </Field>
           <Field label="Reasoning effort" hint="For gpt-5 / o-series reasoning models only: higher effort = deeper analysis, more tokens, higher cost & latency. Ignored by non-reasoning models like gpt-4.1-mini." className="sm:col-span-2">
