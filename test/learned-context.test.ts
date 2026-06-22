@@ -211,10 +211,13 @@ describe("PHASE 3 — ingestLearned writes facts, drops risk", () => {
     expect(listLearnedContext("p3-user").some((row) => row.subject === "fact:TSM")).toBe(true);
   });
 
-  it("a risk-tier candidate is dropped and NOT written", () => {
+  it("an autonomous risk-tier candidate is queued (NOT written, NOT dropped)", () => {
+    // Behavior change (pending-queue slice): autonomous/ingest risk-tier candidates now route to the
+    // human confirmation queue instead of being audit-dropped. It is still NOT written to the brain.
     const r = ingestLearned("p3-user", { kind: "pattern", subject: "max_position", value: "raise to 30%" }, "autonomous");
     expect(r.written).toBeNull();
-    expect(r.dropped).toBe("risk_dropped");
+    expect(r.dropped).toBeNull();
+    expect(r.pendingId).not.toBeNull();
     expect(listLearnedContext("p3-user").some((row) => row.subject === "max_position")).toBe(false);
   });
 

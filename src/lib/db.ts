@@ -29,7 +29,9 @@ import type {
   ChatTurnRole,
   AccountCapabilities,
   MemoryItem,
-  LearnedContextRow
+  LearnedContextRow,
+  LearnedContextPendingRow,
+  LearnedContextPendingStatus
 } from "./types";
 
 let db: Database.Database | undefined;
@@ -346,6 +348,23 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_user ON learned_context (user_id, scope, superseded_by);
     CREATE INDEX IF NOT EXISTS idx_learned_context_symbol ON learned_context (symbol, scope, superseded_by);
+    CREATE TABLE IF NOT EXISTS learned_context_pending (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'private' CHECK(scope IN ('private','shared')),
+      kind TEXT NOT NULL CHECK(kind IN ('pattern','decision','fact')),
+      subject TEXT NOT NULL,
+      symbol TEXT,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inferred',
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest')),
+      risk_tier TEXT NOT NULL CHECK(risk_tier IN ('risk','strategy-directive')),
+      classifier_reason TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
   `);
 
   // Migrate tables to include user_id
@@ -2961,4 +2980,107 @@ export function listLearnedContext(userId: string): LearnedContextRow[] {
 
 export function supersedeLearnedContext(oldId: string, newId: string): void {
   getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+// ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
+// Every helper is ownership-scoped (WHERE user_id = ?). A queued row is a risk-tier candidate that is
+// NOT in the brain — it only ever influences anything via the explicit human approve path, which
+// applies it SAFELY (advisory promote / prompt append) and NEVER auto-mutates numeric policy.
+interface RawLearnedContextPendingRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  kind: string;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: string;
+  risk_tier: string;
+  classifier_reason: string | null;
+  created_at: string;
+  status: string;
+  resolved_at: string | null;
+}
+
+function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedContextPendingRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    scope: row.scope as LearnedContextPendingRow["scope"],
+    kind: row.kind as LearnedContextPendingRow["kind"],
+    subject: row.subject,
+    symbol: row.symbol,
+    value: row.value,
+    source: row.source,
+    origin: row.origin as LearnedContextPendingRow["origin"],
+    riskTier: row.risk_tier as LearnedContextPendingRow["riskTier"],
+    classifierReason: row.classifier_reason,
+    createdAt: row.created_at,
+    status: row.status as LearnedContextPendingRow["status"],
+    resolvedAt: row.resolved_at
+  };
+}
+
+export function insertPendingLearnedContext(row: LearnedContextPendingRow): LearnedContextPendingRow {
+  getDb()
+    .prepare(
+      `INSERT INTO learned_context_pending
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      row.id,
+      row.userId,
+      row.scope,
+      row.kind,
+      row.subject,
+      row.symbol,
+      row.value,
+      row.source,
+      row.origin,
+      row.riskTier,
+      row.classifierReason,
+      row.createdAt,
+      row.status,
+      row.resolvedAt
+    );
+  return row;
+}
+
+export function listPendingLearnedContext(
+  userId: string,
+  status: LearnedContextPendingStatus = "pending"
+): LearnedContextPendingRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM learned_context_pending
+       WHERE user_id = ? AND status = ?
+       ORDER BY created_at DESC`
+    )
+    .all(userId, status) as RawLearnedContextPendingRow[];
+  return rows.map(mapLearnedContextPending);
+}
+
+export function getPendingLearnedContext(id: string, userId: string): LearnedContextPendingRow | null {
+  const row = getDb()
+    .prepare("SELECT * FROM learned_context_pending WHERE id = ? AND user_id = ?")
+    .get(id, userId) as RawLearnedContextPendingRow | undefined;
+  return row ? mapLearnedContextPending(row) : null;
+}
+
+/**
+ * Ownership-scoped status transition. Returns true only when a row owned by `userId` was actually
+ * updated (changes > 0) — so another user's row is a no-op false, and the API layer maps that to 404.
+ */
+export function setPendingLearnedContextStatus(
+  id: string,
+  userId: string,
+  status: LearnedContextPendingStatus
+): boolean {
+  const resolvedAt = status === "pending" ? null : new Date().toISOString();
+  const result = getDb()
+    .prepare("UPDATE learned_context_pending SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ?")
+    .run(status, resolvedAt, id, userId);
+  return result.changes > 0;
 }
