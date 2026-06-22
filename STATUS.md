@@ -24,6 +24,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`safety/fk-cleanup`): **FK enforcement + account-delete cascade cleanup.** Deleting a
+  connected account left orphaned `fill_events`/`portfolio_snapshots`/`trade_proposals`/
+  `synthetic_trailing_stops` still feeding P&L/exposure. `getDb()` now sets `PRAGMA foreign_keys=ON`
+  (inert today, correct default), and `deleteConnectedAccount` purges the account's records (by
+  `account_number`+`user_id`) in one transaction. Behavioral change: removing an account now purges
+  its trade/P&L history. tsc clean, 794 tests (+3), build green. See
+  `docs/rollouts/2026-06-22-fk-account-delete-cleanup.md`.
 - 2026-06-22 (`reliability/llm-timeout`): **Bounded LLM + Robinhood-order fetch timeouts.** LLM HTTP
   calls and the Robinhood MCP order path had no timeout — a half-open connection could hang the caller
   indefinitely (and hold the per-user strategy run lock). New `llmFetch()` + `LLM_TIMEOUT_MS=60s` in

@@ -524,8 +524,25 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
 }
 
 export function deleteConnectedAccount(id: string, userId: string = "local"): boolean {
-  const result = getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
-  return result.changes > 0;
+  const database = getDb();
+  const row = database
+    .prepare("SELECT account_number FROM connected_accounts WHERE id = ? AND user_id = ?")
+    .get(id, userId) as { account_number: string | null } | undefined;
+  if (!row) return false;
+  const acct = row.account_number;
+  // Delete the account and purge its trading records in one transaction, so removing an account never
+  // leaves orphaned fills/snapshots/proposals/stops still feeding P&L or exposure for an account that
+  // no longer exists. Account-delete is an explicit user action — its broker-scoped history goes with it.
+  const run = database.transaction(() => {
+    const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+    if (acct) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops"]) {
+        database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
+      }
+    }
+    return result.changes > 0;
+  });
+  return run();
 }
 
 // ── Synthetic trailing stops (R2 scaffolding) ──────────────────────────────────
