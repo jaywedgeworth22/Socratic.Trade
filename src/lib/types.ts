@@ -886,3 +886,31 @@ export interface LearnedContextCandidate {
   /** Optional intent hint from the producer; the classifier may use it to force 'risk'. */
   intent?: string;
 }
+
+/** Status of a queued risk-tier candidate awaiting explicit human confirmation. */
+export type LearnedContextPendingStatus = "pending" | "approved" | "rejected";
+
+/**
+ * A risk-tier candidate (tier 'risk' | 'strategy-directive') from an autonomous/ingest producer that
+ * was routed to the human confirmation queue instead of being audit-dropped. It lives OUTSIDE the
+ * brain until a human approves it; approval applies it SAFELY (advisory promote / prompt append) and
+ * NEVER auto-derives a numeric policy change. Chat-origin risk candidates are still hard-capped and
+ * never reach this queue.
+ */
+export interface LearnedContextPendingRow {
+  id: string;
+  userId: string;
+  scope: LearnedContextScope;
+  kind: LearnedContextKind;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: LearnedContextOrigin;
+  /** Only the two human-confirmable tiers are ever queued. */
+  riskTier: Exclude<LearnedContextRiskTier, "fact">;
+  classifierReason: string | null;
+  createdAt: string;
+  status: LearnedContextPendingStatus;
+  resolvedAt: string | null;
+}

@@ -1,7 +1,7 @@
 // db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
 // learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
 import { getDb } from "./db";
-import type { LearnedContextRow } from "./types";
+import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus } from "./types";
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
 
@@ -463,4 +463,107 @@ export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
     .prepare("SELECT accession, doc_type, ticker, indexed_at, chunk_count FROM ingested_accessions ORDER BY indexed_at DESC LIMIT ?")
     .all(limit) as Array<{ accession: string; doc_type: string; ticker: string; indexed_at: string; chunk_count: number }>;
   return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
+}
+
+// ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
+// Every helper is ownership-scoped (WHERE user_id = ?). A queued row is a risk-tier candidate that is
+// NOT in the brain — it only ever influences anything via the explicit human approve path, which
+// applies it SAFELY (advisory promote / prompt append) and NEVER auto-mutates numeric policy.
+interface RawLearnedContextPendingRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  kind: string;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: string;
+  risk_tier: string;
+  classifier_reason: string | null;
+  created_at: string;
+  status: string;
+  resolved_at: string | null;
+}
+
+function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedContextPendingRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    scope: row.scope as LearnedContextPendingRow["scope"],
+    kind: row.kind as LearnedContextPendingRow["kind"],
+    subject: row.subject,
+    symbol: row.symbol,
+    value: row.value,
+    source: row.source,
+    origin: row.origin as LearnedContextPendingRow["origin"],
+    riskTier: row.risk_tier as LearnedContextPendingRow["riskTier"],
+    classifierReason: row.classifier_reason,
+    createdAt: row.created_at,
+    status: row.status as LearnedContextPendingRow["status"],
+    resolvedAt: row.resolved_at
+  };
+}
+
+export function insertPendingLearnedContext(row: LearnedContextPendingRow): LearnedContextPendingRow {
+  getDb()
+    .prepare(
+      `INSERT INTO learned_context_pending
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      row.id,
+      row.userId,
+      row.scope,
+      row.kind,
+      row.subject,
+      row.symbol,
+      row.value,
+      row.source,
+      row.origin,
+      row.riskTier,
+      row.classifierReason,
+      row.createdAt,
+      row.status,
+      row.resolvedAt
+    );
+  return row;
+}
+
+export function listPendingLearnedContext(
+  userId: string,
+  status: LearnedContextPendingStatus = "pending"
+): LearnedContextPendingRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM learned_context_pending
+       WHERE user_id = ? AND status = ?
+       ORDER BY created_at DESC`
+    )
+    .all(userId, status) as RawLearnedContextPendingRow[];
+  return rows.map(mapLearnedContextPending);
+}
+
+export function getPendingLearnedContext(id: string, userId: string): LearnedContextPendingRow | null {
+  const row = getDb()
+    .prepare("SELECT * FROM learned_context_pending WHERE id = ? AND user_id = ?")
+    .get(id, userId) as RawLearnedContextPendingRow | undefined;
+  return row ? mapLearnedContextPending(row) : null;
+}
+
+/**
+ * Ownership-scoped status transition. Returns true only when a row owned by `userId` was actually
+ * updated (changes > 0) — so another user's row is a no-op false, and the API layer maps that to 404.
+ */
+export function setPendingLearnedContextStatus(
+  id: string,
+  userId: string,
+  status: LearnedContextPendingStatus
+): boolean {
+  const resolvedAt = status === "pending" ? null : new Date().toISOString();
+  const result = getDb()
+    .prepare("UPDATE learned_context_pending SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ?")
+    .run(status, resolvedAt, id, userId);
+  return result.changes > 0;
 }

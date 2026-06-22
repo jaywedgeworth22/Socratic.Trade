@@ -330,6 +330,23 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_user ON learned_context (user_id, scope, superseded_by);
     CREATE INDEX IF NOT EXISTS idx_learned_context_symbol ON learned_context (symbol, scope, superseded_by);
+    CREATE TABLE IF NOT EXISTS learned_context_pending (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'private' CHECK(scope IN ('private','shared')),
+      kind TEXT NOT NULL CHECK(kind IN ('pattern','decision','fact')),
+      subject TEXT NOT NULL,
+      symbol TEXT,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inferred',
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest')),
+      risk_tier TEXT NOT NULL CHECK(risk_tier IN ('risk','strategy-directive')),
+      classifier_reason TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
   `);
 
   // Migrate tables to include user_id
