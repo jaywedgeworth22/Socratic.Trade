@@ -13,8 +13,9 @@ Wired as the **first tier** of `fetchDailyOHLC` (`src/lib/history.ts`): App B re
 before calling its own keyed history providers (Massive/Tradier/Marketstack), saving that quota. `^GSPC`
 flows through the same path via `/api/market/spx`.
 
-- **Tradeoff:** App A returns close-only series, so an enabled price chart renders a line (no candles) on
-  App A cache hits. Contained to opt-in; default off → existing OHLC behavior unchanged.
+- App A's `closes` now include `volume`, so App B's bars carry close+volume (still no open/high/low).
+- **Tradeoff:** App A returns close(+volume) only, so an enabled price chart renders a line (no candles)
+  on App A cache hits. Contained to opt-in; default off → existing OHLC behavior unchanged.
 - Self-guarded: disabled / miss / non-2xx / transport error → returns null → the cascade falls through to
   App B's own providers. No exceptions escape into a scan.
 - Deliberately **not** wired into the enrichment cascade: App A's `ref` fields (sector/industry/marketCap)
@@ -23,9 +24,13 @@ flows through the same path via `/api/market/spx`.
 
 ## 2. App A as the congressional source (`CONGRESS_TRADE_AS_CONGRESS_SOURCE`)
 When on, `refreshCongress` (`src/lib/web-sources/congress.ts`) swaps its scraper cascade (Senate eFD /
-Apify / Capitol Trades) for a single App A adapter that pulls `/api/transactions` and coerces rows into
-App B's `CongressTrade` shape (`coerceCongressTrade` is tolerant of App A's not-yet-finalized field names).
-A 0-result pull keeps the prior dataset (never wipes). Requires the transactions feed to be reachable.
+Apify / Capitol Trades) for a single App A adapter, `fetchAppACongressTrades`, that pages App A's
+**public** `/api/transactions` feed (no token) forward via `cursor` over a rolling ~90-day window
+(stops when trades fall before the signal window, bounded by page/row caps), coercing rows into App B's
+`CongressTrade` shape. `coerceCongressTrade` maps App A's confirmed fields (`ticker→symbol`,
+`memberName/fullName→member`, `txType` `P`→buy / `S`,`S_partial`→sell, `amountMin/Max`, `owner`,
+`txDate→tradedAt`, `filedDate→disclosedAt`) and rejects unparseable dates. A 0-result pull keeps the
+prior dataset (never wipes).
 
 ## 3. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,
@@ -54,6 +59,10 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 | `CONGRESS_STREAM_PATH` | App A SSE path (default `/api/stream`) |
 
 ## Status of App A's endpoints (2026-06-22)
-App A's home page is live, but its read endpoints (`/api/market/*`, `/api/transactions`) currently return
-HTTP 500 and `/api/stream` is not yet deployed. So all consume paths are built and tested but **inert until
-App A ships those endpoints**; enabling the flags is safe meanwhile (every path self-guards / falls through).
+App A's round-2 endpoints are **merged** and go live after its next deploy (a pending prod DB migration).
+**Wait until `GET https://congress.trade/api/health` returns `{"db":true}` before enabling the flags.**
+Until then every consume path self-guards / falls through, so enabling early is harmless but inert.
+
+Confirmed contract deltas applied here: the `/api/transactions` feed is **public** (no token); `closes`
+carry `volume`; and App B's nightly push now sends `insider[]` + `shortVolume[]` (App A added those import
+slots) — see `docs/congress-trade-share.md`.

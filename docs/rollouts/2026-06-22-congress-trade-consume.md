@@ -76,9 +76,24 @@ App A's read+transactions endpoints currently **500** (prod DB not migrated; App
 `/api/stream` isn't deployed. All consume paths are inert until those are live; enabling the flags is
 safe meanwhile (every path self-guards / falls through).
 
-## Follow-ups (next App B round, after App A ships round 2)
+## Update — round-2 contract finalized + push extended (same day)
 
-- Extend the nightly push batch (`congress-share.ts`) with `volume` on closes + `insider[]` /
-  `shortVolume[]` once App A defines those import slots.
-- Optional: explicit seq-gap auto-repull once App A's reads are live.
-- Verify the consume paths end-to-end against the live App A service, then flip flags on in prod.
+App A confirmed the round-2 contract; applied to App B:
+- **`/api/transactions` is public** (no token). `fetchAppACongressTrades` now pages the public feed
+  forward via `cursor` over a rolling ~90-day window (stops at the window edge; page/row capped).
+  Removed the ingest-token from transaction reads (the write token no longer rides on a public read).
+- **Cache-aside `closes` carry `volume`** (`CongressClose.volume`, threaded through `ohlcBarsToCloses`
+  and `appAClosesToBars`); open/high/low stay App B-only.
+- **Nightly push now also sends `insider[]` + `shortVolume[]`** (App A added the import slots), built by
+  `buildInsiderImport()` / `buildShortVolumeImport()` from App B's cached SEC Form-4 + FINRA datasets,
+  plus `volume` on `prices[].closes`. They ride in the first POST with `spx`.
+- `coerceCongressTrade` aligned to the confirmed object shape (`memberName`, `filedDate`, `txType`
+  `P`/`S`/`S_partial`).
+- +5 tests (volume mapping, both import builders, nightly insider/short-vol payload, public-feed no
+  token-leak). **tsc clean · npm test 920 pass · build green.**
+
+## Follow-ups
+
+- **Wait for `GET https://congress.trade/api/health` → `{"db":true}`** (App A's round-2 deploy + prod
+  migration), then enable the flags and verify all paths end-to-end against the live service.
+- Optional: explicit seq-gap auto-repull once App A's reads are live (today: Last-Event-ID resume).

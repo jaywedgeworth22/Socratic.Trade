@@ -22,6 +22,7 @@ import { symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import type { MarketQuote, MarketScan } from "./types";
+import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSignals } from "./web-sources";
 
 const IMPORT_PATH = "/api/admin/securities/import";
 const DEFAULT_BASE_URL = "https://congress.trade";
@@ -98,6 +99,7 @@ export interface CongressRef {
 export interface CongressClose {
   date: string; // YYYY-MM-DD
   close: number;
+  volume?: number; // App A's price path now carries volume; open/high/low stay App B-only
 }
 
 export interface CongressPrice {
@@ -107,10 +109,32 @@ export interface CongressPrice {
   currentPriceDate?: string;
 }
 
+/** SEC Form-4 insider row in App A's import shape (highest-fit dataset App B shares). */
+export interface CongressInsider {
+  ticker: string;
+  date: string; // YYYY-MM-DD (most recent filing)
+  sentiment: number; // 0–100 net-buy skew
+  buyFilings: number;
+  sellFilings: number;
+  buyShares: number;
+  sellShares: number;
+  owners: string[];
+}
+
+/** FINRA daily short-volume row in App A's import shape. */
+export interface CongressShortVol {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  ratio: number; // % of the day's volume that was short
+  elevated: boolean;
+}
+
 export interface CongressSharePayload {
   refs?: CongressRef[];
   spx?: CongressClose[];
   prices?: CongressPrice[];
+  insider?: CongressInsider[];
+  shortVolume?: CongressShortVol[];
 }
 
 export interface CongressShareResult {
@@ -121,7 +145,7 @@ export interface CongressShareResult {
   response?: unknown;
   error?: string;
   /** Counts actually transmitted across all POSTs in this call. */
-  sent: { refs: number; spx: number; prices: number; closes: number };
+  sent: { refs: number; spx: number; prices: number; closes: number; insider: number; shortVolume: number };
 }
 
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
@@ -147,19 +171,19 @@ export function marketQuoteToRef(
   return ref;
 }
 
-/** Convert OHLC bars to deduped, date-sorted {date, close} closes (drops bars with no valid date/close). */
+/** Convert OHLC bars to deduped, date-sorted {date, close, volume?} closes (drops invalid bars). */
 export function ohlcBarsToCloses(bars: OHLCBar[] | null | undefined): CongressClose[] {
   if (!bars || bars.length === 0) return [];
-  const byDate = new Map<string, number>();
+  const byDate = new Map<string, CongressClose>();
   for (const bar of bars) {
     const date = toBusinessDay(bar.time);
     const close = bar.close;
     if (!date || typeof close !== "number" || !Number.isFinite(close)) continue;
-    byDate.set(date, close); // later bar for a given date wins
+    const entry: CongressClose = { date, close };
+    if (typeof bar.volume === "number" && Number.isFinite(bar.volume)) entry.volume = bar.volume;
+    byDate.set(date, entry); // later bar for a given date wins
   }
-  return Array.from(byDate.entries())
-    .map(([date, close]) => ({ date, close }))
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)); // ascending (oldest-first)
+  return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)); // ascending
 }
 
 /** Build a per-ticker price entry from OHLC bars. currentPrice/currentPriceDate = most recent close. */
@@ -170,6 +194,60 @@ export function ohlcBarsToPriceEntry(symbol: string, bars: OHLCBar[] | null | un
   if (closes.length === 0) return null;
   const newest = closes[closes.length - 1]; // closes are ascending
   return { ticker, closes, currentPrice: newest.close, currentPriceDate: newest.date };
+}
+
+// ── Insider / short-volume import builders (App B's highest-fit datasets for App A) ──
+
+/** Build App A insider rows from App B's cached SEC Form-4 dataset; shares summed per symbol. */
+export function buildInsiderImport(): CongressInsider[] {
+  const ds = getInsiderDataset();
+  if (!ds || ds.filings.length === 0) return [];
+  const agg = new Map<string, { buyShares: number; sellShares: number; date: string }>();
+  for (const f of ds.filings) {
+    const sym = normalizeSymbol(f.symbol);
+    if (!sym) continue;
+    const a = agg.get(sym) ?? { buyShares: 0, sellShares: 0, date: f.filedAt };
+    a.buyShares += f.buyShares;
+    a.sellShares += f.sellShares;
+    if (f.filedAt > a.date) a.date = f.filedAt;
+    agg.set(sym, a);
+  }
+  const symbols = Array.from(agg.keys());
+  const signals = getInsiderSignals(symbols);
+  const out: CongressInsider[] = [];
+  for (const sym of symbols) {
+    const sig = signals[sym];
+    const a = agg.get(sym);
+    if (!sig || !a) continue;
+    out.push({
+      ticker: sym,
+      date: a.date,
+      sentiment: sig.insiderSentiment,
+      buyFilings: sig.buyFilings,
+      sellFilings: sig.sellFilings,
+      buyShares: a.buyShares,
+      sellShares: a.sellShares,
+      owners: sig.owners
+    });
+  }
+  return out.slice(0, maxDailyTickers());
+}
+
+/** Build App A short-volume rows from App B's cached FINRA dataset. */
+export function buildShortVolumeImport(): CongressShortVol[] {
+  const ds = getFinraDataset();
+  const symbols = ds ? Object.keys(ds.ratios) : [];
+  if (symbols.length === 0) return [];
+  const signals = getShortVolumeSignals(symbols);
+  const out: CongressShortVol[] = [];
+  for (const sym of symbols) {
+    const sig = signals[sym];
+    if (!sig) continue;
+    const date = sig.asOf ?? ds?.asOf;
+    if (!date) continue;
+    out.push({ ticker: sym, date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
+  }
+  return out.slice(0, maxDailyTickers());
 }
 
 // ── Low-level POST ─────────────────────────────────────────────────────────────
@@ -189,11 +267,13 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     refs: payload.refs?.length ?? 0,
     spx: payload.spx?.length ?? 0,
     prices: payload.prices?.length ?? 0,
-    closes: countCloses(payload)
+    closes: countCloses(payload),
+    insider: payload.insider?.length ?? 0,
+    shortVolume: payload.shortVolume?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
-  if (sent.refs === 0 && sent.spx === 0 && sent.prices === 0) {
+  if (sent.refs === 0 && sent.spx === 0 && sent.prices === 0 && sent.insider === 0 && sent.shortVolume === 0) {
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
@@ -371,9 +451,11 @@ export interface CongressDailyShareSummary {
   tickers: number;
   priced: number;
   spxRows: number;
+  insiderRows: number;
+  shortVolRows: number;
   posts: number;
   failedPosts: number;
-  sent: { spx: number; prices: number; closes: number };
+  sent: { spx: number; prices: number; closes: number; insider: number; shortVolume: number };
   responses?: unknown[];
 }
 
@@ -385,7 +467,10 @@ export interface CongressDailyShareSummary {
  */
 export async function runCongressDailyShare(options: RunCongressDailyShareOptions = {}): Promise<CongressDailyShareSummary> {
   const now = options.now ?? Date.now();
-  const empty = { tickers: 0, priced: 0, spxRows: 0, posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0 } };
+  const empty = {
+    tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+    posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
+  };
   if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
 
   const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
@@ -417,19 +502,25 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     })
   ).filter((p): p is CongressPrice => p !== null);
 
-  // POST: first chunk carries the SPX series (one fewer round-trip); remaining chunks are prices only.
+  // App B's two highest-fit datasets for congress.trade — already cached locally, sent once/day.
+  const insider = customUniverse ? [] : buildInsiderImport();
+  const shortVolume = customUniverse ? [] : buildShortVolumeImport();
+
+  // POST: the first chunk carries the SPX series + insider + short-volume (one fewer round-trip);
+  // remaining chunks are prices only.
   const chunks = chunkPrices(priceEntries);
+  const head: CongressSharePayload = { spx, insider, shortVolume };
   const payloads: CongressSharePayload[] =
     chunks.length === 0
-      ? spx.length > 0
-        ? [{ spx }]
+      ? spx.length > 0 || insider.length > 0 || shortVolume.length > 0
+        ? [head]
         : []
-      : chunks.map((prices, i) => (i === 0 ? { spx, prices } : { prices }));
+      : chunks.map((prices, i) => (i === 0 ? { ...head, prices } : { prices }));
 
   const responses: unknown[] = [];
   let posts = 0;
   let failedPosts = 0;
-  const sent = { spx: 0, prices: 0, closes: 0 };
+  const sent = { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
   for (const payload of payloads) {
     const result = await shareWithCongressTrade(payload);
     posts++;
@@ -438,6 +529,8 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
       sent.spx += result.sent.spx;
       sent.prices += result.sent.prices;
       sent.closes += result.sent.closes;
+      sent.insider += result.sent.insider;
+      sent.shortVolume += result.sent.shortVolume;
     } else if (!result.skipped) {
       failedPosts++;
     }
@@ -458,6 +551,8 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     tickers: universe.length,
     priced: priceEntries.length,
     spxRows: spx.length,
+    insiderRows: insider.length,
+    shortVolRows: shortVolume.length,
     posts,
     failedPosts,
     sent,
@@ -470,6 +565,8 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
       tickers: summary.tickers,
       priced: summary.priced,
       spxRows: summary.spxRows,
+      insiderRows: summary.insiderRows,
+      shortVolRows: summary.shortVolRows,
       posts,
       failedPosts,
       sent,

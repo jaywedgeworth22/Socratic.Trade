@@ -87,9 +87,9 @@ describe("congress-trade-client reads (enabled)", () => {
     expect(tickers).toHaveLength(500);
   });
 
-  it("pulls transactions with the INGEST_TOKEN bearer when the congress-source flag is on", async () => {
+  it("pulls the public transactions feed without leaking the push/ingest token", async () => {
     process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE = "on";
-    process.env.CONGRESS_TRADE_TOKEN = "ingest-tok";
+    process.env.CONGRESS_TRADE_TOKEN = "push-tok"; // write token must NOT ride along on the public read
     const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) =>
       new Response(JSON.stringify({ transactions: [{ ticker: "AAPL" }], cursor: "c2" }), { status: 200 })
     );
@@ -97,8 +97,7 @@ describe("congress-trade-client reads (enabled)", () => {
     const page = await getAppATransactions({ limit: 5 });
     expect(page?.transactions).toHaveLength(1);
     expect(page?.cursor).toBe("c2");
-    // Transactions use the gated full feed → INGEST_TOKEN (not the public read token).
-    expect((fetchSpy.mock.calls[0][1] as RequestInit).headers).toMatchObject({ authorization: "Bearer ingest-tok" });
+    expect((fetchSpy.mock.calls[0][1] as RequestInit).headers).not.toHaveProperty("authorization");
     delete process.env.CONGRESS_TRADE_TOKEN;
   });
 });
@@ -116,5 +115,11 @@ describe("appAClosesToBars", () => {
       { time: "2026-06-16", close: 101 }
     ]);
     expect(appAClosesToBars(null)).toEqual([]);
+  });
+
+  it("carries volume into bars when App A provides it", () => {
+    expect(appAClosesToBars([{ date: "2026-06-15", close: 100, volume: 5000 }])).toEqual([
+      { time: "2026-06-15", close: 100, volume: 5000 }
+    ]);
   });
 });

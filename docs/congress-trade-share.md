@@ -55,6 +55,16 @@ hook and **(b)** a nightly daily-close/SPX batch.
 `refs` come from the scan hook; the nightly batch sends `prices` + `spx`. This
 matches the "scan refs + nightly prices" split chosen for this work.
 
+**Round-2 additions (2026-06-22):** the nightly batch also forwards App B's two highest-fit datasets,
+sourced from its cached web-sources and built by `buildInsiderImport()` / `buildShortVolumeImport()`:
+- `insider[]` — `{ ticker, date, sentiment, buyFilings, sellFilings, buyShares, sellShares, owners[] }`
+  from the SEC Form-4 dataset.
+- `shortVolume[]` — `{ ticker, date, ratio, elevated }` from the FINRA daily short-volume dataset.
+- `prices[].closes` now also carry `volume` (App A added a `volume` slot; open/high/low stay App B-only).
+
+These ride in the first POST of the nightly batch (with `spx`). Read back via App A's
+`GET /api/market/insider/{T}` and `GET /api/market/short-volume/{T}`.
+
 ## Safety / gating
 
 - **Default OFF.** Automatic forwarding (both hooks) runs only when

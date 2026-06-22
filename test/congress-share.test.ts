@@ -14,6 +14,8 @@ vi.mock("../src/lib/history", async (importOriginal) => {
 import { fetchDailyOHLC } from "../src/lib/history";
 import { setInternalSetting } from "../src/lib/db";
 import {
+  buildInsiderImport,
+  buildShortVolumeImport,
   chunkPrices,
   isCongressDailyShareDue,
   isCongressShareAutoEnabled,
@@ -27,6 +29,8 @@ import {
   shareWithCongressTrade,
   type CongressPrice
 } from "../src/lib/congress-share";
+
+const recentDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
 const mockedFetchDailyOHLC = vi.mocked(fetchDailyOHLC);
 
@@ -317,5 +321,60 @@ describe("runCongressDailyShareIfDue", () => {
     process.env.CONGRESS_TRADE_TOKEN = "tok"; // no enable flag
     expect(await runCongressDailyShareIfDue(Date.now())).toBeNull();
     expect(mockedFetchDailyOHLC).not.toHaveBeenCalled();
+  });
+});
+
+describe("ohlcBarsToCloses — volume", () => {
+  it("carries volume when the bar provides it", () => {
+    expect(ohlcBarsToCloses([{ time: "2026-06-15", close: 100, volume: 5000 }])).toEqual([
+      { date: "2026-06-15", close: 100, volume: 5000 }
+    ]);
+  });
+});
+
+describe("insider / short-volume import builders", () => {
+  it("builds insider rows (shares summed, sentiment from signals) from the cached dataset", () => {
+    setInternalSetting("webSource:insider:dataset", {
+      filings: [
+        { symbol: "AAPL", owner: "Jane Director", buyTx: 3, sellTx: 1, buyShares: 12000, sellShares: 2000, filedAt: recentDate(2), accession: "x1" }
+      ],
+      fetchedAt: new Date().toISOString(),
+      recordCount: 1
+    });
+    const aapl = buildInsiderImport().find((r) => r.ticker === "AAPL");
+    expect(aapl).toMatchObject({ ticker: "AAPL", sentiment: 75, buyFilings: 1, sellFilings: 0, buyShares: 12000, sellShares: 2000 });
+    expect(aapl?.owners).toContain("Jane Director");
+  });
+
+  it("builds short-volume rows from the FINRA dataset", () => {
+    setInternalSetting("webSource:finra:dataset", {
+      ratios: { NVDA: 48.3 },
+      asOf: recentDate(1),
+      fetchedAt: new Date().toISOString(),
+      recordCount: 1
+    });
+    expect(buildShortVolumeImport().find((r) => r.ticker === "NVDA")).toMatchObject({ ticker: "NVDA", ratio: 48.3 });
+  });
+});
+
+describe("runCongressDailyShare — insider + short-volume on the nightly batch", () => {
+  it("includes cached insider + short-volume rows in the first POST", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    setInternalSetting("webSource:insider:dataset", {
+      filings: [{ symbol: "AAPL", owner: "Jane", buyTx: 2, sellTx: 0, buyShares: 9000, sellShares: 0, filedAt: recentDate(2), accession: "y1" }],
+      fetchedAt: new Date().toISOString(),
+      recordCount: 1
+    });
+    setInternalSetting("webSource:finra:dataset", { ratios: { AAPL: 51.2 }, asOf: recentDate(1), fetchedAt: new Date().toISOString(), recordCount: 1 });
+    mockedFetchDailyOHLC.mockResolvedValue([{ time: recentDate(2), close: 1 }, { time: recentDate(1), close: 2 }]);
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const res = await runCongressDailyShare({ now: Date.now(), force: true }); // non-custom → builds both
+    expect(res.insiderRows).toBeGreaterThanOrEqual(1);
+    expect(res.shortVolRows).toBeGreaterThanOrEqual(1);
+    const firstBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(firstBody.insider.length).toBeGreaterThanOrEqual(1);
+    expect(firstBody.shortVolume.length).toBeGreaterThanOrEqual(1);
   });
 });
