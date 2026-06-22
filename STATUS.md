@@ -24,6 +24,15 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`e2e/smoke-fix`): **Fix Playwright smoke (prod-mode auth) + drop transactional
+  fill+snapshot.** Smoke failed because `next start` runs `NODE_ENV=production`, so the auth
+  middleware redirects `/`→`/access-denied` (dashboard never renders). `playwright.config.ts` now
+  authenticates the test browser via the CF-Access header (`CF_ACCESS_TRUST_EMAIL_HEADER=1` +
+  `extraHTTPHeaders`); also refreshed the stale `Kill|Resume`→`Start|Stop` assertion. e2e.yml
+  activation still needs a `workflow`-scoped token (owner; like deploy.yml). **Dropped transactional
+  fill+snapshot** — not safe: each write is a single atomic INSERT, snapshots already bracket the run
+  (pre+post), coupling a real-broker fill to a snapshot write would roll back a real trade, and the
+  CAS + synthetic-stop claim already guard double-book. See `docs/rollouts/2026-06-22-e2e-smoke-auth-fix.md`.
 - 2026-06-22 (`safety/fk-cleanup`): **FK enforcement + account-delete cascade cleanup.** Deleting a
   connected account left orphaned `fill_events`/`portfolio_snapshots`/`trade_proposals`/
   `synthetic_trailing_stops` still feeding P&L/exposure. `getDb()` now sets `PRAGMA foreign_keys=ON`
