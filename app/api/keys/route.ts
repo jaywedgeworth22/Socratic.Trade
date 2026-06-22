@@ -29,6 +29,14 @@ const API_KEY_CATALOG = [
     docsUrl: "https://platform.openai.com/api-keys"
   },
   {
+    service: "xai",
+    label: "xAI (Grok)",
+    category: "LLM",
+    required: false,
+    unlocks: "Grok models for trade proposals and strategy analysis. Select a grok-* model in Settings to use.",
+    docsUrl: "https://console.x.ai/"
+  },
+  {
     service: "finnhub",
     label: "Finnhub",
     category: "Market data",
