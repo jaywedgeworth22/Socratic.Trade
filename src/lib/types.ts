@@ -147,6 +147,19 @@ export interface TuningSettings {
   corroborationWinRatePct?: number;
   /** Shrunk realized avg return (%) strictly above which conviction is treated as corroborated. Default 0. */
   corroborationEdgePct?: number;
+  /**
+   * Deterministic fundamentals hard-veto on BUYS, applied model-free in deterministicBearFilter
+   * (independent of the Bull/Bear LLMs). Veto a buy when the candidate's free-cash-flow yield is
+   * below this floor (e.g. 0 → veto any negative-FCF-yield buy). Undefined disables the rule. The
+   * rule is skipped when fcfYield is unavailable so a missing field never false-vetoes.
+   */
+  bearVetoFcfYieldFloorPct?: number;
+  /**
+   * Companion fundamentals hard-veto: veto a buy when the candidate's debt/equity exceeds this
+   * ceiling (e.g. 3 → veto names levered beyond 300%). Undefined disables; skipped when the field
+   * is unavailable.
+   */
+  bearVetoDebtToEquityCeiling?: number;
 }
 
 export interface RiskRules {
@@ -155,7 +168,6 @@ export interface RiskRules {
   takeProfitPct?: number;
   takeProfitNotional?: number;
   trailingStopPct?: number;
-  stopLossAtrMultiple?: number;
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
@@ -330,6 +342,47 @@ export interface TradingPolicy {
   maxShortOrderNotional?: number;
   // SHORT_SELLING: Max total short exposure as a percentage of portfolio value.
   maxShortExposurePct?: number;
+  /**
+   * Cap on the projected NET portfolio beta (Σ signedMarketValue·beta ÷ totalEquity, including the
+   * candidate). Bounds the book's aggregate market-directional exposure so a cluster of individually
+   * approved high-beta names can't accumulate a correlated drawdown the per-symbol/sector caps miss.
+   * An opening order is blocked only when it pushes |projected beta| above this cap AND further from
+   * the current level (a risk-reducing trade always passes). Undefined disables. Per-name beta is read
+   * from the market scan; names without a beta count as 1.0. Especially relevant once shorting is on.
+   */
+  maxPortfolioBeta?: number;
+  /**
+   * Max allowed % drift between a proposal's recorded entry anchor (referencePrice) and the current
+   * market price, enforced at the approval/execution moment for OPENING market/dollar orders only
+   * (limit orders are already protected by the broker's limit). Rejects a stale proposal whose
+   * technical entry trigger has moved away — closing the gap where an hours-old market order approved
+   * off the run cadence (or with no LLM revalidation key) still executes at a materially worse price.
+   * Undefined or <=0 disables.
+   */
+  maxEntryDriftPct?: number;
+  /**
+   * Auto-attach broker-held bracket (OCO) legs — a stop-loss and take-profit resting at the broker's
+   * matching engine — to opening orders on brokers that support native brackets (Alpaca), derived
+   * from riskRules.stopLossPct/takeProfitPct. Makes protective exits survive local downtime instead
+   * of relying solely on the synthetic scheduler-tick monitor. Defaults to enabled (treated as true
+   * when undefined); set false to opt out. No-op for brokers without native bracket support.
+   */
+  brokerBracketsEnabled?: boolean;
+  /**
+   * Scale per-position stop-loss distance by the name's beta (clamped 0.5×–2.0×) so high-beta names
+   * get wider stops (fewer noise stop-outs) and low-beta names tighter stops (cut losers sooner),
+   * instead of one flat % for every ticker. Applies to the pre-trade gate, the proactive risk-exit
+   * generator, and the synthetic trailing stop. Default false (flat stops). Beta is read from the
+   * scan; names without a beta are unaffected (factor 1.0).
+   */
+  betaScaledStops?: boolean;
+  /**
+   * Convert deterministic OPENING market orders into marketable-limit orders (priced through the
+   * quote by tuning.marketableLimitBufferBps) so a fast-regime entry can't fill arbitrarily far past
+   * the quote. Default false. Protective EXIT orders intentionally stay market for fill certainty —
+   * broker brackets are the exit-reliability mechanism.
+   */
+  marketableLimitEntries?: boolean;
 }
 
 export interface TradeProposal {
@@ -346,6 +399,13 @@ export interface TradeProposal {
   tradeThesisTag: string;
   entryMarketRegime: string;
   confidenceScore?: number;
+  /**
+   * Decision-time market price captured when the proposal was generated. Serves as the entry anchor
+   * for the deterministic entry-drift guard (policy.maxEntryDriftPct) at approval time. Persisted with
+   * the proposal so the guard can compare it against the fresh price even when approval happens hours
+   * later or off the run cadence.
+   */
+  referencePrice?: number;
   /** Limit price for the take-profit leg of a bracket order. */
   bracketTakeProfit?: number;
   /** Stop price for the stop-loss leg of a bracket order. */

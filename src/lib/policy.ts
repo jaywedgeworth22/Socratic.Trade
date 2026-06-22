@@ -82,6 +82,31 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
+  // Entry-drift guard: reject a stale OPENING market/dollar order whose price has moved away from
+  // the proposed entry anchor (referencePrice) by more than maxEntryDriftPct. Limit orders are
+  // excluded — the broker's limit already caps the fill. Fires only when both an entry anchor and a
+  // fresh current price are known, so it can never false-reject on missing data. This closes the gap
+  // where an hours-old market order approved off the run cadence (or with no LLM revalidation) still
+  // executes at a materially worse price than the technical trigger that justified it.
+  if (
+    isOpening &&
+    context.policy.maxEntryDriftPct != null &&
+    context.policy.maxEntryDriftPct > 0 &&
+    proposal.referencePrice != null &&
+    proposal.referencePrice > 0 &&
+    (proposal.type === "market" || proposal.dollarAmount != null || proposal.limitPrice == null)
+  ) {
+    const currentPrice = context.marketScan?.quotesBySymbol[symbol]?.price;
+    if (currentPrice != null && currentPrice > 0) {
+      const driftPct = (Math.abs(currentPrice - proposal.referencePrice) / proposal.referencePrice) * 100;
+      if (driftPct > context.policy.maxEntryDriftPct) {
+        reasons.push(
+          `entry_drift: ${symbol} moved ${driftPct.toFixed(1)}% from the proposed entry $${proposal.referencePrice.toFixed(2)} ` +
+            `(now $${currentPrice.toFixed(2)}), exceeding the ${context.policy.maxEntryDriftPct}% max entry drift.`
+        );
+      }
+    }
+  }
   // SHORT_SELLING: Two-layer gate.
   // Layer 1 — policy flag: shortSellingEnabled must be true.
   // Layer 2 — account capability: the connected broker/account must report shortSelling=true.
@@ -264,6 +289,37 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons.push(`Projected ${sectorDecision.sector} sector exposure ${sectorDecision.projectedPct.toFixed(2)}% exceeds sector cap ${sectorDecision.cap}%.`);
   }
 
+  // Portfolio beta cap. Bounds aggregate market-directional exposure: Σ(signedMarketValue·beta) ÷
+  // totalEquity, including the candidate. The per-symbol/sector caps don't see correlation, so a
+  // cluster of individually-approved high-beta names can still build a large correlated drawdown;
+  // this catches that. A long buy adds +beta exposure, a short adds -beta. Per-name beta comes from
+  // the scan (names without a beta count as 1.0). Only an OPENING order that pushes |projected beta|
+  // BOTH past the cap AND further from the current level is blocked — a beta-reducing trade always
+  // passes. Defaults off (undefined); especially relevant once shorting is enabled.
+  if (isOpening && context.policy.maxPortfolioBeta != null && context.policy.maxPortfolioBeta > 0) {
+    const totalEquity = context.portfolio.totalMarketValue;
+    if (totalEquity > 0) {
+      const betaFor = (sym: string): number => {
+        const b = context.marketScan?.quotesBySymbol[normalizeSymbol(sym)]?.beta;
+        return b != null && Number.isFinite(b) ? b : 1;
+      };
+      const netBetaNow = context.positions.reduce((sum, p) => sum + p.marketValue * betaFor(p.symbol), 0);
+      const signedDelta = proposal.side === "short" ? -estimatedNotional : estimatedNotional;
+      const netBetaProjected = netBetaNow + signedDelta * betaFor(proposal.symbol);
+      const projectedPortfolioBeta = netBetaProjected / totalEquity;
+      const currentPortfolioBeta = netBetaNow / totalEquity;
+      if (
+        Math.abs(projectedPortfolioBeta) > context.policy.maxPortfolioBeta &&
+        Math.abs(projectedPortfolioBeta) > Math.abs(currentPortfolioBeta)
+      ) {
+        reasons.push(
+          `Projected portfolio beta ${projectedPortfolioBeta.toFixed(2)} exceeds the maxPortfolioBeta cap ` +
+            `of ${context.policy.maxPortfolioBeta} (current ${currentPortfolioBeta.toFixed(2)}).`
+        );
+      }
+    }
+  }
+
   const riskReason = riskRuleReason(proposal, context);
   if (riskReason) reasons.push(riskReason);
 
@@ -372,14 +428,19 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   const position = context.positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
   if (!position || position.averageCost <= 0) return undefined;
 
+  // Optional volatility-aware stop scaling: widen the stop for high-beta names, tighten for low-beta.
+  const beta = context.marketScan?.quotesBySymbol[normalizeSymbol(proposal.symbol)]?.beta;
+  const betaStops = context.policy.betaScaledStops === true;
+
   if (proposal.side === "buy") {
     if (position.quantity > 0) {
       const avgCost = position.averageCost;
       const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
       const drawdownPct = ((avgCost - currentPrice) / avgCost) * 100;
       const returnPct = ((currentPrice - avgCost) / avgCost) * 100;
-      
-      if (context.policy.riskRules?.stopLossPct && drawdownPct > context.policy.riskRules.stopLossPct) {
+
+      const effStopLossPct = betaScaledStopPct(context.policy.riskRules?.stopLossPct ?? 0, beta, betaStops);
+      if (effStopLossPct > 0 && drawdownPct > effStopLossPct) {
         return `Stop-loss rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is down ${drawdownPct.toFixed(2)}%.`;
       }
       if (context.policy.riskRules?.stopLossNotional) {
@@ -403,8 +464,9 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
       const avgCost = position.averageCost;
       const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
       const drawdownPct = ((currentPrice - avgCost) / avgCost) * 100; // Inverse math for short: price up means loss
-      
-      if (context.policy.riskRules?.shortStopLossPct && drawdownPct > context.policy.riskRules.shortStopLossPct) {
+
+      const effShortStopPct = betaScaledStopPct(context.policy.riskRules?.shortStopLossPct ?? 0, beta, betaStops);
+      if (effShortStopPct > 0 && drawdownPct > effShortStopPct) {
         return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${context.policy.riskRules.shortStopLossPct}%.`;
       }
     }
@@ -425,5 +487,19 @@ function sectorCapFor(policy: TradingPolicy, sector: string): number | undefined
   if (exact !== undefined) return exact;
   const match = Object.entries(policy.sectorCaps).find(([key]) => key.toLowerCase() === sector.toLowerCase());
   return match?.[1];
+}
+
+/**
+ * Volatility-aware stop scaling. Widens the stop distance for high-beta names (fewer noise
+ * stop-outs) and tightens it for low-beta names (cut losers sooner), instead of one flat % for
+ * every ticker. Beta is clamped to [0.5×, 2.0×] so a missing/extreme value can't produce an absurd
+ * stop. Returns the base unchanged when scaling is disabled or beta is unavailable/invalid — so this
+ * is always safe to call. Shared by the gate (riskRuleReason), the proactive risk-exit generator,
+ * and the synthetic trailing stop so all three stay consistent.
+ */
+export function betaScaledStopPct(baseStopPct: number, beta: number | undefined, enabled: boolean): number {
+  if (!enabled || baseStopPct <= 0 || beta == null || !Number.isFinite(beta) || beta <= 0) return baseStopPct;
+  const clamped = Math.max(0.5, Math.min(2.0, beta));
+  return baseStopPct * clamped;
 }
 
