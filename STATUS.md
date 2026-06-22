@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`agent/antigravity`): **Strategy brainstorm and handoff to Claude.** Conducted a quantitative and financial expert panel review of the strategy, specifying improvements for cost-aware Kelly sizing, broker-held OCO brackets, correlation penalties, and walk-forward validation. Documented findings in `docs/reviews/2026-06-22-strategy-brainstorm-improvements.md` and pushed to GitHub via PR #89.
 - 2026-06-22 (`ci/activate-e2e`): **Activated the Playwright smoke workflow.** `git mv
   ci-pending/e2e.yml .github/workflows/e2e.yml` — the smoke (`npm run test:e2e`, now passing after
   `e2e/smoke-fix`) runs on every PR/push. Reframed `ci-pending/README.md` from "staged" to reference
