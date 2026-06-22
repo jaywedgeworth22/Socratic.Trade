@@ -19,6 +19,13 @@ import { stripClientIdentityHeaders } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
+// The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
+// with src/lib/auth/identity.ts (which does the email→userId mapping in the Node runtime).
+const PRIMARY_SET = new Set(
+  [PRIMARY_EMAIL, ...(process.env.PRIMARY_USER_EMAIL_ALIASES || "").split(",")]
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
 const ALLOWED = (process.env.ALLOWED_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
@@ -28,7 +35,7 @@ const ALLOWED = (process.env.ALLOWED_EMAILS || "")
 const PUBLIC_PREFIXES = ["/api/health", "/api/webhooks", "/access-denied"];
 
 function isEmailAllowed(email: string): boolean {
-  if (email === PRIMARY_EMAIL) return true;
+  if (PRIMARY_SET.has(email)) return true; // primary operator + aliases
   if (ALLOWED.length === 0) return true; // defer to the upstream gateway (Cloudflare Access)
   return ALLOWED.includes(email);
 }
