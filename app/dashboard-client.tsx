@@ -152,7 +152,7 @@ function executionBanner(state: ExecutionState): { className: string; text: stri
   }
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
-    text: "TEST — local simulation with simulated fills. No broker orders; no real capital at risk."
+    text: "TEST — local simulation with simulated fills. No broker orders; no real capital at risk. A connected paper account (e.g. Alpaca Paper Trading) is likely more realistic than this local simulation."
   };
 }
 

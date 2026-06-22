@@ -43,12 +43,18 @@ market. It can:
 It is built so that **doing nothing dangerous is the default.** There are three
 modes, and you have to deliberately move up each step:
 
-1. **Test mode (default):** A pretend account on your own computer. Fake cash,
-   fake fills. Real market data, but no real money can move. This is where it
-   lives unless you change it.
-2. **Paper mode:** A practice account hosted by a real broker (e.g. Alpaca's
-   "paper" sandbox). Still fake money, but the order actually travels to a
-   broker's system, so it is a more realistic rehearsal.
+1. **Test mode (default) — "Test — Local Sim":** A funded local simulator on your
+   own computer. Simulated cash (a configurable starting balance, default
+   $100,000), simulated fills, real market data — no real money can move and no
+   broker connection is required. This is where it lives unless you change it.
+   **Caveat:** it is a *simplified* simulation — market impact, partial fills, and
+   realistic slippage are not modeled, so a third-party paper account (Paper mode,
+   below) is **likely more realistic** than this local simulation. Do not treat
+   local-sim results as predictive of real performance.
+2. **Paper mode (recommended for realistic practice):** A practice account hosted
+   by a real broker (e.g. Alpaca's "paper" sandbox). Still fake money, but the
+   order actually travels to a broker's system — realistic fills, latency, and
+   market hours — so it is a **more realistic rehearsal than the local simulator**.
 3. **Brokerage mode:** A real account with real money. Orders here can actually
    buy and sell, and only when *every* safety rule allows it.
 

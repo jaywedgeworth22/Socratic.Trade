@@ -18,6 +18,12 @@ import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
+import { getOpenLots, getPerformanceSummary } from "./performance";
+
+const TEST_SIM_STARTING_CASH = (() => {
+  const n = Number(process.env.TEST_SIM_STARTING_CASH);
+  return Number.isFinite(n) && n > 0 ? n : 100_000;
+})();
 
 export const ROBINHOOD_TRADING_MCP_URL = "https://agent.robinhood.com/mcp/trading";
 const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
@@ -43,9 +49,9 @@ export function getRobinhoodGateway(userId: string): BrokerGateway {
 }
 
 // Local "Test" broker: real market quotes (Yahoo) + simulated fills, no real broker.
-// Honestly labeled "Test" — it never impersonates Robinhood or any real account.
-export function getTestGateway(): BrokerGateway {
-  return new TestBrokerGateway();
+// Honestly labeled "Test — Local Sim" — it never impersonates Robinhood or any real account.
+export function getTestGateway(userId: string = "local"): BrokerGateway {
+  return new TestBrokerGateway(userId);
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
@@ -463,10 +469,16 @@ const MOCK_PRICES: Record<string, number> = {
 };
 
 class TestBrokerGateway implements BrokerGateway {
+  private readonly userId: string;
+
+  constructor(userId: string = "local") {
+    this.userId = userId;
+  }
+
   async getAccounts(): Promise<BrokerageAccount[]> {
     return [{
       accountNumber: "TEST",
-      label: "Test",
+      label: "Test — Local Sim",
       agenticAllowed: true,
       capabilities: {
         equityTrading: true,
@@ -480,12 +492,42 @@ class TestBrokerGateway implements BrokerGateway {
     }];
   }
 
-  async getPortfolio(accountNumber: string): Promise<Portfolio> {
-    return { accountNumber, totalMarketValue: 0, buyingPower: 0, equityMarketValue: 0, optionMarketValue: 0, cash: 0 };
+  async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
+    const lots = getOpenLots(accountNumber, undefined, this.userId);
+    if (lots.length === 0) return [];
+    const symbols = lots.map((l) => l.symbol);
+    const quotes = await this.getEquityQuotes(accountNumber, symbols);
+    return lots.map((l) => {
+      const price = quotes[normalizeSymbol(l.symbol)]?.price ?? l.entryPrice;
+      return {
+        symbol: l.symbol,
+        quantity: l.quantity,
+        averageCost: l.entryPrice,
+        marketValue: l.quantity * price
+      };
+    });
   }
 
-  async getEquityPositions(): Promise<EquityPosition[]> {
-    return [];
+  async getPortfolio(accountNumber: string): Promise<Portfolio> {
+    const positions = await this.getEquityPositions(accountNumber);
+    const positionsValue = positions.reduce((sum, p) => sum + p.marketValue, 0);
+    const prices: Record<string, number> = {};
+    for (const p of positions) {
+      prices[normalizeSymbol(p.symbol)] = p.quantity !== 0 ? p.marketValue / p.quantity : 0;
+    }
+    // Total P&L = paper realized + paper unrealized (Test fills are recorded as "paper" source).
+    const summary = getPerformanceSummary(accountNumber, prices, this.userId);
+    const totalPnl = summary.paperRealizedPnl + summary.paperUnrealizedPnl;
+    const equity = TEST_SIM_STARTING_CASH + totalPnl;
+    const cash = equity - positionsValue;
+    return {
+      accountNumber,
+      totalMarketValue: equity,
+      buyingPower: Math.max(0, cash),
+      equityMarketValue: positionsValue,
+      optionMarketValue: 0,
+      cash
+    };
   }
 
   async getEquityOrders(): Promise<EquityOrder[]> {
