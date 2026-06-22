@@ -24,11 +24,6 @@ steps materially change.
 
 ## Active Focus
 
-- 2026-06-21 (`claude/fix-status-md`): **STATUS.md dedup.** Removed an interleaved
-  duplicate block in Active Focus — a second copy of the 2026-06-19
-  Ops/observability, Broker-Connection-UI-Split, and Composite-Universe entries
-  (the deletion is intentional, not an accident; the first copies are retained).
-  No other content changed. See `docs/rollouts/2026-06-21-status-md-dedup.md`.
 - 2026-06-22 (`fix/ux-account-authority-watchlist`): **UX fixes + watchlist self-heal bug.** (1) Consent dialog: dropped contradictory "One-time choice"; (2) account dropdown no longer doubles the env suffix ("Alpaca (Paper) (paper)" → "Alpaca (Paper)" — omit `(environment)` when the label already contains it); (3) strategy-authority labels renamed user-facing "Decide" → "Autonomous" (values `propose`/`decide` unchanged) across dropdowns/confirms/subtitle/help/tooltip; (4) **root-cause bug**: `PUT /api/policy` 400'd the whole policy on any unsupported symbol, and since the client re-sends the full policy a stale `BTC` in `additionalSymbols` bricked *every* update (why Autonomous toggle failed) — now `sanitizeSymbolList()` normalizes+drops unsupported symbols (equity-only) instead of erroring (self-heals); broker `getAccounts()` wrapped in try/catch (no raw 500/HTML); client `updatePolicy` never toasts HTML bodies. Add-time validation in Settings kept. tsc clean · policy tests 42/42 · `npm test` 855 pass / 1 pre-existing unrelated fail (`cache-provenance`) · build green. Owner: delete the stale Alpaca paper account via Accounts → Remove. See `docs/rollouts/2026-06-22-ux-consent-account-authority-watchlist.md`.
 - 2026-06-22 (`sim/funded-test-account`): **Funded local simulator for the Test broker.** `TestBrokerGateway`
   (`robinhood.ts`) returned a $0 unfunded portfolio (buying power 0 → couldn't simulate trades); now it is a
