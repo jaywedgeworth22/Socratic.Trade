@@ -13,6 +13,7 @@
 // (both default true) so the email allowlist is an ADDITIONAL way in, not a regression of the prior gate.
 
 import { AUTHENTICATED_EMAIL_HEADER } from "../request-user";
+import { isPrimaryEmail } from "./identity";
 
 function adminEmails(): string[] {
   return (process.env.ADMIN_USER_EMAILS || "")
@@ -21,16 +22,11 @@ function adminEmails(): string[] {
     .filter(Boolean);
 }
 
-/** The primary operator's email, read fresh from env so deployment config (and tests) take effect. */
-function primaryEmail(): string {
-  return (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
-}
-
-/** True if `email` is configured as an admin (or is the primary operator). */
+/** True if `email` is configured as an admin (or is the primary operator, including any primary aliases). */
 export function isAdminEmail(email: string | null | undefined): boolean {
   const e = (email || "").trim().toLowerCase();
   if (!e || !e.includes("@")) return false;
-  if (e === primaryEmail()) return true;
+  if (isPrimaryEmail(e)) return true; // primary operator + PRIMARY_USER_EMAIL_ALIASES
   return adminEmails().includes(e);
 }
 
