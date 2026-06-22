@@ -10,7 +10,7 @@ import {
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { symbolsForPolicyUniverse } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
@@ -376,8 +376,9 @@ function compactMarketScan(scan?: MarketScan) {
 }
 
 async function requestLlmTuning(context: unknown, openaiKey: string, userId: string, keySource: "user" | "operator", keyRef?: string): Promise<LlmTuningPayload> {
+  const policy = getPolicy(userId);
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const model = resolveOpenAiModel(policy);
   const isChatCompletions = url.includes("/chat/completions");
   const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
   const schema = tuningSchema();
@@ -424,7 +425,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
         }
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   const traced = await withLlmGeneration(

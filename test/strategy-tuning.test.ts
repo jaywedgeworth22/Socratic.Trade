@@ -94,6 +94,8 @@ describe("proposeStrategyTuning", () => {
       ...DEFAULT_POLICY,
       accountNumber: "TUNE-LLM",
       paperMode: true,
+      // Classic model: this asserts temperature + exact caps (reasoning bounds → test/llm-request.test.ts).
+      llmModel: "gpt-4.1-mini",
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
     });
     // Seed 20 closed lots so the §3.E weight-shift gate passes and the LLM's

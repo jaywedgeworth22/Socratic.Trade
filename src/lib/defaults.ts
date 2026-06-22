@@ -36,6 +36,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   additionalSymbols: [],
   blocklist: [],
   strategyAuthority: "propose",
+  llmModel: "gpt-5.4-mini",
+  llmReasoningEffort: "medium",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,

@@ -2988,6 +2988,21 @@ function SettingsContent({
               <option value="decide">Autonomous — auto-executes approved orders</option>
             </select>
           </Field>
+          <Field label="AI model" hint="Which OpenAI model powers the agent. Your connected OpenAI key/project must have access to the chosen model." className="sm:col-span-2">
+            <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
+              <option value="gpt-5.4-nano">gpt-5.4-nano — cheapest, lightest reasoning</option>
+              <option value="gpt-5.4-mini">gpt-5.4-mini — balanced (recommended)</option>
+              <option value="gpt-5.5">gpt-5.5 — strongest, most expensive</option>
+              <option value="gpt-4.1-mini">gpt-4.1-mini — legacy non-reasoning</option>
+            </select>
+          </Field>
+          <Field label="Reasoning effort" hint="For gpt-5 / o-series reasoning models only: higher effort = deeper analysis, more tokens, higher cost & latency. Ignored by non-reasoning models like gpt-4.1-mini." className="sm:col-span-2">
+            <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
+              <option value="low">Low — fastest & cheapest</option>
+              <option value="medium">Medium — balanced (recommended)</option>
+              <option value="high">High — deepest analysis, priciest</option>
+            </select>
+          </Field>
           <Field label="Holding horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
             <select className={inputClass} value={policy.holdingHorizon ?? "swing"} onChange={(e) => updatePolicy({ holdingHorizon: e.target.value as TradingPolicy["holdingHorizon"] })}>
               <option value="intraday">Intraday — day trades</option>

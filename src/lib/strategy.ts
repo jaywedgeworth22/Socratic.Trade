@@ -28,7 +28,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -1268,7 +1268,7 @@ async function proposeTrades(input: {
   };
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const model = resolveOpenAiModel(input.policy);
   const isChatCompletions = url.includes("/chat/completions");
   const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
 
@@ -1350,7 +1350,7 @@ async function proposeTrades(input: {
         }
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model, reasoningEffort: input.policy.llmReasoningEffort }
   );
 
   const bullResult = await withLlmGeneration(
@@ -1544,7 +1544,7 @@ async function proposeTrades(input: {
         }
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique, model, reasoningEffort: input.policy.llmReasoningEffort }
   );
 
   const bearResult = await withLlmGeneration(
