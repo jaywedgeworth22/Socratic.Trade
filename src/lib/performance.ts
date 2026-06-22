@@ -47,6 +47,10 @@ export interface ThesisStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  /** Average calendar days held; undefined when lots lack entryAt/exitAt timestamps. */
+  avgDaysHeld?: number;
+  /** % of lots held < 365 days (short-term capital gains); undefined when no timestamp data. */
+  shortTermPct?: number;
 }
 
 /** Realized-outcome stats grouped by the market regime a position was opened in. */
@@ -58,6 +62,8 @@ export interface RegimeStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  avgDaysHeld?: number;
+  shortTermPct?: number;
 }
 
 /** An open (unclosed) tax lot with its entry date, for holding-period / tax analysis. */
@@ -125,11 +131,10 @@ export function recordFillFromProposal(input: {
     positiveNumber(reviewPrice) ??
     positiveNumber(impliedPrice) ??
     0;
-  // Deterministic execution-cost model for SIMULATED fills (default OFF). Real broker (live) fills
-  // already carry their realized price, so only frictionless paper fills are adjusted — this makes
-  // the learning loop net-of-cost rather than certifying a frictionless edge that won't survive a
-  // live fill. With no env configured this is a no-op (price === basePrice), so existing P&L is
-  // untouched.
+  // Deterministic execution-cost model for SIMULATED fills (default ON). Real broker (live) fills
+  // already carry their realized price, so only paper fills are adjusted — this makes the learning
+  // loop net-of-cost rather than certifying a frictionless edge that won't survive a live fill.
+  // Disable by setting PAPER_EXECUTION_COST_MODEL=off.
   const costCfg = executionCostConfig();
   let price = basePrice;
   if (costCfg.enabled && input.source === "paper" && basePrice > 0) {
@@ -449,6 +454,8 @@ export interface SectorStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  avgDaysHeld?: number;
+  shortTermPct?: number;
 }
 
 export function getSectorScorecard(
@@ -486,6 +493,8 @@ export interface ThesisRegimeStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  avgDaysHeld?: number;
+  shortTermPct?: number;
 }
 
 const THESIS_REGIME_SEP = " @ ";
@@ -589,15 +598,34 @@ export interface FactorScorecardStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  /** Average calendar days held; undefined when lots lack entryAt/exitAt timestamps. */
+  avgDaysHeld?: number;
+  /** % of lots held < 365 days (short-term capital gains); undefined when no timestamp data. */
+  shortTermPct?: number;
+}
+
+/**
+ * Options for `getFactorScorecard`.
+ * When `regime` is supplied, only closed lots whose `regime` field matches it are aggregated.
+ * Default (no option / undefined regime): aggregate ALL closed lots regardless of regime
+ * (backward-compatible behavior unchanged).
+ */
+export interface FactorScorecardOptions {
+  regime?: string;
 }
 
 export function getFactorScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  options?: FactorScorecardOptions
 ): FactorScorecardStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots: allLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  // Optional regime filter — default (no option) preserves the original all-lots behavior.
+  const closedLots = options?.regime
+    ? allLots.filter((lot) => lot.regime?.trim() === options.regime?.trim())
+    : allLots;
   if (closedLots.length === 0) return [];
 
   const factorByKey = new Map<string, MarketFactor>();
@@ -799,16 +827,39 @@ function aggregateClosedLots(
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  /** Average calendar days held across closed lots in this bucket (undefined when no entryAt/exitAt data). */
+  avgDaysHeld: number | undefined;
+  /** Percentage of lots held < 365 days (short-term for tax purposes). */
+  shortTermPct: number | undefined;
 }> {
   const prior = resolveShrinkPrior(userId);
-  const byKey = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
+  const byKey = new Map<string, {
+    pnl: number;
+    returnSum: number;
+    wins: number;
+    trades: number;
+    daysHeldSum: number;
+    daysHeldCount: number;
+    shortTermCount: number;
+  }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
-    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0 };
+    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0 };
     cur.pnl += lot.pnl;
     cur.returnSum += lot.returnPct;
     cur.wins += lot.pnl > 0 ? 1 : 0;
     cur.trades += 1;
+    // Holding-period derived fields (read-only; not used in any weight-nudge math).
+    if (lot.entryAt && lot.exitAt) {
+      const entryMs = new Date(lot.entryAt).getTime();
+      const exitMs = new Date(lot.exitAt).getTime();
+      if (Number.isFinite(entryMs) && Number.isFinite(exitMs) && exitMs >= entryMs) {
+        const daysHeld = (exitMs - entryMs) / (1000 * 60 * 60 * 24);
+        cur.daysHeldSum += daysHeld;
+        cur.daysHeldCount += 1;
+        if (daysHeld < 365) cur.shortTermCount += 1;
+      }
+    }
     byKey.set(key, cur);
   }
   return Array.from(byKey.entries())
@@ -820,7 +871,10 @@ function aggregateClosedLots(
       totalPnl: Number(s.pnl.toFixed(2)),
       // Shrink toward neutral (0.5 win, 0% return) with `prior` pseudo-trades.
       shrunkWinRate: Math.round(((s.wins + 0.5 * prior) / (s.trades + prior)) * 100),
-      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2))
+      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2)),
+      // Holding-period fields: undefined when no lots in this bucket have entryAt/exitAt data.
+      avgDaysHeld: s.daysHeldCount > 0 ? Number((s.daysHeldSum / s.daysHeldCount).toFixed(1)) : undefined,
+      shortTermPct: s.daysHeldCount > 0 ? Number(((s.shortTermCount / s.daysHeldCount) * 100).toFixed(1)) : undefined
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
