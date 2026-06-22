@@ -28,6 +28,9 @@ export function getDb(): Database.Database {
   // up to 5s for the lock instead. NORMAL durability is the WAL-recommended pairing.
   db.pragma("busy_timeout = 5000");
   db.pragma("synchronous = NORMAL");
+  // Enforce declared foreign keys (SQLite leaves this off by default). Inert today (no FKs are
+  // declared) but the correct default so any future FK constraint actually enforces.
+  db.pragma("foreign_keys = ON");
   migrate(db);
   applyVersionedMigrations(db);
   assertEncryptionKeyAvailable(db);
