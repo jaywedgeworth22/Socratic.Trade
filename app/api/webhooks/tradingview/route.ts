@@ -6,6 +6,11 @@ import {
   verifyWebhookSecret,
   type TradingViewWebhookPayload
 } from "@/lib/web-sources/technical";
+// Relative (not "@/lib/...") import: vitest's "@/" alias only resolves specifiers that route tests
+// mock; an unmocked "@/lib/*" import fails to load under vitest. A relative path resolves under both
+// vitest and the Next build. submitTriggerEvent must live outside this route module because a
+// Next.js route.ts may only export route handlers.
+import { submitTriggerEvent } from "../../../../src/lib/tradingview-trigger";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +66,19 @@ export async function POST(req: Request) {
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: result.warning ?? "rejected" }, { status: 422 });
     }
+
+    // Submit a material event to the trigger engine so a fresh TV alert can kick off
+    // a strategy run — mirrors the sec8k.ts pattern (dynamic import to avoid circular
+    // deps; defensive catch so the signal cache write is never rolled back).
+    // No-op unless TRIGGER_ENGINE=on (the engine's own gate handles it).
+    if (!result.deduped && result.symbol) {
+      const symbol = result.symbol;
+      // sourceId is stable per unique signal instance: matches the dedupeKey written
+      // by recordTradingViewSignal (symbol|signals|asOf|direction).
+      const sourceId = `tradingview:${symbol}:${payload.signal ?? ""}:${payload.bar_time ?? ""}`;
+      void submitTriggerEvent(symbol, sourceId);
+    }
+
     return NextResponse.json({ ok: true, symbol: result.symbol, deduped: result.deduped ?? false });
   } catch (error) {
     audit("tradingview_webhook_error", { error: error instanceof Error ? error.message : "unknown" });
