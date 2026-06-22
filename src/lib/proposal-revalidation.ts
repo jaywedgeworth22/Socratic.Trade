@@ -299,7 +299,7 @@ export async function revalidatePendingProposals(input: {
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "proposal-revalidation", keySource, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider: "openai", model, context: "proposal-revalidation", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
         const text = extractText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };

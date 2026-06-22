@@ -60,15 +60,15 @@ describe("LLM credential — operator-funded failover", () => {
     vi.stubEnv("OPENAI_API_KEY", "env-openai");
     const { upsertUserApiKey, resolveLlmCredential } = await import("../src/lib/db");
     upsertUserApiKey("u_tenant", "openai", "tenant-openai");
-    expect(resolveLlmCredential("openai", "u_tenant")).toEqual({ key: "tenant-openai", source: "user" });
+    expect(resolveLlmCredential("openai", "u_tenant")).toMatchObject({ key: "tenant-openai", source: "user" });
   });
 
   it("any user (incl. local) without their own key uses the operator failover when ON (default)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "env-openai");
     const { resolveLlmCredential } = await import("../src/lib/db");
     // No local carve-out — local and tenants alike reach the operator-funded failover.
-    expect(resolveLlmCredential("openai", "local")).toEqual({ key: "env-openai", source: "operator" });
-    expect(resolveLlmCredential("openai", "u_tenant")).toEqual({ key: "env-openai", source: "operator" });
+    expect(resolveLlmCredential("openai", "local")).toMatchObject({ key: "env-openai", source: "operator" });
+    expect(resolveLlmCredential("openai", "u_tenant")).toMatchObject({ key: "env-openai", source: "operator" });
   });
 
   it("with the failover OFF, every user (incl. local) needs their own key", async () => {
@@ -80,7 +80,7 @@ describe("LLM credential — operator-funded failover", () => {
     expect(resolveLlmCredential("openai", "local")).toEqual({ source: "none" });
     // A stored key works for either (this is what the boot migration gives local).
     upsertUserApiKey("local", "openai", "local-openai");
-    expect(resolveLlmCredential("openai", "local")).toEqual({ key: "local-openai", source: "user" });
+    expect(resolveLlmCredential("openai", "local")).toMatchObject({ key: "local-openai", source: "user" });
   });
 });
 
@@ -123,5 +123,56 @@ describe("LLM usage ledger", () => {
     const rows = getLlmUsageSummary();
     expect(rows.length).toBe(1);
     expect(rows[0]).toMatchObject({ userId: "u_tenant", provider: "openai", keySource: "operator", promptTokens: 120, completionTokens: 30 });
+  });
+
+  it("attributes usage PER ATTACHED KEY via a non-secret fingerprint", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "env-operator-key");
+    const { resolveLlmCredential, upsertUserApiKey } = await import("../src/lib/db");
+    const { recordLlmUsage, getLlmUsageSummary, keyFingerprint } = await import("../src/lib/llm-usage");
+
+    upsertUserApiKey("u_tenant", "openai", "tenant-own-key");
+    const own = resolveLlmCredential("openai", "u_tenant"); // user's own key
+    const op = resolveLlmCredential("openai", "u_other"); // operator failover
+    expect(own.keyRef).toBe(keyFingerprint("tenant-own-key"));
+    expect(op.keyRef).toBe(keyFingerprint("env-operator-key"));
+    expect(own.keyRef).not.toBe(op.keyRef);
+    expect(own.keyRef).not.toContain("tenant-own-key"); // fingerprint, not the secret
+
+    // Two calls on the operator key + one on the tenant's own key → grouped per key.
+    recordLlmUsage({ userId: "u_other", provider: "openai", model: "gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
+    recordLlmUsage({ userId: "u_third", provider: "openai", model: "gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
+    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "gpt-4o-mini", keySource: "user", keyRef: own.keyRef, promptTokens: 50, completionTokens: 5 });
+
+    const byKey = getLlmUsageSummary();
+    const opRows = byKey.filter((r) => r.keyRef === op.keyRef);
+    const ownRows = byKey.filter((r) => r.keyRef === own.keyRef);
+    expect(opRows.reduce((s, r) => s + r.calls, 0)).toBe(2); // both operator-key calls share a keyRef
+    expect(ownRows.reduce((s, r) => s + r.calls, 0)).toBe(1);
+    expect(byKey.every((r) => r.keyRef !== null)).toBe(true);
+  });
+});
+
+describe("Alpaca market-data credential (shared data, per-user trading)", () => {
+  it("a user's own Alpaca key gives individual data; otherwise the operator's paper key is shared", async () => {
+    vi.stubEnv("ALPACA_PAPER_API_KEY", "op-alpaca-key");
+    vi.stubEnv("ALPACA_PAPER_SECRET_KEY", "op-alpaca-secret");
+    const { resolveAlpacaMarketData, upsertUserApiKey } = await import("../src/lib/db");
+
+    // No userId (background refresh) → operator's paper key as the SHARED source (source "env").
+    expect(resolveAlpacaMarketData()).toMatchObject({ apiKey: "op-alpaca-key", secretKey: "op-alpaca-secret", source: "env" });
+    // A tenant with no own key → operator's shared key.
+    expect(resolveAlpacaMarketData("u_tenant").source).toBe("env");
+
+    // A tenant WITH their own key → their individual data (source "user", private/pooled).
+    upsertUserApiKey("u_tenant", "alpaca_paper_api_key", "tenant-alpaca-key");
+    upsertUserApiKey("u_tenant", "alpaca_paper_secret_key", "tenant-alpaca-secret");
+    expect(resolveAlpacaMarketData("u_tenant")).toMatchObject({ apiKey: "tenant-alpaca-key", secretKey: "tenant-alpaca-secret", source: "user" });
+  });
+
+  it("trading resolution is unaffected — a tenant never gets the operator's Alpaca key to trade", async () => {
+    vi.stubEnv("ALPACA_PAPER_API_KEY", "op-alpaca-key");
+    const { resolveApiKeyWithSource } = await import("../src/lib/db");
+    // The trading path (alpaca.ts uses resolveApiKey, per-user-only) fails closed for a tenant.
+    expect(resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant").source).toBe("none");
   });
 });

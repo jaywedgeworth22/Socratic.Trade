@@ -42,7 +42,21 @@ export function getDb(): Database.Database {
 // migrate() (no ordering/stamp; diverged across worktrees).
 const SCHEMA_BASELINE = 1;
 type Migration = { version: number; name: string; up: (db: Database.Database) => void };
-const MIGRATIONS: Migration[] = [];
+const MIGRATIONS: Migration[] = [
+  {
+    // Per-attached-key LLM usage attribution: usage/cost measured per distinct key (user or
+    // operator), not just per source. Idempotent — skips the column/index when already present.
+    version: 2,
+    name: "llm_usage_key_ref",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "key_ref")) {
+        database.exec("ALTER TABLE llm_usage ADD COLUMN key_ref TEXT");
+      }
+      database.exec("CREATE INDEX IF NOT EXISTS idx_llm_usage_key ON llm_usage (key_ref, created_at)");
+    }
+  }
+];
 
 /**
  * Apply migrations whose version exceeds the DB's user_version, in ascending order,

@@ -134,7 +134,7 @@ Respond with a JSON object containing:
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "red-team", keySource, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider: "openai", model, context: "red-team", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;

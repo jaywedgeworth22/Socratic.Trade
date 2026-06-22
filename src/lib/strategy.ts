@@ -1344,7 +1344,7 @@ async function proposeTrades(input: {
         throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
       }
       const payload = await response.json();
-      recordLlmUsage({ userId: input.userId, provider: "openai", model, context: "strategy", keySource: llmKeySource, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId: input.userId, provider: "openai", model, context: "strategy", keySource: llmKeySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
       const text = extractOpenAiText(payload);
 
       if (!text) {
