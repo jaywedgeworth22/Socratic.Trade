@@ -29,7 +29,100 @@ export function getDb(): Database.Database {
   db.pragma("busy_timeout = 5000");
   db.pragma("synchronous = NORMAL");
   migrate(db);
+  applyVersionedMigrations(db);
+  assertEncryptionKeyAvailable(db);
   return db;
+}
+
+// ── Versioned migrations ─────────────────────────────────────────────────────
+// migrate() is the idempotent baseline (CREATE TABLE IF NOT EXISTS + ALTER-if-missing)
+// representing the schema through SCHEMA_BASELINE. Any NEW schema change must be appended
+// to MIGRATIONS with a higher version so it applies once, in order, recorded via
+// PRAGMA user_version — replacing the old habit of adding another unversioned ALTER to
+// migrate() (no ordering/stamp; diverged across worktrees).
+const SCHEMA_BASELINE = 1;
+type Migration = { version: number; name: string; up: (db: Database.Database) => void };
+const MIGRATIONS: Migration[] = [
+  {
+    // Per-attached-key LLM usage attribution: usage/cost measured per distinct key (user or
+    // operator), not just per source. Idempotent — skips the column/index when already present.
+    version: 2,
+    name: "llm_usage_key_ref",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "key_ref")) {
+        database.exec("ALTER TABLE llm_usage ADD COLUMN key_ref TEXT");
+      }
+      database.exec("CREATE INDEX IF NOT EXISTS idx_llm_usage_key ON llm_usage (key_ref, created_at)");
+    }
+  }
+];
+
+/**
+ * Apply migrations whose version exceeds the DB's user_version, in ascending order,
+ * each inside a transaction that bumps user_version atomically (so a crash can't leave
+ * a half-applied, mis-stamped schema). Returns the final version. Exported with explicit
+ * args for unit testing.
+ */
+export function runMigrations(database: Database.Database, migrations: Migration[], baseline: number): number {
+  let current = Number(database.pragma("user_version", { simple: true })) || 0;
+  if (current < baseline) {
+    database.pragma(`user_version = ${baseline}`);
+    current = baseline;
+  }
+  for (const m of [...migrations].sort((a, b) => a.version - b.version)) {
+    if (m.version <= current) continue;
+    const apply = database.transaction(() => {
+      m.up(database);
+      database.pragma(`user_version = ${m.version}`);
+    });
+    apply();
+    current = m.version;
+    console.log(`[db] applied migration ${m.version} (${m.name})`);
+  }
+  return current;
+}
+
+function applyVersionedMigrations(database: Database.Database): number {
+  return runMigrations(database, MIGRATIONS, SCHEMA_BASELINE);
+}
+
+/** Current schema version (PRAGMA user_version). */
+export function getSchemaVersion(database: Database.Database = getDb()): number {
+  return Number(database.pragma("user_version", { simple: true })) || 0;
+}
+
+// ── ENCRYPTION_KEY boot guard ────────────────────────────────────────────────
+/** True if connected_accounts holds at least one AES-GCM ciphertext (the
+ *  `iv:tag:ciphertext` shape). Legacy plaintext values (no colons) don't count — a
+ *  wrong key can't corrupt those. */
+export function hasEncryptedCredentials(database: Database.Database): boolean {
+  const row = database
+    .prepare("SELECT COUNT(*) AS n FROM connected_accounts WHERE api_key GLOB '*:*:*' OR api_secret GLOB '*:*:*'")
+    .get() as { n: number };
+  return row.n > 0;
+}
+
+/**
+ * Fail loudly at boot rather than silently decrypting stored creds to '' (which a
+ * per-process random ENCRYPTION_KEY fallback does). Triggers only when the key is absent
+ * (ephemeral random fallback) AND the DB already holds ciphertext. `ephemeral` is read
+ * from process.env at call time so it reflects any .env.local loaded during import.
+ */
+export function assertEncryptionKeyAvailable(
+  database: Database.Database,
+  opts: { ephemeral?: boolean; isTest?: boolean } = {}
+): void {
+  const ephemeral = opts.ephemeral ?? !process.env.ENCRYPTION_KEY;
+  const isTest = opts.isTest ?? (process.env.NODE_ENV === "test" || !!process.env.VITEST);
+  if (!ephemeral || isTest) return;
+  if (hasEncryptedCredentials(database)) {
+    throw new Error(
+      "ENCRYPTION_KEY is not set but the database holds encrypted credentials. A per-process " +
+      "random key cannot decrypt them (they would silently read as empty and be lost). Set " +
+      "ENCRYPTION_KEY (hex) to the original key before starting. Refusing to boot."
+    );
+  }
 }
 
 export function audit(kind: string, payload: unknown, userId: string = "local"): void {
@@ -296,7 +389,6 @@ function migrate(database: Database.Database): void {
       model TEXT,
       context TEXT NOT NULL DEFAULT 'unknown',
       key_source TEXT NOT NULL CHECK(key_source IN ('user','operator')),
-      key_ref TEXT,
       prompt_tokens INTEGER,
       completion_tokens INTEGER,
       total_tokens INTEGER,
@@ -305,7 +397,6 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage (user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_llm_usage_source ON llm_usage (key_source, created_at);
-    CREATE INDEX IF NOT EXISTS idx_llm_usage_key ON llm_usage (key_ref, created_at);
 
     CREATE TABLE IF NOT EXISTS user_memory (
       id TEXT PRIMARY KEY,
@@ -430,12 +521,6 @@ function migrate(database: Database.Database): void {
   }
   if (!connectedAccountColumns.some((column) => column.name === "capabilities")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN capabilities TEXT");
-  }
-
-  // Per-attached-key usage attribution: add key_ref to llm_usage tables created before it existed.
-  const llmUsageColumns = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
-  if (llmUsageColumns.length > 0 && !llmUsageColumns.some((column) => column.name === "key_ref")) {
-    database.exec("ALTER TABLE llm_usage ADD COLUMN key_ref TEXT");
   }
 
   // Rename: legacy "dry_run" proposal status is now "paper".

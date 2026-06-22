@@ -24,6 +24,31 @@ export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
   return new AlpacaBrokerGateway(userId);
 }
 
+/**
+ * Estimate an order's notional for the pre-trade review. NEVER fabricates a price:
+ * a wrong notional corrupts the value persisted to `trade_proposals` and the daily
+ * cap accounting (a fabricated $100 made a $50k buy count as $10k). Prefers explicit
+ * order prices, then the live quote; if none is available and there's no dollar
+ * amount, reports the order as over-cap so an un-sizable OPENING order is blocked
+ * (exits aren't notional-capped, so they still pass).
+ */
+export function estimateReviewNotional(
+  input: { dollarAmount?: number; quantity?: number; limitPrice?: number; stopPrice?: number },
+  quotePrice: number | undefined
+): { estimatedNotional: number; alerts: string[] } {
+  if (input.dollarAmount != null) {
+    return { estimatedNotional: input.dollarAmount, alerts: [] };
+  }
+  const estPrice = input.limitPrice ?? input.stopPrice ?? (quotePrice && quotePrice > 0 ? quotePrice : undefined);
+  if (estPrice != null && estPrice > 0) {
+    return { estimatedNotional: (input.quantity ?? 0) * estPrice, alerts: [] };
+  }
+  return {
+    estimatedNotional: Number.MAX_SAFE_INTEGER,
+    alerts: ["Price unavailable — notional could not be estimated; treating as over-cap (set a limit/stop price or dollar amount)."],
+  };
+}
+
 class AlpacaBrokerGateway implements BrokerGateway {
   private alpaca: Alpaca;
   private label: string;
@@ -274,7 +299,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
         };
       }
       return quotes;
-    } catch {
+    } catch (error) {
+      // Don't fail silently — a swallowed quote error is what makes the review fall
+      // through to an unusable price. Surface it; callers handle the empty result.
+      console.warn(`[alpaca] getLatestQuotes failed for ${normalizedSymbols.join(",")}:`, error instanceof Error ? error.message : error);
       return {};
     }
   }
@@ -285,9 +313,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
     const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
-    const price = quotes[normalizeSymbol(input.symbol)]?.price ?? 100;
-    const estPrice = input.limitPrice ?? input.stopPrice ?? price;
-    return { estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * estPrice, alerts: [], raw: { alpaca: true } };
+    const quotePrice = quotes[normalizeSymbol(input.symbol)]?.price;
+    const { estimatedNotional, alerts } = estimateReviewNotional(input, quotePrice);
+    return { estimatedNotional, alerts, raw: { alpaca: true } };
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {

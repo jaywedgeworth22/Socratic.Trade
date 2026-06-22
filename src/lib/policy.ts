@@ -49,9 +49,15 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.systemState === "liquidating" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is liquidating. Only close orders allowed.");
   if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
-  const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-  if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-  if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  // Universe/blocklist applies to OPENING trades only. Never block a risk-reducing exit
+  // (sell/cover) because the symbol was removed from the universe or blocklisted — that
+  // would trap a position in a name you flagged precisely to get out of.
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  if (isOpening) {
+    const allowedSymbols = allowedSymbolsForPolicy(context.policy);
+    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
   // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
@@ -98,8 +104,6 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
   
-  const isOpening = proposal.side === "buy" || proposal.side === "short";
-
   // MARGIN-ACCOUNT MINIMUM (replaces the retired Pattern-Day-Trader gate). SEC/FINRA RETIRED the PDT
   // rule (FINRA Notice 26-10, 2026): there is no longer a $25,000 minimum or a 4-day-trades-in-5-days
   // limit. The new framework is broker-side real-time intraday-margin monitoring plus a $2,000 minimum

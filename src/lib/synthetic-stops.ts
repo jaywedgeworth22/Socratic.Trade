@@ -186,7 +186,11 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         quantity: qty,
         price,
         notional: qty * price,
-        status: "filled",
+        // Live exits are provisional at the quote price; reconcilePendingFills books the
+        // real fill price/qty from the broker (brokerOrderId is the match key). Booking
+        // 'filled' at the quote understates slippage at the worst possible moment. Paper/
+        // test fills have no reconciliation, so they're final.
+        status: source === "live" ? "pending_reconciliation" : "filled",
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });

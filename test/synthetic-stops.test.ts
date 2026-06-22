@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { evaluateStop, runSyntheticStopMonitor } from "../src/lib/synthetic-stops";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
+import { listFillEvents } from "../src/lib/db";
 import type { TradingPolicy } from "../src/lib/types";
 
 const broker = vi.hoisted(() => ({
@@ -108,5 +109,16 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(result.triggered).toBe(1);
     expect(result.exited).toBe(0);
     expect(broker.placed).toHaveLength(0);
+  });
+
+  it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {
+    broker.positions = [{ symbol: "NVDA", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { NVDA: { price: 90 } }; // breaches a 5% trail off extreme 100
+    const result = await runSyntheticStopMonitor("local", { ...policyFor("SYN-LIVE"), paperMode: false }, true);
+    expect(result.exited).toBe(1);
+    const fills = listFillEvents("SYN-LIVE", "live", 10, "local");
+    expect(fills).toHaveLength(1);
+    expect(fills[0].status).toBe("pending_reconciliation"); // reconcilePendingFills books the real fill
+    expect(fills[0].brokerOrderId).toBe("ord-1");
   });
 });
