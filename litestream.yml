@@ -1,5 +1,5 @@
 dbs:
-  - path: /home/ubuntu/apps/trading-live/data/app.db
+  - path: /Users/jay/apps/trading-live/data/app.db
     replicas:
       - type: s3
         bucket: ${LITESTREAM_S3_BUCKET}
@@ -8,5 +8,5 @@ dbs:
         access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
         secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}
       - type: file
-        path: /home/ubuntu/apps/backups/trading-live/app.db
+        path: /Users/jay/apps/backups/trading-live/app.db
         retention: 24h

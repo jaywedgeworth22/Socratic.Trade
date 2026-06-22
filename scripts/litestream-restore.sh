@@ -8,8 +8,8 @@
 #   LITESTREAM_S3_REGION  (default: us-east-1)
 set -euo pipefail
 
-OUTPUT="${1:-/home/ubuntu/apps/trading-live/data/app.db.restored}"
-CONFIG="${LITESTREAM_CONFIG:-/home/ubuntu/apps/trading-live/litestream.yml}"
+OUTPUT="${1:-/Users/jay/apps/trading-live/data/app.db.restored}"
+CONFIG="${LITESTREAM_CONFIG:-/Users/jay/apps/trading-live/litestream.yml}"
 
 : "${LITESTREAM_S3_BUCKET?Required: LITESTREAM_S3_BUCKET}"
 : "${LITESTREAM_S3_ACCESS_KEY_ID?Required: LITESTREAM_S3_ACCESS_KEY_ID}"
@@ -20,7 +20,7 @@ litestream restore \
   -config "$CONFIG" \
   -replica s3 \
   -o "$OUTPUT" \
-  /home/ubuntu/apps/trading-live/data/app.db
+  /Users/jay/apps/trading-live/data/app.db
 
 echo ""
 echo "Restore complete: $OUTPUT"
@@ -29,5 +29,5 @@ echo "  sqlite3 \"$OUTPUT\" 'SELECT count(*) FROM audit_events;'"
 echo ""
 echo "To activate the restored file:"
 echo "  pm2 stop trading"
-echo "  cp \"$OUTPUT\" /home/ubuntu/apps/trading-live/data/app.db"
+echo "  cp \"$OUTPUT\" /Users/jay/apps/trading-live/data/app.db"
 echo "  pm2 restart trading"
