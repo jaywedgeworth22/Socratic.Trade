@@ -35,8 +35,11 @@ describe("robinhood mcp transport", () => {
     });
 
     const { callRobinhoodMcpTool, ROBINHOOD_TRADING_MCP_URL } = await import("../src/lib/robinhood");
+    // The legacy env override is migrated into local's stored token at boot; exercise that path.
+    const { migrateLocalRobinhoodToken } = await import("../src/lib/mcp-oauth");
+    migrateLocalRobinhoodToken();
 
-    const raw = await callRobinhoodMcpTool("user-a", "get_accounts", {});
+    const raw = await callRobinhoodMcpTool("local", "get_accounts", {});
 
     expect(raw).toEqual({ accounts: [{ account_number: "A1", nickname: "Agentic" }] });
     expect(calls[0].url).toBe(ROBINHOOD_TRADING_MCP_URL);
@@ -108,8 +111,12 @@ describe("robinhood mcp transport", () => {
     });
 
     const { getRobinhoodMcpHealth } = await import("../src/lib/robinhood");
+    // The legacy env override is migrated into local's stored token at boot; exercise that path.
+    const { migrateLocalRobinhoodToken } = await import("../src/lib/mcp-oauth");
+    migrateLocalRobinhoodToken();
 
-    await expect(getRobinhoodMcpHealth("user-a")).resolves.toMatchObject({
+    // Health check as the `local` primary user (its token came from the boot migration).
+    await expect(getRobinhoodMcpHealth("local")).resolves.toMatchObject({
       ok: true,
       authenticated: true,
       tools: ["get_accounts", "get_equity_quotes", "place_equity_order"]

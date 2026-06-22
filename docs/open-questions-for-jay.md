@@ -50,13 +50,15 @@ unaffected. Tell me (a)/(b)/(c) and I'll resume.
   to wire first.
 
 ### Q1 — LLM provider provisioning & which to ship first
-**Context:** The chat is provider-agnostic (`ChatLLM`); today only `AnthropicLLM` + `MockLLM` exist.
-You want users to choose between multiple frontier LLMs.
+**Context:** The chat is provider-agnostic (`ChatLLM`); `AnthropicLLM`, `OpenAILLM`, and `MockLLM`
+exist (`src/lib/chat/llm.ts`). `getLLM(userId)` resolves the active provider via
+`resolveLlmCredential`, trying Anthropic then OpenAI in priority order. OpenAI is the 2nd adapter
+and is live; the model-selector UI is the remaining NEXT item.
 **Options:** (a) app-provided keys (you pay, simplest UX) · (b) user-provided keys (BYOK, per-user via
 `resolveApiKey`) · (c) both. And which providers first (Anthropic / OpenAI / Gemini)?
-**My default:** Keep the provider-agnostic interface + a model selector; wire OpenAI as the 2nd adapter
-when I get there; assume BYOK via the existing key store unless told otherwise.
-**Blocks:** adding a 2nd provider adapter + the model-selector UI (NEXT/LATER).
+**My default:** Keep the provider-agnostic interface + a model selector; assume BYOK via the existing
+key store unless told otherwise.
+**Blocks:** model-selector UI (NEXT/LATER).
 
 ### Q2 — RAG corpus depth (cost answered)
 **Context:** Only 8-K summaries are indexed; the structure-aware chunker is built but unused. Full

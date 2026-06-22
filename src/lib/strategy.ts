@@ -28,7 +28,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -52,7 +52,8 @@ import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting } from "./db";
+import { getInternalSetting, getUserSetting, resolveLlmCredential, setInternalSetting } from "./db";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
@@ -125,6 +126,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
     const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+
+    // Pre-run snapshot: record the account state BEFORE any proposals execute so that
+    // post-mortem / reconciliation always has a pre-execution baseline even if the run
+    // crashes mid-loop. The post-run snapshot (below) remains for the final state.
+    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, portfolio: workingPortfolio, positions: workingPositions });
 
     // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
     // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
@@ -648,7 +654,22 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const sampleTrades = stat?.trades ?? 0;
   const winRate = stat?.shrunkWinRate ?? 50;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
-  const conviction = (proposal.confidenceScore ?? 50) / 100;
+  const rawConviction = (proposal.confidenceScore ?? 50) / 100;
+
+  // Conviction-cap on PROVEN theses (panel finding): the LLM's confidenceScore is a direct linear
+  // multiplier on size, and a learned "fact" can inflate it — so AI confidence alone could size up
+  // a proven-but-mediocre thesis past the 20-lot evidence floor (which only protects UNPROVEN ones).
+  // Mitigation: cap confidence's UPSIDE contribution UNLESS the thesis's own realized edge
+  // independently corroborates high conviction. Low confidence still shrinks size fully (only the
+  // upside above the cap is removed). This reads ONLY the realized scorecard stats already in scope
+  // (winRate/avgReturn) + the proposal's own confidenceScore — it must NEVER read learned_context
+  // (Phase-0 byte-identical invariant). Knobs are policy.tuning, conservative defaults ON by default.
+  const convictionCap = policy.tuning?.convictionCapUncorroborated ?? 0.6;
+  const corrobWinRate = policy.tuning?.corroborationWinRatePct ?? 58;
+  const corrobEdge = policy.tuning?.corroborationEdgePct ?? 0;
+  const corroborated = winRate >= corrobWinRate && avgReturn > corrobEdge;
+  const conviction = corroborated ? rawConviction : Math.min(rawConviction, convictionCap);
+  const convictionCapBinds = !corroborated && rawConviction > convictionCap;
 
   // Edge-aware Kelly-lite: scale by win rate AND conviction AND the realized EDGE.
   // A thesis that wins often but with no/negative expectancy shouldn't get full size;
@@ -676,13 +697,20 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   );
   const targetNotional = Math.floor(effectiveMaxOrderNotional * boundedMultiplier);
 
+  // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI
+  // conviction exceeded the cap), surface that the size could not ride confidence alone. Suppressed
+  // for unproven theses, which already report the exploratory-floor reason below.
+  const capNote = convictionCapBinds && !unproven
+    ? `\n\n[Sizing] Conviction capped to ${convictionCap} — thesis not yet corroborated by realized edge (winRate ${winRate}%, avgReturn ${avgReturn}%); AI confidence alone cannot drive size up.`
+    : "";
+
   return {
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + `\n\n[Sizing] Sized to $${targetNotional} (${Math.round(boundedMultiplier * 100)}% of max)` + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`)
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote
   };
 }
 
@@ -983,8 +1011,10 @@ async function proposeTrades(input: {
   ragContext?: string;
   learnedContext?: string;
 }): Promise<TradeProposal[]> {
-  const openaiKey = resolveApiKey("openai", input.userId);
+  const cred = resolveLlmCredential("openai", input.userId);
+  const openaiKey = cred.key;
   if (!openaiKey) return fallbackProposal(input);
+  const llmKeySource = cred.source === "operator" ? "operator" : "user";
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -1300,7 +1330,7 @@ async function proposeTrades(input: {
       })
     },
     async () => {
-      const response = await fetch(url, {
+      const response = await llmFetch(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1314,6 +1344,7 @@ async function proposeTrades(input: {
         throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
       }
       const payload = await response.json();
+      recordLlmUsage({ userId: input.userId, provider: "openai", model, context: "strategy", keySource: llmKeySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
       const text = extractOpenAiText(payload);
 
       if (!text) {
@@ -1487,7 +1518,7 @@ async function proposeTrades(input: {
       })
     },
     async () => {
-      const bearResponse = await fetch(url, {
+      const bearResponse = await llmFetch(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",

@@ -272,8 +272,10 @@ export function parseApifyCongress(items: unknown, now: number = Date.now()): Co
  * Keyed by APIFY_API_TOKEN. House-only by default (eFD is authoritative for the Senate);
  * set WEB_SOURCE_APIFY_CONGRESS_CHAMBERS=all to include Senate too. Returns [] when no token.
  */
-export async function fetchApifyCongress(now: number = Date.now()): Promise<CongressTrade[]> {
-  const token = resolveApiKey("apify") || process.env.APIFY_API_TOKEN;
+export async function fetchApifyCongress(now: number = Date.now(), userId?: string): Promise<CongressTrade[]> {
+  // Apify is shared-operator-infra: the resolver returns the operator env token for any user
+  // (incl. no-userId background refresh), so no direct process.env read is needed here.
+  const token = resolveApiKey("apify", userId);
   if (!token) return [];
   const actor = (process.env.WEB_SOURCE_APIFY_CONGRESS_ACTOR || APIFY_CONGRESS_ACTOR).trim();
   if (/^(off|false|disabled|none)$/i.test(actor)) return [];

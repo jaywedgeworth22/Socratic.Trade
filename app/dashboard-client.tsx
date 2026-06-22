@@ -77,6 +77,7 @@ import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
+import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
 import {
   Button,
   Card,
@@ -93,11 +94,12 @@ import {
   inputClass
 } from "./ui/primitives";
 import { ThemeToggle } from "./ui/theme";
+import { CommandPalette, type Command } from "./ui/command-palette";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
-type FeedTab = "activity" | "runs" | "notifications";
+type FeedTab = "activity" | "runs" | "notifications" | "audit";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
@@ -294,6 +296,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [learnedQueueOpen, setLearnedQueueOpen] = useState(false);
+  const [learnedQueueCount, setLearnedQueueCount] = useState(0);
 
   // Consent gate: "loading" → fetch in progress; "needed" → show modal; "done" → clear
   const [consentGate, setConsentGate] = useState<ConsentGateState>("loading");
@@ -313,6 +317,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }, []);
 
   const [killConfirm, setKillConfirm] = useState(false);
+  const [decideConfirm, setDecideConfirm] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
   // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
@@ -382,14 +388,43 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     };
     for (const type of ["run-complete", "order", "proposal", "dirty"]) es.addEventListener(type, refresh);
     es.addEventListener("market-data", refreshMarketData);
+    // Refresh the pending-learned badge when a new pending item is queued server-side
+    es.addEventListener("pending-learned-change", () => {
+      void fetch("/api/learned-context/pending", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+        .then((data) => { setLearnedQueueCount(data.filter((i) => i.status === "pending").length); })
+        .catch(() => { /* badge stays as-is on error */ });
+    });
     es.onerror = () => {
       // The browser auto-reconnects EventSource; the fallback poll covers any gap.
     };
     return () => es.close();
   }, []);
 
-  // Command K is temporarily disabled per user request
-  // (Shortcut logic was removed from here)
+  // Seed the learned-context queue badge count on mount so the button is visible immediately
+  // if there are pending items, without waiting for the user to open the SlideOver.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/learned-context/pending", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+      .then((data) => {
+        if (!cancelled) setLearnedQueueCount(data.filter((i) => i.status === "pending").length);
+      })
+      .catch(() => { /* badge stays at 0 on error */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // ⌘K / Ctrl-K command palette
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   async function load(options: { quiet?: boolean } = {}) {
     if (!options.quiet) setBusy(true);
@@ -606,8 +641,28 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 
 
   const safetyBanner = executionBanner(executionState);
+
+  const paletteCommands: Command[] = [
+    { id: "tab-decision", label: "Go to Decision", hint: "Decision tab", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
+    { id: "tab-assistant", label: "Go to Assistant", hint: "Assistant tab", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("assistant") },
+    { id: "tab-market", label: "Go to Market Scan", hint: "Market tab", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
+    { id: "tab-macro", label: "Go to Macro", hint: "Macro tab", icon: <Network size={15} />, run: () => setWorkspaceTab("macro") },
+    { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
+    { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={15} />, run: () => setWorkspaceTab("strategy") },
+    { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
+    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
+    { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
+    { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
+    { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
+    { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
+    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
+    { id: "refresh", label: "Refresh dashboard", icon: <RefreshCw size={15} />, run: () => void load() },
+  ];
+
   return (
     <div className="flex min-h-dvh flex-col overflow-x-hidden lg:h-dvh lg:overflow-hidden">
+      {/* ── ⌘K Command Palette ──────────────────────────────────────── */}
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={paletteCommands} />
       {/* ── Shared market-data pool consent gate (blocking until answered) ── */}
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
@@ -661,7 +716,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 aria-label="Approval mode"
                 className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
                 value={policy.strategyAuthority}
-                onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
+                onChange={(e) => {
+                  const next = e.target.value as TradingPolicy["strategyAuthority"];
+                  if (next === "decide" && policy.strategyAuthority !== "decide") {
+                    setDecideConfirm(true);
+                  } else {
+                    void updatePolicy({ strategyAuthority: next });
+                  }
+                }}
               >
                 <option value="propose">Propose → you approve</option>
                 <option value="decide">Decide → auto-executes</option>
@@ -714,6 +776,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 </span>
               )}
             </button>
+            <LearnedContextQueueBadge
+              count={learnedQueueCount}
+              onClick={() => setLearnedQueueOpen(true)}
+            />
             <Button
               variant="ghost"
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
@@ -861,7 +927,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             tabs={[
               { id: "activity", label: "Activity" },
               { id: "runs", label: "Runs" },
-              { id: "notifications", label: "Notifications" }
+              { id: "notifications", label: "Notifications" },
+              { id: "audit", label: "Audit Log" }
             ]}
           />
         </div>
@@ -869,12 +936,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           {feedTab === "activity" && <ActivityFeed snapshot={snapshot} />}
           {feedTab === "runs" && <RunHistory snapshot={snapshot} />}
           {feedTab === "notifications" && <NotificationsList snapshot={snapshot} />}
+          {feedTab === "audit" && <AuditLog snapshot={snapshot} />}
         </div>
       </SlideOver>
 
       <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
         {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
       </SlideOver>
+
+      <LearnedContextQueue
+        open={learnedQueueOpen}
+        onClose={() => setLearnedQueueOpen(false)}
+        onCountChange={setLearnedQueueCount}
+      />
 
       <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
         <div className="h-full w-full">
@@ -913,6 +987,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           setTickerLogoDisplay={updateTickerLogoDisplay}
           openAccounts={() => setAccountsOpen(true)}
           load={load}
+          onRequestDecideConfirm={() => setDecideConfirm(true)}
         />
       </Modal>
 
@@ -939,6 +1014,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         }
         confirmLabel={policy.systemState === "halted" ? "Start" : "Stop"}
         tone={policy.systemState === "halted" ? "primary" : "danger"}
+      />
+
+      <ConfirmModal
+        open={decideConfirm}
+        onClose={() => setDecideConfirm(false)}
+        onConfirm={() => {
+          setDecideConfirm(false);
+          void updatePolicy({ strategyAuthority: "decide" });
+        }}
+        title="Enable autonomous execution?"
+        body="Decide mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
+        confirmLabel="Enable auto-execute"
+        tone="danger"
       />
     </div>
   );
@@ -1205,6 +1293,12 @@ function DecisionView({
   const pending = snapshot.pendingProposals;
   return (
     <div className="space-y-3">
+      {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
+        <Card className="overflow-hidden">
+          <PanelHeader title="Pending approval" subtitle="No proposals awaiting review" icon={<CheckCircle size={16} />} />
+          <EmptyState icon={<CheckCircle size={18} />} title="All clear — no pending approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
+        </Card>
+      )}
       {pending.length > 0 && (
         <Card className="overflow-hidden">
           <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
@@ -2366,33 +2460,60 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
   const runs = snapshot.strategyRuns ?? [];
-  if (runs.length === 0) return <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />;
+  const sched = snapshot.scheduler;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="border-b border-line text-[11px] uppercase text-faint">
-            <th className="px-2 py-1.5 text-left font-semibold">Time</th>
-            <th className="px-2 py-1.5 text-left font-semibold">Status</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Test</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
-            <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => (
-            <tr key={run.id} className="border-b border-line/50">
-              <td className="whitespace-nowrap px-2 py-1.5 text-muted">{new Date(run.startedAt).toLocaleString()}</td>
-              <td className="px-2 py-1.5"><Chip tone={run.status === "completed" ? "up" : run.status === "failed" ? "down" : "warn"}>{run.status}</Chip></td>
-              <td className="px-2 py-1.5 text-right tnum">{run.placedCount}</td>
-              <td className="px-2 py-1.5 text-right tnum">{run.paperCount}</td>
-              <td className="px-2 py-1.5 text-right tnum">{run.blockedCount}</td>
-              <td className="max-w-[220px] truncate px-2 py-1.5 text-faint" title={run.summary}>{run.summary}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {sched && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-muted">
+          <span className="font-semibold uppercase tracking-wide text-faint text-[10px]">Scheduler</span>
+          {sched.lastRunAt && (
+            <span title={sched.lastRunAt}>
+              Last: <span className="text-fg">{new Date(sched.lastRunAt).toLocaleString()}</span>
+            </span>
+          )}
+          {sched.nextRunAt && (
+            <span title={sched.nextRunAt}>
+              Next: <span className="text-fg">{new Date(sched.nextRunAt).toLocaleString()}</span>
+            </span>
+          )}
+          {typeof sched.runsToday === "number" && (
+            <span>
+              Today: <span className="text-fg">{sched.runsToday}</span>
+            </span>
+          )}
+          {!sched.lastRunAt && !sched.nextRunAt && <span className="text-faint">No runs scheduled yet</span>}
+        </div>
+      )}
+      {runs.length === 0 ? (
+        <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-line text-[11px] uppercase text-faint">
+                <th className="px-2 py-1.5 text-left font-semibold">Time</th>
+                <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Test</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
+                <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.id} className="border-b border-line/50">
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted">{new Date(run.startedAt).toLocaleString()}</td>
+                  <td className="px-2 py-1.5"><Chip tone={run.status === "completed" ? "up" : run.status === "failed" ? "down" : "warn"}>{run.status}</Chip></td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.placedCount}</td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.paperCount}</td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.blockedCount}</td>
+                  <td className="max-w-[220px] truncate px-2 py-1.5 text-faint" title={run.summary}>{run.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -2420,6 +2541,26 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
           );
         })
       )}
+    </div>
+  );
+}
+
+function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const items = snapshot.auditFeed ?? [];
+  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No audit events yet" hint="Policy changes, order decisions, and system events appear here." />;
+  return (
+    <div className="space-y-1.5">
+      {items.slice(0, 100).map((item) => (
+        <div key={item.id} className="rounded-lg border border-line/60 bg-surface-2/40 px-3 py-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[11px] text-faint">{new Date(item.createdAt).toLocaleString()}{item.symbol && ` · ${item.symbol}`}{item.companyName && ` (${item.companyName})`}</div>
+              <div className="mt-0.5 text-sm text-fg">{item.title}</div>
+              {item.detail && <div className="mt-0.5 text-[12px] text-muted">{item.detail}</div>}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2510,7 +2651,8 @@ function SettingsContent({
   tickerLogoDisplay,
   setTickerLogoDisplay,
   openAccounts,
-  load
+  load,
+  onRequestDecideConfirm
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -2523,6 +2665,7 @@ function SettingsContent({
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
   openAccounts: () => void;
   load: () => Promise<void>;
+  onRequestDecideConfirm: () => void;
 }) {
   type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications" | "data";
   const [section, setSection] = useState<Section>("operate");
@@ -2557,6 +2700,40 @@ function SettingsContent({
       setPoolConsentLoading(false);
     }
   }
+
+  // ── Learned-context sharing state ────────────────────────────────────────
+  // includeShared defaults TRUE (user benefits from the pool); contributeShared defaults FALSE
+  // (nothing is shared without explicit opt-in). Loaded on first visit to the "data" section.
+  const [lcSharing, setLcSharing] = useState<{ includeShared: boolean; contributeShared: boolean } | null>(null);
+  const [lcSharingLoading, setLcSharingLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/learned-context/sharing")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setLcSharing(d as { includeShared: boolean; contributeShared: boolean }); })
+      .catch(() => { /* leave null — toggles render as disabled until loaded */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function updateLcSharing(patch: { includeShared?: boolean; contributeShared?: boolean }) {
+    if (lcSharingLoading) return;
+    setLcSharingLoading(true);
+    try {
+      const res = await fetch("/api/learned-context/sharing", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      const updated = await res.json() as { includeShared: boolean; contributeShared: boolean };
+      setLcSharing(updated);
+    } catch {
+      /* best-effort */
+    } finally {
+      setLcSharingLoading(false);
+    }
+  }
+
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
@@ -2741,7 +2918,18 @@ function SettingsContent({
             </Field>
           </div>
           <Field label="Strategy authority" className="sm:col-span-2">
-            <select className={inputClass} value={policy.strategyAuthority} onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}>
+            <select
+              className={inputClass}
+              value={policy.strategyAuthority}
+              onChange={(e) => {
+                const next = e.target.value as TradingPolicy["strategyAuthority"];
+                if (next === "decide" && policy.strategyAuthority !== "decide") {
+                  onRequestDecideConfirm();
+                } else {
+                  void updatePolicy({ strategyAuthority: next });
+                }
+              }}
+            >
               <option value="propose">LLM proposes — you approve</option>
               <option value="decide">LLM decides — runs autonomously</option>
             </select>
@@ -2922,6 +3110,49 @@ function SettingsContent({
           </label>
           <p className="text-[11px] text-faint">
             Your choice applies immediately. You can toggle sharing at any time.
+          </p>
+
+          {/* ── Learned-context (AI learnings) sharing ── */}
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">AI-learned facts sharing</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Control whether you benefit from other users&apos; shared learnings and whether your own
+                learned facts are contributed to the shared pool. Only structural market facts are ever
+                shared — risk and strategy directives are never shared. PII is always excluded.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Include shared learnings</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.includeShared ? "On — your AI decisions include facts shared by other users." : "Off — only your own learned facts are used."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.includeShared ?? true}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ includeShared: v }); }}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Contribute my learnings to the shared pool</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.contributeShared ? "On — new facts you learn are shared with opted-in users." : "Off — your learned facts stay private (default)."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.contributeShared ?? false}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ contributeShared: v }); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
+            directives go through a human approval queue and are never shared automatically.
           </p>
         </div>
       )}

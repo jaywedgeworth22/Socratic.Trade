@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   computeFactorICs,
+  computePerFactorIC,
   computeCompositeIC,
   deriveWeightsFromICs,
+  deriveWeightsFromIC,
   splitWalkForward,
   adjustReturns,
   buildEquityCurve,
@@ -319,5 +321,102 @@ describe("buildEquityCurve", () => {
 
   it("returns an empty curve for empty observations", () => {
     expect(buildEquityCurve([], DEFAULT_SCORING_WEIGHTS, new Map())).toHaveLength(0);
+  });
+});
+
+describe("computePerFactorIC", () => {
+  it("is an alias for computeFactorICs — returns same output", () => {
+    const observations: FactorObservation[] = [
+      obs("2026-06-10", "AAA", 0.01, { momentum: 10 }),
+      obs("2026-06-10", "BBB", 0.02, { momentum: 20 }),
+      obs("2026-06-10", "CCC", 0.03, { momentum: 30 })
+    ];
+    expect(computePerFactorIC(observations)).toEqual(computeFactorICs(observations));
+  });
+
+  it("empty rows → all factors have ic=0 and n=0", () => {
+    const result = computePerFactorIC([]);
+    expect(result).toHaveLength(MARKET_FACTORS.length);
+    for (const entry of result) {
+      expect(entry.ic).toBe(0);
+      expect(entry.n).toBe(0);
+    }
+  });
+
+  it("monotone signal → IC ≈ +1 for that factor", () => {
+    const observations: FactorObservation[] = [
+      obs("2026-06-10", "A", 0.01, { liquidity: 10 }),
+      obs("2026-06-10", "B", 0.02, { liquidity: 20 }),
+      obs("2026-06-10", "C", 0.03, { liquidity: 30 }),
+      obs("2026-06-10", "D", 0.04, { liquidity: 40 })
+    ];
+    const result = computePerFactorIC(observations);
+    const liq = result.find((e) => e.factor === "liquidity")!;
+    expect(liq.ic).toBeCloseTo(1, 10);
+    expect(liq.n).toBe(1);
+  });
+});
+
+describe("deriveWeightsFromIC", () => {
+  it("empty rows (no observations) → all default weights", () => {
+    const perFactorIC = computePerFactorIC([]);
+    const weights = deriveWeightsFromIC(perFactorIC);
+    expect(weights).toEqual(DEFAULT_SCORING_WEIGHTS);
+  });
+
+  it("negative IC → that factor receives its DEFAULT weight (not zeroed out)", () => {
+    // Build factor ICs: all zero except momentum which is negative.
+    // n=25 is above minN=20 for all, so they qualify (but their ICs are 0 or negative).
+    const perFactorIC = MARKET_FACTORS.map((factor) => ({ factor, ic: 0, n: 25 }));
+    perFactorIC.find((e) => e.factor === "momentum")!.ic = -0.5;
+
+    // Every factor has ic <= 0 → no positives → full fallback to defaults.
+    const weights = deriveWeightsFromIC(perFactorIC);
+    expect(weights).toEqual(DEFAULT_SCORING_WEIGHTS);
+  });
+
+  it("below minN threshold → falls back to defaults even with positive IC", () => {
+    // All factors have n=5, below default minN=20.
+    const perFactorIC = MARKET_FACTORS.map((factor) => ({ factor, ic: 0.4, n: 5 }));
+    const weights = deriveWeightsFromIC(perFactorIC);
+    expect(weights).toEqual(DEFAULT_SCORING_WEIGHTS);
+  });
+
+  it("mixed: qualified factors scale to DEFAULT weight sum; unqualified use default weight", () => {
+    // Only momentum and liquidity clear minN=20 with positive IC.
+    // Expected: momentum and liquidity together sum to DEFAULT weight sum; rest are defaults.
+    const perFactorIC = MARKET_FACTORS.map((factor) => ({
+      factor,
+      ic: 0,
+      n: factor === "momentum" || factor === "liquidity" ? 25 : 5 // others below minN
+    }));
+    perFactorIC.find((e) => e.factor === "momentum")!.ic = 0.3;
+    perFactorIC.find((e) => e.factor === "liquidity")!.ic = 0.1;
+
+    const weights = deriveWeightsFromIC(perFactorIC);
+
+    // Factors below minN should retain DEFAULT weight.
+    for (const factor of MARKET_FACTORS) {
+      if (factor !== "momentum" && factor !== "liquidity") {
+        expect(weights[factor]).toBe(DEFAULT_SCORING_WEIGHTS[factor]);
+      }
+    }
+
+    // Qualified factors should be positive.
+    expect(weights["momentum"]!).toBeGreaterThan(0);
+    expect(weights["liquidity"]!).toBeGreaterThan(0);
+
+    // Momentum should be proportionally larger than liquidity (IC ratio 3:1).
+    expect(weights["momentum"]! / weights["liquidity"]!).toBeCloseTo(3, 5);
+  });
+
+  it("all factors qualify with positive IC — sum of weights matches DEFAULT sum", () => {
+    const defaultSum = MARKET_FACTORS.reduce((s, f) => s + DEFAULT_SCORING_WEIGHTS[f], 0);
+    const perFactorIC = MARKET_FACTORS.map((factor) => ({ factor, ic: 0.5, n: 30 }));
+    const weights = deriveWeightsFromIC(perFactorIC);
+
+    const qualifiedSum = MARKET_FACTORS.reduce((s, f) => s + (weights[f] ?? 0), 0);
+    // All qualify, so total weight sum should equal DEFAULT sum.
+    expect(qualifiedSum).toBeCloseTo(defaultSum, 5);
   });
 });

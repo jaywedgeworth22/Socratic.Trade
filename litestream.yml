@@ -1,0 +1,10 @@
+dbs:
+  - path: /Users/jay/apps/trading-live/data/app.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_S3_BUCKET}
+        path: trading-live/app.db
+        region: ${LITESTREAM_S3_REGION:-auto}
+        endpoint: ${LITESTREAM_S3_ENDPOINT}
+        access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}

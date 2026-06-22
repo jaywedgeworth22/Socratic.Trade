@@ -1,6 +1,7 @@
 import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
 import { symbolsForPolicyUniverse } from "./index-universes";
+import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -14,6 +15,11 @@ export interface PolicyContext {
   marketScan?: MarketScan;
   /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
   washSaleLockedSymbols?: Set<string>;
+  /**
+   * User identifier. Required for the wash-sale gate to resolve the cross-account locked set
+   * when washSaleLockedSymbols is not pre-populated by the caller.
+   */
+  userId?: string;
   /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
   accountCapabilities?: AccountCapabilities;
   /**
@@ -49,10 +55,27 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.systemState === "liquidating" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is liquidating. Only close orders allowed.");
   if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
-  const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-  if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-  if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  // Universe/blocklist applies to OPENING trades only. Never block a risk-reducing exit
+  // (sell/cover) because the symbol was removed from the universe or blocklisted — that
+  // would trap a position in a name you flagged precisely to get out of.
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  if (isOpening) {
+    const allowedSymbols = allowedSymbolsForPolicy(context.policy);
+    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
+  // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
+  // Permissive default — brackets should be encouraged when stop rules are active.
+  if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const bracketPermitted =
+      context.policy.permittedOrderTypes.includes("bracket" as any) ||
+      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+    if (!bracketPermitted) {
+      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+    }
+  }
   if (!context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
     reasons.push("Extended-hours orders are disabled.");
   }
@@ -87,8 +110,6 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
   
-  const isOpening = proposal.side === "buy" || proposal.side === "short";
-
   // MARGIN-ACCOUNT MINIMUM (replaces the retired Pattern-Day-Trader gate). SEC/FINRA RETIRED the PDT
   // rule (FINRA Notice 26-10, 2026): there is no longer a $25,000 minimum or a 4-day-trades-in-5-days
   // limit. The new framework is broker-side real-time intraday-margin monitoring plus a $2,000 minimum
@@ -167,12 +188,24 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
   // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
   // the last 30 days, which would disallow the loss. Configurable via taxSettings.
+  // Wash sales are only relevant for BUY orders (re-establishing a long position).
+  // Covers are buy-to-close on a short and do NOT re-establish the sold long position,
+  // so they are intentionally excluded here.
+  //
+  // Authoritative cross-account enforcement (architecture-blueprint §3.3): if the
+  // caller did not pre-populate washSaleLockedSymbols, resolve it now using
+  // getUserWashSaleLockedSymbols so the gate cannot be silently bypassed by a caller
+  // that omits the locked set.
   if (
     proposal.side === "buy" &&
-    (context.policy.taxSettings?.washSaleGuard ?? true) &&
-    context.washSaleLockedSymbols?.has(symbol)
+    (context.policy.taxSettings?.washSaleGuard ?? true)
   ) {
-    reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    const lockedSymbols: Set<string> =
+      context.washSaleLockedSymbols ??
+      (context.userId != null ? getUserWashSaleLockedSymbols(context.userId, context.now ?? new Date()) : new Set<string>());
+    if (lockedSymbols.has(symbol)) {
+      reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    }
   }
 
   if (isOpening && proposal.side === "short" && context.policy.maxShortExposurePct) {

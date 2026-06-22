@@ -1,31 +1,31 @@
 import { resolveRequestUserId } from "@/lib/request-user";
 import { buildProductionDeps, makeOrchestrator } from "@/lib/chat/orchestrator";
-import { AnthropicLLM, getLLM, MockLLM, OpenAILLM } from "@/lib/chat/llm";
-import { resolveApiKey } from "@/lib/db";
+import { AnthropicLLM, getLLM, MockLLM, OpenAILLM, type LlmUsageOpts } from "@/lib/chat/llm";
+import { resolveLlmCredential } from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Lazy singleton for the default provider (driven by env). Per-request provider
-// overrides construct a fresh instance each call — acceptable given low chat volume.
-let defaultOrchestrate: ReturnType<typeof makeOrchestrator> | null = null;
-function getDefaultOrchestrator() {
-  if (!defaultOrchestrate) defaultOrchestrate = makeOrchestrator(buildProductionDeps());
-  return defaultOrchestrate;
+function usageOpts(userId: string, source: "user" | "operator" | "none", keyRef?: string): LlmUsageOpts {
+  return { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
 }
 
-/** Build an LLM instance from the per-request provider hint. Falls through to the env default. */
-function llmFromProvider(hint: string | undefined) {
+/**
+ * Build an LLM from the per-request provider hint, scoped to `userId`. The key resolves
+ * per-user-first with the operator env key as a flag-gated failover (resolveLlmCredential), and
+ * usage is attributed to the user (per attached key). Returns null for an unrecognized hint so the
+ * caller falls through to the env default (also per-user via getLLM(userId)).
+ */
+function llmFromProvider(hint: string | undefined, userId: string) {
   if (hint === "openai") {
-    const key = resolveApiKey("openai");
-    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini");
+    const { key, source, keyRef } = resolveLlmCredential("openai", userId);
+    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "anthropic") {
-    const key = resolveApiKey("anthropic");
-    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8");
+    const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
+    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "mock") return new MockLLM();
-  // No recognized hint — use the env-configured default.
   return null;
 }
 
@@ -37,13 +37,10 @@ export async function POST(request: Request) {
   }
 
   const providerHint = typeof body.provider === "string" ? body.provider : undefined;
-  const llm = llmFromProvider(providerHint);
-
-  // If the client sent an explicit provider that resolved to an LLM, use a fresh orchestrator for
-  // this request. Otherwise fall through to the lazy singleton (env default).
-  const orchestrate = llm
-    ? makeOrchestrator(buildProductionDeps(), llm)
-    : getDefaultOrchestrator();
+  // Always per-user: an explicit provider hint, else the env-configured default keyed to this user.
+  // (No shared singleton — that would pin one user's key/attribution for everyone.)
+  const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
+  const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
 
   const reply = await orchestrate({ userId, message: body.message });
   return NextResponse.json(reply);
