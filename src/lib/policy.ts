@@ -1,6 +1,7 @@
 import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
 import { symbolsForPolicyUniverse } from "./index-universes";
+import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -14,6 +15,11 @@ export interface PolicyContext {
   marketScan?: MarketScan;
   /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
   washSaleLockedSymbols?: Set<string>;
+  /**
+   * User identifier. Required for the wash-sale gate to resolve the cross-account locked set
+   * when washSaleLockedSymbols is not pre-populated by the caller.
+   */
+  userId?: string;
   /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
   accountCapabilities?: AccountCapabilities;
   /**
@@ -182,12 +188,24 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
   // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
   // the last 30 days, which would disallow the loss. Configurable via taxSettings.
+  // Wash sales are only relevant for BUY orders (re-establishing a long position).
+  // Covers are buy-to-close on a short and do NOT re-establish the sold long position,
+  // so they are intentionally excluded here.
+  //
+  // Authoritative cross-account enforcement (architecture-blueprint §3.3): if the
+  // caller did not pre-populate washSaleLockedSymbols, resolve it now using
+  // getUserWashSaleLockedSymbols so the gate cannot be silently bypassed by a caller
+  // that omits the locked set.
   if (
     proposal.side === "buy" &&
-    (context.policy.taxSettings?.washSaleGuard ?? true) &&
-    context.washSaleLockedSymbols?.has(symbol)
+    (context.policy.taxSettings?.washSaleGuard ?? true)
   ) {
-    reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    const lockedSymbols: Set<string> =
+      context.washSaleLockedSymbols ??
+      (context.userId != null ? getUserWashSaleLockedSymbols(context.userId, context.now ?? new Date()) : new Set<string>());
+    if (lockedSymbols.has(symbol)) {
+      reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    }
   }
 
   if (isOpening && proposal.side === "short" && context.policy.maxShortExposurePct) {
