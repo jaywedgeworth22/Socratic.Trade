@@ -64,7 +64,9 @@ describe("debateProposal LLM request bounds", () => {
 
     process.env.OPENAI_API_KEY = "test-key";
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RED-TEAM", paperMode: true });
+    // Pin a classic (non-reasoning) model so this test verifies temperature + exact output caps.
+    // Reasoning-model bounds (reasoning_effort, raised caps) are covered by test/llm-request.test.ts.
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RED-TEAM", paperMode: true, llmModel: "gpt-4.1-mini" });
     setStrategyPrompt("BASE STRATEGY");
 
     const bodies: any[] = [];

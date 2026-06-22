@@ -71,6 +71,8 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   // symbol can never block an unrelated policy update. The Settings UI also rejects them at add time.
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
+  if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
+  if (policy.llmReasoningEffort !== undefined && !["low", "medium", "high"].includes(policy.llmReasoningEffort)) return "llmReasoningEffort must be low, medium, or high.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";

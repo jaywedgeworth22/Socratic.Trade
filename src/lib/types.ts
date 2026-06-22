@@ -7,6 +7,8 @@ export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
 export type IndexUniverse = "sp500" | "nasdaq100" | "dow30";
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
+
+export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
@@ -288,6 +290,11 @@ export interface TradingPolicy {
   additionalSymbols: string[];
   blocklist?: string[];
   strategyAuthority: StrategyAuthority;
+  /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
+   *  fallback. Each user picks their own; resolved by resolveOpenAiModel(). */
+  llmModel?: string;
+  /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
+  llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
   maxOrderNotional?: number;

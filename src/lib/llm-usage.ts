@@ -39,6 +39,10 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gpt-4.1": [2, 8],
   "gpt-4.1-mini": [0.4, 1.6],
   "o4-mini": [1.1, 4.4],
+  "gpt-5.5": [5, 30],
+  "gpt-5.4": [2.5, 15],
+  "gpt-5.4-mini": [0.75, 4.5],
+  "gpt-5.4-nano": [0.2, 1.25],
   "claude-opus-4-8": [5, 25],
   "claude-sonnet-4-6": [3, 15],
   "claude-haiku-4-5": [1, 5]

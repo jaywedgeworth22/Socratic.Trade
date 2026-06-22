@@ -19,7 +19,7 @@
 import { audit, listPendingProposals, markProposalRevalidated, resolveLlmCredential, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -250,7 +250,7 @@ export async function revalidatePendingProposals(input: {
   };
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const model = resolveOpenAiModel(policy);
   const isChatCompletions = url.includes("/chat/completions");
   const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
 
@@ -273,7 +273,7 @@ export async function revalidatePendingProposals(input: {
           text: { format: { type: "json_schema", name: "proposal_revalidation", schema } }
         },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   let assessments: RevalidationAssessment[] = [];

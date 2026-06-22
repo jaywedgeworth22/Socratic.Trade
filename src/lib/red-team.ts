@@ -1,7 +1,7 @@
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
@@ -65,7 +65,7 @@ Respond with a JSON object containing:
   });
 
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const model = resolveOpenAiModel(policy);
   const isChatCompletions = url.includes("/chat/completions");
   const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
 
@@ -87,7 +87,7 @@ Respond with a JSON object containing:
         ]
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   try {
