@@ -2219,6 +2219,8 @@ function StrategyView({
                <NumberField label="Cadence (min)" value={policy.runCadenceMinutes} onCommit={(v) => updatePolicy({ runCadenceMinutes: Math.max(1, Math.round(v)) })} />
                <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
                <NumberField label="Max hourly notional ($)" value={policy.maxHourlyNotional} onCommit={(v) => updatePolicy({ maxHourlyNotional: v })} />
+               <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
+               <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
              </div>
              <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
@@ -2231,6 +2233,29 @@ function StrategyView({
                <p className="text-xs leading-relaxed text-faint">
                  Allows scheduled or event-triggered strategy runs during 4:00-9:30 AM ET and 4:00-8:00 PM ET. Extended-hours orders still require the separate order permission, and dollar/fractional orders stay regular-hours only.
                </p>
+             </div>
+             <div className="space-y-2 sm:col-span-2">
+               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+                 <span>
+                   <span className="block text-sm font-medium text-fg">Enable short selling</span>
+                   <span className="block text-xs text-faint">Requires a connected broker account that supports shorting (e.g. Alpaca); has no effect on accounts without short capability. This lets the agent open short/cover positions.</span>
+                 </span>
+                 <Switch checked={Boolean(policy.shortSellingEnabled)} onChange={(v) => updatePolicy({ shortSellingEnabled: v })} />
+               </label>
+               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+                 <span>
+                   <span className="block text-sm font-medium text-fg">Broker-held brackets</span>
+                   <span className="block text-xs text-faint">Attaches native stop-loss/take-profit (OCO) orders at the broker (Alpaca) so protective exits survive local downtime; no effect on brokers without native brackets.</span>
+                 </span>
+                 <Switch checked={policy.brokerBracketsEnabled !== false} onChange={(v) => updatePolicy({ brokerBracketsEnabled: v })} />
+               </label>
+               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+                 <span>
+                   <span className="block text-sm font-medium text-fg">Beta-scaled stops</span>
+                   <span className="block text-xs text-faint">Scales stop-loss distance by each name&apos;s beta (wider for volatile names, tighter for stable ones) instead of one flat %.</span>
+                 </span>
+                 <Switch checked={Boolean(policy.betaScaledStops)} onChange={(v) => updatePolicy({ betaScaledStops: v })} />
+               </label>
              </div>
           </div>
         </div>
@@ -3065,6 +3090,20 @@ function SettingsContent({
               value={tuning.crisisMaxOpeningExposurePct ?? 0}
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, crisisMaxOpeningExposurePct: v } })}
             />
+            <OptionalNumberField
+              label="FCF-yield veto floor %"
+              value={tuning.bearVetoFcfYieldFloorPct}
+              placeholder="blank disables"
+              step={0.5}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, bearVetoFcfYieldFloorPct: v } })}
+            />
+            <OptionalNumberField
+              label="Debt/equity veto ceiling"
+              value={tuning.bearVetoDebtToEquityCeiling}
+              placeholder="blank disables"
+              step={0.5}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, bearVetoDebtToEquityCeiling: v } })}
+            />
           </div>
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Shrinkage prior</span> pulls thin-sample win/return stats toward neutral (higher = more skeptical of small samples; default 5).{" "}
@@ -3073,6 +3112,10 @@ function SettingsContent({
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Red-team threshold</span> sends proposals at or above that confidence score to the adversarial review (default 80).{" "}
             <span className="font-medium text-muted">Crisis open cap</span> blocks new buy/short notional above that portfolio percentage when the deterministic regime is crisis or inverted curve; 0 leaves it off.
+          </p>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">FCF-yield veto floor</span> deterministically vetoes BUYS whose free-cash-flow yield is below this value (e.g. 0 vetoes any negative-FCF buy); blank disables.{" "}
+            <span className="font-medium text-muted">Debt/equity veto ceiling</span> vetoes BUYS whose debt/equity ratio exceeds this (e.g. 3); blank disables.
           </p>
           <p className="text-xs text-faint">
             Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.
@@ -3222,6 +3265,32 @@ function NumberField({ label, value, onCommit }: { label: string; value?: number
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
+        className={inputClass}
+      />
+    </Field>
+  );
+}
+
+function OptionalNumberField({ label, value, placeholder, step, onCommit }: { label: string; value?: number; placeholder?: string; step?: number; onCommit: (v: number | undefined) => void }) {
+  const [draft, setDraft] = useState(value !== undefined ? String(value) : "");
+  useEffect(() => setDraft(value !== undefined ? String(value) : ""), [value]);
+  function commit() {
+    if (draft.trim() === "") { onCommit(undefined); return; }
+    const n = Number(draft);
+    if (Number.isFinite(n) && n >= 0) onCommit(n);
+    else setDraft(value !== undefined ? String(value) : "");
+  }
+  return (
+    <Field label={label}>
+      <input
+        type="number"
+        min="0"
+        step={step ?? 1}
+        value={draft}
+        placeholder={placeholder ?? "blank disables"}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
         className={inputClass}
       />
     </Field>
