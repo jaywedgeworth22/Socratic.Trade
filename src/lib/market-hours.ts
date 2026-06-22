@@ -1,7 +1,7 @@
 // US market session detector using America/New_York wall-clock time.
 // Regular session: Mon–Fri 09:30–16:00 ET.
 // Extended: pre-market 04:00–09:30 ET, post-market 16:00–20:00 ET.
-// NOTE: Does NOT account for market holidays (Phase 1 documented limitation).
+// Market holidays ARE modeled via getMarketHolidays() (see lines below).
 
 export type MarketSession = "closed" | "regular" | "pre" | "post";
 
