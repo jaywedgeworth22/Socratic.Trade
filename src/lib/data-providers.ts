@@ -293,7 +293,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // against /api/admin/robinhood-probe before trusting them next to other real numbers.
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
-  if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider());
+  if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
   if (fintech.key) providers.push(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId));
   if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
@@ -625,13 +625,26 @@ export class RobinhoodEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "robinhood-fundamentals";
   readonly configured = true;
 
+  // SECURITY: the Robinhood OAuth token is per-user. This provider is constructed with the
+  // request-scoped userId (see getEnrichmentProvider) and threads it into the fundamentals
+  // fetch so user B never resolves user A's ('local') broker token. A pass with no user in
+  // scope (undefined) fails closed — it returns empty enrichment rather than borrowing the
+  // operator's token for a shared/background scan.
+  constructor(private readonly userId?: string) {}
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
     const result: Record<string, SymbolEnrichment> = {};
+    // Fail closed when there is no user in scope: a private per-user broker credential must
+    // never be sourced from the dev/operator 'local' identity for an anonymous enrichment pass.
+    if (!this.userId) {
+      for (const symbol of normalized) result[symbol] = {};
+      return result;
+    }
     try {
       const { fetchRobinhoodFundamentals } = await import("./robinhood");
-      const raw = await fetchRobinhoodFundamentals(normalized);
+      const raw = await fetchRobinhoodFundamentals(normalized, this.userId);
       for (const symbol of normalized) {
         const row = raw[symbol];
         result[symbol] = row ? parseRobinhoodFundamentals(row) : {};
