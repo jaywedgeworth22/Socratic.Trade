@@ -45,14 +45,30 @@ export function applyExecutionCost(price: number, side: OrderSide, costBps: numb
 }
 
 /**
- * Read the cost-model config from env (default OFF). Enabled when PAPER_EXECUTION_COST_MODEL is
- * truthy OR a positive PAPER_EXECUTION_COST_BASE_BPS is set. Impact coeff defaults to 10.
+ * Default base slippage when no override is supplied (1 bps — conservative but non-zero so
+ * simulated fills are net-of-cost by default without an extreme haircut).
+ */
+const DEFAULT_BASE_SLIPPAGE_BPS = 1;
+
+/**
+ * Read the cost-model config from env (DEFAULT ON for simulated fills).
+ *
+ * Enabled UNLESS `PAPER_EXECUTION_COST_MODEL` is explicitly set to a falsy value
+ * ("0", "false", "off", "no"). This means:
+ *   - No env → ON (default base of 1 bps + sqrt market-impact).
+ *   - PAPER_EXECUTION_COST_MODEL=off → disabled (opt-out for edge cases / frictionless tests).
+ *   - PAPER_EXECUTION_COST_BASE_BPS=8 → ON, overrides the default base.
+ *   - PAPER_EXECUTION_IMPACT_COEFF=20 → override impact coefficient.
+ *
+ * Real broker (live) fills are never adjusted — only paper/simulated fills are affected.
  */
 export function executionCostConfig(): { enabled: boolean; baseSlippageBps: number; impactCoeff: number } {
-  const flag = ["1", "true", "on", "yes"].includes(String(process.env.PAPER_EXECUTION_COST_MODEL ?? "").trim().toLowerCase());
+  const envFlag = String(process.env.PAPER_EXECUTION_COST_MODEL ?? "").trim().toLowerCase();
+  // Explicit opt-out: treat "0", "false", "off", "no" as disabled.
+  const explicitlyDisabled = ["0", "false", "off", "no"].includes(envFlag);
   const base = Number(process.env.PAPER_EXECUTION_COST_BASE_BPS);
   const coeff = Number(process.env.PAPER_EXECUTION_IMPACT_COEFF);
-  const baseSlippageBps = Number.isFinite(base) && base > 0 ? base : 0;
+  const baseSlippageBps = Number.isFinite(base) && base > 0 ? base : DEFAULT_BASE_SLIPPAGE_BPS;
   const impactCoeff = Number.isFinite(coeff) && coeff > 0 ? coeff : 10;
-  return { enabled: flag || baseSlippageBps > 0, baseSlippageBps, impactCoeff };
+  return { enabled: !explicitlyDisabled, baseSlippageBps, impactCoeff };
 }

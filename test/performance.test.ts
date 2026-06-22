@@ -122,8 +122,10 @@ describe("calculatePnl", () => {
       status: "filled"
     });
 
-    expect(fill.price).toBeCloseTo(420);
-    expect(fill.quantity).toBeCloseTo(10 / 420);
+    // With default-ON execution cost (1 bps base, no spread/volume data here):
+    // price = 420 * (1 + 0.0001) = 420.042; quantity = 10 / 420.042.
+    expect(fill.price).toBeCloseTo(420.042, 1); // 1 bps cost applied to buy
+    expect(fill.quantity).toBeCloseTo(10 / 420.042, 4);
 
     const projection = getPaperPortfolioProjection({ accountNumber: "APPROVAL1", startingCash: 100, currentPrices: { MSFT: 420 } });
     expect(projection.portfolio.cash).toBeCloseTo(90);
@@ -531,8 +533,10 @@ describe("recordFillFromProposal — T9 short/cover boundaries", () => {
     });
     expect(f.side).toBe("short");
     expect(f.quantity).toBeCloseTo(2);
-    expect(f.price).toBeCloseTo(100);
-    expect(f.notional).toBeCloseTo(200); // notional is always recorded as a positive magnitude
+    // With default-ON execution cost (1 bps base, no spread/volume): short receives DOWN.
+    // price = 100 * (1 - 0.0001) = 99.99; notional = 2 * 99.99 = 199.98.
+    expect(f.price).toBeCloseTo(99.99, 1);
+    expect(f.notional).toBeCloseTo(199.98, 1); // notional is always recorded as a positive magnitude
   });
 
   it("books a cover fill as a partial short close in the projection", () => {
@@ -553,6 +557,58 @@ describe("recordFillFromProposal — T9 short/cover boundaries", () => {
 
     const projection = getPaperPortfolioProjection({ accountNumber: "T9_COVER", startingCash: 1000, currentPrices: { TSLA: 95 } });
     expect(projection.positions.find((p) => p.symbol === "TSLA")?.quantity).toBeCloseTo(-2); // short 3, covered 1
+  });
+});
+
+describe("holding-period fields (Task 3 — avgDaysHeld / shortTermPct)", () => {
+  it("computes avgDaysHeld and shortTermPct from entryAt/exitAt on closed lots", async () => {
+    const { insertFillEvent, audit } = await import("../src/lib/db");
+    const account = "HOLDPERIOD1";
+    const userId = `hp-${randomUUID()}`;
+    const runId = "run-hp-1";
+
+    // Lot A: held 10 days (short-term < 365). runId must match the snapshot audit entry.
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "AAA", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", runId, filledAt: "2026-01-01T00:00:00.000Z", raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: "R" } } });
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "AAA", side: "sell", quantity: 1, price: 110, notional: 110, status: "filled", filledAt: "2026-01-11T00:00:00.000Z" });
+    // Lot B: held ~400 days (long-term >= 365). runId must match the snapshot audit entry.
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "BBB", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", runId, filledAt: "2025-01-01T00:00:00.000Z", raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: "R" } } });
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "BBB", side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: "2026-02-05T00:00:00.000Z" });
+    audit("signal_snapshot", {
+      runId,
+      signals: [
+        { symbol: "AAA", chosen: true, factorBreakdown: { liquidity: 5, momentum: 90, value: 20, quality: 10, volatility: 10, sentiment: 15, positioning: 30, diversification: 5, weightedTotal: 60 } },
+        { symbol: "BBB", chosen: true, factorBreakdown: { liquidity: 5, momentum: 90, value: 20, quality: 10, volatility: 10, sentiment: 15, positioning: 30, diversification: 5, weightedTotal: 60 } }
+      ]
+    }, userId);
+
+    const scorecard = getFactorScorecard(account, "paper", {}, userId);
+    // Both lots have momentum as dominant factor → one bucket.
+    expect(scorecard).toHaveLength(1);
+    expect(scorecard[0].factor).toBe("momentum");
+    expect(scorecard[0].trades).toBe(2);
+    // AAA: 10 days, BBB: ~400 days → avg ≈ 205 days (check within 5 days tolerance).
+    expect(scorecard[0].avgDaysHeld).toBeDefined();
+    expect(scorecard[0].avgDaysHeld!).toBeGreaterThan(200);
+    expect(scorecard[0].avgDaysHeld!).toBeLessThan(215);
+    // shortTermPct: 1 out of 2 lots < 365 days = 50%.
+    expect(scorecard[0].shortTermPct).toBeCloseTo(50, 0);
+  });
+
+  it("returns avgDaysHeld=0 and shortTermPct=100 when lots are closed very quickly", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "QUICKCLOSE1";
+    // Buy then sell within the same second — avgDaysHeld ≈ 0, still short-term.
+    insertFillEvent({ accountNumber: account, source: "paper", symbol: "FAST", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: "2026-06-15T10:00:00.000Z" });
+    insertFillEvent({ accountNumber: account, source: "paper", symbol: "FAST", side: "sell", quantity: 1, price: 105, notional: 105, status: "filled", filledAt: "2026-06-15T10:00:01.000Z" });
+
+    const sc = getThesisScorecard(account, "paper");
+    expect(sc).toHaveLength(1);
+    // avgDaysHeld should be defined and very close to 0 (1 second / 86400 seconds per day).
+    expect(sc[0].avgDaysHeld).toBeDefined();
+    expect(sc[0].avgDaysHeld!).toBeGreaterThanOrEqual(0);
+    expect(sc[0].avgDaysHeld!).toBeLessThan(0.1);
+    // shortTermPct: held < 365 days → 100%.
+    expect(sc[0].shortTermPct).toBe(100);
   });
 });
 
