@@ -301,6 +301,28 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   return resolveApiKeyWithSource(service, userId).key;
 }
 
+/**
+ * Resolve Alpaca credentials for MARKET DATA (snapshots/news) — NOT trading. A user with their own
+ * Alpaca key gets their individual data (private/pooled, source "user"); otherwise the operator's
+ * paper key (`local` store → env) serves as the SHARED market-data source (source "env" → shared
+ * cache) for background refreshes and tenants without their own key. Alpaca market data is identical
+ * for paper and live accounts, so the operator's paper key is a fine shared source.
+ *
+ * SECURITY: the trading gateway (`alpaca.ts`) does NOT use this — it resolves Alpaca strictly
+ * per-user (`resolveApiKey`, per-user-only tier) so no one ever TRADES on the operator's account.
+ * This helper exposes the operator's key only for read-only market-data endpoints.
+ */
+export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
+  if (userId) {
+    const own = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey;
+    if (own) return { apiKey: own, secretKey: getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey, source: "user" };
+  }
+  const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
+  const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
+  if (opKey) return { apiKey: opKey, secretKey: opSecret, source: "env" };
+  return { source: "none" };
+}
+
 // ── LLM credential resolution (per-user-first, operator-funded failover) ─────
 //
 // LLM keys (openai/anthropic) are per-user-only in the generic resolver above, so `local` keeps
@@ -318,16 +340,26 @@ export function llmOperatorFallbackEnabled(): boolean {
 }
 
 /**
- * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
- * operator-funded failover so callers can attribute usage/cost. `local` is the operator, so its
- * env key is always "operator" (its own). A non-`local` tenant only reaches the env key when the
- * failover is enabled.
+ * A stable, non-reversible fingerprint of an API key — `sha256(key)` truncated. Lets the usage
+ * ledger measure usage per distinct ATTACHED key without ever storing the secret. Returns undefined
+ * for an empty key.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic", userId?: string): { key?: string; source: LlmKeySource } {
+export function keyFingerprint(key: string | undefined): string | undefined {
+  if (!key) return undefined;
+  return crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
+}
+
+/**
+ * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
+ * operator-funded failover, and `keyRef` is the non-secret fingerprint of the resolved key so the
+ * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
+ * when the failover is enabled.
+ */
+export function resolveLlmCredential(service: "openai" | "anthropic", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user" };
+    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own
@@ -335,7 +367,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic", userId?: s
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
   const envKey = envVar ? process.env[envVar] : undefined;
-  return envKey ? { key: envKey, source: "operator" } : { source: "none" };
+  return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
 }
 
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we

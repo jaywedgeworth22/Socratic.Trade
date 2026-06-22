@@ -6,24 +6,24 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-function usageOpts(userId: string, source: "user" | "operator" | "none"): LlmUsageOpts {
-  return { userId, keySource: source === "operator" ? "operator" : "user", context: "chat" };
+function usageOpts(userId: string, source: "user" | "operator" | "none", keyRef?: string): LlmUsageOpts {
+  return { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
 }
 
 /**
  * Build an LLM from the per-request provider hint, scoped to `userId`. The key resolves
  * per-user-first with the operator env key as a flag-gated failover (resolveLlmCredential), and
- * usage is attributed to the user. Returns null for an unrecognized hint so the caller falls
- * through to the env default (also per-user via getLLM(userId)).
+ * usage is attributed to the user (per attached key). Returns null for an unrecognized hint so the
+ * caller falls through to the env default (also per-user via getLLM(userId)).
  */
 function llmFromProvider(hint: string | undefined, userId: string) {
   if (hint === "openai") {
-    const { key, source } = resolveLlmCredential("openai", userId);
-    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", undefined, usageOpts(userId, source));
+    const { key, source, keyRef } = resolveLlmCredential("openai", userId);
+    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "anthropic") {
-    const { key, source } = resolveLlmCredential("anthropic", userId);
-    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", undefined, usageOpts(userId, source));
+    const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
+    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "mock") return new MockLLM();
   return null;

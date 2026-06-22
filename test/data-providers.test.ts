@@ -854,11 +854,9 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
     process.env.ALPACA_PAPER_API_KEY = "alpaca-key";
     process.env.ALPACA_PAPER_SECRET_KEY = "alpaca-secret";
     process.env.FINNHUB_API_KEY = "finnhub-key";
-    // Alpaca keys are per-user-only (trade-safe): the operator's env values are migrated into the
-    // `local` primary user's store at boot, so the Alpaca enrichment provider seats for `local`.
-    // (Finnhub is shared-operator-infra — env serves any user, no migration needed.)
-    const { migrateLocalEnvCredentials } = await import("../src/lib/db");
-    migrateLocalEnvCredentials();
+    // Alpaca MARKET DATA uses the operator's env paper key as a shared source for background scans
+    // (no userId) — so the Alpaca enrichment provider seats without any per-user key. (Trading still
+    // resolves Alpaca strictly per-user; this only affects read-only data.)
   });
 
   afterEach(() => {
@@ -872,7 +870,7 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
   });
 
   it("seats alpaca-snapshot ahead of the delayed finnhub provider in the cascade", () => {
-    const provider = getEnrichmentProvider("local");
+    const provider = getEnrichmentProvider(); // no userId → operator's shared Alpaca data key
     const order = provider.name.split("+");
     expect(order).toContain("alpaca-snapshot");
     expect(order).toContain("finnhub");
@@ -909,7 +907,7 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
       return new Response(JSON.stringify({}));
     });
 
-    const provider = getEnrichmentProvider("local");
+    const provider = getEnrichmentProvider(); // no userId → operator's shared Alpaca data key
     const result = await provider.enrich(["AAPL"]);
 
     // Real-time Alpaca wins every price-family field…

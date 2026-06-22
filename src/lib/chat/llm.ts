@@ -16,6 +16,8 @@ import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types
 export interface LlmUsageOpts {
   userId?: string;
   keySource?: "user" | "operator";
+  /** Non-secret fingerprint of the key serving this call (per-attached-key attribution). */
+  keyRef?: string;
   context?: string;
 }
 
@@ -28,6 +30,7 @@ function recordChatUsage(opts: LlmUsageOpts, provider: "openai" | "anthropic", m
     model,
     context: opts.context ?? "chat",
     keySource: opts.keySource ?? "user",
+    keyRef: opts.keyRef,
     promptTokens: saw ? prompt : undefined,
     completionTokens: saw ? completion : undefined
   });
@@ -460,16 +463,16 @@ export class OpenAILLM implements ChatLLM {
 export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
   const chatLlm = process.env.CHAT_LLM;
   if (chatLlm === "anthropic") {
-    const { key, source } = resolveLlmCredential("anthropic", userId);
+    const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
     if (key) {
-      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", context: "chat" };
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
       return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport, usage);
     }
   }
   if (chatLlm === "openai") {
-    const { key, source } = resolveLlmCredential("openai", userId);
+    const { key, source, keyRef } = resolveLlmCredential("openai", userId);
     if (key) {
-      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", context: "chat" };
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
       return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", opts.openAITransport ?? defaultOpenAITransport, usage);
     }
   }

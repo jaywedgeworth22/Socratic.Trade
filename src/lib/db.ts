@@ -296,6 +296,7 @@ function migrate(database: Database.Database): void {
       model TEXT,
       context TEXT NOT NULL DEFAULT 'unknown',
       key_source TEXT NOT NULL CHECK(key_source IN ('user','operator')),
+      key_ref TEXT,
       prompt_tokens INTEGER,
       completion_tokens INTEGER,
       total_tokens INTEGER,
@@ -304,6 +305,7 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage (user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_llm_usage_source ON llm_usage (key_source, created_at);
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_key ON llm_usage (key_ref, created_at);
 
     CREATE TABLE IF NOT EXISTS user_memory (
       id TEXT PRIMARY KEY,
@@ -428,6 +430,12 @@ function migrate(database: Database.Database): void {
   }
   if (!connectedAccountColumns.some((column) => column.name === "capabilities")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN capabilities TEXT");
+  }
+
+  // Per-attached-key usage attribution: add key_ref to llm_usage tables created before it existed.
+  const llmUsageColumns = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
+  if (llmUsageColumns.length > 0 && !llmUsageColumns.some((column) => column.name === "key_ref")) {
+    database.exec("ALTER TABLE llm_usage ADD COLUMN key_ref TEXT");
   }
 
   // Rename: legacy "dry_run" proposal status is now "paper".

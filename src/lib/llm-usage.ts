@@ -9,6 +9,7 @@
 import crypto from "crypto";
 import { getDb } from "./db";
 import type { LlmKeySource } from "./db-api-keys";
+export { keyFingerprint } from "./db-api-keys";
 
 export interface LlmUsageEntry {
   userId: string;
@@ -18,6 +19,9 @@ export interface LlmUsageEntry {
   context?: string;
   /** 'operator' means the operator-funded env key served this (non-owning) user. */
   keySource: Exclude<LlmKeySource, "none">;
+  /** Non-secret stable fingerprint of the API key that served this call (see keyFingerprint), so
+   *  usage/cost can be measured PER ATTACHED KEY — user-provided or operator. */
+  keyRef?: string;
   promptTokens?: number;
   completionTokens?: number;
 }
@@ -78,8 +82,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     const cost = estimateLlmCostUsd(entry.model, entry.promptTokens, entry.completionTokens);
     getDb()
       .prepare(
-        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         crypto.randomUUID(),
@@ -88,6 +92,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
         entry.model ?? null,
         entry.context ?? "unknown",
         entry.keySource,
+        entry.keyRef ?? null,
         entry.promptTokens ?? null,
         entry.completionTokens ?? null,
         total ?? null,
@@ -103,6 +108,8 @@ export interface LlmUsageRow {
   userId: string;
   provider: string;
   keySource: LlmKeySource;
+  /** Per-attached-key fingerprint (see keyFingerprint); null for legacy rows without one. */
+  keyRef: string | null;
   calls: number;
   promptTokens: number;
   completionTokens: number;
@@ -111,9 +118,10 @@ export interface LlmUsageRow {
 }
 
 /**
- * Aggregate usage grouped by (userId, provider, keySource). `sinceIso` bounds the window.
- * `operatorFundedOnly` returns only rows where a NON-`local` tenant spent on the operator key —
- * the figure the operator most cares about while the failover is enabled.
+ * Aggregate usage grouped by (userId, provider, keySource, keyRef) — so usage/cost is measured per
+ * ATTACHED KEY, not just per source. `sinceIso` bounds the window. `operatorFundedOnly` returns only
+ * rows where a NON-`local` tenant spent on the operator key — the figure the operator most cares
+ * about while the failover is enabled.
  */
 export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean } = {}): LlmUsageRow[] {
   const where: string[] = [];
@@ -129,14 +137,14 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = getDb()
     .prepare(
-      `SELECT user_id, provider, key_source,
+      `SELECT user_id, provider, key_source, key_ref,
               COUNT(*) AS calls,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
               COALESCE(SUM(completion_tokens),0) AS completion_tokens,
               COALESCE(SUM(total_tokens),0) AS total_tokens,
               COALESCE(SUM(cost_usd),0) AS cost_usd
        FROM llm_usage ${clause}
-       GROUP BY user_id, provider, key_source
+       GROUP BY user_id, provider, key_source, key_ref
        ORDER BY cost_usd DESC, calls DESC`
     )
     .all(...params) as Array<Record<string, unknown>>;
@@ -144,6 +152,7 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
     userId: String(r.user_id),
     provider: String(r.provider),
     keySource: r.key_source as LlmKeySource,
+    keyRef: r.key_ref == null ? null : String(r.key_ref),
     calls: Number(r.calls),
     promptTokens: Number(r.prompt_tokens),
     completionTokens: Number(r.completion_tokens),

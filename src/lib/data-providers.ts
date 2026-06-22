@@ -10,7 +10,7 @@
 // the final real tier — no API key required, uses session crumb auth.
 
 import { normalizeSymbol } from "./money";
-import { resolveApiKey, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
+import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { getStreamedHeadlines } from "./streams/news-store";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -269,8 +269,9 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const alphaVantage = resolveApiKeyWithSource("alphavantage", userId);
   const fmp = resolveApiKeyWithSource("fmp", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
-  const alpacaKey = resolveApiKeyWithSource("alpaca_paper_api_key", userId);
-  const alpacaSecret = resolveApiKey("alpaca_paper_secret_key", userId);
+  // Alpaca MARKET DATA: own key (individual) → operator's paper key (shared) for background/tenants.
+  // Trading is unaffected (alpaca.ts resolves Alpaca strictly per-user).
+  const alpacaData = resolveAlpacaMarketData(userId);
   // ── Freshness-tier ordering (first-wins cascade) ──────────────────────────
   // The cascade below is first-wins per field (takeScalar keeps the first non-undefined
   // value). So provider ORDER decides which source wins the price-family fields
@@ -284,7 +285,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // WITHOUT disturbing fundamentals sourcing (still finnhub/fmp/yahoo below). It
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
-  if (alpacaKey.key && alpacaSecret) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaKey.key, alpacaSecret, alpacaKey.source, userId));
+  if (alpacaData.apiKey && alpacaData.secretKey) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
@@ -297,7 +298,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
-  if (alpacaKey.key) providers.push(new AlpacaNewsEnrichmentProvider(alpacaKey.key, alpacaSecret || undefined, alpacaKey.source, userId));
+  if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
   providers.push(new YahooFinanceEnrichmentProvider());
