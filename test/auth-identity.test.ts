@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isEmailAllowed, isPrimaryEmail, userIdForEmail } from "../src/lib/auth/identity";
 
 describe("auth identity — multi-user keystone (Q3)", () => {
@@ -24,5 +24,44 @@ describe("auth identity — multi-user keystone (Q3)", () => {
     expect(isEmailAllowed("mail@jays.services")).toBe(true);
     expect(isEmailAllowed("anyone@example.com")).toBe(true); // no env allowlist in test → CF Access is the gate
     expect(isEmailAllowed("")).toBe(false);
+  });
+});
+
+describe("auth identity — primary email aliases", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("every PRIMARY_USER_EMAIL_ALIASES address shares the one 'local' account with the primary", () => {
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@gmail.example");
+    vi.stubEnv("PRIMARY_USER_EMAIL_ALIASES", "owner@custom.example, owner@work.example");
+
+    // All three map to the single primary dataset.
+    expect(userIdForEmail("owner@gmail.example")).toBe("local");
+    expect(userIdForEmail("OWNER@Custom.Example")).toBe("local"); // normalized
+    expect(userIdForEmail("owner@work.example")).toBe("local");
+
+    // All three are recognized as primary and allowed.
+    for (const e of ["owner@gmail.example", "owner@custom.example", "owner@work.example"]) {
+      expect(isPrimaryEmail(e)).toBe(true);
+      expect(isEmailAllowed(e)).toBe(true);
+    }
+
+    // A non-listed address is a separate isolated tenant, not the primary.
+    const stranger = userIdForEmail("stranger@example.com");
+    expect(stranger).toMatch(/^u_[0-9a-f]{24}$/);
+    expect(stranger).not.toBe("local");
+    expect(isPrimaryEmail("stranger@example.com")).toBe(false);
+  });
+
+  it("aliases are still gated by ALLOWED_EMAILS for non-primary addresses", () => {
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@gmail.example");
+    vi.stubEnv("PRIMARY_USER_EMAIL_ALIASES", "owner@custom.example");
+    vi.stubEnv("ALLOWED_EMAILS", "teammate@example.com");
+
+    // Primary + aliases bypass ALLOWED_EMAILS entirely.
+    expect(isEmailAllowed("owner@gmail.example")).toBe(true);
+    expect(isEmailAllowed("owner@custom.example")).toBe(true);
+    // Explicitly-allowed teammate is in; everyone else is out once ALLOWED_EMAILS is non-empty.
+    expect(isEmailAllowed("teammate@example.com")).toBe(true);
+    expect(isEmailAllowed("stranger@example.com")).toBe(false);
   });
 });
