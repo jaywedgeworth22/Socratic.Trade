@@ -638,12 +638,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const dailyNotionalPct = (policy.maxDailyNotional ?? 0) > 0 ? Math.round((dailyStats.notional / (policy.maxDailyNotional ?? 1)) * 100) : 0;
   const pendingCount = snapshot.pendingProposals.length;
   const setupBlocked = Boolean(enableBlockedReason);
-  const autonomyStatus = policy.systemState === "halted"
-    ? { tone: "down" as const, label: "Inactive" }
-    : policy.systemState === "active" && setupBlocked
+  // The chip reflects the RUN state (Start/Stop), not the approval mode. "Stopped" until you press
+  // Start; once running it also names the mode so choosing Autonomous is visibly reflected
+  // ("Running · Autonomous" vs "Running · Propose"). Choosing a mode alone never starts the system.
+  const autonomyStatus = policy.systemState === "active"
+    ? setupBlocked
       ? { tone: "warn" as const, label: "Setup Needed" }
-    : policy.systemState === "active"
-      ? { tone: "up" as const, label: "Autonomy On" }
+      : { tone: "up" as const, label: policy.strategyAuthority === "decide" ? "Running · Autonomous" : "Running · Propose" }
+    : policy.systemState === "halted"
+      ? { tone: "down" as const, label: "Stopped" }
       : { tone: "neutral" as const, label: `Autonomy ${policy.systemState}` };
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
