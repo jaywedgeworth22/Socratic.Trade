@@ -135,6 +135,18 @@ export interface TuningSettings {
   redTeamConvictionThreshold?: number;
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
+  /**
+   * Max value AI confidence may contribute to the conviction sizing multiplier (0–1) when the
+   * thesis's realized edge does NOT corroborate it. Caps only the UPSIDE — low confidence still
+   * shrinks size fully. Default 0.6. Prevents an inflated confidenceScore from sizing up a
+   * proven-but-mediocre thesis on AI conviction alone. (Reads only realized scorecard stats +
+   * the proposal's own confidenceScore — never learned_context.)
+   */
+  convictionCapUncorroborated?: number;
+  /** Shrunk realized win rate (%) at/above which conviction is treated as corroborated (cap lifts). Default 58. */
+  corroborationWinRatePct?: number;
+  /** Shrunk realized avg return (%) strictly above which conviction is treated as corroborated. Default 0. */
+  corroborationEdgePct?: number;
 }
 
 export interface RiskRules {
