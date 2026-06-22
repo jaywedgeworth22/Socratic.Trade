@@ -24,12 +24,18 @@ filling the missing pieces.
 
 ## Integrations (outside the phase roadmap)
 
-- **congress.trade data-share** (2026-06-22, `docs/congress-trade-share.md`):
+- **congress.trade data-share — push** (2026-06-22, `docs/congress-trade-share.md`):
   outbound, default-OFF forwarding of this app's company refs + daily closes +
   the `^GSPC` series to `congress.trade` (App A)'s idempotent import endpoint, so
   the *shared* daily FMP quota is spent once. After-scan refs hook + once-per-day
   nightly `prices`/`spx` batch + an admin trigger route. Gated on
   `CONGRESS_TRADE_TOKEN` + `CONGRESS_SHARE_ENABLED`; token is server-only.
+- **congress.trade — receive/consume** (2026-06-22, `docs/congress-trade-consume.md`,
+  contract `docs/push-to-app-b.md`): default-OFF cache-aside reads of App A's
+  `/api/market/*` (history first tier), App A as the congressional source via
+  `/api/transactions` (token-gated), and a push receiver (webhook + SSE) feeding the
+  scan's web-signal overlay. Inert until App A's read endpoints are live.
+  Round 3 (pending App A slots): push `volume`+`insider`+`shortVolume` on the nightly batch.
 
 ## Build Order
 

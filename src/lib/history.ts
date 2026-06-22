@@ -14,6 +14,7 @@ import { fulfillMarketDataDemand, hasDataPoolConsent, recordMarketDataDemand, re
 import { emitDashboardEvent } from "./events";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
+import { appAClosesToBars, getAppAPrices, getAppASpx } from "./congress-trade-client";
 import { BROWSER_UA, politeFetchJson, politeFetchText } from "./web-sources/http";
 
 const DEFAULT_TTL_MS = 30 * 60_000; // daily bars only move intraday on the last candle
@@ -80,6 +81,11 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
+    // congress.trade (App A) cache-aside tier: App A also pulls FMP, so reuse its EOD closes first
+    // to spend the shared quota once and save App B's own (keyed) history calls. Returns close-only
+    // bars (no OHLC), so an enabled price chart renders a line, not candles, on App A hits. No-op
+    // unless CONGRESS_TRADE_READS_ENABLED is on; "shared" scope (App A is a public external source).
+    { scope: "shared", fetch: () => fetchAppAHistory(symbol) },
     { scope: cacheScopeForKeySource(keySources.massive.source, userId), fetch: () => fetchMassive(symbol, startDate, keySources.massive.key) },
     { scope: cacheScopeForKeySource(keySources.tradier.source, userId), fetch: () => fetchTradier(symbol, startDate, keySources.tradier.key) },
     { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
@@ -314,4 +320,15 @@ function numOrUndef(value: unknown): number | undefined {
 
 export function clearHistoryCache(): void {
   cache.clear();
+}
+
+/**
+ * congress.trade (App A) cache-aside source: App A's EOD close series for a symbol (or the S&P-500
+ * via ^GSPC) as close-only OHLCBars. Returns null unless reads are enabled AND App A has ≥2 closes,
+ * so the cascade falls through to App B's own providers on a miss. Self-guarded inside the client.
+ */
+async function fetchAppAHistory(symbol: string): Promise<OHLCBar[] | null> {
+  const closes = symbol === "^GSPC" ? await getAppASpx() : (await getAppAPrices(symbol))?.closes ?? [];
+  const bars = appAClosesToBars(closes);
+  return bars.length >= 2 ? bars : null;
 }

@@ -24,6 +24,23 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`agent/claude-congress-share`, round 2): **Bidirectional congress.trade — receiving side (default OFF).**
+  Added App B's consume side on top of the push side: (1) **cache-aside reads** of App A's
+  `/api/market/*` as the first tier of `fetchDailyOHLC` (saves keyed-history quota; close-only on hits)
+  — `CONGRESS_TRADE_READS_ENABLED`; (2) **App A as congressional source** — `refreshCongress` pulls
+  `/api/transactions` (token-gated full feed, sends `INGEST_TOKEN`; tolerant `coerceCongressTrade` mapped
+  to App A's confirmed object shape) instead of scraping — `CONGRESS_TRADE_AS_CONGRESS_SOURCE`; (3) **push
+  receiver** — webhook `POST /api/webhooks/congress` (constant-time bearer `CONGRESS_WEBHOOK_SECRET`) +
+  outbound **SSE** consumer (`CONGRESS_STREAM_ENABLED`, `Last-Event-ID` resume), both feeding
+  `applyCongressEvent` → existing `getSymbolWebSignals` overlay. Built via a 5-agent mapping pass + a
+  10-agent adversarial review; **all 6 verified findings fixed** (unparseable-date ingestion, added-count
+  under retention pruning, chamber `startsWith("sen")`, empty-owner default, SSE drop logging, seq/gap
+  documented). Contract files for App A: `docs/push-to-app-b.md`, `docs/congress-trade-consume.md`. tsc
+  clean · `npm test` 915 pass (98 files, +31 new; 1 first-run flake, clean on re-run) · build green.
+  **Blocker:** App A's `/api/market/*` + `/api/transactions` currently 500 and `/api/stream` not deployed
+  — consume paths are inert (self-guarded) until App A ships them. **Next (App B round 3):** add
+  `volume`+`insider[]`+`shortVolume[]` to the nightly push once App A defines those import slots. See
+  `docs/rollouts/2026-06-22-congress-trade-consume.md`.
 - 2026-06-22 (`agent/claude-congress-share`): **Outbound data-share to congress.trade (App A) — default OFF.**
   New `src/lib/congress-share.ts` forwards the company `refs` + daily `closes` + `^GSPC` series this app
   already fetches to App A's idempotent `POST /api/admin/securities/import`, so App A can avoid spending the

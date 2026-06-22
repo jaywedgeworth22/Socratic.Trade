@@ -17,6 +17,7 @@
 // All adapters degrade to nothing on failure — we never invent a trade.
 
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting } from "../db";
+import { congressAsCongressSourceEnabled, getAppATransactions } from "../congress-trade-client";
 import { normalizeSymbol } from "../money";
 import type { CongressSignal, CongressTrade } from "./types";
 import {
@@ -488,11 +489,15 @@ export async function fetchCapitolTrades(): Promise<CongressTrade[]> {
 
 // ── Refresh orchestration ────────────────────────────────────────────────────
 
+function tradeKey(t: CongressTrade): string {
+  return `${t.symbol}|${t.member}|${t.side}|${t.tradedAt}|${t.amountLow ?? ""}`;
+}
+
 function dedupeTrades(trades: CongressTrade[]): CongressTrade[] {
   const seen = new Set<string>();
   const out: CongressTrade[] = [];
   for (const t of trades) {
-    const key = `${t.symbol}|${t.member}|${t.side}|${t.tradedAt}|${t.amountLow ?? ""}`;
+    const key = tradeKey(t);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);
@@ -535,11 +540,18 @@ export async function refreshCongress(now: number = Date.now(), force = false): 
   const sources: string[] = [];
   const warnings: string[] = [];
 
-  for (const adapter of [
-    { id: "senate-efd", run: () => scrapeSenateEfd(now) },
-    { id: "apify-congress", run: () => fetchApifyCongress(now) },
-    { id: "capitol-trades", run: fetchCapitolTrades }
-  ]) {
+  // When App A (congress.trade) is the configured source of truth, pull from it and skip the
+  // local scrapers entirely (it IS the authority on congressional disclosures). Otherwise run
+  // App B's own adapter cascade.
+  const adapters = congressAsCongressSourceEnabled()
+    ? [{ id: "congress-trade", run: () => fetchAppACongressTrades(now) }]
+    : [
+        { id: "senate-efd", run: () => scrapeSenateEfd(now) },
+        { id: "apify-congress", run: () => fetchApifyCongress(now) },
+        { id: "capitol-trades", run: fetchCapitolTrades }
+      ];
+
+  for (const adapter of adapters) {
     try {
       const trades = await adapter.run();
       if (trades.length > 0) {
@@ -564,4 +576,127 @@ export async function refreshCongress(now: number = Date.now(), force = false): 
   setInternalSetting(DATASET_KEY, dataset);
   audit("web_source_refresh", { id: "congress", ok: true, recordCount: trades.length, sources, warnings });
   return { id: "congress", ok: true, recordCount: trades.length, sources, fetchedAt, warning: warnings.join("; ") || undefined };
+}
+
+// ── App A (congress.trade) as the congressional source ───────────────────────
+// When CONGRESS_TRADE_AS_CONGRESS_SOURCE is on, App A is the system-of-record for disclosures.
+// We pull its /api/transactions feed and coerce rows into App B's CongressTrade shape. App A's
+// exact per-row field names are not finalized, so the coercer is tolerant (accepts common aliases).
+
+const APP_A_MAX_PAGES = 10;
+const APP_A_MAX_TRADES = 5000;
+const APP_A_RETENTION_DAYS = 120; // bound the push-merged dataset (> the 60-day signal window)
+const APP_A_SOURCE = "congress.trade";
+
+function pickStr(o: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return undefined;
+}
+
+function pickNum(o: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = o[k];
+    const n = typeof v === "number" ? v : typeof v === "string" ? Number(v.replace(/[$,]/g, "")) : NaN;
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+/** Tolerantly coerce an App A transaction row (or a pushed CongressTrade) into a CongressTrade. */
+export function coerceCongressTrade(raw: unknown): CongressTrade | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+
+  const symbol = normalizeSymbol(pickStr(o, ["symbol", "ticker", "asset", "assetTicker", "issuerTicker"]) ?? "");
+  if (!symbol) return null;
+
+  // App A's /api/transactions uses single-letter SEC codes: P=purchase(buy), S / S_partial=sale(sell);
+  // other codes (E exchange, G gift, …) are intentionally ignored. Also accept word forms from
+  // other sources.
+  const sideRaw = (pickStr(o, ["side", "type", "transactionType", "txType", "action"]) ?? "").toLowerCase();
+  let side: "buy" | "sell" | undefined;
+  if (sideRaw === "p" || /(buy|purchase|acqui)/.test(sideRaw)) side = "buy";
+  else if (sideRaw === "s" || sideRaw.startsWith("s_") || /(sell|sale|dispos)/.test(sideRaw)) side = "sell";
+  if (!side) return null;
+
+  const tradedAt = pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]);
+  const disclosedAt = pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]);
+  const anchor = tradedAt ?? disclosedAt;
+  // Reject a trade with no date OR an unparseable one ("not-a-date", "2026-13-45") at ingestion, so
+  // garbage never accumulates in the dataset and the disclosedAt-windowed signal stays correct.
+  if (!anchor || !Number.isFinite(Date.parse(anchor))) return null;
+
+  // Match the senate prefix (senate/senator) at the START — substring .includes("sen") would
+  // misclassify "representative". Anything else (house/rep/unknown) → house.
+  const chamberRaw = (pickStr(o, ["chamber", "house", "body"]) ?? "").toLowerCase();
+  const chamber: "senate" | "house" = chamberRaw.startsWith("sen") ? "senate" : "house";
+
+  const trade: CongressTrade = {
+    symbol,
+    member: pickStr(o, ["memberName", "member", "politician", "fullName", "name", "representative", "senator"]) ?? "Unknown",
+    chamber,
+    side,
+    tradedAt: anchor,
+    disclosedAt: disclosedAt ?? tradedAt,
+    source: APP_A_SOURCE
+  };
+  const amountLow = pickNum(o, ["amountLow", "amount_min", "minAmount", "sizeRangeLow", "valueLow", "amountMin"]);
+  const amountHigh = pickNum(o, ["amountHigh", "amount_max", "maxAmount", "sizeRangeHigh", "valueHigh", "amountMax"]);
+  if (amountLow !== undefined) trade.amountLow = amountLow;
+  if (amountHigh !== undefined) trade.amountHigh = amountHigh;
+  const owner = pickStr(o, ["owner", "ownerType", "holder"]);
+  if (owner) trade.owner = owner;
+  return trade;
+}
+
+/** Pull recent congressional disclosures from App A, following the cursor (bounded). */
+export async function fetchAppACongressTrades(now: number = Date.now()): Promise<CongressTrade[]> {
+  void now;
+  const out: CongressTrade[] = [];
+  let since: string | undefined;
+  for (let page = 0; page < APP_A_MAX_PAGES; page++) {
+    const res = await getAppATransactions(since ? { since } : {});
+    if (!res || res.transactions.length === 0) break;
+    for (const raw of res.transactions) {
+      const t = coerceCongressTrade(raw);
+      if (t) out.push(t);
+      if (out.length >= APP_A_MAX_TRADES) return out;
+    }
+    if (!res.cursor || res.cursor === since) break; // no more pages / no forward progress
+    since = res.cursor;
+  }
+  return out;
+}
+
+/**
+ * Merge externally-received congressional trades (push webhook / SSE) into the persisted dataset,
+ * deduped and pruned to APP_A_RETENTION_DAYS. Returns how many net-new rows landed. Idempotent:
+ * re-sending the same trades is a no-op (dedupeTrades keeps the first occurrence).
+ */
+export function upsertCongressTrades(incoming: CongressTrade[], now: number = Date.now()): { added: number; total: number } {
+  const clean = incoming.filter((t): t is CongressTrade => Boolean(t && t.symbol && t.side && t.tradedAt));
+  const prior = getCongressDataset();
+  if (clean.length === 0) return { added: 0, total: prior?.recordCount ?? 0 };
+  // `added` = distinct incoming keys not already present, computed BEFORE retention pruning so the
+  // count is accurate even when pruning drops unrelated old prior rows.
+  const priorKeys = new Set((prior?.trades ?? []).map(tradeKey));
+  const added = new Set(clean.map(tradeKey).filter((k) => !priorKeys.has(k))).size;
+  const cutoff = now - APP_A_RETENTION_DAYS * 24 * 60 * 60_000;
+  const merged = dedupeTrades([...(prior?.trades ?? []), ...clean]).filter((t) => {
+    const ts = Date.parse(t.disclosedAt ?? t.tradedAt);
+    return Number.isFinite(ts) && ts >= cutoff; // keep only parseable + within-retention rows
+  });
+  const sources = Array.from(new Set([...(prior?.sources ?? []), APP_A_SOURCE]));
+  const dataset: CongressDataset = {
+    trades: merged,
+    fetchedAt: new Date(now).toISOString(),
+    sources,
+    recordCount: merged.length
+  };
+  setInternalSetting(DATASET_KEY, dataset);
+  return { added, total: merged.length };
 }
