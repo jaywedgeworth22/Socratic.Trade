@@ -1,0 +1,67 @@
+name: Deploy
+
+# Deploys the merged `main` branch to the self-hosted production host.
+# Production runs `next start` under PM2 (app `trading`) from the
+# `~/apps/trading-live` worktree, served at trading.jays.services.
+#
+# ⚠️ STAGED — NOT ACTIVE. This file lives in `ci-pending/` because the push
+# credential lacks the GitHub OAuth `workflow` scope. Read `ci-pending/README.md`
+# (Deploy section) for activation + self-hosted-runner setup, and the SSH-based
+# alternative, BEFORE moving this into `.github/workflows/`.
+
+on:
+  # Auto-deploy every push to main (i.e. every merged PR).
+  push:
+    branches: [main]
+  # Manual "Run workflow" button in the Actions tab.
+  workflow_dispatch: {}
+
+# Never run two deploys at once; let an in-flight deploy finish rather than
+# cancel it mid-build/restart.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Requires a self-hosted runner registered on the production box and carrying
+    # BOTH of these labels. See ci-pending/README.md → "Self-hosted runner setup".
+    runs-on: [self-hosted, trading-live]
+
+    # Optional overrides via repo Settings → Secrets and variables → Variables.
+    # Defaults match the documented production layout; resolved with shell
+    # fallbacks below so an unset variable still works.
+    env:
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+      PM2_APP: ${{ vars.PM2_APP }}
+
+    steps:
+      - name: Pull, build, and restart production
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIR="${DEPLOY_DIR:-$HOME/apps/trading-live}"
+          APP="${PM2_APP:-trading}"
+
+          echo "::group::Update worktree ($DIR → origin/main)"
+          cd "$DIR"
+          git fetch origin main
+          git checkout main
+          # Match origin/main exactly. Only TRACKED files are reset; untracked
+          # files (.env.local, data/app.db, data/logos/) are left untouched.
+          git reset --hard origin/main
+          git --no-pager log --oneline -1
+          echo "::endgroup::"
+
+          echo "::group::Install dependencies (lockfile-exact)"
+          npm ci
+          echo "::endgroup::"
+
+          echo "::group::Build (.next is regenerated)"
+          npm run build
+          echo "::endgroup::"
+
+          echo "::group::Restart PM2 process ($APP)"
+          pm2 restart "$APP" --update-env
+          pm2 save
+          echo "::endgroup::"
