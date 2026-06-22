@@ -53,6 +53,17 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
   if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
+  // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
+  // Permissive default — brackets should be encouraged when stop rules are active.
+  if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const bracketPermitted =
+      context.policy.permittedOrderTypes.includes("bracket" as any) ||
+      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+    if (!bracketPermitted) {
+      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+    }
+  }
   if (!context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
     reasons.push("Extended-hours orders are disabled.");
   }

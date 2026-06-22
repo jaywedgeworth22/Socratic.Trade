@@ -346,6 +346,15 @@ export interface TradeProposal {
   tradeThesisTag: string;
   entryMarketRegime: string;
   confidenceScore?: number;
+  /** Limit price for the take-profit leg of a bracket order. */
+  bracketTakeProfit?: number;
+  /** Stop price for the stop-loss leg of a bracket order. */
+  bracketStopLoss?: number;
+  /**
+   * Optional limit price for the stop-loss leg, making it a stop-limit order.
+   * When absent the stop-loss leg is a plain stop-market.
+   */
+  bracketStopLimit?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -554,6 +563,15 @@ export interface EquityOrderInput {
   stopPrice?: number;
   timeInForce: TimeInForce;
   marketHours: MarketHours;
+  /** Limit price for the take-profit leg of a bracket order. */
+  bracketTakeProfit?: number;
+  /** Stop price for the stop-loss leg of a bracket order. */
+  bracketStopLoss?: number;
+  /**
+   * Optional limit price for the stop-loss leg, making it a stop-limit order.
+   * When absent the stop-loss leg is a plain stop-market.
+   */
+  bracketStopLimit?: number;
 }
 
 export interface BrokerGateway {
