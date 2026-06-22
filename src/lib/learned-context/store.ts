@@ -31,7 +31,8 @@ import type {
   LearnedContextPendingRow,
   LearnedContextRow
 } from "../types";
-import { classifyRiskTier, hasPii } from "./classify";
+import { hasPii } from "./classify";
+import { classifyWithSemanticGate, type SemanticGateOptions } from "./semantic-gate";
 
 export interface IngestLearnedResult {
   written: LearnedContextRow | null;
@@ -54,19 +55,25 @@ export interface IngestLearnedResult {
  *       · origin 'autonomous'/'ingest'     → INSERT a learned_context_pending row (status 'pending') for
  *                                            human confirmation; audit 'learned_context.pending'. Approval
  *                                            applies it SAFELY and NEVER auto-mutates numeric policy.
+ *
+ * ASYNC: classification now runs the two-layer gate (sync keyword classifier + templated-fact allowlist
+ * + LLM semantic gate; see semantic-gate.ts). The gate is STRICTLY ADDITIVE — it can only UPGRADE a
+ * keyword 'fact' → 'risk' and falls back to the keyword result on any LLM failure — so every routing
+ * branch below (incl. the chat hard-cap) keeps its exact semantics. `opts.llm` is injectable for tests.
  */
-export function ingestLearned(
+export async function ingestLearned(
   userId: string,
   candidate: LearnedContextCandidate,
-  origin: LearnedContextOrigin
-): IngestLearnedResult {
+  origin: LearnedContextOrigin,
+  opts: SemanticGateOptions = {}
+): Promise<IngestLearnedResult> {
   // PII gate first — an SSN/card number is never written regardless of tier.
   if (hasPii(candidate.value)) {
     audit("learned_context.drop", { userId, origin, reason: "pii", subject: candidate.subject }, userId);
     return { written: null, dropped: "pii", pending: null, pendingId: null, tier: "fact" };
   }
 
-  const tier = classifyRiskTier(candidate);
+  const tier = await classifyWithSemanticGate(candidate, opts);
 
   if (tier !== "fact") {
     // CHAT origin is HARD-CAPPED at 'fact' — a chat message can NEVER produce a pending risk item.

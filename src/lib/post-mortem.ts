@@ -166,7 +166,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     // erasable FACTS over time. We emit only durable QUALITATIVE track-record facts (directional,
     // no numeric percent/size) for well-sampled theses; the fail-closed classifier drops anything
     // it deems risk-adjacent, and risk/sizing inferences are never written in this slice.
-    writeThesisTrackRecordFacts(outcomesByThesis, userId);
+    await writeThesisTrackRecordFacts(outcomesByThesis, userId);
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
@@ -217,7 +217,7 @@ const MIN_LOTS_FOR_TRACK_RECORD_FACT = 5;
  * as a risk-adjacent (numeric) candidate. Untagged buckets are skipped. Best-effort: a failure
  * here never affects the reflection write or any trading path.
  */
-function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userId: string): void {
+async function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userId: string): Promise<void> {
   for (const stat of outcomesByThesis) {
     if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
     if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
@@ -227,7 +227,7 @@ function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userId: str
         ? "has repeatedly lost on a realized basis"
         : "has a roughly break-even realized track record";
     try {
-      ingestLearned(
+      await ingestLearned(
         userId,
         {
           kind: "pattern",
