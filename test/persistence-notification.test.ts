@@ -243,6 +243,80 @@ describe("persistence and notifications", () => {
     }
   }, 15_000);
 
+  it("records a pre-run portfolio snapshot before any proposals execute", async () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    // No OpenAI key → proposeTrades uses fallback (no network call) → run completes as a
+    // no-op. We just need to verify a snapshot was written with the run's runId.
+    delete process.env.OPENAI_API_KEY;
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("nasdaq.com")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-06-21",
+              table: {
+                rows: [
+                  {
+                    symbol: "AAPL",
+                    lastsale: "$200",
+                    pctchange: "1%",
+                    volume: "1000000",
+                    marketCap: "3000000000000",
+                    sector: "Technology",
+                    industry: "Consumer Electronics"
+                  }
+                ]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      const { listPortfolioSnapshots, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
+      const { runStrategyOnce } = await import("../src/lib/strategy");
+
+      const mockAccountId = randomUUID();
+      // The test broker's getAccounts() always returns accountNumber "TEST", so the policy
+      // must also reference "TEST" for the account-selection check to pass.
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "test",
+        environment: "paper",
+        accountNumber: "TEST",
+        label: "Pre-Snapshot Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+      setPolicy({
+        ...DEFAULT_POLICY,
+        systemState: "active",
+        paperMode: true,
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        strategyAuthority: "decide"
+      });
+
+      const snapshotsBefore = listPortfolioSnapshots("TEST").length;
+      const result = await runStrategyOnce();
+      expect(result.status).toBe("completed");
+      // After the run, at least two snapshots must exist (pre-run + post-run).
+      const snapshotsAfter = listPortfolioSnapshots("TEST");
+      expect(snapshotsAfter.length).toBeGreaterThan(snapshotsBefore);
+      // The pre-run snapshot is the first snapshot written for this runId.
+      const runSnapshots = snapshotsAfter.filter((s) => s.runId === result.runId);
+      expect(runSnapshots.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
+    }
+  }, 20_000);
+
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = "test-openai-key";
