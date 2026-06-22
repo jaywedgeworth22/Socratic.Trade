@@ -1,8 +1,18 @@
-import { deleteInternalSetting, getInternalSetting, setInternalSetting } from "./db";
+import { deleteInternalSetting, findInternalSettingByKeyLike, getInternalSetting, setInternalSetting } from "./db";
 
+// CLIENT registration is global (one OAuth app client shared across users).
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
-const STATE_PREFIX = "robinhood_mcp_oauth_state:";
-const TOKEN_SETTING = "robinhood_mcp_oauth_tokens";
+
+// Per-user key builders.  The state key embeds the random part last so LIKE
+// queries can scan by prefix without exposing userId in the OAuth redirect URL.
+//   token:  robinhood_mcp_oauth_token:<userId>
+//   state:  robinhood_mcp_oauth_state:<userId>:<randomPart>
+function tokenSettingKey(userId: string): string {
+  return `robinhood_mcp_oauth_token:${userId}`;
+}
+function stateSettingKey(userId: string, randomPart: string): string {
+  return `robinhood_mcp_oauth_state:${userId}:${randomPart}`;
+}
 
 export interface McpOAuthClient {
   clientId: string;
@@ -12,6 +22,7 @@ export interface McpOAuthClient {
 
 export interface McpOAuthState {
   state: string;
+  userId: string;
   codeVerifier: string;
   redirectUri: string;
   createdAt: string;
@@ -48,15 +59,16 @@ export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
   };
 }
 
-export async function buildMcpAuthorizationUrl(): Promise<string> {
+export async function buildMcpAuthorizationUrl(userId: string): Promise<string> {
   const config = requireOAuthConfig();
   const client = await getOrRegisterClient(config);
-  const state = randomBase64Url(32);
+  const randomPart = randomBase64Url(32);
   const codeVerifier = randomBase64Url(64);
   const codeChallenge = await sha256Base64Url(codeVerifier);
 
-  setInternalSetting(`${STATE_PREFIX}${state}`, {
-    state,
+  setInternalSetting(stateSettingKey(userId, randomPart), {
+    state: randomPart,
+    userId,
     codeVerifier,
     redirectUri: config.redirectUri,
     createdAt: new Date().toISOString()
@@ -67,53 +79,103 @@ export async function buildMcpAuthorizationUrl(): Promise<string> {
   url.searchParams.set("client_id", client.clientId);
   url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("scope", config.scope);
-  url.searchParams.set("state", state);
+  url.searchParams.set("state", randomPart);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
   return url.toString();
 }
 
-export async function completeMcpOAuthCallback(input: { code: string; state: string }): Promise<McpOAuthTokens> {
+/**
+ * Recover a stored McpOAuthState by scanning for a settings row whose key
+ * matches `robinhood_mcp_oauth_state:%:<randomPart>`.  The callback route
+ * receives only `state` (the random part) with no session context, so we
+ * scan by the random suffix which has 32 bytes of entropy.
+ */
+export function findMcpOAuthStateByRandom(randomPart: string): { key: string; value: McpOAuthState } | undefined {
+  return findInternalSettingByKeyLike<McpOAuthState>(`robinhood_mcp_oauth_state:%:${randomPart}`);
+}
+
+export async function completeMcpOAuthCallback(input: {
+  code: string;
+  state: string;
+  /**
+   * The userId resolved from the browser session that hit the callback. When provided, it
+   * must match the userId the flow was initiated under (`stateBlob.userId`). This stops an
+   * attacker-initiated flow (state bound to the attacker) from being completed in a victim's
+   * session — i.e. binding a freshly-minted broker token under the wrong userId. In
+   * production the callback request always carries a verified identity (middleware enforces
+   * it); in single-operator/dev both sides are 'local', so the check is a no-op there.
+   */
+  expectedUserId?: string;
+}): Promise<McpOAuthTokens> {
   const config = requireOAuthConfig();
-  const stateKey = `${STATE_PREFIX}${input.state}`;
-  const state = getInternalSetting<McpOAuthState>(stateKey);
-  if (!state) throw new Error("Robinhood MCP OAuth state was not found or already used.");
+
+  // Recover the state blob by scanning on the random suffix — the redirect carries only the
+  // random `state`, not the userId (the userId is never placed in the OAuth redirect URL).
+  const found = findMcpOAuthStateByRandom(input.state);
+  if (!found) throw new Error("Robinhood MCP OAuth state was not found or already used.");
+  const { key: stateKey, value: stateBlob } = found;
   deleteInternalSetting(stateKey);
+
+  // Cross-check the completing session against the initiating session. The state row is
+  // consumed above regardless, so a mismatched attempt can't be retried with the same state.
+  if (input.expectedUserId !== undefined && input.expectedUserId !== stateBlob.userId) {
+    throw new Error("Robinhood MCP OAuth state does not belong to the current session.");
+  }
 
   const client = await getOrRegisterClient(config);
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: input.code,
-    redirect_uri: state.redirectUri,
+    redirect_uri: stateBlob.redirectUri,
     client_id: client.clientId,
-    code_verifier: state.codeVerifier
+    code_verifier: stateBlob.codeVerifier
   });
   if (client.clientSecret) body.set("client_secret", client.clientSecret);
 
   const tokens = await exchangeToken(config.tokenUrl, body);
-  setMcpOAuthTokens(tokens);
+  setMcpOAuthTokens(stateBlob.userId, tokens);
   return tokens;
 }
 
-export async function getMcpAccessToken(): Promise<string | undefined> {
-  if (process.env.ROBINHOOD_MCP_AUTH_TOKEN) return process.env.ROBINHOOD_MCP_AUTH_TOKEN;
-  const tokens = getStoredMcpOAuthTokens();
+/**
+ * Get the access token for a specific user — always from that user's own stored OAuth token.
+ *
+ * There is no env-token special case: the legacy `ROBINHOOD_MCP_AUTH_TOKEN` env override is
+ * migrated into the `local` operator's stored token at boot (migrateLocalRobinhoodToken), so the
+ * primary user resolves it like any other user and a non-`local` tenant can never reach it.
+ */
+export async function getMcpAccessToken(userId: string): Promise<string | undefined> {
+  const tokens = getStoredMcpOAuthTokens(userId);
   if (!tokens) return undefined;
   if (!isExpiring(tokens)) return tokens.accessToken;
   if (!tokens.refreshToken) return tokens.accessToken;
-  return refreshMcpAccessToken(tokens);
+  return refreshMcpAccessToken(userId, tokens);
 }
 
-export function getStoredMcpOAuthTokens(): McpOAuthTokens | undefined {
-  return getInternalSetting<McpOAuthTokens>(TOKEN_SETTING);
+/**
+ * Boot migration: seed the `local` operator's stored OAuth token from the legacy
+ * `ROBINHOOD_MCP_AUTH_TOKEN` env override, so broker-token resolution is uniformly per-user (no
+ * special env branch). Idempotent — only seeds when `local` has no stored token yet.
+ */
+export function migrateLocalRobinhoodToken(): boolean {
+  const env = process.env.ROBINHOOD_MCP_AUTH_TOKEN?.trim();
+  if (!env) return false;
+  if (getStoredMcpOAuthTokens("local")) return false;
+  setMcpOAuthTokens("local", { accessToken: env, tokenType: "Bearer" });
+  return true;
 }
 
-export function clearMcpOAuthTokens(): void {
-  deleteInternalSetting(TOKEN_SETTING);
+export function getStoredMcpOAuthTokens(userId: string): McpOAuthTokens | undefined {
+  return getInternalSetting<McpOAuthTokens>(tokenSettingKey(userId));
 }
 
-export function setMcpOAuthTokens(tokens: McpOAuthTokens): void {
-  setInternalSetting(TOKEN_SETTING, tokens);
+export function clearMcpOAuthTokens(userId: string): void {
+  deleteInternalSetting(tokenSettingKey(userId));
+}
+
+export function setMcpOAuthTokens(userId: string, tokens: McpOAuthTokens): void {
+  setInternalSetting(tokenSettingKey(userId), tokens);
 }
 
 export function tokenResponseToTokens(raw: Record<string, unknown>, existing?: McpOAuthTokens): McpOAuthTokens {
@@ -129,7 +191,7 @@ export function tokenResponseToTokens(raw: Record<string, unknown>, existing?: M
   };
 }
 
-async function refreshMcpAccessToken(existing: McpOAuthTokens): Promise<string> {
+async function refreshMcpAccessToken(userId: string, existing: McpOAuthTokens): Promise<string> {
   const config = requireOAuthConfig();
   const client = await getOrRegisterClient(config);
   const body = new URLSearchParams({
@@ -139,7 +201,7 @@ async function refreshMcpAccessToken(existing: McpOAuthTokens): Promise<string> 
   });
   if (client.clientSecret) body.set("client_secret", client.clientSecret);
   const tokens = await exchangeToken(config.tokenUrl, body, existing);
-  setMcpOAuthTokens(tokens);
+  setMcpOAuthTokens(userId, tokens);
   return tokens.accessToken;
 }
 

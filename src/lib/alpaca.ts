@@ -18,10 +18,35 @@ import type {
 } from "./types";
 import { normalizeSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
-import { getActiveConnectedAccount, getUserApiKey } from "./db";
+import { getActiveConnectedAccount, resolveApiKey } from "./db";
 
 export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
   return new AlpacaBrokerGateway(userId);
+}
+
+/**
+ * Estimate an order's notional for the pre-trade review. NEVER fabricates a price:
+ * a wrong notional corrupts the value persisted to `trade_proposals` and the daily
+ * cap accounting (a fabricated $100 made a $50k buy count as $10k). Prefers explicit
+ * order prices, then the live quote; if none is available and there's no dollar
+ * amount, reports the order as over-cap so an un-sizable OPENING order is blocked
+ * (exits aren't notional-capped, so they still pass).
+ */
+export function estimateReviewNotional(
+  input: { dollarAmount?: number; quantity?: number; limitPrice?: number; stopPrice?: number },
+  quotePrice: number | undefined
+): { estimatedNotional: number; alerts: string[] } {
+  if (input.dollarAmount != null) {
+    return { estimatedNotional: input.dollarAmount, alerts: [] };
+  }
+  const estPrice = input.limitPrice ?? input.stopPrice ?? (quotePrice && quotePrice > 0 ? quotePrice : undefined);
+  if (estPrice != null && estPrice > 0) {
+    return { estimatedNotional: (input.quantity ?? 0) * estPrice, alerts: [] };
+  }
+  return {
+    estimatedNotional: Number.MAX_SAFE_INTEGER,
+    alerts: ["Price unavailable — notional could not be estimated; treating as over-cap (set a limit/stop price or dollar amount)."],
+  };
 }
 
 class AlpacaBrokerGateway implements BrokerGateway {
@@ -38,17 +63,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : undefined;
     this.isMcp = activeAccount?.broker === "alpaca-mcp";
     this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
-    const keyId =
-      accountKeys?.apiKey ||
-      getUserApiKey(userId, "ALPACA_PAPER_API_KEY")?.apiKey ||
-      getUserApiKey(userId, "alpaca")?.apiKey ||
-      process.env.ALPACA_PAPER_API_KEY ||
-      "";
-    const secretKey =
-      accountKeys?.apiSecret ||
-      getUserApiKey(userId, "ALPACA_PAPER_SECRET_KEY")?.apiKey ||
-      process.env.ALPACA_PAPER_SECRET_KEY ||
-      "";
+    // A connected-account key (per-user account data) wins; otherwise the per-user key store.
+    // SECURITY: route through resolveApiKey so the env fallback is operator-only (alpaca keys are
+    // a per-user-only tier). A non-`local` user with no stored key gets "" → broker construction
+    // fails loudly instead of silently trading on the operator's Alpaca account via process.env.
+    const keyId = accountKeys?.apiKey || resolveApiKey("alpaca_paper_api_key", userId) || "";
+    const secretKey = accountKeys?.apiSecret || resolveApiKey("alpaca_paper_secret_key", userId) || "";
     
     let baseUrl = accountKeys?.baseUrl?.trim();
     if (this.isMcp) {
@@ -279,7 +299,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
         };
       }
       return quotes;
-    } catch {
+    } catch (error) {
+      // Don't fail silently — a swallowed quote error is what makes the review fall
+      // through to an unusable price. Surface it; callers handle the empty result.
+      console.warn(`[alpaca] getLatestQuotes failed for ${normalizedSymbols.join(",")}:`, error instanceof Error ? error.message : error);
       return {};
     }
   }
@@ -290,31 +313,59 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
     const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
-    const price = quotes[normalizeSymbol(input.symbol)]?.price ?? 100;
-    const estPrice = input.limitPrice ?? input.stopPrice ?? price;
-    return { estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * estPrice, alerts: [], raw: { alpaca: true } };
+    const quotePrice = quotes[normalizeSymbol(input.symbol)]?.price;
+    const { estimatedNotional, alerts } = estimateReviewNotional(input, quotePrice);
+    return { estimatedNotional, alerts, raw: { alpaca: true } };
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
+    const isBracket = !!(input.bracketTakeProfit || input.bracketStopLoss);
+
+    // Alpaca does not support notional (dollar) bracket orders — only qty-based.
+    // When dollarAmount is set on a bracket order, convert it to qty using the
+    // reviewed price estimate (limitPrice || stopPrice || 1). Callers should prefer
+    // passing qty directly for bracket orders to avoid price-estimate drift.
+    let bracketQty: number | undefined;
+    if (isBracket && input.dollarAmount && !input.quantity) {
+      const estPrice = input.limitPrice ?? input.stopPrice ?? 1;
+      bracketQty = Math.floor(input.dollarAmount / estPrice);
+    }
+
     const fallbackFn = async () => {
       try {
         const orderOptions: Record<string, unknown> = {
           symbol: input.symbol,
           side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
           type: input.type,
-          time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
+          // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
+          time_in_force: isBracket ? "day" : (input.timeInForce === "gfd" ? "day" : "gtc"),
           client_order_id: input.refId
         };
 
-        if (input.quantity) {
+        if (bracketQty != null) {
+          orderOptions.qty = bracketQty;
+        } else if (input.quantity) {
           orderOptions.qty = input.quantity;
-        } else if (input.dollarAmount) {
+        } else if (input.dollarAmount && !isBracket) {
           orderOptions.notional = input.dollarAmount;
         }
 
         if (input.limitPrice) orderOptions.limit_price = input.limitPrice;
         if (input.stopPrice) orderOptions.stop_price = input.stopPrice;
         if (input.marketHours === "extended_hours") orderOptions.extended_hours = true;
+
+        if (isBracket) {
+          orderOptions.order_class = "bracket";
+          if (input.bracketTakeProfit != null) {
+            orderOptions.take_profit = { limit_price: input.bracketTakeProfit };
+          }
+          if (input.bracketStopLoss != null) {
+            orderOptions.stop_loss = {
+              stop_price: input.bracketStopLoss,
+              ...(input.bracketStopLimit != null ? { limit_price: input.bracketStopLimit } : {})
+            };
+          }
+        }
 
         const raw = await this.alpaca.createOrder(orderOptions);
         return {
@@ -344,14 +395,30 @@ class AlpacaBrokerGateway implements BrokerGateway {
       symbol: input.symbol,
       side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
       type: input.type,
-      time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
+      // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
+      time_in_force: isBracket ? "day" : (input.timeInForce === "gfd" ? "day" : "gtc"),
       client_order_id: input.refId
     };
-    if (input.quantity) orderArgs.qty = String(input.quantity);
-    else if (input.dollarAmount) orderArgs.notional = String(input.dollarAmount);
+
+    if (bracketQty != null) orderArgs.qty = String(bracketQty);
+    else if (input.quantity) orderArgs.qty = String(input.quantity);
+    else if (input.dollarAmount && !isBracket) orderArgs.notional = String(input.dollarAmount);
 
     if (input.limitPrice) orderArgs.limit_price = String(input.limitPrice);
     if (input.stopPrice) orderArgs.stop_price = String(input.stopPrice);
+
+    if (isBracket) {
+      orderArgs.order_class = "bracket";
+      if (input.bracketTakeProfit != null) {
+        orderArgs.take_profit = { limit_price: input.bracketTakeProfit };
+      }
+      if (input.bracketStopLoss != null) {
+        orderArgs.stop_loss = {
+          stop_price: input.bracketStopLoss,
+          ...(input.bracketStopLimit != null ? { limit_price: input.bracketStopLimit } : {})
+        };
+      }
+    }
 
     return this.callMcp<any>(toolName, orderArgs, fallbackFn).then((res: any) => {
       if (res && res.id) {

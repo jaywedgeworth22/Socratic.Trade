@@ -15,13 +15,14 @@ import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
+import { extractLearnedCandidates } from "../memory/salience";
+import { ingestLearned } from "../learned-context/store";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
 import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, ToolSchema } from "./types";
 
 export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
-  const model = llm ?? getLLM();
   const tools = buildTools();
   const toolSchemas: ToolSchema[] = Object.entries(tools).map(([name, t]) => ({
     name,
@@ -31,12 +32,24 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
 
   return async function handleTurn(args: { userId: string; message: string }): Promise<ChatReply> {
     const { userId, message } = args;
+    // Per-user model: an injected llm (already user-scoped by the route) or one resolved for THIS
+    // user — so the per-user key, operator failover, and usage attribution always apply.
+    const model = llm ?? getLLM(userId);
     audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION }, userId);
     // Prior turns (redacted) for multi-turn context — fetched BEFORE appending the current message.
     const history = listTurns(userId, 10).map((t) => ({ role: t.role, text: t.text }));
     appendTurn(userId, { role: "user", text: message });
 
     const mem = ingestMessage(userId, message);
+    // Parallel learned-context producer: durable pattern/decision FACTS route through ingestLearned
+    // (NOT user_memory). The fail-closed classifier hard-caps chat at 'fact'; risk-adjacent prose is
+    // dropped+audited, never written. This keeps chat structurally write-isolated from the brain's
+    // risk knobs while letting it contribute advisory facts.
+    for (const candidate of extractLearnedCandidates(message)) {
+      // Awaited: ingest now runs the async semantic gate. The chat hard-cap still holds — a gate
+      // 'risk' verdict on a chat candidate is DROPPED (never queued) inside ingestLearned.
+      await ingestLearned(userId, candidate, "chat");
+    }
     const memories = retrieve(userId);
     const memorySummary = memories.map((m) => `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`).join("\n");
 

@@ -57,13 +57,22 @@ describe("positioning sub-score", () => {
 });
 
 describe("hasNotableWebSignal (event candidate union)", () => {
-  it("flags net congressional buys, insider buying, and elevated short pressure", () => {
-    expect(hasNotableWebSignal({ congress: { netSignal: 2 } as never, bulletins: [] })).toBe(true);
+  it("flags net congressional buys (≥2 members, netSignal≥2), insider buying, and elevated short pressure", () => {
+    // Congress: both buyCount AND netSignal must reach the floor.
+    expect(hasNotableWebSignal({ congress: { netSignal: 2, buyCount: 2 } as never, bulletins: [] })).toBe(true);
+    expect(hasNotableWebSignal({ congress: { netSignal: 3, buyCount: 4 } as never, bulletins: [] })).toBe(true);
     expect(hasNotableWebSignal({ insiderSentiment: 80, bulletins: [] })).toBe(true);
     expect(hasNotableWebSignal({ shortVolumeRatio: 62, bulletins: [] })).toBe(true);
   });
-  it("does not flag net selling, neutral insider, or ordinary short volume", () => {
-    expect(hasNotableWebSignal({ congress: { netSignal: -1 } as never, bulletins: [] })).toBe(false);
+  it("does not flag thin congress signals (single member or netSignal < 2)", () => {
+    // netSignal=1: only 1 more buyer than seller — not enough on its own
+    expect(hasNotableWebSignal({ congress: { netSignal: 1, buyCount: 1 } as never, bulletins: [] })).toBe(false);
+    // buyCount=1 even with netSignal=2 — single member, too thin
+    expect(hasNotableWebSignal({ congress: { netSignal: 2, buyCount: 1 } as never, bulletins: [] })).toBe(false);
+    // net selling
+    expect(hasNotableWebSignal({ congress: { netSignal: -1, buyCount: 1 } as never, bulletins: [] })).toBe(false);
+  });
+  it("does not flag neutral insider, ordinary short volume, or undefined", () => {
     expect(hasNotableWebSignal({ insiderSentiment: 40, shortVolumeRatio: 45, bulletins: [] })).toBe(false);
     expect(hasNotableWebSignal(undefined)).toBe(false);
   });

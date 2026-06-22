@@ -1,9 +1,11 @@
 import crypto from "crypto";
 import {
   audit,
+  claimSyntheticStop,
   deleteSyntheticStop,
   insertFillEvent,
   listSyntheticStops,
+  revertSyntheticStopClaim,
   upsertSyntheticStop,
   type SyntheticTrailingStop
 } from "./db";
@@ -154,8 +156,17 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       continue;
     }
     const exitSide = stop.side === "long" ? "sell" : "cover";
+    // Atomically claim this stop (active -> triggered) BEFORE placing. If a previous tick's
+    // monitor is still mid-placement (slow broker call spanning the next 60s tick), it already
+    // claimed the stop and this run skips it — so the same protective exit can't fire twice.
+    if (!claimSyntheticStop(stop.id, userId)) {
+      audit("synthetic_stop_skipped_inflight", { symbol: stop.symbol, note: "already claimed/triggered by a concurrent monitor run" }, userId);
+      continue;
+    }
+    // Deterministic ref id (stop id + trigger price) so the broker's own client_order_id
+    // dedupe is a second line of defense against a duplicate exit.
+    const refId = `sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}`;
     try {
-      const refId = crypto.randomUUID();
       const exec = await gateway.placeEquityOrder({
         accountNumber,
         symbol: stop.symbol,
@@ -175,14 +186,22 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         quantity: qty,
         price,
         notional: qty * price,
-        status: "filled",
+        // Live exits are provisional at the quote price; reconcilePendingFills books the
+        // real fill price/qty from the broker (brokerOrderId is the match key). Booking
+        // 'filled' at the quote understates slippage at the worst possible moment. Paper/
+        // test fills have no reconciliation, so they're final.
+        status: source === "live" ? "pending_reconciliation" : "filled",
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });
+      // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
       result.exited++;
       audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId);
     } catch (err) {
+      // Placement failed/uncertain — re-arm the stop so a later tick can retry rather than
+      // leaving the position unprotected behind a stuck 'triggered' row.
+      revertSyntheticStopClaim(stop.id, userId);
       audit("synthetic_stop_error", { symbol: stop.symbol, error: err instanceof Error ? err.message : String(err) }, userId);
     }
   }

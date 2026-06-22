@@ -3,7 +3,7 @@
 // deterministic rule-based stand-in so the policy is testable offline. Pure (no DB).
 // Ported from reference/atlas-public-src/bff/memory/salience.mjs.
 
-import type { MemoryCandidate, MemoryDecision, MemoryKind } from "../types";
+import type { LearnedContextCandidate, MemoryCandidate, MemoryDecision, MemoryKind } from "../types";
 
 // Durability by kind (constraints are permanent; one-offs never persist).
 const DUR: Record<string, number> = {
@@ -72,6 +72,55 @@ export function extractCandidates(message: string): MemoryCandidate[] {
 
   // PII gate
   for (const c of out) c.pii = PII_PATTERNS.some((re) => re.test(c.value));
+  return out;
+}
+
+// A ticker-like token (1–5 uppercase letters) used to attach a learned fact to a symbol.
+const TICKER_RE = /\b([A-Z]{1,5})\b/;
+
+/**
+ * Extract durable learned-FACT candidates (the dormant `pattern`/`decision` salience kinds) from a
+ * chat message. These do NOT go to user_memory — the orchestrator routes them through
+ * ingestLearned, where the fail-closed classifier decides whether each is a safe fact or a
+ * risk-adjacent candidate to drop. We therefore extract liberally here and let classify.ts gate:
+ * the raw phrase is carried as `intent` so risk-adjacent prose ("lean harder into tech") is caught.
+ *
+ * `pattern`  — a recurring, symbol-specific behavioral observation (e.g. post-earnings drift).
+ * `decision` — a durable named fact / stable truth about a name or the market structure.
+ */
+export function extractLearnedCandidates(message: string): LearnedContextCandidate[] {
+  const text = String(message);
+  const lc = text.toLowerCase();
+  const out: LearnedContextCandidate[] = [];
+  const symbolMatch = text.match(TICKER_RE);
+  const symbol = symbolMatch ? symbolMatch[1] : null;
+
+  // Pattern: an explicitly stated recurring/behavioral observation worth remembering.
+  if (/\b(always|usually|tends? to|historically|every time|seasonal|pattern|typically|drifts?|fades?)\b/.test(lc)) {
+    out.push({
+      kind: "pattern",
+      subject: symbol ? `pattern:${symbol}` : "pattern",
+      value: text.slice(0, 200),
+      symbol,
+      source: "user_stated",
+      confidence: 0.6,
+      intent: lc
+    });
+  }
+
+  // Decision/fact: a durable named fact ("X is the sole supplier of Y", "the only", "is the").
+  if (/\b(is the (sole|only|largest|dominant|leading)|sole supplier|only supplier|monopol|fact:)\b/.test(lc)) {
+    out.push({
+      kind: "decision",
+      subject: symbol ? `fact:${symbol}` : "fact",
+      value: text.slice(0, 200),
+      symbol,
+      source: "user_stated",
+      confidence: 0.7,
+      intent: lc
+    });
+  }
+
   return out;
 }
 

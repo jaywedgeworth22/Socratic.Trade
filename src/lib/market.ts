@@ -9,8 +9,13 @@ const EVENT_CANDIDATE_RESERVE = Number(process.env.MARKET_SCAN_EVENT_RESERVE ?? 
 /** A web signal worth pulling a below-cutoff name into the candidate set for. */
 export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
   if (!sig) return false;
+  // Congress: require at least 2 distinct members buying AND net >= 2 (more buys than sells).
+  // Single-member disclosures are too thin to justify overriding the scan score cutoff.
+  const congressNotable =
+    (sig.congress?.buyCount ?? 0) >= 2 &&
+    (sig.congress?.netSignal ?? 0) >= 2;
   return (
-    (sig.congress?.netSignal ?? 0) > 0 || // net congressional buying
+    congressNotable ||
     (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) || // insider buying
     (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) || // elevated short pressure
     (sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70) // strong bullish technical
@@ -36,6 +41,8 @@ const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonl
 
 type RawNasdaqRow = Record<string, unknown>;
 
+// Nasdaq screener is a public, unauthenticated endpoint — no user API key is
+// consumed, so this single shared cache is safe to serve to all users.
 let screenerCache:
   | {
       expiresAt: number;
@@ -437,6 +444,7 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     bid: extra.bid && extra.bid > 0 ? extra.bid : quote.bid,
     ask: extra.ask && extra.ask > 0 ? extra.ask : quote.ask,
     intradayChangePct: typeof extra.intradayChangePct === "number" ? extra.intradayChangePct : quote.intradayChangePct,
+    vwap: extra.vwap && extra.vwap > 0 ? extra.vwap : quote.vwap,
     asOf: extra.asOf ?? quote.asOf,
     companyName: extra.companyName ?? quote.companyName,
     sentiment: extra.sentiment ?? quote.sentiment,

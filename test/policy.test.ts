@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
 import type { AccountCapabilities, EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
+
+// Mock the tax module so the authoritative wash-sale gate tests don't need a DB.
+vi.mock("../src/lib/tax", () => ({
+  getUserWashSaleLockedSymbols: vi.fn((_userId: string) => new Set<string>()),
+}));
 
 // Minimal AccountCapabilities that grants short-selling for tests that verify the enabled path.
 const shortCapableAccount: AccountCapabilities = {
@@ -85,6 +91,44 @@ describe("evaluateTradeProposal", () => {
       washSaleLockedSymbols: new Set(["TSLA"])
     });
     expect(decision.approved).toBe(true);
+  });
+
+  // Authoritative cross-account wash-sale gate (architecture-blueprint §3.3):
+  // the gate must block the buy even when the caller omits washSaleLockedSymbols,
+  // resolving the set via getUserWashSaleLockedSymbols(userId) itself.
+  it("blocks a buy of a wash-sale-locked symbol at the gate even when washSaleLockedSymbols is omitted", () => {
+    vi.mocked(getUserWashSaleLockedSymbols).mockReturnValueOnce(new Set(["TSLA"]));
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10,
+      userId: "user-test",
+      // intentionally omitting washSaleLockedSymbols — gate must resolve it itself
+    });
+    expect(getUserWashSaleLockedSymbols).toHaveBeenCalledWith("user-test", expect.any(Date));
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
+  });
+
+  it("does not call getUserWashSaleLockedSymbols when washSaleLockedSymbols is pre-populated", () => {
+    vi.mocked(getUserWashSaleLockedSymbols).mockClear();
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10,
+      washSaleLockedSymbols: new Set(["TSLA"]),
+      userId: "user-test",
+    });
+    // Pre-populated set is used directly; no extra DB call.
+    expect(getUserWashSaleLockedSymbols).not.toHaveBeenCalled();
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
   });
 
   it("blocks symbols outside the allowed universe", () => {

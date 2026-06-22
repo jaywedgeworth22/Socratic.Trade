@@ -11,7 +11,7 @@ const buttonBase =
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-fg hover:brightness-110 shadow-sm",
-  danger: "bg-down text-white hover:brightness-110 shadow-sm",
+  danger: "bg-down text-down-fg hover:brightness-110 shadow-sm",
   ghost: "border border-line bg-surface text-fg hover:bg-surface-2",
   subtle: "bg-surface-2 text-fg hover:bg-surface-3",
   accentSoft: "bg-accent/12 text-accent hover:bg-accent/20 border border-accent/20"
@@ -275,6 +275,12 @@ export function StatTile({
   sub?: React.ReactNode;
   tone?: Tone;
   icon?: React.ReactNode;
+  /**
+   * Native hover tooltip for the whole tile — used to carry the value's provenance
+   * (source + "Received HH:MM"). Applied to the tile's container `Card` below so hovering
+   * anywhere on the tile reveals it. Pass a `dataPointTitle(...)` string only when a real
+   * source/time is known; leave undefined to fall back to no tooltip rather than fabricating one.
+   */
   title?: string;
 }) {
   const valueTone = tone === "up" ? "text-up" : tone === "down" ? "text-down" : tone === "warn" ? "text-warn" : "text-fg";

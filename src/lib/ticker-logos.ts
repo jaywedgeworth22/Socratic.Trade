@@ -1,6 +1,9 @@
 export type TickerLogoDisplay = "tile" | "transparent" | "off";
 
-export const DEFAULT_TICKER_LOGO_DISPLAY: TickerLogoDisplay = "tile";
+// Default to the transparent (clean, no background tile) treatment. When a
+// symbol has no loadable logo, TickerLogo automatically falls back to a tile
+// monogram, so this default never leaves a bare gap.
+export const DEFAULT_TICKER_LOGO_DISPLAY: TickerLogoDisplay = "transparent";
 
 const TICKER_LOGO_VALUES = new Set<TickerLogoDisplay>(["tile", "transparent", "off"]);
 const TICKER_LOGO_BASE_URL = "https://raw.githubusercontent.com/davidepalazzo/ticker-logos/main/ticker_icons";

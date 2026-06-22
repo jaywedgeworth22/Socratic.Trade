@@ -24,6 +24,117 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`ci/activate-e2e`): **Activated the Playwright smoke workflow.** `git mv
+  ci-pending/e2e.yml .github/workflows/e2e.yml` — the smoke (`npm run test:e2e`, now passing after
+  `e2e/smoke-fix`) runs on every PR/push. Reframed `ci-pending/README.md` from "staged" to reference
+  (all of ci/security/e2e/deploy are now active; `ci-pending/` holds only the README). To make the
+  smoke a *required* merge gate, add its check context (`smoke`) to the `main-protection` ruleset's
+  required checks. See `docs/rollouts/2026-06-22-activate-e2e-workflow.md`.
+- 2026-06-21 (`fix/per-user-robinhood-enrichment-token`): **SECURITY — Robinhood broker-token tenant isolation in the read-only enrichment paths.** Audit of PR #42 (`0056f04`, per-user OAuth token) found two enrichment callers fetched Robinhood data with no userId, falling through to `DEV_USER_ID` (`'local'`) and silently using the operator's real broker token for every user. Fix: `fetchRobinhoodHistoricals`/`fetchRobinhoodFundamentals` (`robinhood.ts`) now require an explicit `userId` (no `DEV_USER_ID` default); `fetchDailyOHLC` (`history.ts`) consults the private Robinhood OHLC tier ONLY when a user is in scope and forwards it (the computed-technicals refresh writes a GLOBAL dataset → omits the broker tier, never borrows `'local'`); `RobinhoodEnrichmentProvider` (`data-providers.ts`) takes the request-scoped userId and fails closed when none. Also folded in: the OAuth callback now asserts the completing session's userId matches `stateBlob.userId` (`completeMcpOAuthCallback` `expectedUserId`) so a token can't be bound under a victim's userId. New `test/robinhood-tenant-isolation.test.ts` (7 tests) pins user B never resolving user A's token. tsc clean, **674 tests** (+7), build green. Built in the isolated `~/apps/trading-fix-rh-token` worktree off `origin/main` (the `agent/claude` lane was parked on `agent/claude-litestream`); landing via PR. See `docs/rollouts/2026-06-21-robinhood-enrichment-token-isolation.md` and the "Post-merge hardening" section of `docs/design/per-user-broker-token.md`.
+- 2026-06-22 (`e2e/smoke-fix`): **Fix Playwright smoke (prod-mode auth) + drop transactional
+  fill+snapshot.** Smoke failed because `next start` runs `NODE_ENV=production`, so the auth
+  middleware redirects `/`→`/access-denied` (dashboard never renders). `playwright.config.ts` now
+  authenticates the test browser via the CF-Access header (`CF_ACCESS_TRUST_EMAIL_HEADER=1` +
+  `extraHTTPHeaders`); also refreshed the stale `Kill|Resume`→`Start|Stop` assertion. e2e.yml
+  activation still needs a `workflow`-scoped token (owner; like deploy.yml). **Dropped transactional
+  fill+snapshot** — not safe: each write is a single atomic INSERT, snapshots already bracket the run
+  (pre+post), coupling a real-broker fill to a snapshot write would roll back a real trade, and the
+  CAS + synthetic-stop claim already guard double-book. See `docs/rollouts/2026-06-22-e2e-smoke-auth-fix.md`.
+- 2026-06-22 (`safety/fk-cleanup`): **FK enforcement + account-delete cascade cleanup.** Deleting a
+  connected account left orphaned `fill_events`/`portfolio_snapshots`/`trade_proposals`/
+  `synthetic_trailing_stops` still feeding P&L/exposure. `getDb()` now sets `PRAGMA foreign_keys=ON`
+  (inert today, correct default), and `deleteConnectedAccount` purges the account's records (by
+  `account_number`+`user_id`) in one transaction. Behavioral change: removing an account now purges
+  its trade/P&L history. tsc clean, 794 tests (+3), build green. See
+  `docs/rollouts/2026-06-22-fk-account-delete-cleanup.md`.
+- 2026-06-22 (`reliability/llm-timeout`): **Bounded LLM + Robinhood-order fetch timeouts.** LLM HTTP
+  calls and the Robinhood MCP order path had no timeout — a half-open connection could hang the caller
+  indefinitely (and hold the per-user strategy run lock). New `llmFetch()` + `LLM_TIMEOUT_MS=60s` in
+  `llm-request.ts`, applied to bull/bear (`strategy.ts`), `red-team`, `strategy-tuning`,
+  `proposal-revalidation`, `post-mortem`, and `chat/llm` (Anthropic+OpenAI); `callRobinhoodMcpMethod`
+  gets `AbortSignal.timeout(30s)` (covers `place_equity_order`). tsc clean, 791 tests (+3), build green.
+  See `docs/rollouts/2026-06-22-llm-fetch-timeout.md`.
+- 2026-06-22 (`reliability/scheduler-cadence`): **Scheduler cadence rehydrate on boot.** The scheduler
+  fired a run on the first tick after every restart/HMR/deploy regardless of cadence (in-memory
+  `userSchedules.lastRunAt` starts null). Now seeds `lastRunAt` from the last real `strategy_runs` row
+  via new `getLastStrategyRunStartedAt(userId)`, so cadence survives a restart. tsc clean, 790 tests
+  (+3), build green. NOTE: dropped the queued `fill_events UNIQUE(proposal_id, source)` idempotency —
+  invalid key (proposals legitimately have multiple fills; broke 26 tests) and the execution CAS
+  already guards the double-book. See `docs/rollouts/2026-06-22-scheduler-cadence-rehydrate.md`.
+- 2026-06-22 (`feat/llm-usage-key-labels`): **Human-readable per-key LLM usage labels.** `describeUsageKey(row)` (`llm-usage.ts`) maps a usage row's opaque `key_ref` fingerprint back to a **last-4 + label** from the live key store (own key → `"<userId> (<provider>)"`; `local` → `"operator (<provider>)"`; tenant on the env failover → `"operator env (<provider>)"`; detached key → undefined). `GET /api/admin/llm-usage` rows now carry `keyLabel` + `keyLast4`. Last-4 is computed at read time, never persisted (the ledger still only stores the non-reversible fingerprint). tsc clean, **788 tests** (+1), build green. Built in `~/apps/trading-keys3` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-llm-usage-key-labels.md`.
+- 2026-06-22 (`feat/alpaca-shared-data-per-key-ledger`): **Per-attached-key LLM ledger + Alpaca paper key as shared market-data source.** (1) The `llm_usage` ledger now records a non-secret `key_ref` (`keyFingerprint` = truncated sha256) so usage/cost is measured **per attached key** (user or operator), not just per source; `resolveLlmCredential` returns `keyRef`, threaded through every LLM site, grouped in `getLlmUsageSummary` at `GET /api/admin/llm-usage`. (2) New `resolveAlpacaMarketData(userId)` — a user's own Alpaca key gives individual data (private/pooled); otherwise the operator's paper key serves as the **shared** market-data source for background scans (no userId) + tenants without their own key. Trading stays strictly per-user (`alpaca.ts` unchanged) so no one trades on the operator's account; Alpaca data is identical paper/live. Restores the real-time Alpaca enrichment tier for background scans (had degraded after PR #65). Robinhood-as-global-data considered + declined (no edge, undocumented account-scoped caps, ToS risk). `key_ref` schema added as a versioned migration (v2) per the new `MIGRATIONS` framework. tsc clean, **766 tests** (+3), build green. Built in isolated `~/apps/trading-keys2` off `origin/main` (PR #65 merged); landing via PR. See `docs/rollouts/2026-06-22-per-key-ledger-and-shared-alpaca-data.md`.
+- 2026-06-21 (`safety/persistence-hardening`): **Migration framework + money/data-loss fixes.**
+  From the post-fix "what's left" re-audit; rebuilt onto the split `db.ts` + next16/zod4. Adds a
+  `PRAGMA user_version` migration framework (`runMigrations`/`getSchemaVersion`; `migrate()` stays the
+  idempotent baseline, next schema change goes in `MIGRATIONS`); an **ENCRYPTION_KEY boot fail-fast**
+  (`assertEncryptionKeyAvailable` throws if the ephemeral random key would silently decrypt stored
+  creds to `''`); **no fabricated `$100`** in Alpaca review (`estimateReviewNotional` fails closed;
+  `getEquityQuotes` logs swallowed errors); **side-aware universe/blocklist gate** (sell/cover exits
+  never blocked); **synthetic-stop live exits booked `pending_reconciliation`**. tsc clean, 772 tests
+  (+8), build green. CI workflow activation is PR #50. See
+  `docs/rollouts/2026-06-21-persistence-safety-hardening.md`.
+- 2026-06-21 (`feat/per-user-key-resolution`): **Multi-user API-key resolution (no special `local`) + operator-funded LLM failover with per-user usage tracking.** `resolveApiKeyWithSource` (`db-api-keys.ts`) is tier-aware: **per-user-only** keys (broker `alpaca_*` + LLM `openai`/`anthropic`, and any unlisted service) have **no env fallback for anyone** — at boot the operator's env values are migrated into the `local` primary user's store (`migrateLocalEnvCredentials`/`migrateLocalRobinhoodToken` via `instrumentation.ts`), so every user incl. `local` resolves from their own stored keys/OAuth; **shared-operator-infra** keys (all market data, FRED, Pinecone/Voyage, Apify, SEC UA) keep a global env fallback (operator-funded public data; a user's own key still overrides + joins the consent pool). LLM uses `resolveLlmCredential`: per-user key first, else the operator env key as a **flag-gated failover for any user** (`LLM_OPERATOR_FALLBACK`, default on) — every call recorded in a new `llm_usage` ledger (`llm-usage.ts`, tokens/cost/keySource) at `GET /api/admin/llm-usage`. Closed direct-`process.env` bypasses (`alpaca.ts`, `mcp-oauth.ts`, `massive-s3.ts`, `congress.ts`) + threaded userId through the chat orchestrator and learned-context semantic gate (adversarial-review fixes — were silently spending the operator LLM key unattributed). tsc clean, **763 tests**, build green. Built in isolated `~/apps/trading-keys` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-21-per-user-key-resolution-llm-ledger.md`.
+- 2026-06-21 (`agent/claude-docs-pr-policy`): **Corrected AGENTS.md (PR policy + db.ts split + stale counts).** Documented the required `verify` CI check (ruleset-enforced; `--admin` does NOT bypass; merge with `--squash --auto`), repointed the daily-notional trap to `db-execution.ts` + added a note that `db.ts` is now an 8-module barrel, refreshed the test count (~723/81), and fixed the backwards AGENTS.md↔CLAUDE.md symlink description. See `docs/rollouts/2026-06-21-agents-md-pr-policy-fix.md`.
+- 2026-06-21 (`agent/claude-litestream-dedup`): **Removed dead Litestream stub.** Deleted `scripts/litestream.mjs` + the 3 `litestream:*` npm scripts + the old `LITESTREAM_DB_PATH`/`LITESTREAM_REPLICA_URL` env vars (never run); reconciled `docs/ops-observability-security.md` to the live PM2+R2 setup. Single Litestream implementation now (the verified-live one from #47). tsc clean, 723 tests pass, build green. See `docs/rollouts/2026-06-21-litestream-dedup.md`.
+- 2026-06-21 (`agent/claude-flaky-lock`): **Fix flaky CI timeout in `approval-lock.test.ts`.** The two tests that let `executeProposal` run its full broker-review path (no broker → retry/backoff > 5s on loaded CI runners) got a 20s per-test timeout; they assert lock behavior, not timing. Stops intermittent `Test timed out in 5000ms` failures that were blocking PR merges. tsc clean, 4/4 pass. See `docs/rollouts/2026-06-21-flaky-approval-lock-timeout.md`.
+- 2026-06-21 (`agent/claude-db-split-v2`): **refactor(db): split db.ts (2964 lines) into 8 focused modules.** Pure mechanical extraction — db.ts retains schema/migration/getDb()/audit() and re-exports all 8 modules as a barrel for zero consumer breakage. Re-derived from current main (supersedes stale PR #46). tsc clean, 704/704 tests green, build green. See `docs/rollouts/2026-06-21-db-split-v2.md`.
+
+
+
+- 2026-06-21 (`agent/claude-litestream`): **Litestream WAL replication LIVE on Cloudflare R2 (P2-5).** Litestream 0.5.12 installed and running as PM2 sidecar `litestream` via `scripts/run-litestream.sh`, replicating `~/apps/trading-live/data/app.db` → R2 bucket `trading-live-backups`. First ~9.4 MB snapshot verified uploaded; `replica sync` each second, restart_time 0. 0.5.x is single-replica (dropped the local-file replica) and uses `litestream ltx` (not `snapshots`). PR #47. **Follow-up: rotate the R2 token (pasted in chat; scoped to that one bucket).** See `docs/rollouts/2026-06-21-litestream-r2-live.md`.
+- 2026-06-21 (`feat/csrf-rate-limit-admin`): **SECURITY-HARDENING — CSRF origin guard + per-user rate limiting + admin-role gate.** Added `src/lib/auth/csrf.ts` (same-origin Sec-Fetch-Site/Origin check, wired into `middleware.ts` for state-changing `/api/*`; webhooks/health exempt), `src/lib/rate-limit.ts` (in-process sliding window, no deps; fail-open on error, 429 over limit; applied to OAuth start/callback, `orders/cancel`, `proposals/[id]/approve`), and `src/lib/auth/admin.ts` `requireAdmin` (ADMIN_USER_EMAILS allowlist + primary operator, default-deny in prod; composes with the legacy x-admin-token/non-prod gate; wired into all six `app/api/admin/*` routes). tsc clean, 642 tests pass (+19), build green. See `docs/rollouts/2026-06-21-csrf-rate-limit-admin.md`.
+- 2026-06-21 (`agent/claude`): **P0-3/P1-2/P1-7 — VIX Yahoo fallback + congress floor + exposure defaults.** Live ^VIX from Yahoo Finance (key-free) replaces "Unknown regime" when no FRED key is configured; `hasNotableWebSignal` now requires buyCount≥2 AND netSignal≥2 (single-member disclosures no longer trigger rank-lift); `maxGrossExposurePct`/`maxNetExposurePct` defaults tightened 100→80 to enforce a 20% cash buffer. tsc clean, 593 tests all pass (+20). See `docs/rollouts/2026-06-21-p1-macro-signal-exposure.md`.
+- 2026-06-22 (`claude/app-strategic-framework-xh9bdw`): **Staged production deploy workflow.** Added `ci-pending/deploy.yml` (auto-deploy `main`/merged PRs + manual dispatch → self-hosted PM2 host: `git reset --hard origin/main` → `npm ci` → `npm run build` → `pm2 restart trading`, preserving untracked `.env.local`/`data/`) and expanded `ci-pending/README.md` with activation, self-hosted-runner setup, and an SSH alternative. Staged in `ci-pending/` because the push token lacks `workflow` scope. Owner must `git mv` it into `.github/workflows/` + register the `trading-live` runner (or set SSH secrets) to activate. See `docs/rollouts/2026-06-22-deploy-workflow-staged.md`.
+- 2026-06-21 (`claude/app-strategic-framework-xh9bdw`): **Ticker logos default to transparent + tile-monogram fallback.** `DEFAULT_TICKER_LOGO_DISPLAY` `tile`→`transparent`; `TickerLogo` now renders a tile monogram (first 1–2 letters) when a logo image fails to load instead of a bare gap (explicit `fallback` prop still wins). Addresses a user report; the separate "Logo source (GitHub/logo.dev) picker does nothing" complaint was already fixed on `main` (commit `e61ec84` removed the picker; deterministic GitHub→logo.dev cascade) and only needs a deploy. tsc clean · `ticker-logos` test updated & green · `npm test` 647 pass / 1 pre-existing unrelated fail (`cache-provenance`, date-sensitive) · build clean. See `docs/rollouts/2026-06-21-ticker-logo-transparent-default-tile-fallback.md`.
+- 2026-06-21 (`claude/app-strategic-framework-xh9bdw`): **Plain-English strategic-framework doc.** Added `docs/strategic-framework.md` — a college-level, no-investing-experience-assumed outline of the whole strategy (three execution modes, six evaluation lenses, factor weighting matrix, learning loop, safety gates) with an explicit honest weaknesses/limits/risks section (unproven factor weights, no rigorous backtester, free-tier data gaps, keyword sentiment, advisory-only weight shifts + 20-trade cold start, short/cover not fully proven, single-process scheduler, no holiday calendar). Living doc with its own changelog; update it as the strategy is refined. Docs-only. See `docs/rollouts/2026-06-21-strategic-framework-plain-english.md`.
+- 2026-06-21 (`agent/claude`): **P1-4/5/6 — congress disclosedAt windowing + scorecard floor + deterministic Bear veto.** PR #35.
+- 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**
+  Reordered the enrichment cascade so the real-time `AlpacaSnapshotEnrichmentProvider` wins the
+  price-family fields (price/bid/ask/volume/vwap/intradayChangePct) over delayed providers (it only
+  supplies market data, so fundamentals sourcing is untouched; self-skips without Alpaca keys). Added
+  a shared `dataPointTitle(label, source, asOf)` (+ `derivedTitle`) so hovering ANY Market-Scan cell
+  shows `Source: <provider> · Received HH:MM`, attributed to that field's own `sources[field]`
+  (derived cols → "Computed from <inputs>"; no-provenance cols → time only; never fabricated).
+  `StatTile` carries source/time app-wide; `SOURCE_LABELS` polished (alpaca-snapshot→"Alpaca"). tsc
+  clean · **593 tests** · adversarially verified · see
+  `docs/rollouts/2026-06-21-best-source-and-provenance-tooltips.md`.
+- 2026-06-21 (`agent/claude`): **Scan default columns (expert panel) + Alpaca VWAP/feed.**
+  A 4-persona financial-expert panel chose a new 11-column execution-aware default for the Market
+  Scan — `symbol·price·Chg·vsVWAP·SecRS·%offHi·$Vol·Spread·Bid·Ask·Score` (bid/ask now default-on
+  per owner mandate; `SCAN_COLS_KEY`→v3). Alpaca snapshot provider now also maps real **VWAP**
+  (lights the existing "vs VWAP" column) and the data feed is env-configurable (`ALPACA_DATA_FEED`,
+  default `iex`; SIP is 403 on the free plan). Also fixed 5 tsc errors another lane left in
+  `test/deterministic-bear.test.ts`. tsc clean · **580 tests** · live VWAP verified · see
+  `docs/rollouts/2026-06-21-scan-default-columns-alpaca-vwap.md`.
+- 2026-06-21 (`agent/claude`): **P1 edge quality — congress disclosedAt windowing + scorecard noise floor + deterministic Bear veto.** Three financial-expert-panel P1 items: (1) `aggregateCongressSignals` now windows on `disclosedAt` (not `tradedAt`) so only market-visible disclosures count; (2) LLM scorecard filters raised ≥2→≥5 trades; (3) `deterministicBearFilter` (sync, no LLM) runs before Bear: hard-vetos phantom exits + below-median buys in crisis regime, flags momentum overextension. tsc clean, 573 tests (+16). Commit: `61b560e`. See `docs/rollouts/2026-06-21-p1-edge-quality.md`.
+- 2026-06-21 (`agent/claude-ui`, PR pending): **UI/UX deferred-fix pass.** Cleared a batch from
+  the issue register: Strategy-Flow rework (REL-6), safe-area insets (IPH-9/IOS-1), dark-mode
+  danger contrast (A11Y-7), scoped chart gradient (MISC-1), deleted dead `app/ui/dashboard/*`
+  (DUP-1, also closing CPY-7/VIS-2), safety-banner casing (CPY-9), Activity aria (A11Y-5),
+  pill-label sizes (A11Y-8), scan-table overscan (SCN-2). Done in an isolated worktree off `main`
+  to avoid racing the live `agent/claude` session. tsc clean · **557 tests** · build clean · see
+  `docs/rollouts/2026-06-21-ui-ux-deferred-fixes.md`.
+
+- 2026-06-21 (`agent/claude`, PR #32): **PDT-rule repeal + Alpaca scan data + consent UI.**
+  FINRA Notice 26-10 retired the Pattern-Day-Trader rule ($25k / 4-trades-in-5-days) → replaced
+  the `policy.ts` PDT gate with a `MARGIN_MINIMUM_EQUITY` ($2,000) margin-account gate (LIVE +
+  `marginEnabled` + equity < $2k, opening legs only); day-trade counting kept but now informational.
+  New `AlpacaSnapshotEnrichmentProvider` feeds real bid/ask/price/volume/intraday-change into the
+  Market Scan (replacing fabricated spreads), consent-gated, verified live against the linked paper
+  account. Settings gained a "Data" tab that states the shared-pool deal + a consent toggle
+  (`GET/POST /api/consent`). tsc clean · **557 tests** · see
+  `docs/rollouts/2026-06-21-pdt-repeal-alpaca-scan-consent-ui.md`.
+
+- 2026-06-21 (`safety/deep-fixes`): **Execution-section CAS + synthetic-stop re-entrancy + boot
+  autonomy interlock.** Three failure-mode-review deep fixes (the auth middleware #1, the drawdown
+  circuit breaker #7, and the approval-path run-lock were already on `main`). Adds an atomic DB
+  compare-and-swap (`claimProposalForExecution`) at both `executeProposal` commit points — defense in
+  depth alongside the existing run-lock so concurrent/retried approvals can't double-place; the
+  synthetic-stop monitor now claims each stop (`claimSyntheticStop`/`revertSyntheticStopClaim`) +
+  a `globalThis`-pinned per-user in-flight guard in the scheduler (deterministic refId for broker
+  dedupe); and `reconcileAutonomyOnBoot()` reverts persisted `active` autonomy to `halted` on boot
+  unless `AUTONOMY_RESUME_ON_BOOT=1`. tsc clean · tests green (+8) · build green. See
+  `docs/rollouts/2026-06-21-execution-cas-and-boot-interlock.md`.
 - 2026-06-21: **Responsive UI spacing and sizing tweaks.** Stretched selects and text fields to be max-sm:h-11 on mobile device headers, constrained widths to prevent layout breaking, and aligned header elements cleanly.
 - 2026-06-21: **Proposal UI refinements, account details, and text contrast improvements.** Updated the proposed decisions card inside `DecisionView` to display a custom bold, smaller `TEST` label instead of the green chip for paper test status. Plumbed the connected account details (`Agentic x####`, `Brokerage x####`, `Paper x####`) to the top-left of each proposal card. Surfaced ticker logos directly in the proposal boxes beside the ticker. Hardened text contrast by changing size/cost labels to `text-fg font-medium` and rationale text to `text-fg/85`. Customised the portfolio panel and mobile summary titles to indicate the specific broker/environment (e.g., `Alpaca Paper Account` or `Robinhood Agentic Account`). Verified all 416 unit tests, type check, and Next.js build pass cleanly.
 - 2026-06-21: **Responsive header layout, logo options, and ticker validation.** Redesigned the header component to stack cleanly as `flex-col` on mobile/tablet and `lg:flex-row` on desktop, preventing overlap with the top safety banner. Aligned the green Zap logo to the top of the title text. Renamed autonomy status `"Halted"` to `"Inactive"`. Changed Settings subtitle to `"Risk, Tax, & Notifications"`. Renamed Ticker logo options to "Small Tile" and "Medium". Integrated logo source selection ("Option 1: Auto", "Option 2: GitHub only", "Option 3: logo.dev only") with backend routing. Added symbol validation to Watchlist, Additional Watchlist, and Ignore List (Blocklist) to restrict input to valid S&P 500, Nasdaq 100, and Dow 30 components. Passed all 416 unit tests, Next.js build, and type check.

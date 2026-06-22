@@ -1,6 +1,7 @@
 import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
 import { symbolsForPolicyUniverse } from "./index-universes";
+import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -14,6 +15,11 @@ export interface PolicyContext {
   marketScan?: MarketScan;
   /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
   washSaleLockedSymbols?: Set<string>;
+  /**
+   * User identifier. Required for the wash-sale gate to resolve the cross-account locked set
+   * when washSaleLockedSymbols is not pre-populated by the caller.
+   */
+  userId?: string;
   /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
   accountCapabilities?: AccountCapabilities;
   /**
@@ -31,13 +37,14 @@ export interface PolicyContext {
   now?: Date;
 }
 
-/** $25,000 minimum equity a LIVE account must hold to day-trade without tripping the PDT rule. */
-export const PDT_EQUITY_THRESHOLD = 25_000;
 /**
- * A LIVE account under the equity threshold may make at most this many day-trades in a rolling
- * 5-business-day window; the order that would enable one MORE (the 4th) is blocked.
+ * Minimum equity a LIVE MARGIN account must hold to trade on margin. SEC/FINRA RETIRED the
+ * Pattern-Day-Trader rule (FINRA Notice 26-10, 2026): the old $25,000 minimum and the
+ * 4-day-trades-in-5-business-days limit no longer exist. The replacement framework is broker-side
+ * real-time intraday-margin monitoring plus this $2,000 minimum for margin accounts. We enforce only
+ * the static minimum here and defer intraday margin to the broker — we no longer count day-trades.
  */
-export const PDT_MAX_DAY_TRADES = 3;
+export const MARGIN_MINIMUM_EQUITY = 2_000;
 
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
@@ -48,10 +55,27 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.systemState === "liquidating" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is liquidating. Only close orders allowed.");
   if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
-  const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-  if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-  if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  // Universe/blocklist applies to OPENING trades only. Never block a risk-reducing exit
+  // (sell/cover) because the symbol was removed from the universe or blocklisted — that
+  // would trap a position in a name you flagged precisely to get out of.
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  if (isOpening) {
+    const allowedSymbols = allowedSymbolsForPolicy(context.policy);
+    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
+  // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
+  // Permissive default — brackets should be encouraged when stop rules are active.
+  if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const bracketPermitted =
+      context.policy.permittedOrderTypes.includes("bracket" as any) ||
+      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+    if (!bracketPermitted) {
+      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+    }
+  }
   if (!context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
     reasons.push("Extended-hours orders are disabled.");
   }
@@ -86,25 +110,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
   
-  const isOpening = proposal.side === "buy" || proposal.side === "short";
-
-  // PATTERN-DAY-TRADER GATE (FINRA Rule 4210). A "day-trade" is a same-symbol round-trip opened
-  // and closed on the same calendar day. An account flagged as a pattern day trader — 4+ day-trades
-  // in a rolling 5 business days — must keep ≥ $25,000 in equity. Scope: LIVE/real-capital execution
-  // ONLY; Test/local simulation and broker-Paper accounts can never violate PDT and are never gated.
-  // We block the OPENING leg that would ENABLE a 4th day-trade (priorDayTradeCount ≥ 3) when the live
-  // account's equity (Portfolio.totalMarketValue) is below the threshold. Closing legs (sell/cover) are
-  // never blocked here — exiting a position can only reduce, never create, PDT exposure.
+  // MARGIN-ACCOUNT MINIMUM (replaces the retired Pattern-Day-Trader gate). SEC/FINRA RETIRED the PDT
+  // rule (FINRA Notice 26-10, 2026): there is no longer a $25,000 minimum or a 4-day-trades-in-5-days
+  // limit. The new framework is broker-side real-time intraday-margin monitoring plus a $2,000 minimum
+  // equity for MARGIN accounts. So we no longer count day-trades; we enforce ONLY the static $2,000
+  // margin minimum on a LIVE/real-capital MARGIN account and defer intraday margin to the broker.
+  // Scope: LIVE execution only (Test/local sim and broker-Paper are never gated); opening legs only;
+  // cash (non-margin) accounts are never gated here (they aren't subject to the margin minimum).
   if (
     isOpening &&
     context.isLiveExecution === true &&
-    context.portfolio.totalMarketValue < PDT_EQUITY_THRESHOLD &&
-    (context.priorDayTradeCount ?? 0) >= PDT_MAX_DAY_TRADES
+    context.accountCapabilities?.marginEnabled === true &&
+    context.portfolio.totalMarketValue < MARGIN_MINIMUM_EQUITY
   ) {
     reasons.push(
-      `pdt_rule: Pattern-Day-Trader block — this account has ${context.priorDayTradeCount} day-trades in the last 5 business days ` +
-        `and equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the $${PDT_EQUITY_THRESHOLD.toLocaleString("en-US")} minimum; ` +
-        `opening ${symbol} would enable a 4th day-trade.`
+      `margin_minimum: this LIVE margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
+        `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} minimum required to trade on margin (the PDT rule was retired — FINRA Notice 26-10).`
     );
   }
 
@@ -167,12 +188,24 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
   // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
   // the last 30 days, which would disallow the loss. Configurable via taxSettings.
+  // Wash sales are only relevant for BUY orders (re-establishing a long position).
+  // Covers are buy-to-close on a short and do NOT re-establish the sold long position,
+  // so they are intentionally excluded here.
+  //
+  // Authoritative cross-account enforcement (architecture-blueprint §3.3): if the
+  // caller did not pre-populate washSaleLockedSymbols, resolve it now using
+  // getUserWashSaleLockedSymbols so the gate cannot be silently bypassed by a caller
+  // that omits the locked set.
   if (
     proposal.side === "buy" &&
-    (context.policy.taxSettings?.washSaleGuard ?? true) &&
-    context.washSaleLockedSymbols?.has(symbol)
+    (context.policy.taxSettings?.washSaleGuard ?? true)
   ) {
-    reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    const lockedSymbols: Set<string> =
+      context.washSaleLockedSymbols ??
+      (context.userId != null ? getUserWashSaleLockedSymbols(context.userId, context.now ?? new Date()) : new Set<string>());
+    if (lockedSymbols.has(symbol)) {
+      reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    }
   }
 
   if (isOpening && proposal.side === "short" && context.policy.maxShortExposurePct) {

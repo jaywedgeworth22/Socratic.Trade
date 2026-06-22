@@ -1,6 +1,7 @@
-import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveApiKey } from "./db";
+import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
@@ -24,8 +25,10 @@ export async function debateProposal(
   const policy = getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
-  const openaiKey = resolveApiKey("openai", userId);
+  const cred = resolveLlmCredential("openai", userId);
+  const openaiKey = cred.key;
   if (!openaiKey) return { rejected: false, available: false, reason: "Red Team debate skipped because OpenAI is not configured." };
+  const keySource = cred.source === "operator" ? "operator" : "user";
   
   const systemPrompt = `You are the Red Team Risk Agent. Your job is to rigorously critique the strategy's high-conviction trade proposals.
   
@@ -110,7 +113,7 @@ Respond with a JSON object containing:
         })
       },
       async () => {
-        const response = await fetch(url, {
+        const response = await llmFetch(url, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -131,6 +134,7 @@ Respond with a JSON object containing:
         }
 
         const payload = await response.json();
+        recordLlmUsage({ userId, provider: "openai", model, context: "red-team", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;

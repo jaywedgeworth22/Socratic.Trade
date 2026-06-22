@@ -1,0 +1,214 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+import { DEFAULT_POLICY } from "../src/lib/defaults";
+import { applyDeterministicSizing } from "../src/lib/strategy";
+import type { EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+
+// Conviction-size cap (panel finding): AI confidenceScore is a direct linear multiplier on size and
+// a learned "fact" can inflate it. The 20-lot evidence floor only protects UNPROVEN theses, so a
+// PROVEN-but-mediocre thesis could size up on confidence alone. The cap clamps confidence's UPSIDE
+// contribution UNLESS the thesis's own realized edge corroborates it. It reads ONLY the realized
+// scorecard stats (sourced from getThesisScorecard / getThesisRegimeScorecard over closed lots) +
+// the proposal's own confidenceScore — NEVER learned_context (Phase-0 byte-identical invariant).
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-confcap-${randomUUID()}.db`)}`;
+});
+
+const THESIS = "Momentum-Breakout";
+const REGIME = "Tech-Bull";
+
+const PORTFOLIO: Portfolio = {
+  accountNumber: "A",
+  totalMarketValue: 1_000_000,
+  buyingPower: 1_000_000,
+  equityMarketValue: 0,
+  optionMarketValue: 0,
+  cash: 1_000_000
+};
+
+/** A buy proposal under the proven thesis/regime. confidenceScore drives raw conviction. */
+function buyProposal(confidenceScore: number): TradeProposal {
+  return {
+    symbol: "NVDA",
+    side: "buy",
+    type: "market",
+    timeInForce: "gfd",
+    marketHours: "regular_hours",
+    rationale: "entry",
+    tradeThesisTag: THESIS,
+    entryMarketRegime: REGIME,
+    confidenceScore
+  };
+}
+
+/** Policy with a clean notional base: 10000 max, no NAV cap, conservative cap defaults left ON. */
+function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    accountNumber: account,
+    paperMode: true,
+    maxOrderNotional: 10_000,
+    maxOrderPctOfNav: undefined,
+    scoringWeights: { ...DEFAULT_POLICY.scoringWeights },
+    tuning
+  };
+}
+
+/**
+ * Seed `count` closed round-trips for THESIS @ REGIME on `account`. The first `wins` are winners
+ * (+winPct%), the rest losers (-lossPct%). Each round-trip uses a unique symbol so FIFO lots don't
+ * mix, and ascending filledAt. Thesis/regime are carried on the opening (buy) fill's raw.proposal.
+ */
+async function seedClosedLots(opts: {
+  account: string;
+  count: number;
+  wins: number;
+  winPct: number;
+  lossPct: number;
+}) {
+  const { insertFillEvent } = await import("../src/lib/db");
+  const { account, count, wins, winPct, lossPct } = opts;
+  let t = 0;
+  for (let i = 0; i < count; i++) {
+    const sym = `SYM${i}`;
+    const entry = 100;
+    const exit = i < wins ? entry * (1 + winPct / 100) : entry * (1 - lossPct / 100);
+    insertFillEvent({
+      accountNumber: account,
+      source: "paper",
+      symbol: sym,
+      side: "buy",
+      quantity: 1,
+      price: entry,
+      notional: entry,
+      status: "filled",
+      filledAt: `2026-06-15T00:${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t++ % 60).padStart(2, "0")}.000Z`,
+      raw: { proposal: { tradeThesisTag: THESIS, entryMarketRegime: REGIME } }
+    });
+    insertFillEvent({
+      accountNumber: account,
+      source: "paper",
+      symbol: sym,
+      side: "sell",
+      quantity: 1,
+      price: exit,
+      notional: exit,
+      status: "filled",
+      filledAt: `2026-06-15T00:${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t++ % 60).padStart(2, "0")}.000Z`
+    });
+  }
+}
+
+const NO_POSITIONS: EquityPosition[] = [];
+
+function notionalFromRationale(p: TradeProposal): number {
+  return p.dollarAmount ?? 0;
+}
+
+describe("conviction-size cap", () => {
+  it("(a) proven + high confidence + mediocre realized stats → cap BINDS, size strictly smaller than corroborated, note present", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const account = "CAP-A";
+    // 20 closed lots (>= minLots, PROVEN). 10 winners (+2%) / 10 losers (-3%):
+    //   shrunkWinRate  = round((10 + 0.5*5)/(20+5) * 100) = 50% (< 58, fails win-rate gate)
+    //   shrunkAvgReturn = round((10*2 + 10*(-3))/(20+5), 2) = -0.4% (<= 0, fails edge gate)
+    // => NOT corroborated; raw conviction 0.95 clamps to the 0.6 default cap.
+    await seedClosedLots({ account, count: 20, wins: 10, winPct: 2, lossPct: 3 });
+    setPolicy(policyFor(account));
+
+    // Capped result (cap ON, default 0.6).
+    const capped = applyDeterministicSizing(buyProposal(95), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+
+    // Corroborated-equivalent: SAME mediocre realized inputs, but cap effectively disabled
+    // (convictionCapUncorroborated = 1 so Math.min(0.95, 1) = 0.95). Isolates exactly the cap's effect.
+    const uncapped = applyDeterministicSizing(
+      buyProposal(95),
+      policyFor(account, { convictionCapUncorroborated: 1 }),
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(notionalFromRationale(capped)).toBeGreaterThan(0);
+    expect(notionalFromRationale(capped)).toBeLessThan(notionalFromRationale(uncapped)); // strictly smaller
+    expect(capped.rationale).toContain("[Sizing] Conviction capped to 0.6");
+    expect(capped.rationale).toContain("not yet corroborated by realized edge");
+    // The corroborated-equivalent does NOT carry the cap note.
+    expect(uncapped.rationale).not.toContain("Conviction capped");
+  });
+
+  it("(b) proven + high confidence + strong realized stats → cap does NOT bind; full conviction-scaled size; no note", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const account = "CAP-B";
+    // 20 closed lots. 18 winners (+5%) / 2 losers (-1%):
+    //   shrunkWinRate  = round((18 + 2.5)/25 * 100) = 82% (>= 58)
+    //   shrunkAvgReturn = round((18*5 + 2*(-1))/25, 2) = 3.52% (> 0)
+    // => CORROBORATED; full raw conviction 0.95 applies, cap never binds.
+    await seedClosedLots({ account, count: 20, wins: 18, winPct: 5, lossPct: 1 });
+    setPolicy(policyFor(account));
+
+    const sized = applyDeterministicSizing(buyProposal(95), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+
+    // With the cap disabled the result is identical — proof the cap did not bind on strong stats.
+    const uncapped = applyDeterministicSizing(
+      buyProposal(95),
+      policyFor(account, { convictionCapUncorroborated: 1 }),
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(notionalFromRationale(sized)).toBe(notionalFromRationale(uncapped));
+    expect(sized.rationale).not.toContain("Conviction capped");
+  });
+
+  it("(c) low confidence → size reduced regardless; cap does not touch the downside path", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const account = "CAP-C";
+    // Mediocre (uncorroborated) stats, identical to (a).
+    await seedClosedLots({ account, count: 20, wins: 10, winPct: 2, lossPct: 3 });
+    setPolicy(policyFor(account));
+
+    const lowConf = applyDeterministicSizing(buyProposal(20), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+    const highConfCapped = applyDeterministicSizing(buyProposal(95), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+
+    // raw conviction 0.20 < cap 0.6 → cap is a no-op (Math.min(0.20, 0.6) = 0.20). Low confidence
+    // still shrinks size, and is strictly smaller than the capped-high-confidence size (0.20 < 0.6).
+    expect(lowConf.rationale).not.toContain("Conviction capped");
+    expect(notionalFromRationale(lowConf)).toBeGreaterThan(0);
+    expect(notionalFromRationale(lowConf)).toBeLessThan(notionalFromRationale(highConfCapped));
+  });
+
+  it("(d) unproven thesis (< minLots) stays pinned to the sizing floor (existing behavior preserved)", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const account = "CAP-D";
+    // Only 3 closed lots (< 20 minLots) under the thesis → UNPROVEN. High confidence must NOT size up.
+    await seedClosedLots({ account, count: 3, wins: 0, winPct: 2, lossPct: 3 });
+    setPolicy(policyFor(account));
+
+    const sized = applyDeterministicSizing(buyProposal(95), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+
+    // floor = 10% of 10000 = 1000. Pinned to floor; reports the exploratory reason, not the cap note.
+    expect(notionalFromRationale(sized)).toBe(1000);
+    expect(sized.rationale).toContain("EXPLORATORY floor");
+    expect(sized.rationale).not.toContain("Conviction capped");
+  });
+
+  it("(e) sizing is deterministic: identical inputs produce identical output", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const account = "CAP-E";
+    await seedClosedLots({ account, count: 20, wins: 10, winPct: 2, lossPct: 3 });
+    setPolicy(policyFor(account));
+
+    const a = applyDeterministicSizing(buyProposal(95), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+    const b = applyDeterministicSizing(buyProposal(95), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+
+    expect(notionalFromRationale(a)).toBe(notionalFromRationale(b));
+    expect(a.rationale).toBe(b.rationale);
+  });
+});

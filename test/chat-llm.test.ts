@@ -8,7 +8,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb } from "../src/lib/db";
 import { AnthropicLLM, getLLM, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
-import { DISCLAIMER } from "../src/lib/chat/prompt";
+import { buildSystem, DISCLAIMER, SYSTEM_PROMPT } from "../src/lib/chat/prompt";
 import type { LlmRunArgs, ToolSchema } from "../src/lib/chat/types";
 
 // Shared LlmRunArgs fixture — minimal but valid.
@@ -194,6 +194,77 @@ describe("OpenAILLM — ChatLLM contract", () => {
     // After the system message the first non-system role must be user, not assistant.
     const nonSystem = msgs.filter((m) => m.role !== "system");
     expect(nonSystem[0].role).toBe("user");
+  });
+});
+
+// ── AnthropicLLM prompt-caching unit tests ──────────────────────────────────
+
+describe("AnthropicLLM — prompt-caching cache_control", () => {
+  /** Minimal Anthropic-style text response. */
+  function anthropicResponse(text: string) {
+    return { content: [{ type: "text", text }], stop_reason: "end_turn" };
+  }
+
+  it("sends system as an array of content blocks (not a plain string)", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    await llm.run({ ...baseArgs, system: SYSTEM_PROMPT });
+
+    expect(Array.isArray(capturedBody.system)).toBe(true);
+  });
+
+  it("marks the entire system as ephemeral when system equals SYSTEM_PROMPT exactly", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    await llm.run({ ...baseArgs, system: SYSTEM_PROMPT });
+
+    const systemBlocks: any[] = capturedBody.system;
+    expect(systemBlocks).toHaveLength(1);
+    expect(systemBlocks[0].text).toBe(SYSTEM_PROMPT);
+    expect(systemBlocks[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("splits stable prefix (ephemeral) and dynamic suffix (uncached) when user memory is present", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    const systemWithMemory = buildSystem("Hold AAPL long-term.");
+    await llm.run({ ...baseArgs, system: systemWithMemory });
+
+    const systemBlocks: any[] = capturedBody.system;
+    // Two blocks: stable prefix (cached) + dynamic suffix (not cached).
+    expect(systemBlocks).toHaveLength(2);
+    expect(systemBlocks[0].text).toBe(SYSTEM_PROMPT);
+    expect(systemBlocks[0].cache_control).toEqual({ type: "ephemeral" });
+    // Dynamic suffix should NOT have cache_control.
+    expect(systemBlocks[1].cache_control).toBeUndefined();
+    expect(systemBlocks[1].text).toContain("Hold AAPL long-term.");
+  });
+
+  it("sends unrecognised system string as a single uncached block", async () => {
+    let capturedBody: any = null;
+    const transport = vi.fn().mockImplementation((body: any) => {
+      capturedBody = body;
+      return Promise.resolve(anthropicResponse("ok"));
+    });
+    const llm = new AnthropicLLM("ant-test", "claude-sonnet-4-6", transport);
+    await llm.run({ ...baseArgs, system: "custom override system prompt" });
+
+    const systemBlocks: any[] = capturedBody.system;
+    expect(systemBlocks).toHaveLength(1);
+    expect(systemBlocks[0].text).toBe("custom override system prompt");
+    expect(systemBlocks[0].cache_control).toBeUndefined();
   });
 });
 

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { evaluateTradeProposal, PDT_EQUITY_THRESHOLD, PDT_MAX_DAY_TRADES } from "../src/lib/policy";
-import type { OrderSide, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import { evaluateTradeProposal, MARGIN_MINIMUM_EQUITY } from "../src/lib/policy";
+import type { AccountCapabilities, OrderSide, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 
 // Pattern-Day-Trader gate (FINRA Rule 4210). Owner-resolved decisions under test:
 //   day-trade   = same-symbol round-trip OPENED and CLOSED on the same NY calendar day
@@ -125,11 +125,24 @@ describe("countDayTradesInLastBusinessDays", () => {
   });
 });
 
-describe("evaluateTradeProposal — PDT gate", () => {
+describe("evaluateTradeProposal — margin-minimum gate (PDT rule retired, FINRA Notice 26-10)", () => {
+  // The Pattern-Day-Trader rule ($25k minimum + 4-day-trades-in-5-days) was retired by SEC/FINRA.
+  // The replacement is broker-side real-time intraday margin + a $2,000 minimum for MARGIN accounts.
+  // The gate now enforces ONLY that static minimum, on LIVE margin accounts, for opening legs.
+  const caps = (marginEnabled: boolean): AccountCapabilities => ({
+    equityTrading: true,
+    shortSelling: false,
+    optionsTrading: false,
+    futuresTrading: false,
+    cryptoTrading: false,
+    marginEnabled,
+    accountType: "brokerage"
+  });
+
   function evaluate(opts: {
     equity: number;
     isLiveExecution?: boolean;
-    priorDayTradeCount?: number;
+    marginEnabled?: boolean;
     proposal?: TradeProposal;
     accountNumber?: string;
   }) {
@@ -141,62 +154,39 @@ describe("evaluateTradeProposal — PDT gate", () => {
       dailyOrderCount: 0,
       estimatedNotional: 100,
       isLiveExecution: opts.isLiveExecution,
-      priorDayTradeCount: opts.priorDayTradeCount
+      accountCapabilities: opts.marginEnabled === undefined ? undefined : caps(opts.marginEnabled)
     });
   }
 
-  it("BLOCKS an opening LIVE order with equity < $25k and 3 prior day-trades", async () => {
-    await seedDayTrades("PDT-BLOCK", "live", 3);
-    const { countDayTradesInLastBusinessDays } = await import("../src/lib/db");
-    const prior = countDayTradesInLastBusinessDays("PDT-BLOCK", 5, AS_OF);
-    expect(prior).toBe(PDT_MAX_DAY_TRADES); // exactly 3 — the next opening trade would be the 4th
-
-    const decision = evaluate({ equity: PDT_EQUITY_THRESHOLD - 1, isLiveExecution: true, priorDayTradeCount: prior });
+  it("BLOCKS a LIVE margin opening order below the $2,000 minimum", () => {
+    const decision = evaluate({ equity: MARGIN_MINIMUM_EQUITY - 1, isLiveExecution: true, marginEnabled: true });
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.some((r) => r.includes("pdt_rule"))).toBe(true);
+    expect(decision.reasons.some((r) => r.includes("margin_minimum"))).toBe(true);
   });
 
-  it("does NOT block when equity >= $25k even with 3 prior day-trades", () => {
-    const decision = evaluate({ equity: PDT_EQUITY_THRESHOLD, isLiveExecution: true, priorDayTradeCount: 3 });
-    expect(decision.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-    expect(decision.approved).toBe(true);
+  it("does NOT block at or above the $2,000 minimum", () => {
+    expect(evaluate({ equity: MARGIN_MINIMUM_EQUITY, isLiveExecution: true, marginEnabled: true }).reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
+    const ample = evaluate({ equity: 50_000, isLiveExecution: true, marginEnabled: true });
+    expect(ample.reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
+    expect(ample.approved).toBe(true);
   });
 
-  it("does NOT block a paper/Test account (not live) regardless of equity or day-trade count", () => {
-    // Low equity (< $25k) with many day-trades: the ONLY reason that must be absent is pdt_rule.
-    // (Other notional/exposure caps may legitimately fire at this equity — they are not the PDT gate.)
-    const decisionUndefined = evaluate({ equity: 1000, isLiveExecution: undefined, priorDayTradeCount: 10 });
-    expect(decisionUndefined.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-
-    const decisionFalse = evaluate({ equity: 1000, isLiveExecution: false, priorDayTradeCount: 10 });
-    expect(decisionFalse.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-
-    // And with ample equity a paper account is fully approved (no caps bind either).
-    const decisionPaperHighEquity = evaluate({ equity: 100_000, isLiveExecution: false, priorDayTradeCount: 10 });
-    expect(decisionPaperHighEquity.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-    expect(decisionPaperHighEquity.approved).toBe(true);
+  it("does NOT block a CASH (non-margin) account below $2,000", () => {
+    const decision = evaluate({ equity: 1000, isLiveExecution: true, marginEnabled: false });
+    expect(decision.reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
   });
 
-  it("does NOT block when fewer than 3 prior day-trades", () => {
-    // Sub-threshold equity but only 2 prior day-trades → PDT gate must not fire.
-    const decision = evaluate({ equity: 1000, isLiveExecution: true, priorDayTradeCount: PDT_MAX_DAY_TRADES - 1 });
-    expect(decision.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-
-    // With ample equity and 2 prior day-trades the LIVE opening order is fully approved.
-    const highEquity = evaluate({ equity: 100_000, isLiveExecution: true, priorDayTradeCount: PDT_MAX_DAY_TRADES - 1 });
-    expect(highEquity.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-    expect(highEquity.approved).toBe(true);
+  it("does NOT block a paper/Test account (not live) regardless of equity or margin", () => {
+    expect(evaluate({ equity: 100, isLiveExecution: undefined, marginEnabled: true }).reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
+    expect(evaluate({ equity: 100, isLiveExecution: false, marginEnabled: true }).reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
+    const paperHigh = evaluate({ equity: 100_000, isLiveExecution: false, marginEnabled: true });
+    expect(paperHigh.reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
+    expect(paperHigh.approved).toBe(true);
   });
 
-  it("does NOT falsely block a CLOSING order (sell) even when over the PDT limit", () => {
+  it("never blocks a CLOSING order (sell) on the margin minimum", () => {
     const sell: TradeProposal = { ...openingProposal, symbol: "AAPL", side: "sell", dollarAmount: undefined, quantity: 1 };
-    const decision = evaluate({ equity: 1000, isLiveExecution: true, priorDayTradeCount: 5, proposal: sell });
-    expect(decision.reasons.some((r) => r.includes("pdt_rule"))).toBe(false);
-  });
-
-  it("blocks an opening SHORT the same way as a buy", () => {
-    const short: TradeProposal = { ...openingProposal, symbol: "AAPL", side: "short" };
-    const decision = evaluate({ equity: 1000, isLiveExecution: true, priorDayTradeCount: 4, proposal: short });
-    expect(decision.reasons.some((r) => r.includes("pdt_rule"))).toBe(true);
+    const decision = evaluate({ equity: 100, isLiveExecution: true, marginEnabled: true, proposal: sell });
+    expect(decision.reasons.some((r) => r.includes("margin_minimum"))).toBe(false);
   });
 });

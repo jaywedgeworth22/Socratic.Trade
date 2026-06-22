@@ -7,9 +7,35 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { canonicalTicker } from "../rag/chunk";
-import { resolveApiKey } from "../db";
-import { DISCLAIMER } from "./prompt";
+import { resolveLlmCredential } from "../db";
+import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
+import { llmFetch } from "../llm-request";
+import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
+
+/** Per-user attribution for the LLM usage ledger. When `userId` is set, run() records a usage row. */
+export interface LlmUsageOpts {
+  userId?: string;
+  keySource?: "user" | "operator";
+  /** Non-secret fingerprint of the key serving this call (per-attached-key attribution). */
+  keyRef?: string;
+  context?: string;
+}
+
+/** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
+function recordChatUsage(opts: LlmUsageOpts, provider: "openai" | "anthropic", model: string, prompt: number, completion: number, saw: boolean): void {
+  if (!opts.userId) return;
+  recordLlmUsage({
+    userId: opts.userId,
+    provider,
+    model,
+    context: opts.context ?? "chat",
+    keySource: opts.keySource ?? "user",
+    keyRef: opts.keyRef,
+    promptTokens: saw ? prompt : undefined,
+    completionTokens: saw ? completion : undefined
+  });
+}
 
 const MAX_STEPS = 5;
 
@@ -240,9 +266,15 @@ export class MockLLM implements ChatLLM {
 type Transport = (body: any, apiKey: string) => Promise<any>;
 
 async function defaultTransport(body: any, apiKey: string): Promise<any> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await llmFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      // Enable prompt-caching beta so cache_control blocks are honoured by the API.
+      "anthropic-beta": "prompt-caching-2024-07-31"
+    },
     body: JSON.stringify(body)
   });
   if (!res.ok) throw new Error(`anthropic ${res.status}`);
@@ -251,10 +283,13 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 
 /** Real Anthropic Messages API tool loop (server-side only). */
 export class AnthropicLLM implements ChatLLM {
-  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport) {}
+  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
 
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     const messages: any[] = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let sawUsage = false;
     // Replay prior turns for multi-turn context. Anthropic requires the first message to be user, so
     // drop any leading assistant turn from the (chronological) history before appending the new message.
     const prior = (history ?? []).slice();
@@ -264,11 +299,34 @@ export class AnthropicLLM implements ChatLLM {
     const toolCalls: ToolCall[] = [];
     let text = "";
 
+    // Prompt-caching: mark the stable SYSTEM_PROMPT prefix as ephemeral so Anthropic
+    // can reuse the cached KV across repeated calls. Only the dynamic suffix (user memory,
+    // if present) is left uncached. This is a no-op for non-Anthropic providers since they
+    // receive the plain-string `system` via a different transport.
+    const anthropicSystem: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> =
+      system === SYSTEM_PROMPT
+        ? // No dynamic suffix — entire system is stable; cache the whole thing.
+          [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }]
+        : system.startsWith(SYSTEM_PROMPT)
+          ? // Dynamic suffix present (user memory) — cache only the stable prefix.
+            [
+              { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+              { type: "text", text: system.slice(SYSTEM_PROMPT.length) }
+            ]
+          : // Unrecognised system string (custom override) — send as a single uncached block.
+            [{ type: "text", text: system }];
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const resp = await this.transport(
-        { model: this.model, max_tokens: 1024, system, messages, ...(tools?.length ? { tools } : {}) },
+        { model: this.model, max_tokens: 1024, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) },
         this.apiKey
       );
+      const u = extractLlmUsage(resp);
+      if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
+        sawUsage = true;
+        promptTokens += u.promptTokens ?? 0;
+        completionTokens += u.completionTokens ?? 0;
+      }
       const content = resp.content || [];
       messages.push({ role: "assistant", content });
       text = content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
@@ -296,6 +354,7 @@ export class AnthropicLLM implements ChatLLM {
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
       for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
     }
+    recordChatUsage(this.usage, "anthropic", this.model, promptTokens, completionTokens, sawUsage);
     return { text: withDisclaimer(text), toolCalls, citations };
   }
 }
@@ -305,7 +364,7 @@ type OpenAITransport = (body: any, apiKey: string) => Promise<any>;
 
 async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
   const url = process.env.OPENAI_CHAT_URL ?? "https://api.openai.com/v1/chat/completions";
-  const res = await fetch(url, {
+  const res = await llmFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body)
@@ -328,12 +387,16 @@ export class OpenAILLM implements ChatLLM {
   constructor(
     private apiKey: string,
     private model: string,
-    private transport: OpenAITransport = defaultOpenAITransport
+    private transport: OpenAITransport = defaultOpenAITransport,
+    private usage: LlmUsageOpts = {}
   ) {}
 
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     // Build OpenAI messages array. Prior user/assistant turns first, then the current message.
     const messages: any[] = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let sawUsage = false;
     if (system) messages.push({ role: "system", content: system });
     const prior = (history ?? []).slice();
     // OpenAI requires alternating user/assistant; drop a leading assistant turn if present.
@@ -368,6 +431,12 @@ export class OpenAILLM implements ChatLLM {
         this.apiKey
       );
 
+      const u = extractLlmUsage(resp);
+      if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
+        sawUsage = true;
+        promptTokens += u.promptTokens ?? 0;
+        completionTokens += u.completionTokens ?? 0;
+      }
       const choice = resp.choices?.[0];
       if (!choice) break;
       const assistantMsg = choice.message ?? {};
@@ -405,19 +474,31 @@ export class OpenAILLM implements ChatLLM {
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
       for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
     }
+    recordChatUsage(this.usage, "openai", this.model, promptTokens, completionTokens, sawUsage);
     return { text: text || DISCLAIMER, toolCalls, citations };
   }
 }
 
-export function getLLM(opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
+/**
+ * Build the env-default chat LLM for a user. The key resolves per-user-first with the operator
+ * env key as a flag-gated failover (see resolveLlmCredential), and usage is attributed to `userId`.
+ * Passing no userId resolves the operator (`local`) key — preserves single-operator behaviour.
+ */
+export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
   const chatLlm = process.env.CHAT_LLM;
   if (chatLlm === "anthropic") {
-    const key = resolveApiKey("anthropic");
-    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport);
+    const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport, usage);
+    }
   }
   if (chatLlm === "openai") {
-    const key = resolveApiKey("openai");
-    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", opts.openAITransport ?? defaultOpenAITransport);
+    const { key, source, keyRef } = resolveLlmCredential("openai", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", opts.openAITransport ?? defaultOpenAITransport, usage);
+    }
   }
   return new MockLLM();
 }

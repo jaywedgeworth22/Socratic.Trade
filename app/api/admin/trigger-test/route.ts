@@ -1,21 +1,18 @@
 import { NextResponse } from "next/server";
 import { admitRun, submitMaterialEvent, triggerEngineEnabled, triggerMode } from "@/lib/triggers";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { requireAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // Dev/ops route to inspect the event-driven trigger engine and preview the admitRun gate.
 // GET = show engine state + the admit decision for a sample event. POST = submit a test event
-// (no-op unless TRIGGER_ENGINE=on and mode != interval). Gated to non-production.
-function authorized(request: Request): boolean {
-  const token = process.env.ADMIN_REINDEX_TOKEN;
-  if (token && request.headers.get("x-admin-token") === token) return true;
-  return process.env.NODE_ENV !== "production";
-}
-
+// (no-op unless TRIGGER_ENGINE=on and mode != interval). Admin-gated: verified ADMIN_USER_EMAILS /
+// primary operator, or x-admin-token, or non-production.
 export async function GET(request: Request) {
-  if (!authorized(request)) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+  const denied = requireAdmin(request);
+  if (denied) return denied;
   const userId = resolveRequestUserId(request);
   return NextResponse.json({
     ok: true,
@@ -26,7 +23,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!authorized(request)) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+  const denied = requireAdmin(request);
+  if (denied) return denied;
   const userId = resolveRequestUserId(request);
   let symbol = "AAPL";
   try {

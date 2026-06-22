@@ -37,6 +37,9 @@ export async function checkRegimeFlip(userId: string = "local"): Promise<void> {
   audit("regime_flip", { from: prev, to: next, vix: macro.vix, fedFunds: macro.fedFundsRate, dgs10: macro.dgs10Treasury, escalation: isEscalationRegime(next) }, userId);
   // Immediate dashboard refresh even when the trigger engine is off.
   emitDashboardEvent({ type: "dirty", at: new Date().toISOString(), detail: { regimeFrom: prev, regimeTo: next } });
-  // Material event: a no-op for run-triggering unless TRIGGER_ENGINE is on. `from->to` dedups flapping.
-  broadcastMaterialEvent({ type: "regime", sourceId: `${prev}->${next}`, reason: `Regime flip ${prev} → ${next}` });
+  // Material event: only broadcast when flipping INTO an escalation regime (Risk-Off / Crisis /
+  // Inverted-curve). A de-escalation back to calm should not trigger an expensive LLM run.
+  if (isEscalationRegime(next)) {
+    broadcastMaterialEvent({ type: "regime", sourceId: `${prev}->${next}`, reason: `Regime flip ${prev} → ${next}` });
+  }
 }

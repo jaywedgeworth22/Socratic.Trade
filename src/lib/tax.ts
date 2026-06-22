@@ -21,6 +21,8 @@ export interface OpenLotTax {
   daysHeld: number;
   daysToLongTerm: number;
   isLongTerm: boolean;
+  unrealizedGain?: number; // dollars: (currentPrice - avgCost) * qty — positive = gain
+  earlyExitTaxPremium?: number; // extra tax vs waiting for long-term: unrealizedGain * (shortRate - longRate) / 100
 }
 
 export interface HarvestCandidate {
@@ -180,13 +182,21 @@ export function getTaxSummary(
     .filter((lot) => lot.side === "long")
     .map((lot) => {
       const days = lot.entryAt ? Math.max(0, (now.getTime() - new Date(lot.entryAt).getTime()) / MS_PER_DAY) : 0;
+      const sym = normalizeSymbol(lot.symbol);
+      const currentPrice = currentPrices[sym] ?? null;
+      const unrealizedGain = currentPrice != null ? (currentPrice - lot.entryPrice) * lot.quantity : undefined;
+      const earlyExitTaxPremium = unrealizedGain != null && unrealizedGain > 0
+        ? unrealizedGain * ((tax.shortTermRatePct - tax.longTermRatePct) / 100)
+        : undefined;
       return {
-        symbol: normalizeSymbol(lot.symbol),
+        symbol: sym,
         quantity: lot.quantity, // keep full share precision in the record; the UI formats for display
         entryAt: lot.entryAt,
         daysHeld: Math.floor(days),
         daysToLongTerm: Math.max(0, Math.ceil(LONG_TERM_DAYS - days)),
-        isLongTerm: days > LONG_TERM_DAYS
+        isLongTerm: days > LONG_TERM_DAYS,
+        unrealizedGain,
+        earlyExitTaxPremium
       };
     })
     .sort((a, b) => a.daysToLongTerm - b.daysToLongTerm);

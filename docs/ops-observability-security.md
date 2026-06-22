@@ -23,10 +23,10 @@ This app now has opt-in scaffolding for the seven selected tools:
   rejects workflow-file changes unless the credentials include `workflow` scope.
 - **Audit hardening**: npm overrides pin transitive Axios and PostCSS to patched
   releases, and Vitest is on the current major so its Vite dependency is patched.
-- **Litestream**: `npm run litestream:replicate` streams `data/app.db` to
-  `LITESTREAM_REPLICA_URL`; `npm run litestream:restore` restores only when the
-  local DB does not already exist. This intentionally avoids destructive restore
-  flags.
+- **Litestream**: continuous WAL replication of `data/app.db` to Cloudflare R2, run as
+  a PM2 sidecar (`litestream`) via `scripts/run-litestream.sh` against `litestream.yml`.
+  Restore with `scripts/litestream-restore.sh`. Full setup, monitoring, and DR steps are
+  in `docs/litestream.md`.
 - **Playwright**: `npm run test:e2e` runs a browser smoke test against a production
   `next build && next start` server on `PLAYWRIGHT_PORT`, or against
   `PLAYWRIGHT_BASE_URL` if one is supplied. If the Codex PM2 `next dev` preview is
@@ -64,8 +64,9 @@ The telemetry path treats this as a financial application:
 ## Production Notes
 
 - Prefer Infisical for all production secrets instead of hand-edited `.env.local`.
-- Run Litestream under a process supervisor next to production `next start`; verify a
-  restore to a scratch path before treating backups as ready.
+- Litestream runs under PM2 (`litestream` sidecar) next to production `next start` — see
+  `docs/litestream.md`. Periodically verify a restore to a scratch path
+  (`scripts/litestream-restore.sh /tmp/app.db.restored`) before treating backups as ready.
 - Browser Sentry, Session Replay, and source-map upload should be enabled in a
   follow-up only after revalidating the Sentry Next.js build wrapper against
   `npm run build`.

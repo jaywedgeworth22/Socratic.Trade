@@ -41,11 +41,11 @@ import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { deriveMetrics } from "@/lib/derived-metrics";
 import { deriveExecutionState, type ExecutionState } from "@/lib/execution-mode";
 import {
-  cellTitle,
   companyTitle,
   enrichPositionsForDisplay,
   formatNotificationDisplay,
   formatShareQuantity,
+  friendlySource,
   quoteTitle,
   ratingTitle,
   receivedLabel,
@@ -77,6 +77,7 @@ import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
+import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
 import {
   Button,
   Card,
@@ -93,11 +94,12 @@ import {
   inputClass
 } from "./ui/primitives";
 import { ThemeToggle } from "./ui/theme";
+import { CommandPalette, type Command } from "./ui/command-palette";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
-type FeedTab = "activity" | "runs" | "notifications";
+type FeedTab = "activity" | "runs" | "notifications" | "audit";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
@@ -294,6 +296,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [learnedQueueOpen, setLearnedQueueOpen] = useState(false);
+  const [learnedQueueCount, setLearnedQueueCount] = useState(0);
 
   // Consent gate: "loading" → fetch in progress; "needed" → show modal; "done" → clear
   const [consentGate, setConsentGate] = useState<ConsentGateState>("loading");
@@ -313,6 +317,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }, []);
 
   const [killConfirm, setKillConfirm] = useState(false);
+  const [decideConfirm, setDecideConfirm] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
   // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
@@ -382,14 +388,43 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     };
     for (const type of ["run-complete", "order", "proposal", "dirty"]) es.addEventListener(type, refresh);
     es.addEventListener("market-data", refreshMarketData);
+    // Refresh the pending-learned badge when a new pending item is queued server-side
+    es.addEventListener("pending-learned-change", () => {
+      void fetch("/api/learned-context/pending", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+        .then((data) => { setLearnedQueueCount(data.filter((i) => i.status === "pending").length); })
+        .catch(() => { /* badge stays as-is on error */ });
+    });
     es.onerror = () => {
       // The browser auto-reconnects EventSource; the fallback poll covers any gap.
     };
     return () => es.close();
   }, []);
 
-  // Command K is temporarily disabled per user request
-  // (Shortcut logic was removed from here)
+  // Seed the learned-context queue badge count on mount so the button is visible immediately
+  // if there are pending items, without waiting for the user to open the SlideOver.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/learned-context/pending", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+      .then((data) => {
+        if (!cancelled) setLearnedQueueCount(data.filter((i) => i.status === "pending").length);
+      })
+      .catch(() => { /* badge stays at 0 on error */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // ⌘K / Ctrl-K command palette
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   async function load(options: { quiet?: boolean } = {}) {
     if (!options.quiet) setBusy(true);
@@ -606,15 +641,35 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 
 
   const safetyBanner = executionBanner(executionState);
+
+  const paletteCommands: Command[] = [
+    { id: "tab-decision", label: "Go to Decision", hint: "Decision tab", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
+    { id: "tab-assistant", label: "Go to Assistant", hint: "Assistant tab", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("assistant") },
+    { id: "tab-market", label: "Go to Market Scan", hint: "Market tab", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
+    { id: "tab-macro", label: "Go to Macro", hint: "Macro tab", icon: <Network size={15} />, run: () => setWorkspaceTab("macro") },
+    { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
+    { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={15} />, run: () => setWorkspaceTab("strategy") },
+    { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
+    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
+    { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
+    { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
+    { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
+    { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
+    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
+    { id: "refresh", label: "Refresh dashboard", icon: <RefreshCw size={15} />, run: () => void load() },
+  ];
+
   return (
     <div className="flex min-h-dvh flex-col overflow-x-hidden lg:h-dvh lg:overflow-hidden">
+      {/* ── ⌘K Command Palette ──────────────────────────────────────── */}
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={paletteCommands} />
       {/* ── Shared market-data pool consent gate (blocking until answered) ── */}
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
       {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
-        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
+        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide", safetyBanner.className)}
         title={executionState.clarification}
       >
         {safetyBanner.text}
@@ -661,7 +716,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 aria-label="Approval mode"
                 className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
                 value={policy.strategyAuthority}
-                onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
+                onChange={(e) => {
+                  const next = e.target.value as TradingPolicy["strategyAuthority"];
+                  if (next === "decide" && policy.strategyAuthority !== "decide") {
+                    setDecideConfirm(true);
+                  } else {
+                    void updatePolicy({ strategyAuthority: next });
+                  }
+                }}
               >
                 <option value="propose">Propose → you approve</option>
                 <option value="decide">Decide → auto-executes</option>
@@ -704,15 +766,20 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <button
               onClick={() => setFeedOpen(true)}
+              aria-label={pendingCount > 0 ? `Activity — ${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}` : "Activity"}
               className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
             >
               <ActivityIcon size={15} /> <span className="hidden sm:inline">Activity</span>
               {pendingCount > 0 && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
+                <span aria-live="polite" className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
                   {pendingCount}
                 </span>
               )}
             </button>
+            <LearnedContextQueueBadge
+              count={learnedQueueCount}
+              onClick={() => setLearnedQueueOpen(true)}
+            />
             <Button
               variant="ghost"
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
@@ -860,7 +927,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             tabs={[
               { id: "activity", label: "Activity" },
               { id: "runs", label: "Runs" },
-              { id: "notifications", label: "Notifications" }
+              { id: "notifications", label: "Notifications" },
+              { id: "audit", label: "Audit Log" }
             ]}
           />
         </div>
@@ -868,12 +936,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           {feedTab === "activity" && <ActivityFeed snapshot={snapshot} />}
           {feedTab === "runs" && <RunHistory snapshot={snapshot} />}
           {feedTab === "notifications" && <NotificationsList snapshot={snapshot} />}
+          {feedTab === "audit" && <AuditLog snapshot={snapshot} />}
         </div>
       </SlideOver>
 
       <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
         {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
       </SlideOver>
+
+      <LearnedContextQueue
+        open={learnedQueueOpen}
+        onClose={() => setLearnedQueueOpen(false)}
+        onCountChange={setLearnedQueueCount}
+      />
 
       <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
         <div className="h-full w-full">
@@ -912,6 +987,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           setTickerLogoDisplay={updateTickerLogoDisplay}
           openAccounts={() => setAccountsOpen(true)}
           load={load}
+          onRequestDecideConfirm={() => setDecideConfirm(true)}
         />
       </Modal>
 
@@ -939,6 +1015,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         confirmLabel={policy.systemState === "halted" ? "Start" : "Stop"}
         tone={policy.systemState === "halted" ? "primary" : "danger"}
       />
+
+      <ConfirmModal
+        open={decideConfirm}
+        onClose={() => setDecideConfirm(false)}
+        onConfirm={() => {
+          setDecideConfirm(false);
+          void updatePolicy({ strategyAuthority: "decide" });
+        }}
+        title="Enable autonomous execution?"
+        body="Decide mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
+        confirmLabel="Enable auto-execute"
+        tone="danger"
+      />
     </div>
   );
 }
@@ -948,7 +1037,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 function StatusPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={title}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">{label}</span>
       <span className="tnum text-[13px] leading-tight text-fg">{value}</span>
     </div>
   );
@@ -959,7 +1048,7 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
   const bar = tone === "down" ? "bg-down" : tone === "warn" ? "bg-warn" : "bg-accent";
   return (
     <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={`${money(used)} of ${money(cap)} daily volume limit used`}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
       <div className="flex items-center gap-1.5">
         <span className="tnum text-[13px] leading-tight text-fg">{pct}%</span>
         <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-3/50 backdrop-blur-md">
@@ -1041,11 +1130,19 @@ function PortfolioRail({
 
   const enriched = enrichPositionsForDisplay(positions, total).sort((a, b) => b.marketValue - a.marketValue);
 
+  // Portfolio balances come from the active *broker* account (its API). Attribute Value/P&L to that
+  // broker + the account's last-synced time — but ONLY for a real broker. In Test mode (local
+  // simulation) there is no upstream provider, so we leave the plain label rather than invent one.
+  const activeAcc = activeConnectedAccountFor(snapshot);
+  const brokerSource = activeAcc && activeAcc.broker !== "test" ? activeAcc.broker : undefined;
+  const brokerAsOf = brokerSource ? activeAcc?.updatedAt : undefined;
+  const valueTitle = brokerSource ? dataPointTitle("Account value", brokerSource, brokerAsOf) : undefined;
+
   return (
     <Card className="flex h-full flex-col overflow-hidden">
       <PanelHeader title="Portfolio" subtitle={getPortfolioAccountSubtitle(snapshot)} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
-        <StatTile label="Value" value={money(total)} />
+        <StatTile label="Value" value={money(total)} title={valueTitle} />
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
       </div>
       <div className="px-4 py-3">
@@ -1196,6 +1293,12 @@ function DecisionView({
   const pending = snapshot.pendingProposals;
   return (
     <div className="space-y-3">
+      {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
+        <Card className="overflow-hidden">
+          <PanelHeader title="Pending approval" subtitle="No proposals awaiting review" icon={<CheckCircle size={16} />} />
+          <EmptyState icon={<CheckCircle size={18} />} title="All clear — no pending approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
+        </Card>
+      )}
       {pending.length > 0 && (
         <Card className="overflow-hidden">
           <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
@@ -1342,10 +1445,52 @@ function vwapDeltaPct(q: MarketQuote): number | undefined {
   return ((q.price - q.vwap) / q.vwap) * 100;
 }
 
+/**
+ * Shared "what is this data point, where did it come from, and when did it arrive?" tooltip.
+ * Returns the label on its own, then `Source: <pretty provider>` when a source is known, then
+ * the human "Received HH:MM" stamp when an `asOf` timestamp is known — each on its own line.
+ * Source attribution must be the *specific field's* provider (e.g. `quote.sources?.peRatio`),
+ * never a fabricated or quote-level provider. With no source and no time it is just the label.
+ */
+function dataPointTitle(label: string, source?: string, asOf?: string): string {
+  const parts = [label];
+  if (source) parts.push(`Source: ${friendlySource(source)}`);
+  const received = receivedLabel(asOf);
+  if (received) parts.push(received);
+  return parts.join("\n");
+}
+
+/**
+ * Tooltip for a DERIVED/[CALCULATED] column: keep the column's existing methodology blurb,
+ * then append "Computed from <input fields> · Received HH:MM". Attribution is to the INPUT
+ * fields' own providers (gathered honestly from `quote.sources`) — we never invent a provider
+ * for a value no upstream API emitted. The provider line is only shown when at least one input
+ * field actually has a recorded source.
+ */
+function derivedTitle(
+  explanation: string,
+  inputs: string,
+  q: MarketQuote,
+  sourceFields: Array<keyof NonNullable<MarketQuote["sources"]>>
+): string {
+  const providers = Array.from(
+    new Set(
+      sourceFields
+        .map((field) => q.sources?.[field])
+        .filter((value): value is string => Boolean(value))
+        .map((value) => friendlySource(value))
+    )
+  );
+  const received = receivedLabel(q.asOf);
+  const computed = [`Computed from ${inputs}`, received].filter(Boolean).join(" · ");
+  const provenance = providers.length > 0 ? `\nInput source: ${providers.join(" + ")}` : "";
+  return `${explanation}\n${computed}${provenance}`;
+}
+
 function vwapTitle(q: MarketQuote): string | undefined {
   const delta = vwapDeltaPct(q);
   if (typeof delta !== "number") return undefined;
-  return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${cellTitle("VWAP", q.sources?.vwap)}`;
+  return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${dataPointTitle("VWAP", q.sources?.vwap, q.asOf)}`;
 }
 
 const SCAN_COLUMNS: ScanColumn[] = [
@@ -1354,60 +1499,81 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "price", label: "Price", title: "Last traded price (delayed). Source: NASDAQ delayed screener, refined by Yahoo / broker quotes when available.", align: "right", sortKey: "price",
     render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
   { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
-    render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down") },
-  { id: "vsVwap", label: "vs VWAP", title: "Last price vs latest daily VWAP. Source: Massive grouped daily bars when available.", align: "right", sortValue: vwapDeltaPct,
+    render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down"),
+    cellTitle: (q) => dataPointTitle("Intraday change", q.sources?.intradayChangePct, q.asOf) },
+  { id: "vsVwap", label: "vs VWAP", title: "Last price vs latest daily VWAP. Source: Alpaca real-time snapshot, or Massive grouped daily bars — hover a cell for the actual source.", align: "right", sortValue: vwapDeltaPct,
     render: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? <span className="tnum">{formatPct(v)}</span> : DASH; },
     cellClass: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
     cellTitle: vwapTitle },
   { id: "volume", label: "Vol", title: "Shares traded today (falls back to the 10-day average when reported after hours). Source: screener / Finnhub.", align: "right", sortKey: "volume",
-    render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH) },
+    render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Volume", q.sources?.volume, q.asOf) },
   { id: "marketCap", label: "Mkt Cap", title: "Market capitalization = share price × shares outstanding.", align: "right", sortKey: "marketCap",
-    render: (q) => (q.marketCap && q.marketCap > 0 ? <span className="tnum text-muted">{compactMoney(q.marketCap)}</span> : DASH) },
+    render: (q) => (q.marketCap && q.marketCap > 0 ? <span className="tnum text-muted">{compactMoney(q.marketCap)}</span> : DASH),
+    // marketCap = price × shares outstanding; no API emits it directly, so attribute to the price source.
+    cellTitle: (q) => derivedTitle("Market capitalization = share price × shares outstanding.", "price × shares outstanding", q, ["price"]) },
   { id: "peRatio", label: "P/E", title: "Price-to-Earnings ratio = price ÷ trailing-12-month earnings per share; lower is cheaper relative to earnings. 'n/a' = negative/zero earnings (no meaningful ratio); '—' = no data. Source: Yahoo / FMP / Finnhub.", align: "right", sortKey: "peRatio",
-    render: (q) => <span className="tnum text-muted">{q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—"}</span>, cellTitle: (q) => cellTitle("P/E ratio", q.sources?.peRatio) },
+    render: (q) => <span className="tnum text-muted">{q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—"}</span>, cellTitle: (q) => dataPointTitle("P/E ratio", q.sources?.peRatio, q.asOf) },
   { id: "fcfYield", label: "FCF%", title: "Free-cash-flow yield = trailing free cash flow ÷ market cap; higher means more cash generated per dollar of value. Source: Yahoo Finance.", align: "right", sortKey: "fcfYield",
-    render: (q) => (typeof q.fcfYield === "number" ? <span className="tnum text-muted">{q.fcfYield.toFixed(1)}%</span> : DASH), cellTitle: (q) => cellTitle("Free-cash-flow yield", q.sources?.fcfYield) },
+    render: (q) => (typeof q.fcfYield === "number" ? <span className="tnum text-muted">{q.fcfYield.toFixed(1)}%</span> : DASH), cellTitle: (q) => dataPointTitle("Free-cash-flow yield", q.sources?.fcfYield, q.asOf) },
   { id: "debtToEquity", label: "D/E", title: "Debt-to-Equity = total debt ÷ shareholder equity; lower means less leverage. Source: Yahoo Finance.", align: "right", sortKey: "debtToEquity",
-    render: (q) => (typeof q.debtToEquity === "number" ? <span className="tnum text-muted">{q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)}</span> : DASH), cellTitle: (q) => cellTitle("Debt / equity", q.sources?.debtToEquity) },
+    render: (q) => (typeof q.debtToEquity === "number" ? <span className="tnum text-muted">{q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)}</span> : DASH), cellTitle: (q) => dataPointTitle("Debt / equity", q.sources?.debtToEquity, q.asOf) },
   { id: "epsGrowth", label: "EPS gr", title: "Earnings-per-share growth, year over year (e.g. +15%). Source: Yahoo Finance.", align: "right", sortKey: "epsGrowth",
-    render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => cellTitle("EPS growth (YoY)", q.sources?.epsGrowth) },
+    render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => dataPointTitle("EPS growth (YoY)", q.sources?.epsGrowth, q.asOf) },
   { id: "dividendYield", label: "Div", title: "Annual dividend yield = trailing dividends per share ÷ price. Source: Yahoo / Finnhub.", align: "right", sortKey: "dividendYield",
-    render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH) },
+    render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Dividend yield", q.sources?.dividendYield, q.asOf) },
   // ── Backend-derived ratios (computed by us, not returned by any API). See src/lib/derived-metrics.ts. ──
   { id: "peg", label: "PEG", title: "[CALCULATED] PEG ratio = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive. Blank when unprofitable or no growth.", align: "right", sortValue: (q) => deriveMetrics(q).peg,
     render: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? <span className="tnum">{v.toFixed(2)}</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? (v < 1 ? "text-up" : v > 2.5 ? "text-down" : "") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? (v < 1 ? "text-up" : v > 2.5 ? "text-down" : "") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] PEG ratio = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive.", "P/E and EPS growth", q, ["peRatio", "epsGrowth"]) },
   { id: "roe", label: "ROE", title: "[CALCULATED] Return on equity = EPS ÷ book value per share, where BVPS = price ÷ P/B. Higher = more efficient use of capital; negative = losing money on equity.", align: "right", sortValue: (q) => deriveMetrics(q).roe,
     render: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? <span className="tnum">{v.toFixed(1)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Return on equity = EPS ÷ book value per share, where BVPS = price ÷ P/B.", "EPS, P/B and price", q, ["eps", "price"]) },
   { id: "earnYld", label: "Earn Yld", title: "[CALCULATED] Earnings yield = EPS ÷ price (the inverse of P/E). Usable when P/E is n/a; negative = the company is losing money.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).earnYld,
     render: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Earnings yield = EPS ÷ price (the inverse of P/E).", "EPS and price", q, ["eps", "price"]) },
   { id: "payout", label: "Payout", title: "[CALCULATED] Dividend payout ratio = dividends per share ÷ EPS. >100% means the dividend exceeds earnings and may be unsustainable.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).payout,
     render: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(0)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" && v > 100 ? "text-down" : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" && v > 100 ? "text-down" : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Dividend payout ratio = dividends per share ÷ EPS.", "dividend yield, EPS and price", q, ["dividendYield", "eps", "price"]) },
   { id: "dollarVolM", label: "$ Vol", title: "[CALCULATED] Daily dollar volume = price × volume — liquidity gauge for position sizing and slippage.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).dollarVolM,
-    render: (q) => { const v = deriveMetrics(q).dollarVolM; return typeof v === "number" ? <span className="tnum text-muted">{compactMoney(v * 1e6)}</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).dollarVolM; return typeof v === "number" ? <span className="tnum text-muted">{compactMoney(v * 1e6)}</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Daily dollar volume = price × volume — liquidity gauge for sizing and slippage.", "price and volume", q, ["price", "volume"]) },
   { id: "spreadBps", label: "Spread", title: "[CALCULATED] Bid-ask spread in basis points = (ask − bid) ÷ mid × 10000 — execution cost; wide spreads favor limit orders.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).spreadBps,
-    render: (q) => { const v = deriveMetrics(q).spreadBps; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).spreadBps; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Bid-ask spread in basis points = (ask − bid) ÷ mid × 10000 — execution cost.", "bid and ask", q, ["bid", "ask"]) },
   { id: "sectorRelStrength", label: "Sec RS", title: "[CALCULATED] Sector relative strength = this name's intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today.", align: "right", defaultHidden: true, sortKey: "sectorRelStrength",
     render: (q) => (typeof q.sectorRelStrength === "number" ? <span className="tnum">{q.sectorRelStrength >= 0 ? "+" : ""}{q.sectorRelStrength.toFixed(2)}%</span> : DASH),
-    cellClass: (q) => (typeof q.sectorRelStrength === "number" ? (q.sectorRelStrength >= 0 ? "text-up" : "text-down") : "") },
+    cellClass: (q) => (typeof q.sectorRelStrength === "number" ? (q.sectorRelStrength >= 0 ? "text-up" : "text-down") : ""),
+    cellTitle: (q) => derivedTitle("[CALCULATED] Sector relative strength = this name's intraday % move minus the average move of its sector among scan candidates.", "intraday change and sector", q, ["intradayChangePct", "sector"]) },
   { id: "marginOfSafety", label: "MoS", title: "[CALCULATED] Margin of safety = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share). Positive = trading below intrinsic value.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).marginOfSafety,
     render: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? <span className="tnum">{v >= 0 ? "+" : ""}{v.toFixed(0)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Margin of safety = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share).", "EPS, P/B and price", q, ["eps", "price"]) },
   { id: "pctFromHigh", label: "% off Hi", title: "[CALCULATED] % from the 52-week high = (price − 52w high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).pctFromHigh,
-    render: (q) => { const v = deriveMetrics(q).pctFromHigh; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}%</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).pctFromHigh; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}%</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] % from the 52-week high = (price − 52w high) ÷ high.", "price and 52-week high", q, ["price"]) },
   { id: "rr52w", label: "R:R", title: "[CALCULATED] Reward:risk to the 52-week band = (52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).rr52w,
-    render: (q) => { const v = deriveMetrics(q).rr52w; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).rr52w; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Reward:risk to the 52-week band = (52w high − price) ÷ (price − 52w low).", "price and the 52-week high/low band", q, ["price"]) },
+  // shortPercentOfFloat / beta carry no per-field provenance in EnrichmentSources, so we stamp
+  // the value's freshness (asOf) but never fabricate a provider for them.
   { id: "shortPercentOfFloat", label: "Short %", title: "Percent of the tradable float sold short. High (>15–20%) raises short-squeeze potential but also signals bearish positioning. Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "shortPercentOfFloat",
-    render: (q) => (typeof q.shortPercentOfFloat === "number" ? <span className="tnum text-muted">{q.shortPercentOfFloat.toFixed(1)}%</span> : DASH) },
+    render: (q) => (typeof q.shortPercentOfFloat === "number" ? <span className="tnum text-muted">{q.shortPercentOfFloat.toFixed(1)}%</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Short % of float", undefined, q.asOf) },
   { id: "beta", label: "Beta", title: "Beta — sensitivity to the broad market (1.0 = moves with the market; >1 amplifies moves, <1 dampens them). Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "beta",
-    render: (q) => (typeof q.beta === "number" ? <span className="tnum text-muted">{q.beta.toFixed(2)}</span> : DASH) },
+    render: (q) => (typeof q.beta === "number" ? <span className="tnum text-muted">{q.beta.toFixed(2)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Beta", undefined, q.asOf) },
   { id: "bid", label: "Bid", title: "Best bid — the highest price a buyer is currently willing to pay. Shown when broker quotes are available.", align: "right", defaultHidden: true, sortKey: "bid",
-    render: (q) => (typeof q.bid === "number" ? <span className="tnum text-muted">{money(q.bid)}</span> : DASH) },
+    render: (q) => (typeof q.bid === "number" ? <span className="tnum text-muted">{money(q.bid)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Best bid", q.sources?.bid, q.asOf) },
   { id: "ask", label: "Ask", title: "Best ask — the lowest price a seller is currently willing to accept. Shown when broker quotes are available.", align: "right", defaultHidden: true, sortKey: "ask",
-    render: (q) => (typeof q.ask === "number" ? <span className="tnum text-muted">{money(q.ask)}</span> : DASH) },
+    render: (q) => (typeof q.ask === "number" ? <span className="tnum text-muted">{money(q.ask)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Best ask", q.sources?.ask, q.asOf) },
   { id: "sentiment", label: "Sentiment", title: "News sentiment 0–100 (50 = neutral), scored from recent headlines with keyword/NLP analysis. Source: Alpha Vantage / Finnhub.", sortKey: "sentiment",
     render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : DASH), cellTitle: (q) => sentimentTitle(q) },
   { id: "analystScore", label: "Rating", title: "Analyst consensus 0–100, blended across providers (Strong Buy = 100 … Strong Sell = 0). Source: Yahoo / FMP / Finnhub.", sortKey: "analystScore",
@@ -1415,21 +1581,27 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
     render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
   { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
-    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) },
+    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH),
+    cellTitle: (q) => dataPointTitle("Sector", q.sources?.sector, q.asOf) },
   // Score is intentionally LAST so it renders at the far right — the "verdict" column the eye
   // lands on after scanning a row. Default sort is by score desc.
   { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
-    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
+    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span>,
+    // Composite of many scored factors; attribute to the underlying input fields' providers, never a single invented source.
+    cellTitle: (q) => derivedTitle("[CALCULATED] Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors (weights on the Strategy tab).", "the scan's per-factor inputs", q, ["price", "volume", "intradayChangePct", "peRatio", "sentiment"]) }
 ];
 
-// Default-visible columns — chosen by a 2-expert review (2026-06-21) for fast at-a-glance triage:
-// identity → price → momentum (Chg) → liquidity ($Vol) → sector relative strength → reward:risk →
-// external rating → Score (far-right "verdict"). Everything else is one click away via "Configure
-// columns". This explicit list is the source of truth; the per-column `defaultHidden` flags are
-// legacy and no longer consulted for the default set.
-const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "dollarVolM", "sectorRelStrength", "rr52w", "analystScore", "score"];
-// v2: bumped so the slimmer default replaces a saved column set from the old (dense) layout.
-const SCAN_COLS_KEY = "scan-visible-cols-v2";
+// Default-visible columns — chosen by a 4-expert trading-desk panel (2026-06-21) now that Alpaca
+// supplies REAL bid/ask/spread/VWAP. Reading left-to-right, the row answers one question — "is this
+// name moving, leading, in a tradeable spot, and can I get filled cheaply right now?": identity →
+// price → momentum (Chg) → intraday VWAP benchmark → sector relative strength → distance from the
+// 52-week high (entry timing) → dollar-volume liquidity → execution block (Spread flanked by the real
+// Bid/Ask) → Score (far-right "verdict", default sort). Everything else is one click away via
+// "Configure columns". This explicit list is the source of truth; the per-column `defaultHidden`
+// flags are legacy and no longer consulted for the default set.
+const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "vsVwap", "sectorRelStrength", "pctFromHigh", "dollarVolM", "spreadBps", "bid", "ask", "score"];
+// v3: bumped so the execution-aware default (real bid/ask/spread/VWAP) replaces a saved v2 column set.
+const SCAN_COLS_KEY = "scan-visible-cols-v3";
 
 function MarketScanView({
   snapshot,
@@ -1590,6 +1762,8 @@ function MarketScanView({
         <div className="h-[min(600px,65vh)] overflow-x-auto p-2">
           <TableVirtuoso
             data={sorted}
+            overscan={600}
+            initialItemCount={Math.min(sorted.length, 20)}
             components={{
               Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
@@ -1628,10 +1802,17 @@ function MarketScanView({
               <>
                 {cols.map((c) => {
                   const pinned = c.id === "score";
+                  const cellTip = c.cellTitle?.(q);
+                  // Stamp the scan-level "Received …" only when the cell's own tooltip doesn't already
+                  // carry a per-field "Received …" line (dataPointTitle/derivedTitle add one from q.asOf
+                  // when it's a real ISO time) — avoids a duplicate received stamp on the same tooltip.
+                  const tip = [cellTip, cellTip?.includes("Received ") ? undefined : dataReceived]
+                    .filter(Boolean)
+                    .join("\n") || undefined;
                   return (
                   <td
                     key={c.id}
-                    title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined}
+                    title={tip}
                     className={cn(
                       "px-2.5 py-1.5",
                       c.align === "right" && "text-right",
@@ -2279,33 +2460,60 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
   const runs = snapshot.strategyRuns ?? [];
-  if (runs.length === 0) return <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />;
+  const sched = snapshot.scheduler;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="border-b border-line text-[11px] uppercase text-faint">
-            <th className="px-2 py-1.5 text-left font-semibold">Time</th>
-            <th className="px-2 py-1.5 text-left font-semibold">Status</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Test</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
-            <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => (
-            <tr key={run.id} className="border-b border-line/50">
-              <td className="whitespace-nowrap px-2 py-1.5 text-muted">{new Date(run.startedAt).toLocaleString()}</td>
-              <td className="px-2 py-1.5"><Chip tone={run.status === "completed" ? "up" : run.status === "failed" ? "down" : "warn"}>{run.status}</Chip></td>
-              <td className="px-2 py-1.5 text-right tnum">{run.placedCount}</td>
-              <td className="px-2 py-1.5 text-right tnum">{run.paperCount}</td>
-              <td className="px-2 py-1.5 text-right tnum">{run.blockedCount}</td>
-              <td className="max-w-[220px] truncate px-2 py-1.5 text-faint" title={run.summary}>{run.summary}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {sched && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-muted">
+          <span className="font-semibold uppercase tracking-wide text-faint text-[10px]">Scheduler</span>
+          {sched.lastRunAt && (
+            <span title={sched.lastRunAt}>
+              Last: <span className="text-fg">{new Date(sched.lastRunAt).toLocaleString()}</span>
+            </span>
+          )}
+          {sched.nextRunAt && (
+            <span title={sched.nextRunAt}>
+              Next: <span className="text-fg">{new Date(sched.nextRunAt).toLocaleString()}</span>
+            </span>
+          )}
+          {typeof sched.runsToday === "number" && (
+            <span>
+              Today: <span className="text-fg">{sched.runsToday}</span>
+            </span>
+          )}
+          {!sched.lastRunAt && !sched.nextRunAt && <span className="text-faint">No runs scheduled yet</span>}
+        </div>
+      )}
+      {runs.length === 0 ? (
+        <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-line text-[11px] uppercase text-faint">
+                <th className="px-2 py-1.5 text-left font-semibold">Time</th>
+                <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Test</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
+                <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.id} className="border-b border-line/50">
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted">{new Date(run.startedAt).toLocaleString()}</td>
+                  <td className="px-2 py-1.5"><Chip tone={run.status === "completed" ? "up" : run.status === "failed" ? "down" : "warn"}>{run.status}</Chip></td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.placedCount}</td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.paperCount}</td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.blockedCount}</td>
+                  <td className="max-w-[220px] truncate px-2 py-1.5 text-faint" title={run.summary}>{run.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -2333,6 +2541,26 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
           );
         })
       )}
+    </div>
+  );
+}
+
+function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const items = snapshot.auditFeed ?? [];
+  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No audit events yet" hint="Policy changes, order decisions, and system events appear here." />;
+  return (
+    <div className="space-y-1.5">
+      {items.slice(0, 100).map((item) => (
+        <div key={item.id} className="rounded-lg border border-line/60 bg-surface-2/40 px-3 py-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[11px] text-faint">{new Date(item.createdAt).toLocaleString()}{item.symbol && ` · ${item.symbol}`}{item.companyName && ` (${item.companyName})`}</div>
+              <div className="mt-0.5 text-sm text-fg">{item.title}</div>
+              {item.detail && <div className="mt-0.5 text-[12px] text-muted">{item.detail}</div>}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2423,7 +2651,8 @@ function SettingsContent({
   tickerLogoDisplay,
   setTickerLogoDisplay,
   openAccounts,
-  load
+  load,
+  onRequestDecideConfirm
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -2436,11 +2665,75 @@ function SettingsContent({
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
   openAccounts: () => void;
   load: () => Promise<void>;
+  onRequestDecideConfirm: () => void;
 }) {
-  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications" | "data";
   const [section, setSection] = useState<Section>("operate");
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  // ── Shared data pool consent state ──────────────────────────────────────
+  const [poolConsent, setPoolConsent] = useState<boolean | null>(null);
+  const [poolConsentLoading, setPoolConsentLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/consent")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPoolConsent(Boolean(d?.accepted)); })
+      .catch(() => { /* leave null — show toggle in indeterminate/off state */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function setPoolConsentValue(accepted: boolean) {
+    if (poolConsentLoading) return;
+    setPoolConsentLoading(true);
+    try {
+      await fetch("/api/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accepted })
+      });
+      setPoolConsent(accepted);
+    } catch {
+      /* best-effort — keep local state unchanged on failure */
+    } finally {
+      setPoolConsentLoading(false);
+    }
+  }
+
+  // ── Learned-context sharing state ────────────────────────────────────────
+  // includeShared defaults TRUE (user benefits from the pool); contributeShared defaults FALSE
+  // (nothing is shared without explicit opt-in). Loaded on first visit to the "data" section.
+  const [lcSharing, setLcSharing] = useState<{ includeShared: boolean; contributeShared: boolean } | null>(null);
+  const [lcSharingLoading, setLcSharingLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/learned-context/sharing")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setLcSharing(d as { includeShared: boolean; contributeShared: boolean }); })
+      .catch(() => { /* leave null — toggles render as disabled until loaded */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function updateLcSharing(patch: { includeShared?: boolean; contributeShared?: boolean }) {
+    if (lcSharingLoading) return;
+    setLcSharingLoading(true);
+    try {
+      const res = await fetch("/api/learned-context/sharing", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      const updated = await res.json() as { includeShared: boolean; contributeShared: boolean };
+      setLcSharing(updated);
+    } catch {
+      /* best-effort */
+    } finally {
+      setLcSharingLoading(false);
+    }
+  }
+
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
@@ -2518,7 +2811,8 @@ function SettingsContent({
               { id: "keys", label: "API Keys" },
               { id: "tax", label: "Tax" },
               { id: "tuning", label: "Tuning" },
-              { id: "notifications", label: "Notifications" }
+              { id: "notifications", label: "Notifications" },
+              { id: "data", label: "Data" }
             ]}
           />
         </div>
@@ -2624,7 +2918,18 @@ function SettingsContent({
             </Field>
           </div>
           <Field label="Strategy authority" className="sm:col-span-2">
-            <select className={inputClass} value={policy.strategyAuthority} onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}>
+            <select
+              className={inputClass}
+              value={policy.strategyAuthority}
+              onChange={(e) => {
+                const next = e.target.value as TradingPolicy["strategyAuthority"];
+                if (next === "decide" && policy.strategyAuthority !== "decide") {
+                  onRequestDecideConfirm();
+                } else {
+                  void updatePolicy({ strategyAuthority: next });
+                }
+              }}
+            >
               <option value="propose">LLM proposes — you approve</option>
               <option value="decide">LLM decides — runs autonomously</option>
             </select>
@@ -2771,6 +3076,83 @@ function SettingsContent({
           </p>
           <p className="text-xs text-faint">
             Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.
+          </p>
+        </div>
+      )}
+
+      {section === "data" && (
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">Shared data pool</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Opting in shares the general market data you pull with your own provider keys / broker MCP —
+                quotes, fundamentals, price history, and news — with other opted-in users, and gives you
+                access to the data they&apos;ve pulled (the shared pool). Your personal account data —
+                positions, orders, balances, P&amp;L, and credentials — is never shared.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Sharing</span>
+              <span className="block text-xs text-faint">
+                {poolConsent === null ? "Loading…" : poolConsent ? "Sharing on — you contribute to and read from the shared pool." : "Sharing off — you use only your own data."}
+              </span>
+            </span>
+            <Switch
+              checked={Boolean(poolConsent)}
+              onChange={(v) => { if (!poolConsentLoading && poolConsent !== null) void setPoolConsentValue(v); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Your choice applies immediately. You can toggle sharing at any time.
+          </p>
+
+          {/* ── Learned-context (AI learnings) sharing ── */}
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">AI-learned facts sharing</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Control whether you benefit from other users&apos; shared learnings and whether your own
+                learned facts are contributed to the shared pool. Only structural market facts are ever
+                shared — risk and strategy directives are never shared. PII is always excluded.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Include shared learnings</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.includeShared ? "On — your AI decisions include facts shared by other users." : "Off — only your own learned facts are used."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.includeShared ?? true}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ includeShared: v }); }}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Contribute my learnings to the shared pool</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.contributeShared ? "On — new facts you learn are shared with opted-in users." : "Off — your learned facts stay private (default)."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.contributeShared ?? false}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ contributeShared: v }); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
+            directives go through a human approval queue and are never shared automatically.
           </p>
         </div>
       )}

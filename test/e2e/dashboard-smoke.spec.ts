@@ -8,5 +8,6 @@ test("dashboard loads the core trading workspace", async ({ page }) => {
   await expect(page.getByText("Decision").first()).toBeVisible();
   await expect(page.getByText("Market Scan").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Run/i }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: /Kill|Resume/i }).first()).toBeVisible();
+  // Header kill switch: "Stop" while the system is active, "Start" while halted.
+  await expect(page.getByRole("button", { name: /Start|Stop/i }).first()).toBeVisible();
 });
