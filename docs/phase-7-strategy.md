@@ -152,8 +152,13 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   regime-critical) macro fields on repeat runs, listing the rest as unchanged.
 - Still TODO from this section: OPRO-style prompt self-rewrite (intentionally
   kept advisory-only via Strategy Studio's human-approved tuning, not
-  auto-applied) and persisted MAE/MFE per closed lot (currently recomputed each
-  gated reflection).
+  auto-applied).
+- **MAE/MFE persistence IS implemented**: `db-fills.ts` exposes
+  `persistMaeMfeById` and `persistMaeMfeByKey` which update `fill_events.mae`
+  and `fill_events.mfe` columns (added via migration in `db.ts`). The excursion
+  computation path in the gated post-mortem writes these via the persistence
+  helpers; earlier reflection cycles that recomputed without persisting are
+  superseded.
 
 **Implemented (2026-06-16, signals + learning pass — branch `ui-redesign`):**
 This pass implemented the tractable subset of Codex's "Stronger Trading Signals

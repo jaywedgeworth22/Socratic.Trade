@@ -6,9 +6,10 @@ and dashboard controls now exist; keep this file as design history and use
 `STATUS.md` plus current code as the live source of truth before changing the
 autonomy path.
 
-Current hardening gaps: market holidays are still not modeled, scheduler behavior
-is local single-process, and any dev-server `EMFILE` watcher issue is operational
-rather than a strategy-loop feature gap.
+Current hardening gaps: market holidays ARE now modeled via `getMarketHolidays()`
+in `src/lib/market-hours.ts` (the Phase 1 documented limitation is resolved).
+Scheduler behavior is local single-process, and any dev-server `EMFILE` watcher
+issue is operational rather than a strategy-loop feature gap.
 
 ## Objective
 

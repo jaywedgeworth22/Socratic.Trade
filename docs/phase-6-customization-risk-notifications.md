@@ -18,6 +18,8 @@ Each `StrategyProfile` stores:
 - active flag
 
 The existing global policy and prompt are migrated into a default profile.
+`strategy_profiles` carries a `user_id` column added via the `migrate()` backfill
+in `src/lib/db.ts` (same pattern as other per-user tables).
 
 ## Risk Rules
 
@@ -26,7 +28,7 @@ Policy enforcement includes:
 - sector exposure caps for buys
 - stop-loss protection for adding to losing positions
 - take-profit protection for adding to extended winners
-- optional trailing stop metadata for future broker reconciliation
+- trailing stop enforcement via the synthetic-stops engine (`src/lib/synthetic-stops.ts`)
 
 ## Notifications
 
@@ -38,7 +40,11 @@ Supported events:
 - pending_approval
 - kill_switch
 
-Webhook delivery is disabled unless a webhook URL is configured. No webhook means the event is audited as skipped, not failed.
+Multi-channel delivery is implemented (`src/lib/notify.ts`, ported from Atlas):
+phone push (ntfy / Pushover), webhook, email (Resend), and SMS (Twilio). Each
+channel is independently gated — disabled unless admin config is present AND the
+user has a matching target. No configured channel means the event is audited as
+skipped, not failed.
 
 ## Acceptance
 

@@ -115,8 +115,14 @@ The persistence layer is **already correctly scoped** (`WHERE user_id = ?` on wa
 
 1. **No auth/middleware** — no `middleware.ts` anywhere; identity originates spoofably at `request-user.ts:9-16`. *Fix: middleware + session-derived userId.*
 2. **Route-layer ownership not asserted** — `[id]` routes (`proposals/[id]`, `connected-accounts/[id]`, `profiles/[id]`) rely solely on the DB `WHERE user_id=?`. *Fix: after auth, assert `resource.user_id === session.userId` so a future query that forgets the predicate can't leak.*
-3. **SSE stream is a global broadcast** — `app/api/events/stream/route.ts:9-66` subscribes every client to the process bus with **no per-user filter**; `emitDashboardEvent` fans out to all (`src/lib/events.ts:36-46`). `DashboardEvent.userId` exists (`events.ts:16-17`) but is never enforced and the route never reads a userId. *Fix: read authenticated userId in the stream route; forward only events whose `event.userId` matches or are explicitly global. Audit every `emitDashboardEvent` call site to set `userId`.*
-4. **Robinhood broker token is process-global** — one `TOKEN_SETTING` with no userId (`src/lib/mcp-oauth.ts:108,116`; state/client also global at 58,156,181). One broker session shared across all users — cannot support per-user broker linking. *Fix (later milestone): key `TOKEN_SETTING/STATE_PREFIX/CLIENT_SETTING` by userId, thread authenticated userId through `auth/robinhood/start+callback`.*
+3. **SSE stream is a global broadcast** — ✅ **Fixed**: `app/api/events/stream/route.ts`
+   now reads the subscriber's `userId` and drops events tagged for a different tenant;
+   untagged events are global. Audit of `emitDashboardEvent` call sites to set `userId`
+   is the remaining follow-up.
+4. **Robinhood broker token is process-global** — ✅ **Fixed**: `src/lib/mcp-oauth.ts`
+   now keys the token (`robinhood_mcp_oauth_token:<userId>`), state
+   (`robinhood_mcp_oauth_state:<userId>:<random>`), and all OAuth helpers by `userId`,
+   enabling per-user broker linking via `auth/robinhood/start+callback`.
 5. **Admin routes** gated only by `NODE_ENV!=='production' || x-admin-token===ADMIN_REINDEX_TOKEN` (shared ops secret), not per-user (`app/api/admin/*`). *Fix: require an authenticated admin role.*
 6. **`'local'` defaults everywhere in db.ts** (`633,655,661,670,676`, etc.) fail **open** into the shared tenant. *Fix: drop defaults (or throw on missing userId) once auth lands.*
 7. **No CSRF / same-site / rate-limiting** on mutating routes. *Fix once identity exists.*

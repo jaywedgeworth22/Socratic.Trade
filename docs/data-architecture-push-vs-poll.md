@@ -19,7 +19,7 @@ don't re-derive them. Two ideas run through everything here:
 | Mechanism | Direction | Best for | In our app |
 |---|---|---|---|
 | **Webhook** | Provider → us (HTTP POST to a URL we host) | Discrete events (an alert, a filing) | ✅ TradingView → `app/api/webhooks/tradingview` |
-| **WebSocket** | We dial out, hold a long-lived socket; provider streams | High-frequency streams (quotes, news, fills) | Not yet (Massive/Finnhub/Alpaca offer it) |
+| **WebSocket** | We dial out, hold a long-lived socket; provider streams | High-frequency streams (quotes, news, fills) | ✅ **Implemented** — Alpaca news and `trade_updates` WebSocket workers live in `src/lib/streams/` (started from `instrumentation.ts`). Massive/Finnhub quote streams still scoped below. |
 | **SSE (server-sent events)** | One-way stream over plain HTTP | Server → our own browser clients | ✅ `app/api/events/stream` → dashboard |
 
 **Why push reduces overhead:** less compute/parsing (process only on change), less bandwidth
@@ -87,8 +87,9 @@ LLM inference is our dominant compute cost, and the strategy run (proposal + per
 red-team + every-run post-mortem) currently fires on a **fixed 60-min wall clock regardless of
 whether any input changed**. The largest possible overhead reduction is to **trigger the LLM
 pipeline when a material event arrives** (fresh 8-K, congress buy, fill, regime flip,
-high-conviction technical push) rather than on the clock. Requires policy gating to avoid
-over-trading; tracked as a design item, not yet built.
+high-conviction technical push) rather than on the clock. This is **implemented and default-off**
+(`src/lib/triggers.ts`; `TRIGGER_ENGINE=event|both` env var to enable); see the scoping section
+below for details.
 
 ---
 
@@ -103,8 +104,8 @@ in two places, which is where push pays off.
 | Rank | Target | Mechanism | Status |
 |---|---|---|---|
 | 1 | Browser dashboard 30s poll (`/api/dashboard`) | **SSE** on run/order events | ✅ **Implemented** (`src/lib/events.ts`, `app/api/events/stream`, client EventSource; poll demoted to 120s fallback). Emits on `run-complete`; add `order`/`proposal` emits next. |
-| 2 | News (Alpaca REST, 30-min poll) | Alpaca **news WebSocket** (free Benzinga) | Scoped below — needs a persistent WS worker. |
-| 3 | Order fills/status (polled each run) | Alpaca **`trade_updates` WebSocket** | Scoped below. |
+| 2 | News (Alpaca REST, 30-min poll) | Alpaca **news WebSocket** (free Benzinga) | ✅ **Implemented** — `src/lib/streams/alpaca-news-stream.ts`; deduped by article id; writes into the shared news cache. |
+| 3 | Order fills/status (polled each run) | Alpaca **`trade_updates` WebSocket** | ✅ **Implemented** — `src/lib/streams/alpaca-trade-updates-stream.ts`; emits `order` dashboard events on fill/partial_fill. |
 | 4 | Quotes (NASDAQ screener poll) | Massive/Alpaca/Finnhub **WebSocket** | Scoped below; Massive $29 stream is still 15-min delayed. |
 | — | Technicals | TradingView **webhook** | Already push-capable; **currently `TECHNICAL_SOURCE=computed`** (free fallback) — TradingView wired but not in use. |
 
@@ -161,8 +162,11 @@ caches the scan/enrichment already read → reconnects with backoff → dedups. 
 read path (scan) decoupled from the socket. Inbound **webhooks** (provider → us) keep using the
 serverless route pattern under `app/api/webhooks/<provider>/` instead.
 
-### Event-driven LLM trigger (the big lever, design-only)
-Replace the fixed 60-min strategy cadence with: run when `emitDashboardEvent`-class material
+### Event-driven LLM trigger (the big lever — implemented, default-off)
+The trigger engine is built (`src/lib/triggers.ts`, `src/lib/regime-watch.ts`, and the SEC 8-K
+`sec8k.ts` producer). It replaces the fixed 60-min strategy cadence with: run when material
 events arrive (new filing / congress buy / fill / regime flip / high-conviction technical),
-debounced and policy-gated (cooldown, max runs/hr, market-hours, conviction threshold) so it
-cuts LLM cost without over-trading.
+debounced and policy-gated (cooldown, max runs/hr, market-hours, conviction threshold).
+**Default off**: `TRIGGER_ENGINE` unset → scheduler runs on the fixed interval exactly as before;
+`submitMaterialEvent`/`broadcastMaterialEvent` are no-ops. Set `TRIGGER_ENGINE=event` or
+`TRIGGER_ENGINE=both` to activate event-driven triggering.

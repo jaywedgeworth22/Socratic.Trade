@@ -4,8 +4,11 @@
 // agreements, etc.), so a fresh 8-K is a catalyst flag worth surfacing to the agent.
 // Free, no key (UA only). We read the market-wide "current 8-K" atom feed, map each
 // filer's CIK to a ticker via SEC's company_tickers.json (cached weekly), and keep a
-// short rolling window of "TICKER filed an 8-K" events. Coarse by design (no per-item
-// parsing yet — that needs a fetch per filing); item-level detail is a follow-up.
+// short rolling window of "TICKER filed an 8-K" events. Per-item label enrichment
+// IS implemented: parseEightKItemsFromHtml() fetches the filing summary page and
+// extracts item codes (e.g. "Item 5.02"); eightKHasMaterialItem() filters an
+// expert-panel allowlist; items surface in bulletins and trigger the event-driven
+// engine (`src/lib/triggers.ts`) when a material item code is detected.
 // Never fabricated: no feed / no CIK match -> no event.
 
 import { audit, getInternalSetting, setInternalSetting } from "../db";
