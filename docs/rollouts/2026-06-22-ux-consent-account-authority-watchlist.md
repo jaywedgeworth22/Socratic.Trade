@@ -27,6 +27,13 @@ watchlist symbol (e.g. `BTC`) could brick *all* policy updates.
    - The Settings "Additional Watchlist" / "Ignore List" / allowlist inputs
      already reject unsupported symbols at add time with a clear toast; that's
      kept (this is the "don't let me add it in the first place" behavior).
+   - **No silent loss:** `updatePolicy` now diffs the sent policy against the
+     saved one and, if the server dropped any watchlist/ignore symbols as
+     unsupported, shows a `warning` toast naming them ("Removed unsupported
+     symbol(s): …") instead of a plain success. This guarantees a user is never
+     left thinking a symbol is being watched when it isn't — covering legacy
+     stuck entries and any future non-validating add path, on top of the
+     add-time rejection. Helper: `droppedUnsupportedSymbols(sent, saved)`.
    - The active-account check wrapped the broker `getAccounts()` call in
      try/catch so a transient broker/network failure returns a clean message
      instead of an unhandled 500 (the likely cause of the earlier full-height

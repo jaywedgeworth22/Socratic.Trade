@@ -193,6 +193,16 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
+// Symbols the user SENT (watchlist + ignore list) that the server dropped as unsupported (equity-only),
+// so we can warn explicitly instead of silently losing them. The server uses the same validity rule for
+// both lists, so a dropped symbol is absent from both saved lists.
+function droppedUnsupportedSymbols(sent: TradingPolicy, saved: TradingPolicy): string[] {
+  const up = (list: string[] | undefined): string[] => (list ?? []).map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const savedSet = new Set([...up(saved.additionalSymbols), ...up(saved.blocklist)]);
+  const sentAll = [...up(sent.additionalSymbols), ...up(sent.blocklist)];
+  return Array.from(new Set(sentAll.filter((s) => !savedSet.has(s))));
+}
+
 // ── Shared market-data pool consent gate ─────────────────────────────────
 
 type ConsentGateState = "loading" | "needed" | "done";
@@ -453,7 +463,18 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         const message = raw && !raw.startsWith("<") && raw.length <= 300 ? raw : `Policy update failed (${response.status}).`;
         throw new Error(message);
       }
-      toast.success("Policy updated.");
+      // The server drops unsupported symbols (equity-only) from the watchlist / ignore list. Detect any
+      // that were silently removed and warn explicitly, so nothing is ever thought to be watched when it
+      // isn't. (Add-time validation already blocks these at the input; this also catches legacy entries.)
+      const saved = (await response.json().catch(() => null)) as TradingPolicy | null;
+      const dropped = saved ? droppedUnsupportedSymbols({ ...snapshot.policy, ...patch }, saved) : [];
+      if (dropped.length > 0) {
+        toast.warning(`Removed unsupported symbol${dropped.length > 1 ? "s" : ""}: ${dropped.join(", ")}`, {
+          description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported, so these were not kept on the list."
+        });
+      } else {
+        toast.success("Policy updated.");
+      }
       await load({ quiet: true });
     } catch (policyError) {
       toast.error(policyError instanceof Error ? policyError.message : "Policy update failed.");
