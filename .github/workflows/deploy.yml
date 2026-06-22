@@ -3,11 +3,7 @@ name: Deploy
 # Deploys the merged `main` branch to the self-hosted production host.
 # Production runs `next start` under PM2 (app `trading`) from the
 # `~/apps/trading-live` worktree, served at trading.jays.services.
-#
-# ⚠️ STAGED — NOT ACTIVE. This file lives in `ci-pending/` because the push
-# credential lacks the GitHub OAuth `workflow` scope. Read `ci-pending/README.md`
-# (Deploy section) for activation + self-hosted-runner setup, and the SSH-based
-# alternative, BEFORE moving this into `.github/workflows/`.
+# Activation + self-hosted-runner setup notes live in ci-pending/README.md.
 
 on:
   # Auto-deploy every push to main (i.e. every merged PR).
