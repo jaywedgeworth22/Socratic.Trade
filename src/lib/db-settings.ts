@@ -102,6 +102,37 @@ export function hasDataPoolConsent(userId: string = "local"): boolean {
   return c.accepted === true && (c.version ?? 0) >= DATA_POOL_CONSENT_VERSION;
 }
 
+// ── Learned-context sharing preferences ──────────────────────────────────────
+// Two independent opt-in/out flags stored as user_settings:
+//   includeShared   (default TRUE)  — the user benefits from the shared fact pool.
+//   contributeShared (default FALSE) — nothing is shared without explicit opt-in.
+//
+// Only FACT-tier learned_context rows are ever eligible to become scope='shared'.
+// Risk / strategy-directive rows never reach this path (they go to the pending queue).
+// PII is already excluded upstream before ingestLearned is called.
+export interface LearnedContextSharingPrefs {
+  /** Read shared facts written by other opted-in users. Default true. */
+  includeShared: boolean;
+  /** Contribute this user's own learned facts to the shared pool. Default false. */
+  contributeShared: boolean;
+}
+
+const LEARNED_CONTEXT_SHARING_KEY = "learned_context_sharing";
+
+export function getLearnedContextSharing(userId: string): LearnedContextSharingPrefs {
+  return getUserSetting<LearnedContextSharingPrefs>(userId, LEARNED_CONTEXT_SHARING_KEY, {
+    includeShared: true,
+    contributeShared: false
+  });
+}
+
+export function setLearnedContextSharing(userId: string, prefs: Partial<LearnedContextSharingPrefs>): LearnedContextSharingPrefs {
+  const current = getLearnedContextSharing(userId);
+  const next: LearnedContextSharingPrefs = { ...current, ...prefs };
+  setUserSetting(userId, LEARNED_CONTEXT_SHARING_KEY, next);
+  return next;
+}
+
 // ── Market-data demand queue ───────────────────────────────────────────────────
 
 export type MarketDataDemandKind = "history";
