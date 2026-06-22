@@ -222,6 +222,40 @@ address:
 - If a commit was already made with the real email, amend before pushing:
   `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com" && git commit --amend --reset-author --no-edit`.
 
+### Bot identity for agent worktrees (PLANNED — not yet active)
+
+> Activate this section **only after** the bot GitHub account + token exist. Until then the
+> single-identity rules above remain in force. (This was added as a parked draft PR so it's ready.)
+
+To make GitHub's "require 1 approving review" rule enforceable, the autonomous agents push and open
+PRs as a **separate non-admin GitHub account** (a machine user), so the owner can approve their PRs
+(GitHub forbids approving your own). Once the bot exists:
+
+- **Account:** `<BOT_USERNAME>` — repo collaborator with **Write** (not Admin), and **not** in the
+  `main-protection` ruleset bypass list. Fill in its noreply email from the bot's GitHub settings:
+  `<BOT_USER_ID>+<BOT_USERNAME>@users.noreply.github.com`.
+- **Per-worktree identity (requires `extensions.worktreeConfig`).** The single shared-`.git/config`
+  `user.email` documented above cannot give worktrees *different* identities. Turn worktree config on
+  once — `git config extensions.worktreeConfig true` — then set each worktree's email explicitly:
+  - agent worktrees (`~/apps/trading-claude`, `-codex`, `-antigravity`):
+    `git config --worktree user.email "<BOT_USER_ID>+<BOT_USERNAME>@users.noreply.github.com"`
+  - integration (`~/Code/Agentic Trading`) and `~/apps/trading-live`:
+    `git config --worktree user.email "12656028+jaywedgeworth22@users.noreply.github.com"`
+- **Pushes + PR authorship.** Set `GH_TOKEN=<bot fine-grained PAT>` in each agent's environment (its
+  pm2 `env` block / shell rc). `gh` then pushes and opens PRs **as the bot**, so the owner is a valid
+  reviewer. Scope the bot PAT to `agentic-trading` only, with Contents R/W, Pull requests R/W, and
+  **Workflows R/W** (the last also lets the agents push `.github/workflows/` changes, which
+  `scripts/land.sh` otherwise refuses).
+- **Then enable review:** set the `main-protection` ruleset's required approvals to **1**. The owner's
+  own occasional manual PRs would then need an approver too — either have the bot approve them, or keep
+  the owner as a ruleset bypass actor for hotfixes.
+- The email-privacy rule still applies: the bot commits/pushes with its GitHub **noreply** address,
+  never a real one.
+
+> Note: a separate identity does **not** fix the `STATUS.md` rebase churn (every agent prepending to
+> "Active Focus" + rapid merges). Address that separately — enable a GitHub **merge queue**, or stop
+> editing `STATUS.md` in feature PRs (keep per-change notes in append-only `docs/rollouts/`).
+
 ## Pull requests
 
 - **Every branch intended to land on `main` gets a PR.** Don't push a feature
