@@ -109,10 +109,19 @@ is mostly architectural: make every future keyed connector accept `userId`,
 continue removing legacy direct env reads when new sources land, and verify
 source attribution when a saved user key overrides env.
 
-### M3 `[todo]` Per-user preferences & policy
-Today `TradingPolicy`, profiles, prompt, and tuning are global (one row). Scope them
-by `userId`: each user has their own policy/profiles/horizon/risk/tuning/tax/scoring
-weights. The default user keeps the current global config (migrate it in).
+### M3 `[done]` Per-user preferences & policy
+`TradingPolicy`, strategy profiles, prompt, and tuning are fully scoped by `userId`.
+`getPolicy(userId)`, `setPolicy(policy, userId)`, `getStrategyPrompt(userId)`,
+`setStrategyPrompt(prompt, userId)`, and all profile CRUD (`createStrategyProfile`,
+`updateStrategyProfile`, `activateStrategyProfile`, `deleteStrategyProfile`,
+`listStrategyProfiles`, `getStrategyProfile`) accept `userId` and filter by
+`user_id = ?`. The legacy global `settings` rows for `policy` and `strategyPrompt`
+are dead weight (never read at runtime); a one-time migration copies any
+existing global rows to the `local` user so existing single-user DBs lose
+nothing. A `DELETE /api/profiles/[id]` route was added with ownership-scoped
+404 semantics; deletion of an active profile reassigns the active flag to the
+oldest remaining profile. Two-user isolation is verified by
+`test/per-user-policy-isolation.test.ts` (6 tests, all passing as of 2026-06-21).
 
 ### M4 `[partial]` Per-user data isolation
 `fill_events`, `portfolio_snapshots`, `trade_proposals`, scorecards, and the

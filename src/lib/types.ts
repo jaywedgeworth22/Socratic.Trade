@@ -135,6 +135,18 @@ export interface TuningSettings {
   redTeamConvictionThreshold?: number;
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
+  /**
+   * Max value AI confidence may contribute to the conviction sizing multiplier (0–1) when the
+   * thesis's realized edge does NOT corroborate it. Caps only the UPSIDE — low confidence still
+   * shrinks size fully. Default 0.6. Prevents an inflated confidenceScore from sizing up a
+   * proven-but-mediocre thesis on AI conviction alone. (Reads only realized scorecard stats +
+   * the proposal's own confidenceScore — never learned_context.)
+   */
+  convictionCapUncorroborated?: number;
+  /** Shrunk realized win rate (%) at/above which conviction is treated as corroborated (cap lifts). Default 58. */
+  corroborationWinRatePct?: number;
+  /** Shrunk realized avg return (%) strictly above which conviction is treated as corroborated. Default 0. */
+  corroborationEdgePct?: number;
 }
 
 export interface RiskRules {
@@ -813,4 +825,46 @@ export interface MemoryItem {
   hard: boolean;
   assertedAt: string;
   supersededBy: string | null;
+}
+
+// ── learned_context (the tiered crossover-learning store) ──────────────────────
+// A SQLite channel, distinct from user_memory and the Pinecone corpus, holding durable
+// learned FACTS that reach the strategy brain ONLY as advisory prompt DATA — never as a
+// numeric input to sizing or scoring weights. The risk classifier (classify.ts) is the
+// single chokepoint: anything not clearly a non-risk fact is fail-closed to 'risk' and, in
+// this fact-tier slice, is audit-logged-and-dropped (the pending queue is a later slice).
+export type LearnedContextScope = "private" | "shared";
+export type LearnedContextKind = "pattern" | "decision" | "fact";
+export type LearnedContextOrigin = "chat" | "autonomous" | "ingest";
+export type LearnedContextRiskTier = "fact" | "risk" | "strategy-directive";
+
+/** A persisted learned-context row. `supersededBy` non-null means a newer fact replaced it. */
+export interface LearnedContextRow {
+  id: string;
+  userId: string;
+  scope: LearnedContextScope;
+  kind: LearnedContextKind;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: LearnedContextOrigin;
+  riskTier: LearnedContextRiskTier;
+  confidence: number;
+  contributorUserId: string | null;
+  assertedAt: string;
+  supersededBy: string | null;
+  expiresAt: string | null;
+}
+
+/** A pre-persistence learned-context candidate (origin/scope are assigned at ingest time). */
+export interface LearnedContextCandidate {
+  kind: LearnedContextKind;
+  subject: string;
+  value: string;
+  symbol?: string | null;
+  source?: string;
+  confidence?: number;
+  /** Optional intent hint from the producer; the classifier may use it to force 'risk'. */
+  intent?: string;
 }

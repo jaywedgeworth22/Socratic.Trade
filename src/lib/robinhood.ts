@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
+import { DEV_USER_ID } from "./auth/identity";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 
@@ -36,10 +37,10 @@ export interface RobinhoodMcpHealth {
   warning?: string;
 }
 
-export function getRobinhoodGateway(): BrokerGateway {
+export function getRobinhoodGateway(userId: string): BrokerGateway {
   // Robinhood is MCP-only. When it isn't connected, the MCP gateway surfaces honest
   // errors and the health card shows "not connected" — it never returns fabricated data.
-  return new HttpMcpRobinhoodGateway();
+  return new HttpMcpRobinhoodGateway(userId);
 }
 
 // Local "Test" broker: real market quotes (Yahoo) + simulated fills, no real broker.
@@ -49,6 +50,11 @@ export function getTestGateway(): BrokerGateway {
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
+  private readonly userId: string;
+
+  constructor(userId: string) {
+    this.userId = userId;
+  }
   async getAccounts(): Promise<BrokerageAccount[]> {
     const raw = await this.callTool("get_accounts", {}) as Record<string, unknown>;
     const accounts = Array.isArray(raw?.accounts) ? raw.accounts : Array.isArray(raw) ? raw : [];
@@ -250,11 +256,11 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
   }
 
   private async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    return callRobinhoodMcpTool(name, args);
+    return callRobinhoodMcpTool(this.userId, name, args);
   }
 }
 
-export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
+export async function getRobinhoodMcpHealth(userId: string): Promise<RobinhoodMcpHealth> {
   const checkedAt = new Date().toISOString();
   const protocolVersion = getRobinhoodMcpProtocolVersion();
   const base = {
@@ -276,7 +282,7 @@ export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
   }
 
   const url = getRobinhoodMcpUrl();
-  const token = await getMcpAccessToken();
+  const token = await getMcpAccessToken(userId);
   if (!token) {
     return {
       ...base,
@@ -290,7 +296,7 @@ export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
 
   let warning: string | undefined;
   try {
-    await callRobinhoodMcpMethod("initialize", {
+    await callRobinhoodMcpMethod(userId, "initialize", {
       protocolVersion,
       capabilities: {},
       clientInfo: { name: "Agentic Trading", version: "0.1.0" }
@@ -302,7 +308,7 @@ export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
   }
 
   try {
-    const result = await callRobinhoodMcpMethod("tools/list", {});
+    const result = await callRobinhoodMcpMethod(userId, "tools/list", {});
     const resultObj = result as { tools?: Array<{ name?: string }> };
     const tools = Array.isArray(resultObj?.tools)
       ? resultObj.tools.map((tool: { name?: string }) => String(tool?.name ?? "")).filter(Boolean).sort()
@@ -320,13 +326,13 @@ export async function getRobinhoodMcpHealth(): Promise<RobinhoodMcpHealth> {
   }
 }
 
-export async function callRobinhoodMcpTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-  const result = await callRobinhoodMcpMethod("tools/call", { name, arguments: args });
+export async function callRobinhoodMcpTool(userId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+  const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
   return unpackMcpToolResult(result);
 }
 
-export async function callRobinhoodMcpMethod(method: string, params: Record<string, unknown>): Promise<unknown> {
-  const token = await getMcpAccessToken();
+export async function callRobinhoodMcpMethod(userId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+  const token = await getMcpAccessToken(userId);
   const response = await fetch(getRobinhoodMcpUrl(), {
     method: "POST",
     headers: {
@@ -343,7 +349,7 @@ export async function callRobinhoodMcpMethod(method: string, params: Record<stri
     })
   });
 
-  if (response.status === 401) clearMcpOAuthTokens();
+  if (response.status === 401) clearMcpOAuthTokens(userId);
 
   const body = await response.text();
   const payload = parseMcpResponseBody(body, response.headers.get("content-type"));
@@ -617,16 +623,21 @@ export function robinhoodMcpDataEnabled(): boolean {
  * Fetch daily OHLC history for a symbol via Robinhood MCP `get_equity_historicals`.
  * Returns null when Robinhood isn't connected, the call fails, or <2 bars come back —
  * so it slots into the keyed-first OHLC cascade as just another tier.
+ *
+ * `userId` defaults to the dev/local identity; callers that operate in a per-user
+ * request context should pass the resolved userId.  When `ROBINHOOD_MCP_AUTH_TOKEN`
+ * is set the per-user lookup is bypassed anyway.
  */
 export async function fetchRobinhoodHistoricals(
   symbol: string,
-  opts: { interval?: string; span?: string } = {}
+  opts: { interval?: string; span?: string; userId?: string } = {}
 ): Promise<OHLCBar[] | null> {
   if (!robinhoodMcpDataEnabled()) return null;
   const sym = normalizeSymbol(symbol);
   if (!sym) return null;
+  const userId = opts.userId ?? DEV_USER_ID;
   try {
-    const raw = await callRobinhoodMcpTool("get_equity_historicals", {
+    const raw = await callRobinhoodMcpTool(userId, "get_equity_historicals", {
       symbols: [sym],
       symbol: sym,
       interval: opts.interval ?? "day",
@@ -680,13 +691,16 @@ export function parseRobinhoodHistoricals(raw: unknown, symbol: string): OHLCBar
 /**
  * Raw `get_equity_fundamentals` output, normalized to a per-symbol map. Returns {} when
  * Robinhood isn't connected. The exact field set is broker-defined; callers map defensively.
+ *
+ * `userId` defaults to the dev/local identity.  Pass the request-scoped userId for
+ * per-user token lookup; when `ROBINHOOD_MCP_AUTH_TOKEN` is set the lookup is bypassed.
  */
-export async function fetchRobinhoodFundamentals(symbols: string[]): Promise<Record<string, Record<string, unknown>>> {
+export async function fetchRobinhoodFundamentals(symbols: string[], userId: string = DEV_USER_ID): Promise<Record<string, Record<string, unknown>>> {
   if (!robinhoodMcpDataEnabled()) return {};
   const wanted = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
   if (wanted.length === 0) return {};
   try {
-    const raw = await callRobinhoodMcpTool("get_equity_fundamentals", { symbols: wanted });
+    const raw = await callRobinhoodMcpTool(userId, "get_equity_fundamentals", { symbols: wanted });
     const root = raw as Record<string, unknown> | undefined;
     const rows = Array.isArray(root?.results) ? root!.results : Array.isArray(root?.fundamentals) ? root!.fundamentals : Array.isArray(raw) ? (raw as unknown[]) : [];
     const out: Record<string, Record<string, unknown>> = {};

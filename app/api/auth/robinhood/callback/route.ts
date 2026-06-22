@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { completeMcpOAuthCallback } from "@/lib/mcp-oauth";
+import { resolveRequestUserId } from "@/lib/request-user";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  // No user-bound session yet at callback time; key by the resolved (dev/verified) identity plus the
+  // client IP so a flood of forged callbacks can't grind the token exchange.
+  const clientIp =
+    request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown-ip";
+  const limited = enforceRateLimit(`${resolveRequestUserId(request)}:${clientIp}`, "auth/robinhood/callback", RATE_LIMITS.oauth);
+  if (limited) return limited;
+
   const url = new URL(request.url);
   const error = url.searchParams.get("error");
   if (error) {

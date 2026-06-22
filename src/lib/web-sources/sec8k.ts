@@ -128,7 +128,7 @@ export function isEightKRefreshDue(now: number = Date.now()): boolean {
 }
 
 /** Load the CIK→ticker map, cached weekly in the settings KV. */
-async function loadCikMap(now: number): Promise<Record<string, string>> {
+export async function loadCikMap(now: number): Promise<Record<string, string>> {
   const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(CIK_KEY);
   if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
   const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));

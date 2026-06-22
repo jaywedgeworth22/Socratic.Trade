@@ -16,6 +16,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { stripClientIdentityHeaders } from "./src/lib/auth/strip-identity";
+import { checkSameOrigin } from "./src/lib/auth/csrf";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
 const ALLOWED = (process.env.ALLOWED_EMAILS || "")
@@ -47,6 +48,28 @@ export function middleware(req: NextRequest): NextResponse {
     // (e.g. a webhook sender) can never hand a forged identity to a handler that reads it.
     const headers = stripClientIdentityHeaders(new Headers(req.headers));
     return NextResponse.next({ request: { headers } });
+  }
+
+  // CSRF: reject cross-site state-changing requests to /api/* (PUBLIC_PREFIXES already returned above, so
+  // webhooks — which use their own shared-secret auth and carry no browser Origin — are unaffected). Uses a
+  // same-origin assertion (Sec-Fetch-Site / Origin / Referer) appropriate for this app's header-based
+  // identity; fail-open for non-browser callers, fail-closed only on a proven cross-origin browser request.
+  if (pathname.startsWith("/api/")) {
+    const csrf = checkSameOrigin({
+      method: req.method,
+      url: req.url,
+      secFetchSite: req.headers.get("sec-fetch-site"),
+      origin: req.headers.get("origin"),
+      referer: req.headers.get("referer"),
+      forwardedHost: req.headers.get("x-forwarded-host"),
+      host: req.headers.get("host")
+    });
+    if (!csrf.ok) {
+      return new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
+        status: 403,
+        headers: { "content-type": "application/json" }
+      });
+    }
   }
 
   const isProd = process.env.NODE_ENV === "production";

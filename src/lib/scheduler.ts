@@ -5,7 +5,7 @@
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
 import { checkAllUserPriceAlerts } from "./alerts";
-import { audit, getPolicy, listUsers, setInternalSetting, setPolicy } from "./db";
+import { audit, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
@@ -13,7 +13,8 @@ import { getBrokerGateway } from "./broker";
 import { reconcilePendingFills, runStrategyOnce } from "./strategy";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
-import { refreshDueWebSources } from "./web-sources";
+import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
+import { symbolsForPolicyUniverse } from "./index-universes";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 
@@ -93,6 +94,26 @@ async function tick(): Promise<void> {
   // keep the dashboard + agent context fresh even while autonomous trading is paused.
   // Skipped instantly when not yet due; fully self-guarded so it can't break a tick.
   void refreshDueWebSources().catch((err) => console.error("[scheduler] web-source refresh error:", err));
+
+  // 10-K/10-Q body ingest (weekly cadence, gated on paid Voyage key signal).
+  // Collects the union of all user watchlists + policy universes so the shared
+  // corpus covers every symbol any active user is monitoring. Fire-and-forget;
+  // errors are captured inside refreshFilingBodies and audited there.
+  if (isFilingIngestDue()) {
+    const symbolSet = new Set<string>();
+    for (const userId of listUsers()) {
+      try {
+        const policy = getPolicy(userId);
+        for (const s of symbolsForPolicyUniverse(policy)) symbolSet.add(s);
+        for (const item of listWatchlistSymbols(userId)) symbolSet.add(item.symbol);
+      } catch {
+        // don't let a single user's DB error block the others
+      }
+    }
+    void refreshFilingBodies(Array.from(symbolSet)).catch((err) =>
+      console.error("[scheduler] filing-body refresh error:", err)
+    );
+  }
 
   // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded, runs beside the web-source
   // refresh. Records + announces a regime change; only triggers a run when TRIGGER_ENGINE is on.
