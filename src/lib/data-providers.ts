@@ -624,13 +624,21 @@ export function parseRobinhoodFundamentals(row: Record<string, unknown>): Symbol
 export class RobinhoodEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "robinhood-fundamentals";
   readonly configured = true;
+  private readonly scope: CacheScope;
 
   // SECURITY: the Robinhood OAuth token is per-user. This provider is constructed with the
   // request-scoped userId (see getEnrichmentProvider) and threads it into the fundamentals
   // fetch so user B never resolves user A's ('local') broker token. A pass with no user in
   // scope (undefined) fails closed — it returns empty enrichment rather than borrowing the
   // operator's token for a shared/background scan.
-  constructor(private readonly userId?: string) {}
+  //
+  // The fundamentals themselves (pe_ratio, 52-wk hi/lo, avg volume, sector, industry) are PUBLIC
+  // market data — not the user's private account. So, exactly like every other user-keyed source,
+  // they are cached consent-pooled: pool tier when the user opted into the reciprocal data pool,
+  // otherwise kept private to that user (a `user` keySource is never force-shared without consent).
+  constructor(private readonly userId?: string) {
+    this.scope = cacheScopeForKeySource("user", userId);
+  }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
@@ -642,15 +650,32 @@ export class RobinhoodEnrichmentProvider implements MarketEnrichmentProvider {
       for (const symbol of normalized) result[symbol] = {};
       return result;
     }
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId);
+    const misses: string[] = [];
+    // Serve from the consent-aware cache first (private → pool-if-consented → shared). A consenting
+    // user reads bars/fundamentals another consenting user already fetched, without spending a call.
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("robinhood-fundamentals", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
     try {
       const { fetchRobinhoodFundamentals } = await import("./robinhood");
-      const raw = await fetchRobinhoodFundamentals(normalized, this.userId);
-      for (const symbol of normalized) {
+      const raw = await fetchRobinhoodFundamentals(misses, this.userId);
+      for (const symbol of misses) {
         const row = raw[symbol];
-        result[symbol] = row ? parseRobinhoodFundamentals(row) : {};
+        const data = row ? parseRobinhoodFundamentals(row) : {};
+        if (Object.keys(data).length > 0) {
+          writeEnrichmentCache("robinhood-fundamentals", symbol, this.scope, this.userId, data, now + ttlMs());
+        }
+        result[symbol] = data;
       }
     } catch {
-      for (const symbol of normalized) result[symbol] = {};
+      for (const symbol of misses) result[symbol] = {};
     }
     return result;
   }
