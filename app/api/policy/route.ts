@@ -25,12 +25,8 @@ export async function PUT(request: Request) {
     includedIndices: Array.isArray(body.includedIndices)
       ? Array.from(new Set(body.includedIndices.map(String).filter(isIndexUniverse))) as IndexUniverse[]
       : current.includedIndices,
-    additionalSymbols: Array.isArray(body.additionalSymbols)
-      ? Array.from(new Set(body.additionalSymbols.map(String).map(normalizeSymbol).filter(Boolean)))
-      : current.additionalSymbols,
-    blocklist: Array.isArray(body.blocklist)
-      ? Array.from(new Set(body.blocklist.map(String).map(normalizeSymbol).filter(Boolean)))
-      : current.blocklist,
+    additionalSymbols: sanitizeSymbolList(body.additionalSymbols, current.additionalSymbols ?? []),
+    blocklist: sanitizeSymbolList(body.blocklist, current.blocklist ?? []),
     scoringWeights: {
       ...DEFAULT_POLICY.scoringWeights,
       ...current.scoringWeights,
@@ -70,12 +66,9 @@ export async function PUT(request: Request) {
 }
 
 async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
-  for (const symbol of policy.additionalSymbols || []) {
-    if (!isValidAppSymbol(symbol)) return `Symbol ${symbol} in additional watchlist is not supported by the app.`;
-  }
-  for (const symbol of policy.blocklist || []) {
-    if (!isValidAppSymbol(symbol)) return `Symbol ${symbol} in ignore list is not supported by the app.`;
-  }
+  // Unsupported watchlist / ignore-list symbols are sanitized out in the PUT handler above (the app is
+  // equity-only: S&P 500 / Nasdaq 100 / Dow 30). They can no longer reach here, so a stale unsupported
+  // symbol can never block an unrelated policy update. The Settings UI also rejects them at add time.
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
@@ -119,10 +112,29 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.systemState === "active" && !policy.accountNumber) return "Select an account before enabling autonomy.";
   if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Select at least one base index or additional watchlist symbol before enabling autonomy.";
   if (policy.systemState === "active" && policy.accountNumber) {
-    const account = (await getBrokerGateway(policy, userId).getAccounts()).find((item) => item.accountNumber === policy.accountNumber);
-    if (!account) return "Selected account is not available.";
-    if (!account.agenticAllowed) return "Selected account is not agentic_allowed.";
+    // Don't let a transient broker/network failure here surface as an unhandled 500 (which renders as a
+    // raw error page) — return a clean, actionable message instead.
+    try {
+      const accounts = await getBrokerGateway(policy, userId).getAccounts();
+      const account = accounts.find((item) => item.accountNumber === policy.accountNumber);
+      if (!account) return "Selected account is not available.";
+      if (!account.agenticAllowed) return "Selected account is not agentic_allowed.";
+    } catch {
+      return "Could not verify the selected account right now. Please try again in a moment.";
+    }
   }
+}
+
+/**
+ * Normalize + drop unsupported symbols (equity-only: S&P 500 / Nasdaq 100 / Dow 30). When `raw` isn't an
+ * array, fall back to the existing list — but still re-filter it so a legacy unsupported symbol can't
+ * persist and brick later policy updates. The Settings UI rejects unsupported symbols at add time too.
+ */
+function sanitizeSymbolList(raw: unknown, fallback: string[]): string[] {
+  const source = Array.isArray(raw)
+    ? Array.from(new Set(raw.map(String).map(normalizeSymbol).filter(Boolean)))
+    : fallback;
+  return source.filter((symbol): symbol is string => typeof symbol === "string" && isValidAppSymbol(symbol));
 }
 
 function normalizeSectorCaps(value: unknown): Record<string, number> {
