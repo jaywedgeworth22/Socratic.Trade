@@ -45,7 +45,7 @@ import {
   recordFillFromProposal,
   recordPortfolioSnapshot
 } from "./performance";
-import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
+import { allowedSymbolsForPolicy, betaScaledStopPct, evaluateTradeProposal } from "./policy";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -58,7 +58,7 @@ import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -173,7 +173,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         return null;
       });
 
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
+    const betaBySymbol: Record<string, number> = {};
+    for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
+      if (typeof q.beta === "number" && Number.isFinite(q.beta)) betaBySymbol[normalizeSymbol(sym)] = q.beta;
+    }
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol);
 
     let ragContext = "";
     try {
@@ -222,7 +226,10 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       learnedContext
     });
 
-    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions));
+    const sizedProposals = llmProposals.map((p) => {
+      const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions);
+      return enrichOpeningProposal(sized, policy, marketScan);
+    });
 
     const debatedProposals: TradeProposal[] = [];
     // Red Team is REQUIRED for high-conviction trades. If it could not run (no key, provider
@@ -561,11 +568,23 @@ export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): numb
  *      VIX regime is the weakest possible risk-on entry and the Bear LLM is not reliably
  *      calibrated to reject it (same model as Bull, trained to be helpful).
  */
+/**
+ * SHORT_SELLING two-layer gate, expressed as the set of order sides the proposal generator may emit.
+ * short/cover are allowed only when policy.shortSellingEnabled is true AND the connected account
+ * reports shortSelling capability. Otherwise long-only. Mirrors the policy.ts execution-time gate so
+ * the schema can never surface a side the gate would reject.
+ */
+export function allowedProposalSides(policy: TradingPolicy, account?: ExecutionAccount): OrderSide[] {
+  const shortAllowed = policy.shortSellingEnabled === true && account?.capabilities?.shortSelling === true;
+  return shortAllowed ? ["buy", "sell", "short", "cover"] : ["buy", "sell"];
+}
+
 export function deterministicBearFilter(
   proposals: TradeProposal[],
   positions: EquityPosition[],
   topCandidates: MarketQuote[],
-  regime: string
+  regime: string,
+  vetoThresholds?: { fcfYieldFloorPct?: number; debtToEquityCeiling?: number }
 ): { kept: TradeProposal[]; vetoed: Array<{ symbol: string; side: string; reason: string }> } {
   // All EquityPosition entries are long positions (the app is equity-only; short positions
   // are not represented in the live book yet). Cover proposals would require short positions,
@@ -601,6 +620,23 @@ export function deterministicBearFilter(
         p.rationale =
           `[Deterministic flag: momentum overextension (momentum=${Math.round(momentum)}, value=${Math.round(value)}). ` +
           `Verify this is a breakout, not a chase.]\n\n${p.rationale}`;
+      }
+    }
+
+    // Rule 4: model-free fundamentals hard-veto on buys (independent of the Bull/Bear LLMs, which
+    // share one model and can rationalize a weak long). Catches cash-burning / over-levered names
+    // regardless of what the LLMs agree on. Skipped when the threshold is unset OR the field is
+    // unavailable, so a missing fundamental never false-vetoes a legitimate name.
+    if (p.side === "buy" && quote) {
+      const fcfFloor = vetoThresholds?.fcfYieldFloorPct;
+      const deCeil = vetoThresholds?.debtToEquityCeiling;
+      if (fcfFloor != null && typeof quote.fcfYield === "number" && Number.isFinite(quote.fcfYield) && quote.fcfYield < fcfFloor) {
+        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)` });
+        continue;
+      }
+      if (deCeil != null && typeof quote.debtToEquity === "number" && Number.isFinite(quote.debtToEquity) && quote.debtToEquity > deCeil) {
+        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)` });
+        continue;
       }
     }
 
@@ -1102,8 +1138,17 @@ async function proposeTrades(input: {
     : null;
   const executionMode = llmExecutionMode(executionState);
   const executionModeClarification = llmModeClarification(executionState);
+  // SHORT_SELLING: expose short/cover sides to the model ONLY when shorting is enabled in policy AND
+  // the connected account actually supports it (capability-gated). Otherwise the schema is long-only
+  // and the model cannot emit a short/cover. The policy.ts gate enforces the same two-layer check at
+  // execution time as a backstop. Declared here (before the prompt) so both the prompt and schema use it.
+  const allowedSides = allowedProposalSides(input.policy, input.activeAccount);
+  const shortAllowed = allowedSides.includes("short");
   const systemPrompt = [
     "You are an autonomous equity trading agent for a Robinhood brokerage account.",
+    shortAllowed
+      ? "SHORT SELLING IS ENABLED on this account. In addition to buy/sell you MAY open SHORT positions (side='short') on names with a clearly bearish thesis, and close them with side='cover'. Every short MUST carry a mandatory stop-loss (shortStopLossPct) and respect the short-exposure caps; only short with genuine conviction, not to fill a quota."
+      : "SHORT SELLING IS DISABLED on this account. Propose long-only: side is buy or sell. Do not propose short or cover.",
     "",
     "Execution Mode:",
     `Current executionMode is "${executionMode}".`,
@@ -1254,9 +1299,9 @@ async function proposeTrades(input: {
           ],
           properties: {
             symbol: { type: "string" },
-            // SHORT_SELLING: Change to ["buy", "sell", "short", "cover"] when
-            // policy.shortSellingEnabled is implemented and broker supports it.
-            side: { enum: ["buy", "sell"] },
+            // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
+            // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
+            side: { enum: allowedSides },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
@@ -1376,7 +1421,11 @@ async function proposeTrades(input: {
     rawBullProposals,
     input.positions,
     input.marketScan?.topCandidates ?? [],
-    currentMarketRegime
+    currentMarketRegime,
+    {
+      fcfYieldFloorPct: input.policy.tuning?.bearVetoFcfYieldFloorPct,
+      debtToEquityCeiling: input.policy.tuning?.bearVetoDebtToEquityCeiling
+    }
   );
   if (deterministicVetoed.length > 0) {
     console.log("[DeterministicBear] Vetoed before Bear LLM:", deterministicVetoed.map(v => `${v.symbol} ${v.side}: ${v.reason}`).join(" | "));
@@ -1386,6 +1435,9 @@ async function proposeTrades(input: {
   const bearSystemPrompt = [
     "You are the Bear Agent (Red Team Risk Manager) for an autonomous trading system.",
     "Your objective is to CRITIQUE the following proposed trades generated by the Bull Agent.",
+    shortAllowed
+      ? "Short selling is enabled: short/cover proposals are permitted. Hold shorts to a HIGHER bar than longs — confirm a clear bearish catalyst and a mandatory stop; reject thesis-light shorts and shorts into strong uptrends or low-float squeeze risk."
+      : "Short selling is disabled: only buy/sell are valid. Reject any short or cover proposal outright.",
     "Execution modes are distinct: test/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.",
     "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
@@ -1420,9 +1472,9 @@ async function proposeTrades(input: {
           ],
           properties: {
             symbol: { type: "string" },
-            // SHORT_SELLING: Change to ["buy", "sell", "short", "cover"] when
-            // policy.shortSellingEnabled is implemented and broker supports it.
-            side: { enum: ["buy", "sell"] },
+            // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
+            // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
+            side: { enum: allowedSides },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
@@ -1863,15 +1915,53 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
   }
 }
 
+/**
+ * Stamp an opening proposal with the entry anchor (referencePrice) the deterministic entry-drift
+ * guard compares against at approval time, and — on brokers with native bracket support (Alpaca),
+ * when policy.brokerBracketsEnabled is not disabled — attach broker-held stop-loss/take-profit legs
+ * derived from riskRules so protective exits rest at the matching engine and survive local downtime
+ * (a crash/DB-lock/disconnect no longer leaves a position unprotected). No-op for non-opening sides
+ * and for brokers without native brackets (the synthetic scheduler-tick monitor remains the fallback
+ * there). Pre-existing bracket fields on the proposal are never overwritten.
+ */
+export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan): TradeProposal {
+  if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
+  const sym = normalizeSymbol(proposal.symbol);
+  const refPrice = proposal.referencePrice ?? proposal.limitPrice ?? marketScan.quotesBySymbol[sym]?.price;
+  if (refPrice == null || !(refPrice > 0)) return proposal;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+
+  const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
+  const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+  if (bracketsEnabled && brokerSupportsBrackets) {
+    const stopPct = proposal.side === "short"
+      ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
+      : (policy.riskRules?.stopLossPct ?? 0);
+    const takePct = policy.riskRules?.takeProfitPct ?? 0;
+    // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
+    if (proposal.side === "buy") {
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(refPrice * (1 - stopPct / 100)) };
+      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(refPrice * (1 + takePct / 100)) };
+    } else {
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(refPrice * (1 + stopPct / 100)) };
+      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(refPrice * (1 - takePct / 100)) };
+    }
+  }
+  return next;
+}
+
 export function generateProactiveRiskProposals(
   positions: EquityPosition[],
   currentPrices: Record<string, number>,
-  policy: TradingPolicy
+  policy: TradingPolicy,
+  betaBySymbol: Record<string, number> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
   const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
   const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
+  const betaStops = policy.betaScaledStops === true;
 
   if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
 
@@ -1879,6 +1969,10 @@ export function generateProactiveRiskProposals(
     if (Math.abs(pos.quantity) <= 0.000001 || pos.averageCost <= 0) continue;
     const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
     if (!currentPrice || currentPrice <= 0) continue;
+    // Volatility-aware stop distance: widen for high-beta names, tighten for low-beta (no-op when
+    // betaScaledStops is off or the name has no beta). Take-profit stays flat (a target, not a stop).
+    const beta = betaBySymbol[normalizeSymbol(pos.symbol)];
+    const effStopLossPct = betaScaledStopPct(stopLossPct, beta, betaStops);
 
     let reason = "";
     let exitSide: "sell" | "cover" = "sell";
@@ -1886,8 +1980,8 @@ export function generateProactiveRiskProposals(
     if (pos.quantity > 0) {
       // Long: profit when price rises; exit a breach with a SELL.
       const returnPct = ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
-      if (stopLossPct > 0 && returnPct <= -stopLossPct) {
-        reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${stopLossPct}% limit.`;
+      if (effStopLossPct > 0 && returnPct <= -effStopLossPct) {
+        reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effStopLossPct.toFixed(2)}% limit.`;
       } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
         reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
@@ -1897,9 +1991,10 @@ export function generateProactiveRiskProposals(
       // short selling is enabled (the only path that can open a short in the first place).
       if (!policy.shortSellingEnabled) continue;
       const returnPct = ((pos.averageCost - currentPrice) / pos.averageCost) * 100;
-      const effShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
+      const baseShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
+      const effShortStop = betaScaledStopPct(baseShortStop, beta, betaStops);
       if (effShortStop > 0 && returnPct <= -effShortStop) {
-        reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop}% limit.`;
+        reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop.toFixed(2)}% limit.`;
       } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
         reason = `Proactive short take-profit cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }

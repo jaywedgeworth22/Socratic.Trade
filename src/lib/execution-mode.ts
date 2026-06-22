@@ -2,7 +2,7 @@ import type { ConnectedAccount, FillSource, TradingPolicy } from "./types";
 
 export type LlmExecutionMode = "test/local" | "broker/paper" | "broker/live";
 
-export type ExecutionAccount = Pick<ConnectedAccount, "id" | "broker" | "environment" | "accountNumber" | "label">;
+export type ExecutionAccount = Pick<ConnectedAccount, "id" | "broker" | "environment" | "accountNumber" | "label" | "capabilities">;
 
 export interface ExecutionState {
   mode: LlmExecutionMode;

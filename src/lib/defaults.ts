@@ -42,6 +42,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   maxSymbolExposurePct: 25,
   maxGrossExposurePct: 80,  // keep ≥20% cash buffer by default; users can raise in policy settings
   maxNetExposurePct: 80,    // consistent with gross; net > gross is impossible for long-only anyway
+  maxEntryDriftPct: 10,     // reject a stale opening market/dollar order whose price drifted >10% from the proposed entry
+  brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
   proposalExpiryMinutes: 2880,
