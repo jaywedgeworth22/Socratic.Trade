@@ -620,18 +620,6 @@ steps materially change.
   to the Symbol Drilldown price chart. Expanded the backend `fetchDailyOHLC`
   history fetch horizon from ~1.1 years to 5 years (1825 days) to support the
   longer timeframes. See `docs/rollouts/2026-06-19-price-chart-timeframes.md`.
-- 2026-06-19: **Ops/observability/security foundation selected by user**. Added
-  Infisical command wrappers, local Gitleaks scanning, Sentry
-  server/edge runtime hooks, Langfuse LLM tracing with redacted summary capture by
-  default, npm Dependabot config, Litestream SQLite backup/restore wrappers, and
-  Playwright dashboard smoke tests. GitHub CI/e2e/security workflows are deferred
-  until push credentials include `workflow` scope. These are opt-in unless their
-  env vars or host CLIs are configured. Browser Sentry/source-map upload is
-  deferred until the Sentry build wrapper is revalidated. See
-  `docs/ops-observability-security.md` and
-  `docs/rollouts/2026-06-19-ops-observability-security.md`.
-- 2026-06-19: **Broker Connection UI Split**. Split the unified "Add Account" UI in the dashboard into distinct buttons for each broker (Alpaca vs Robinhood) and customized the editing form to only require API Keys/Secrets for Alpaca. This prevents user confusion since Robinhood uses an OAuth flow via the MCP server and Alpaca requires static keys. Full verification passed.
-- 2026-06-19: **Composite Universe & System State Migration**. Replaced `universe`, `allowlist`, `enabled`, and `killSwitch` in `TradingPolicy` with a robust composite universe (`includedIndices`, `additionalSymbols`, `blocklist`) and a unified `systemState` (`active`, `halted`, `liquidating`, `close_only`). The policy engine, strategy runner, scheduler, tuning, and UI components were completely migrated. A new NAV-based sizing rule (`maxOrderPctOfNav`) was also introduced in the `DEFAULT_POLICY`. Full verification passed: `npx tsc --noEmit`, `npm test` (223 tests), and `npm run build`.
 - 2026-06-19: **Live-safety/risk-controls slice (Phase 10 E4/E5)**. Red Team
   review threshold is now a policy tuning knob (`redTeamConvictionThreshold`,
   default behavior 80), and `crisisMaxOpeningExposurePct` optionally caps new
