@@ -1,0 +1,569 @@
+// db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
+// learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
+import { getDb } from "./db";
+import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus } from "./types";
+
+// ── Audit-event helpers ────────────────────────────────────────────────────────
+
+export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+  const rows = getDb()
+    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    kind: row.kind,
+    payload: JSON.parse(row.payload)
+  }));
+}
+
+export function latestAuditByKind(kind: string, userId: string = "local"): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
+  const row = getDb()
+    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
+    .get(kind, userId) as { id: string; created_at: string; kind: string; payload: string } | undefined;
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    kind: row.kind,
+    payload: JSON.parse(row.payload)
+  };
+}
+
+export interface SignalSnapshotAuditRow {
+  rowid: number;
+  id: string;
+  createdAt: string;
+  payload: unknown;
+}
+
+export function listSignalSnapshotAuditAfter(
+  userId: string = "local",
+  watermark?: { lastAuditRowid?: number },
+  limit = 100
+): SignalSnapshotAuditRow[] {
+  const hasWatermark = typeof watermark?.lastAuditRowid === "number";
+  const rows = hasWatermark
+    ? (getDb()
+        .prepare(
+          `SELECT rowid, id, created_at, payload
+           FROM audit_events
+           WHERE user_id = ?
+            AND kind = 'signal_snapshot'
+            AND rowid > ?
+           ORDER BY rowid ASC
+           LIMIT ?`
+        )
+        .all(userId, watermark!.lastAuditRowid, limit) as Array<{ rowid: number; id: string; created_at: string; payload: string }>)
+    : (getDb()
+        .prepare(
+          `SELECT rowid, id, created_at, payload
+           FROM audit_events
+           WHERE user_id = ? AND kind = 'signal_snapshot'
+           ORDER BY rowid ASC
+           LIMIT ?`
+        )
+        .all(userId, limit) as Array<{ rowid: number; id: string; created_at: string; payload: string }>);
+
+  return rows.map((row) => ({ rowid: row.rowid, id: row.id, createdAt: row.created_at, payload: JSON.parse(row.payload) }));
+}
+
+// ── Counterfactual learning watermarks ────────────────────────────────────────
+
+export interface CounterfactualLearningWatermark {
+  userId: string;
+  lastAuditRowid?: number;
+  lastAuditCreatedAt?: string;
+  lastAuditId?: string;
+  updatedAt: string;
+}
+
+export function getCounterfactualLearningWatermark(userId: string = "local"): CounterfactualLearningWatermark | undefined {
+  const row = getDb()
+    .prepare("SELECT user_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at FROM counterfactual_learning_watermarks WHERE user_id = ?")
+    .get(userId) as { user_id: string; last_audit_rowid: number | null; last_audit_created_at: string | null; last_audit_id: string | null; updated_at: string } | undefined;
+  if (!row) return undefined;
+  return {
+    userId: row.user_id,
+    lastAuditRowid: row.last_audit_rowid ?? undefined,
+    lastAuditCreatedAt: row.last_audit_created_at ?? undefined,
+    lastAuditId: row.last_audit_id ?? undefined,
+    updatedAt: row.updated_at
+  };
+}
+
+export function setCounterfactualLearningWatermark(input: {
+  userId?: string;
+  lastAuditRowid?: number;
+  lastAuditCreatedAt?: string;
+  lastAuditId?: string;
+  updatedAt?: string;
+}): void {
+  const userId = input.userId ?? "local";
+  const updatedAt = input.updatedAt ?? new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO counterfactual_learning_watermarks (user_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+        last_audit_rowid = excluded.last_audit_rowid,
+        last_audit_created_at = excluded.last_audit_created_at,
+        last_audit_id = excluded.last_audit_id,
+        updated_at = excluded.updated_at`
+    )
+    .run(userId, input.lastAuditRowid ?? null, input.lastAuditCreatedAt ?? null, input.lastAuditId ?? null, updatedAt);
+}
+
+// ── Skipped-candidate counterfactuals ─────────────────────────────────────────
+
+export interface SkippedCounterfactualCandidateInput {
+  userId?: string;
+  runId: string;
+  symbol: string;
+  snapshotAt: string;
+  refPrice: number;
+  horizonDays: number;
+  targetDate: string;
+  score?: number;
+  sector?: string;
+  regime?: string;
+  dominantFactor?: string;
+  bulletins?: string[];
+  now?: string;
+}
+
+export interface SkippedCounterfactualRow {
+  id: string;
+  userId: string;
+  runId: string;
+  symbol: string;
+  snapshotAt: string;
+  refPrice: number;
+  horizonDays: number;
+  targetDate: string;
+  status: "pending" | "matured";
+  exitDate?: string;
+  exitPrice?: number;
+  returnPct?: number;
+  score?: number;
+  sector?: string;
+  regime?: string;
+  dominantFactor?: string;
+  bulletins?: string[];
+  lastCheckedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type RawSkippedCounterfactualRow = {
+  id: string;
+  user_id: string;
+  run_id: string;
+  symbol: string;
+  snapshot_at: string;
+  ref_price: number;
+  horizon_days: number;
+  target_date: string;
+  status: string;
+  exit_date: string | null;
+  exit_price: number | null;
+  return_pct: number | null;
+  score: number | null;
+  sector: string | null;
+  regime: string | null;
+  dominant_factor: string | null;
+  bulletins: string | null;
+  last_checked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function toSkippedCounterfactualRow(row: RawSkippedCounterfactualRow): SkippedCounterfactualRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    runId: row.run_id,
+    symbol: row.symbol,
+    snapshotAt: row.snapshot_at,
+    refPrice: row.ref_price,
+    horizonDays: row.horizon_days,
+    targetDate: row.target_date,
+    status: row.status === "matured" ? "matured" : "pending",
+    exitDate: row.exit_date ?? undefined,
+    exitPrice: row.exit_price ?? undefined,
+    returnPct: row.return_pct ?? undefined,
+    score: row.score ?? undefined,
+    sector: row.sector ?? undefined,
+    regime: row.regime ?? undefined,
+    dominantFactor: row.dominant_factor ?? undefined,
+    bulletins: row.bulletins ? JSON.parse(row.bulletins) as string[] : undefined,
+    lastCheckedAt: row.last_checked_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function insertSkippedCounterfactualCandidate(input: SkippedCounterfactualCandidateInput): boolean {
+  const userId = input.userId ?? "local";
+  const now = input.now ?? new Date().toISOString();
+  const id = `${userId}:${input.runId}:${input.symbol}:${input.horizonDays}`;
+  const result = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO skipped_candidate_counterfactuals (
+        id, user_id, run_id, symbol, snapshot_at, ref_price, horizon_days,
+        target_date, status, score, sector, regime, dominant_factor, bulletins,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      userId,
+      input.runId,
+      input.symbol,
+      input.snapshotAt,
+      input.refPrice,
+      input.horizonDays,
+      input.targetDate,
+      input.score ?? null,
+      input.sector ?? null,
+      input.regime ?? null,
+      input.dominantFactor ?? null,
+      input.bulletins ? JSON.stringify(input.bulletins) : null,
+      now,
+      now
+    );
+  return result.changes > 0;
+}
+
+export function listPendingSkippedCounterfactuals(input: {
+  userId?: string;
+  nowDate: string;
+  checkedBefore?: string;
+  limit?: number;
+}): SkippedCounterfactualRow[] {
+  const userId = input.userId ?? "local";
+  const limit = input.limit ?? 50;
+  const rows = getDb()
+    .prepare(
+      `SELECT *
+       FROM skipped_candidate_counterfactuals
+       WHERE user_id = ?
+        AND status = 'pending'
+        AND target_date <= ?
+        AND (last_checked_at IS NULL OR last_checked_at <= ?)
+       ORDER BY target_date ASC, snapshot_at ASC, symbol ASC
+       LIMIT ?`
+    )
+    .all(userId, input.nowDate, input.checkedBefore ?? new Date(0).toISOString(), limit) as RawSkippedCounterfactualRow[];
+  return rows.map(toSkippedCounterfactualRow);
+}
+
+export function markSkippedCounterfactualChecked(id: string, userId: string = "local", checkedAt: string = new Date().toISOString()): void {
+  getDb()
+    .prepare("UPDATE skipped_candidate_counterfactuals SET last_checked_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'pending'")
+    .run(checkedAt, checkedAt, id, userId);
+}
+
+export function markSkippedCounterfactualMatured(input: {
+  id: string;
+  userId?: string;
+  exitDate: string;
+  exitPrice: number;
+  returnPct: number;
+  checkedAt?: string;
+}): boolean {
+  const userId = input.userId ?? "local";
+  const checkedAt = input.checkedAt ?? new Date().toISOString();
+  const result = getDb()
+    .prepare(
+      `UPDATE skipped_candidate_counterfactuals
+       SET status = 'matured',
+        exit_date = ?,
+        exit_price = ?,
+        return_pct = ?,
+        last_checked_at = ?,
+        updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'pending'`
+    )
+    .run(input.exitDate, input.exitPrice, input.returnPct, checkedAt, checkedAt, input.id, userId);
+  return result.changes > 0;
+}
+
+export function listMaturedSkippedCounterfactuals(userId: string = "local", limit = 50): SkippedCounterfactualRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT *
+       FROM skipped_candidate_counterfactuals
+       WHERE user_id = ? AND status = 'matured'
+       ORDER BY return_pct DESC, updated_at DESC
+       LIMIT ?`
+    )
+    .all(userId, limit) as RawSkippedCounterfactualRow[];
+  return rows.map(toSkippedCounterfactualRow);
+}
+
+// ── Learned-context fact-tier CRUD ────────────────────────────────────────────
+
+interface RawLearnedContextRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  kind: string;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: string;
+  risk_tier: string;
+  confidence: number;
+  contributor_user_id: string | null;
+  asserted_at: string;
+  superseded_by: string | null;
+  expires_at: string | null;
+}
+
+export function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    scope: row.scope as LearnedContextRow["scope"],
+    kind: row.kind as LearnedContextRow["kind"],
+    subject: row.subject,
+    symbol: row.symbol,
+    value: row.value,
+    source: row.source,
+    origin: row.origin as LearnedContextRow["origin"],
+    riskTier: row.risk_tier as LearnedContextRow["riskTier"],
+    confidence: row.confidence,
+    contributorUserId: row.contributor_user_id,
+    assertedAt: row.asserted_at,
+    supersededBy: row.superseded_by,
+    expiresAt: row.expires_at
+  };
+}
+
+export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow {
+  getDb()
+    .prepare(
+      `INSERT INTO learned_context
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      row.id,
+      row.userId,
+      row.scope,
+      row.kind,
+      row.subject,
+      row.symbol,
+      row.value,
+      row.source,
+      row.origin,
+      row.riskTier,
+      row.confidence,
+      row.contributorUserId,
+      row.assertedAt,
+      row.supersededBy,
+      row.expiresAt
+    );
+  return row;
+}
+
+export function findLiveLearnedContextBySubject(
+  userId: string,
+  kind: string,
+  subject: string,
+  symbol: string | null
+): LearnedContextRow | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM learned_context
+       WHERE user_id = ? AND kind = ? AND subject = ? AND ((symbol IS NULL AND ? IS NULL) OR symbol = ?)
+         AND superseded_by IS NULL
+       ORDER BY asserted_at DESC LIMIT 1`
+    )
+    .get(userId, kind, subject, symbol, symbol) as RawLearnedContextRow | undefined;
+  return row ? mapLearnedContext(row) : null;
+}
+
+/**
+ * Live FACT rows for a decision: the user's own private rows plus, when includeShared is set,
+ * other contributors' opted-in shared rows. Filtered to the given symbols (plus symbol-less
+ * rows, which are general facts) and to non-expired rows. READ-ONLY — never mutates.
+ */
+export function listLearnedContextForDecision(
+  userId: string,
+  symbols: string[],
+  includeShared = false
+): LearnedContextRow[] {
+  const nowIso = new Date().toISOString();
+  const normalizedSymbols = new Set(symbols.map((s) => s.toUpperCase()));
+  const rows = includeShared
+    ? (getDb()
+        .prepare(
+          `SELECT * FROM learned_context
+           WHERE superseded_by IS NULL AND risk_tier = 'fact'
+             AND (user_id = ? OR scope = 'shared')`
+        )
+        .all(userId) as RawLearnedContextRow[])
+    : (getDb()
+        .prepare(
+          `SELECT * FROM learned_context
+           WHERE superseded_by IS NULL AND risk_tier = 'fact' AND user_id = ?`
+        )
+        .all(userId) as RawLearnedContextRow[]);
+  return rows
+    .map(mapLearnedContext)
+    .filter((r) => r.expiresAt === null || r.expiresAt > nowIso)
+    .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
+}
+
+export function listLearnedContext(userId: string): LearnedContextRow[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM learned_context WHERE user_id = ? AND superseded_by IS NULL ORDER BY asserted_at DESC")
+    .all(userId) as RawLearnedContextRow[];
+  return rows.map(mapLearnedContext);
+}
+
+export function supersedeLearnedContext(oldId: string, newId: string): void {
+  getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+// ── RAG ingestion de-dup helpers ──────────────────────────────────────────────
+// Keyed by (accession, doc_type) — globally unique for SEC filings, so no user scoping needed.
+
+export interface IngestedAccessionRow {
+  accession: string;
+  docType: string;
+  ticker: string;
+  indexedAt: string;
+  chunkCount: number;
+}
+
+/** Return true if this (accession, docType) pair has already been embedded. */
+export function hasIngestedAccession(accession: string, docType: string): boolean {
+  const row = getDb()
+    .prepare("SELECT 1 FROM ingested_accessions WHERE accession = ? AND doc_type = ?")
+    .get(accession, docType);
+  return row != null;
+}
+
+/** Record a successfully-ingested accession so it is never re-embedded. */
+export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+  getDb()
+    .prepare(
+      "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
+    )
+    .run(accession, docType, ticker, new Date().toISOString(), chunkCount);
+}
+
+/** List all ingested accessions (admin/diagnostic). */
+export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
+  const rows = getDb()
+    .prepare("SELECT accession, doc_type, ticker, indexed_at, chunk_count FROM ingested_accessions ORDER BY indexed_at DESC LIMIT ?")
+    .all(limit) as Array<{ accession: string; doc_type: string; ticker: string; indexed_at: string; chunk_count: number }>;
+  return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
+}
+
+// ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
+// Every helper is ownership-scoped (WHERE user_id = ?). A queued row is a risk-tier candidate that is
+// NOT in the brain — it only ever influences anything via the explicit human approve path, which
+// applies it SAFELY (advisory promote / prompt append) and NEVER auto-mutates numeric policy.
+interface RawLearnedContextPendingRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  kind: string;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: string;
+  risk_tier: string;
+  classifier_reason: string | null;
+  created_at: string;
+  status: string;
+  resolved_at: string | null;
+}
+
+function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedContextPendingRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    scope: row.scope as LearnedContextPendingRow["scope"],
+    kind: row.kind as LearnedContextPendingRow["kind"],
+    subject: row.subject,
+    symbol: row.symbol,
+    value: row.value,
+    source: row.source,
+    origin: row.origin as LearnedContextPendingRow["origin"],
+    riskTier: row.risk_tier as LearnedContextPendingRow["riskTier"],
+    classifierReason: row.classifier_reason,
+    createdAt: row.created_at,
+    status: row.status as LearnedContextPendingRow["status"],
+    resolvedAt: row.resolved_at
+  };
+}
+
+export function insertPendingLearnedContext(row: LearnedContextPendingRow): LearnedContextPendingRow {
+  getDb()
+    .prepare(
+      `INSERT INTO learned_context_pending
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      row.id,
+      row.userId,
+      row.scope,
+      row.kind,
+      row.subject,
+      row.symbol,
+      row.value,
+      row.source,
+      row.origin,
+      row.riskTier,
+      row.classifierReason,
+      row.createdAt,
+      row.status,
+      row.resolvedAt
+    );
+  return row;
+}
+
+export function listPendingLearnedContext(
+  userId: string,
+  status: LearnedContextPendingStatus = "pending"
+): LearnedContextPendingRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM learned_context_pending
+       WHERE user_id = ? AND status = ?
+       ORDER BY created_at DESC`
+    )
+    .all(userId, status) as RawLearnedContextPendingRow[];
+  return rows.map(mapLearnedContextPending);
+}
+
+export function getPendingLearnedContext(id: string, userId: string): LearnedContextPendingRow | null {
+  const row = getDb()
+    .prepare("SELECT * FROM learned_context_pending WHERE id = ? AND user_id = ?")
+    .get(id, userId) as RawLearnedContextPendingRow | undefined;
+  return row ? mapLearnedContextPending(row) : null;
+}
+
+/**
+ * Ownership-scoped status transition. Returns true only when a row owned by `userId` was actually
+ * updated (changes > 0) — so another user's row is a no-op false, and the API layer maps that to 404.
+ */
+export function setPendingLearnedContextStatus(
+  id: string,
+  userId: string,
+  status: LearnedContextPendingStatus
+): boolean {
+  const resolvedAt = status === "pending" ? null : new Date().toISOString();
+  const result = getDb()
+    .prepare("UPDATE learned_context_pending SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ?")
+    .run(status, resolvedAt, id, userId);
+  return result.changes > 0;
+}
