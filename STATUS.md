@@ -24,6 +24,12 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`ci/activate-e2e`): **Activated the Playwright smoke workflow.** `git mv
+  ci-pending/e2e.yml .github/workflows/e2e.yml` — the smoke (`npm run test:e2e`, now passing after
+  `e2e/smoke-fix`) runs on every PR/push. Reframed `ci-pending/README.md` from "staged" to reference
+  (all of ci/security/e2e/deploy are now active; `ci-pending/` holds only the README). To make the
+  smoke a *required* merge gate, add its check context (`smoke`) to the `main-protection` ruleset's
+  required checks. See `docs/rollouts/2026-06-22-activate-e2e-workflow.md`.
 - 2026-06-21 (`fix/per-user-robinhood-enrichment-token`): **SECURITY — Robinhood broker-token tenant isolation in the read-only enrichment paths.** Audit of PR #42 (`0056f04`, per-user OAuth token) found two enrichment callers fetched Robinhood data with no userId, falling through to `DEV_USER_ID` (`'local'`) and silently using the operator's real broker token for every user. Fix: `fetchRobinhoodHistoricals`/`fetchRobinhoodFundamentals` (`robinhood.ts`) now require an explicit `userId` (no `DEV_USER_ID` default); `fetchDailyOHLC` (`history.ts`) consults the private Robinhood OHLC tier ONLY when a user is in scope and forwards it (the computed-technicals refresh writes a GLOBAL dataset → omits the broker tier, never borrows `'local'`); `RobinhoodEnrichmentProvider` (`data-providers.ts`) takes the request-scoped userId and fails closed when none. Also folded in: the OAuth callback now asserts the completing session's userId matches `stateBlob.userId` (`completeMcpOAuthCallback` `expectedUserId`) so a token can't be bound under a victim's userId. New `test/robinhood-tenant-isolation.test.ts` (7 tests) pins user B never resolving user A's token. tsc clean, **674 tests** (+7), build green. Built in the isolated `~/apps/trading-fix-rh-token` worktree off `origin/main` (the `agent/claude` lane was parked on `agent/claude-litestream`); landing via PR. See `docs/rollouts/2026-06-21-robinhood-enrichment-token-isolation.md` and the "Post-merge hardening" section of `docs/design/per-user-broker-token.md`.
 - 2026-06-22 (`e2e/smoke-fix`): **Fix Playwright smoke (prod-mode auth) + drop transactional
   fill+snapshot.** Smoke failed because `next start` runs `NODE_ENV=production`, so the auth
