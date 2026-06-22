@@ -133,7 +133,7 @@ describe("executeProposal run-lock (TOCTOU guard)", () => {
     // After the function exits, the lock must be free for the next caller.
     expect(acquireStrategyLock(userId)).toBe(true);
     releaseStrategyLock(userId);
-  });
+  }, 20000); // executeProposal exhausts broker-review retries with no broker — allow margin over the 5s default
 
   it("does not interfere with a different user's lock", async () => {
     const userA = `lock-usera-${randomUUID()}`;
@@ -159,5 +159,5 @@ describe("executeProposal run-lock (TOCTOU guard)", () => {
     if (resultA !== undefined) {
       expect(resultA.status).not.toBe("busy");
     }
-  });
+  }, 20000); // executeProposal exhausts broker-review retries with no broker — allow margin over the 5s default
 });
