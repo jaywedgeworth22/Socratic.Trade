@@ -47,8 +47,19 @@ memory + verification + landing by the orchestrator.
 
 Isolated worktree `~/Code/agentic-trading-queue` off `origin/main`:
 - `npx tsc --noEmit` — clean
-- `npm test` (vitest) — **804 passed, 90 files** (middleware change broke nothing)
-- `npm run build` — green (compiled the new `robots`/`sitemap`/`welcome` routes + metadata)
+- `npm test` (vitest) — **807 passed, 91 files**
+- `npm run build` — green; static routes generated: `/welcome`, `/strategy`, `/robots.txt`, `/sitemap.xml`
+
+## Follow-up additions (same day)
+
+- **Button fix**: added `buttonClass()` to `app/ui/primitives.tsx`; the landing CTAs now use a
+  styled `<a>` instead of a `<button>` nested in an `<a>`.
+- **Paper-trading wording**: `app/welcome/page.tsx` + `app/layout.tsx` now describe paper trading
+  as **via a third-party connection (e.g. Alpaca Paper Trading)**, and the landing notes the
+  built-in local simulator ("Test — Local Sim") is less realistic than a connected paper account.
+- **Strategy overview page**: new `app/strategy/page.tsx` (flag-gated + noindex, mirrors welcome),
+  derived honestly from `docs/strategic-framework.md` (lenses, safety rules, learning loop, honest
+  limitations, practice modes). Linked from the landing; `/strategy` added to `PUBLIC_PREFIXES`.
 
 ## Decisions / notes
 
@@ -61,7 +72,8 @@ Isolated worktree `~/Code/agentic-trading-queue` off `origin/main`:
 
 ## Follow-ups
 
-- Minor: the CTA wraps `<Button>` (a `<button>`) in an `<a>` — functional but not ideal
-  HTML; could switch to an anchor-styled button later.
+- **Next PR — funded Test simulator** (per owner decision): make the Test broker a funded local
+  simulator (simulated starting balance so it actually works), label "Test — Local Sim", and state
+  in-app + docs that third-party paper (e.g. Alpaca) is likely more realistic than the local sim.
 - Owner: securities-counsel review of RIA / SEC Marketing-Rule before any live-trading
   marketing; verify Meta/X/Bing ad policies before spend; write SEO content (slow).

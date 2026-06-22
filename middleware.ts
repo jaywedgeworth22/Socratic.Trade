@@ -32,7 +32,7 @@ const ALLOWED = (process.env.ALLOWED_EMAILS || "")
   .filter(Boolean);
 
 // Paths that never require a user identity.
-const PUBLIC_PREFIXES = ["/api/health", "/api/webhooks", "/access-denied", "/welcome"];
+const PUBLIC_PREFIXES = ["/api/health", "/api/webhooks", "/access-denied", "/welcome", "/strategy"];
 
 function isEmailAllowed(email: string): boolean {
   if (PRIMARY_SET.has(email)) return true; // primary operator + aliases

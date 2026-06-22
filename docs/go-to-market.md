@@ -104,12 +104,25 @@ non-speculative equity/SaaS keywords, hard-capped.
 - ✅ Compliant, education-led **landing page** at `app/welcome/page.tsx`, **flag-gated**
   (`LANDING_PAGE_ENABLED`, default off → 404), with prominent disclosures + JSON-LD;
   `/welcome` added to middleware `PUBLIC_PREFIXES`; env documented in `.env.example`.
+- ✅ **Wording corrected**: the landing describes paper trading as **via a third-party
+  connection (e.g. Alpaca Paper Trading)**, and explicitly notes the built-in local
+  simulator ("Test — Local Sim") is less realistic than a connected paper account.
+- ✅ **Strategy overview page** at `app/strategy/page.tsx` (same flag-gate + noindex),
+  derived honestly from `docs/strategic-framework.md` (six lenses, deterministic safety
+  rules, learning loop, **honest limitations & risks**, practice modes). Linked from the
+  landing hero + a dedicated section; `/strategy` added to `PUBLIC_PREFIXES`.
+- ✅ **Button fix**: CTAs use a styled `<a>` via a new `buttonClass()` helper in
+  `app/ui/primitives.tsx` (no more `<button>` nested in `<a>`).
 
-**Partial / needs a decision:**
-- 🟡 **Public demo** — Test mode (local simulator) is operational *inside* the auth-gated
-  app, but a public **no-signup** demo needs an unauthenticated, sandboxed surface
-  (multi-tenant data isolation + abuse controls). Non-trivial; deferred. This is the
-  single biggest unlock for Show HN/directories if pursued.
+**Partial / in progress:**
+- 🟡 **Test account → funded local simulator** (decided; separate PR): the Test broker
+  currently returns a $0 unfunded portfolio. Decision: make it a **funded local simulator**
+  (simulated starting balance so it actually works), labeled "Test — Local Sim"
+  (abbrev) / "Test — Local Simulator", and state in the app + docs that third-party paper
+  (e.g. Alpaca) is **likely more realistic** than the local sim. Keeps the zero-config
+  default; only one test references the current zeros, so breakage risk is low.
+- 🟡 **A public no-signup demo** still needs an unauthenticated, sandboxed surface
+  (separate, larger effort) — the funded local sim is for authed users, not yet a public demo.
 - 🟡 **Positioning of the live feature** — leading with paper/education is implemented in
   copy; the live-trading marketing message still needs counsel (RIA determination).
 

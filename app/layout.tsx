@@ -10,12 +10,12 @@ export const metadata: Metadata = {
     template: "%s · Agentic Trading"
   },
   description:
-    "Agentic Trading is an AI-assisted cockpit for researching markets, simulating strategies on paper, and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
   applicationName: "Agentic Trading",
   keywords: [
     "AI trading research",
     "automated trading software",
-    "paper trading simulator",
+    "paper trading software",
     "algorithmic trading dashboard",
     "stock market analysis tool"
   ],
@@ -26,12 +26,12 @@ export const metadata: Metadata = {
     url: "/",
     title: "Agentic Trading — AI market research & strategy cockpit",
     description:
-      "AI-assisted cockpit for market research, paper-trading simulation, and a transparent, risk-controlled trading workflow. Not investment advice."
+      "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
     title: "Agentic Trading — AI market research & strategy cockpit",
-    description: "AI-assisted market research + paper-trading simulation. Not investment advice."
+    description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
   },
   // Default = NOINDEX. Only allow indexing when explicitly opted in (the app is private by default).
   robots:

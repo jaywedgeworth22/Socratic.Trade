@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Button, Card } from "../ui/primitives";
+import { Card, buttonClass } from "../ui/primitives";
 
 export const metadata: Metadata = {
   title: "AI market research & strategy cockpit",
   description:
-    "Agentic Trading is an AI-assisted cockpit for researching markets, simulating strategies on paper, and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
   alternates: { canonical: "/welcome" },
   openGraph: {
     type: "website",
@@ -13,12 +13,12 @@ export const metadata: Metadata = {
     url: "/welcome",
     title: "Agentic Trading — AI market research & strategy cockpit",
     description:
-      "AI-assisted cockpit for market research, paper-trading simulation, and a transparent, risk-controlled trading workflow. Not investment advice."
+      "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
     title: "Agentic Trading — AI market research & strategy cockpit",
-    description: "AI-assisted market research + paper-trading simulation. Not investment advice."
+    description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
   },
   robots:
     process.env.NEXT_PUBLIC_ALLOW_INDEXING === "true"
@@ -39,8 +39,8 @@ const FEATURES: Array<{ title: string; body: string }> = [
     body: "Each candidate is scored across independent research lenses — valuation, momentum, sentiment, risk — so you see a rounded picture, not a single signal."
   },
   {
-    title: "Paper-trading simulation",
-    body: "Run every strategy in a fully simulated paper account before touching real capital. Realistic fills, position sizing, and P&L tracking — no money at risk."
+    title: "Paper trading via a connected broker",
+    body: "Connect a third-party paper account — e.g. Alpaca Paper Trading — and run every strategy against it before risking real capital. No money at risk."
   },
   {
     title: "Transparent strategy & learning loop",
@@ -71,9 +71,9 @@ const STEPS: Array<{ n: number; title: string; detail: string }> = [
   },
   {
     n: 3,
-    title: "Simulate on paper and decide — you approve",
+    title: "Test in a connected paper account and decide — you approve",
     detail:
-      "Promising ideas are routed into a paper-trading simulation. If you choose to act on one in your real account, you review and approve each order before it is sent."
+      "Promising ideas can be routed to a connected third-party paper account (e.g. Alpaca Paper Trading). If you choose to act on one in your real account, you review and approve each order before it is sent."
   }
 ];
 
@@ -93,7 +93,7 @@ export default function WelcomePage() {
             applicationCategory: "FinanceApplication",
             operatingSystem: "Web",
             description:
-              "AI-assisted cockpit for market research, paper-trading simulation, and a transparent, risk-controlled trading workflow.",
+              "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow.",
             offers: { "@type": "Offer", price: "0", priceCurrency: "USD" }
           })
         }}
@@ -104,10 +104,8 @@ export default function WelcomePage() {
         <header className="border-b border-line bg-surface/80 backdrop-blur-sm">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
             <span className="text-base font-semibold text-fg">Agentic Trading</span>
-            <a href={ACCESS_HREF}>
-              <Button size="sm" variant="primary">
-                Request access
-              </Button>
+            <a href={ACCESS_HREF} className={buttonClass({ variant: "primary", size: "sm" })}>
+              Request access
             </a>
           </div>
         </header>
@@ -119,15 +117,16 @@ export default function WelcomePage() {
               AI market research &amp; strategy cockpit
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
-              Scan and enrich markets, evaluate ideas across multiple research lenses, simulate
-              strategies on paper, and — when you are ready — run a transparent, risk-controlled
-              workflow where you approve every order.
+              Scan and enrich markets, evaluate ideas across multiple research lenses, test
+              strategies in a connected paper account (e.g. Alpaca Paper Trading), and — when you
+              are ready — run a transparent, risk-controlled workflow where you approve every order.
             </p>
             <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <a href={ACCESS_HREF}>
-                <Button size="md" variant="primary">
-                  Request access
-                </Button>
+              <a href={ACCESS_HREF} className={buttonClass({ variant: "primary", size: "md" })}>
+                Request access
+              </a>
+              <a href="/strategy" className={buttonClass({ variant: "ghost", size: "md" })}>
+                How the strategy works
               </a>
             </div>
             <p className="text-sm text-faint">Currently in private beta.</p>
@@ -144,6 +143,11 @@ export default function WelcomePage() {
                 </Card>
               ))}
             </div>
+            <p className="text-xs text-faint leading-relaxed">
+              Try the workflow instantly with the built-in local simulator (&ldquo;Test &mdash; Local Sim&rdquo;,
+              no broker required), or connect a third-party paper account such as Alpaca Paper Trading &mdash;
+              which is likely more realistic than the local simulation.
+            </p>
           </section>
 
           {/* ── How it works ───────────────────────────────────────────────── */}
@@ -162,6 +166,19 @@ export default function WelcomePage() {
                 </li>
               ))}
             </ol>
+          </section>
+
+          {/* ── Strategy overview link ─────────────────────────────────────── */}
+          <section className="space-y-3 text-center">
+            <h2 className="text-xl font-semibold text-fg">How the strategy works</h2>
+            <p className="mx-auto max-w-2xl text-sm text-muted leading-relaxed">
+              An AI reads market data and argues with itself about whether a trade is a good idea; only if the
+              idea survives that argument do hard-coded safety rules let a small order through &mdash; and the
+              system keeps score so it can improve. We are upfront about where it is weak or unproven.
+            </p>
+            <a href="/strategy" className={buttonClass({ variant: "ghost", size: "sm" })}>
+              Read the full strategy overview
+            </a>
           </section>
 
           {/* ── Disclosures ────────────────────────────────────────────────── */}
