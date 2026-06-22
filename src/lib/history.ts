@@ -84,11 +84,14 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
     { scope: cacheScopeForKeySource(keySources.tradier.source, userId), fetch: () => fetchTradier(symbol, startDate, keySources.tradier.key) },
     { scope: cacheScopeForKeySource(keySources.marketstack.source, userId), fetch: () => fetchMarketstack(symbol, keySources.marketstack.key) },
     // First-party broker history — inert unless ROBINHOOD_ADAPTER=mcp + OAuth token present.
-    // SECURITY: the Robinhood token is per-user, so this tier is consulted ONLY when an explicit
+    // SECURITY: the Robinhood token is per-user, so this tier is FETCHED only when an explicit
     // userId is in scope. A shared/background pull (no userId — e.g. the computed-technicals
     // refresh that writes a GLOBAL dataset) must not borrow the operator's ('local') broker token.
+    // The resulting BARS are public market data (not the user's private account), so — like any
+    // other user-keyed source — they are cached consent-pooled: pool tier when the user opted into
+    // the reciprocal data pool, otherwise kept private to that user (never force-shared).
     ...(userId
-      ? [{ scope: "private" as CacheScope, fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
+      ? [{ scope: cacheScopeForKeySource("user", userId), fetch: () => fetchRobinhoodHistoricals(symbol, { interval: "day", span: "5year", userId }) }]
       : []),
     { scope: "shared", fetch: () => fetchYahoo(symbol) },
     { scope: "shared", fetch: () => fetchStooq(symbol) }
