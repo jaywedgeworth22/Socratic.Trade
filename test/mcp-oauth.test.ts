@@ -59,12 +59,17 @@ describe("mcp oauth", () => {
     expect(tokenA).toBe("tok-a");
   });
 
-  it("returns the env-var token for any user (global operator override)", async () => {
-    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "global-operator-token");
-    const { getMcpAccessToken } = await import("../src/lib/mcp-oauth");
+  it("never reads the env override directly; the boot migration seeds local's token, tenants get none", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "operator-token");
+    const { getMcpAccessToken, migrateLocalRobinhoodToken } = await import("../src/lib/mcp-oauth");
 
-    expect(await getMcpAccessToken("user-a")).toBe("global-operator-token");
-    expect(await getMcpAccessToken("user-b")).toBe("global-operator-token");
+    // No env special-case in resolution: before migration even `local` has no token.
+    expect(await getMcpAccessToken("local")).toBeUndefined();
+    // The boot migration moves the legacy env override into local's stored OAuth token.
+    expect(migrateLocalRobinhoodToken()).toBe(true);
+    expect(await getMcpAccessToken("local")).toBe("operator-token");
+    // A tenant never resolves the operator's token.
+    expect(await getMcpAccessToken("user-b")).toBeUndefined();
   });
 
   it("clears only the calling user token on disconnect", async () => {

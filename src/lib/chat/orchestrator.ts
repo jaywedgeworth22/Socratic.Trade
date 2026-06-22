@@ -23,7 +23,6 @@ import { buildTools, type ToolDeps } from "./tools";
 import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, ToolSchema } from "./types";
 
 export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
-  const model = llm ?? getLLM();
   const tools = buildTools();
   const toolSchemas: ToolSchema[] = Object.entries(tools).map(([name, t]) => ({
     name,
@@ -33,6 +32,9 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
 
   return async function handleTurn(args: { userId: string; message: string }): Promise<ChatReply> {
     const { userId, message } = args;
+    // Per-user model: an injected llm (already user-scoped by the route) or one resolved for THIS
+    // user — so the per-user key, operator failover, and usage attribution always apply.
+    const model = llm ?? getLLM(userId);
     audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION }, userId);
     // Prior turns (redacted) for multi-turn context — fetched BEFORE appending the current message.
     const history = listTurns(userId, 10).map((t) => ({ role: t.role, text: t.text }));

@@ -289,6 +289,22 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
 
+    CREATE TABLE IF NOT EXISTS llm_usage (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT,
+      context TEXT NOT NULL DEFAULT 'unknown',
+      key_source TEXT NOT NULL CHECK(key_source IN ('user','operator')),
+      prompt_tokens INTEGER,
+      completion_tokens INTEGER,
+      total_tokens INTEGER,
+      cost_usd REAL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_source ON llm_usage (key_source, created_at);
+
     CREATE TABLE IF NOT EXISTS user_memory (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

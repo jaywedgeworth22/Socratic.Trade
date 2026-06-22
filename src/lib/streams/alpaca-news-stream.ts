@@ -36,8 +36,9 @@ export function startAlpacaNewsStream(): void {
     console.warn("[stream:alpaca-news] global WebSocket unavailable in this runtime; not starting.");
     return;
   }
-  const key = resolveApiKey("alpaca_paper_api_key");
-  const secret = resolveApiKey("alpaca_paper_secret_key");
+  // Process-level background worker (no per-request user): keyed to the `local` operator.
+  const key = resolveApiKey("alpaca_paper_api_key", "local");
+  const secret = resolveApiKey("alpaca_paper_secret_key", "local");
   if (!key) {
     console.warn("[stream:alpaca-news] missing Alpaca key; not starting.");
     return;

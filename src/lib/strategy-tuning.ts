@@ -5,8 +5,9 @@ import {
   latestAuditByKind,
   listFillEvents,
   listStrategyRuns,
-  resolveApiKey
+  resolveLlmCredential
 } from "./db";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
@@ -177,12 +178,13 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     macro
   };
 
-  const openaiKey = resolveApiKey("openai", userId);
+  const cred = resolveLlmCredential("openai", userId);
+  const openaiKey = cred.key;
   if (!openaiKey) {
     return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities });
   }
 
-  const payload = await requestLlmTuning(context, openaiKey, userId);
+  const payload = await requestLlmTuning(context, openaiKey, userId, cred.source === "operator" ? "operator" : "user");
   const proposedPatch = toPatch(payload, prompt);
   const cautions = [...payload.cautions];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
@@ -277,7 +279,7 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown, openaiKey: string, userId: string): Promise<LlmTuningPayload> {
+async function requestLlmTuning(context: unknown, openaiKey: string, userId: string, keySource: "user" | "operator"): Promise<LlmTuningPayload> {
   const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
   const isChatCompletions = url.includes("/chat/completions");
@@ -364,6 +366,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
       }
 
       const payload = await response.json();
+      recordLlmUsage({ userId, provider: "openai", model, context: "strategy-tuning", keySource, ...extractLlmUsage(payload) });
       const text = extractResponseText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       return { text, payload: JSON.parse(text) as LlmTuningPayload };

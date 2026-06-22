@@ -30,7 +30,8 @@ export interface FlatFileBar {
 
 function cfg(userId?: string) {
   const accessKey = resolveApiKey("massive_access_key_id", userId) ?? "";
-  const secret = resolveApiKey("massive_secret_access_key", userId) ?? resolveApiKey("massive", userId) ?? "";
+  // SigV4 needs the dedicated S3 secret; never borrow the REST key (missing → fail cleanly).
+  const secret = resolveApiKey("massive_secret_access_key", userId) ?? "";
   const host = (resolveApiKey("massive_s3_endpoint", userId) ?? "https://files.massive.com").replace(/^https?:\/\//, "");
   const bucket = resolveApiKey("massive_bucket", userId) ?? "flatfiles";
   const region = process.env.MASSIVE_S3_REGION ?? "us-east-1";

@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { normalizeSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
-import { getActiveConnectedAccount, getUserApiKey } from "./db";
+import { getActiveConnectedAccount, resolveApiKey } from "./db";
 
 export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
   return new AlpacaBrokerGateway(userId);
@@ -38,17 +38,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : undefined;
     this.isMcp = activeAccount?.broker === "alpaca-mcp";
     this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
-    const keyId =
-      accountKeys?.apiKey ||
-      getUserApiKey(userId, "ALPACA_PAPER_API_KEY")?.apiKey ||
-      getUserApiKey(userId, "alpaca")?.apiKey ||
-      process.env.ALPACA_PAPER_API_KEY ||
-      "";
-    const secretKey =
-      accountKeys?.apiSecret ||
-      getUserApiKey(userId, "ALPACA_PAPER_SECRET_KEY")?.apiKey ||
-      process.env.ALPACA_PAPER_SECRET_KEY ||
-      "";
+    // A connected-account key (per-user account data) wins; otherwise the per-user key store.
+    // SECURITY: route through resolveApiKey so the env fallback is operator-only (alpaca keys are
+    // a per-user-only tier). A non-`local` user with no stored key gets "" → broker construction
+    // fails loudly instead of silently trading on the operator's Alpaca account via process.env.
+    const keyId = accountKeys?.apiKey || resolveApiKey("alpaca_paper_api_key", userId) || "";
+    const secretKey = accountKeys?.apiSecret || resolveApiKey("alpaca_paper_secret_key", userId) || "";
     
     let baseUrl = accountKeys?.baseUrl?.trim();
     if (this.isMcp) {

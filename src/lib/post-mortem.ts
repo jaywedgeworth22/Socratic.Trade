@@ -1,4 +1,5 @@
-import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey, upsertFillExcursionsByKey } from "./db";
+import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveLlmCredential, upsertFillExcursionsByKey } from "./db";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
 import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat } from "./performance";
@@ -10,8 +11,10 @@ import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
   const db = getDb();
-  const openaiKey = resolveApiKey("openai", userId);
+  const cred = resolveLlmCredential("openai", userId);
+  const openaiKey = cred.key;
   if (!openaiKey) return;
+  const keySource = cred.source === "operator" ? "operator" : "user";
   
   // Fetch latest 50 fill events with their corresponding proposals
   const rows = db.prepare(`
@@ -141,6 +144,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
+        recordLlmUsage({ userId, provider: "openai", model, context: "post-mortem", keySource, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;

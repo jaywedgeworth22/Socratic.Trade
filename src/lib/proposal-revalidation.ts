@@ -16,7 +16,8 @@
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
 
-import { audit, listPendingProposals, markProposalRevalidated, resolveApiKey, updateProposalStatus } from "./db";
+import { audit, listPendingProposals, markProposalRevalidated, resolveLlmCredential, updateProposalStatus } from "./db";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { determineMarketRegime, fetchMacroData } from "./macro";
@@ -188,8 +189,10 @@ export async function revalidatePendingProposals(input: {
   );
   if (pending.length === 0) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: false };
 
-  const openaiKey = resolveApiKey("openai", userId);
+  const cred = resolveLlmCredential("openai", userId);
+  const openaiKey = cred.key;
   if (!openaiKey) return { checked: pending.length, reaffirmed: 0, withdrawn: 0, skipped: true };
+  const keySource = cred.source === "operator" ? "operator" : "user";
 
   const currentMarketRegime = determineMarketRegime(await fetchMacroData(userId));
 
@@ -295,7 +298,9 @@ export async function revalidatePendingProposals(input: {
           console.warn("[revalidation] LLM call failed", await response.text());
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
-        const text = extractText(await response.json());
+        const payload = await response.json();
+        recordLlmUsage({ userId, provider: "openai", model, context: "proposal-revalidation", keySource, ...extractLlmUsage(payload) });
+        const text = extractText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };

@@ -121,21 +121,31 @@ export async function completeMcpOAuthCallback(input: { code: string; state: str
 }
 
 /**
- * Get the access token for a specific user.
+ * Get the access token for a specific user — always from that user's own stored OAuth token.
  *
- * The `ROBINHOOD_MCP_AUTH_TOKEN` env var is a process-level operator override
- * that bypasses per-user lookup entirely — suitable for single-operator
- * deployments.  In multi-user production deployments this env var must NOT be
- * set, otherwise all users share the same token regardless of their own OAuth
- * state (cross-user data exposure).
+ * There is no env-token special case: the legacy `ROBINHOOD_MCP_AUTH_TOKEN` env override is
+ * migrated into the `local` operator's stored token at boot (migrateLocalRobinhoodToken), so the
+ * primary user resolves it like any other user and a non-`local` tenant can never reach it.
  */
 export async function getMcpAccessToken(userId: string): Promise<string | undefined> {
-  if (process.env.ROBINHOOD_MCP_AUTH_TOKEN) return process.env.ROBINHOOD_MCP_AUTH_TOKEN;
   const tokens = getStoredMcpOAuthTokens(userId);
   if (!tokens) return undefined;
   if (!isExpiring(tokens)) return tokens.accessToken;
   if (!tokens.refreshToken) return tokens.accessToken;
   return refreshMcpAccessToken(userId, tokens);
+}
+
+/**
+ * Boot migration: seed the `local` operator's stored OAuth token from the legacy
+ * `ROBINHOOD_MCP_AUTH_TOKEN` env override, so broker-token resolution is uniformly per-user (no
+ * special env branch). Idempotent — only seeds when `local` has no stored token yet.
+ */
+export function migrateLocalRobinhoodToken(): boolean {
+  const env = process.env.ROBINHOOD_MCP_AUTH_TOKEN?.trim();
+  if (!env) return false;
+  if (getStoredMcpOAuthTokens("local")) return false;
+  setMcpOAuthTokens("local", { accessToken: env, tokenType: "Bearer" });
+  return true;
 }
 
 export function getStoredMcpOAuthTokens(userId: string): McpOAuthTokens | undefined {
