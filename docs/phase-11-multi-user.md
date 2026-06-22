@@ -100,7 +100,10 @@ supported account buttons instead of requiring a Paper account.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
-User-Agent, and Pinecone/Voyage. Pinecone vector metadata/query filters use a
+User-Agent, Pinecone/Voyage, and Apify/congress (`fetchApifyCongress` accepts an
+optional `userId` and calls `resolveApiKey("apify", userId)`). The chat `getLLM`
+path also passes `userId` to `resolveLlmCredential` so per-user Anthropic/OpenAI
+keys are respected in chat responses. Pinecone vector metadata/query filters use a
 sanitized tenant ID, while Pinecone/Voyage credential lookup still uses the raw
 app user ID so saved keys keep working for identity-provider IDs with punctuation.
 Current API-key routes resolve their request user through the central request
