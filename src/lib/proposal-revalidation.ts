@@ -19,7 +19,7 @@
 import { audit, listPendingProposals, markProposalRevalidated, resolveLlmCredential, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -289,7 +289,7 @@ export async function revalidatePendingProposals(input: {
         output: (result) => ({ ...summarizeOpenAiResponseText(result.text), assessmentCount: result.assessments.length })
       },
       async () => {
-        const response = await fetch(url, {
+        const response = await llmFetch(url, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${openaiKey}` },
           body: JSON.stringify(body)

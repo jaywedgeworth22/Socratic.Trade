@@ -335,6 +335,9 @@ export async function callRobinhoodMcpMethod(userId: string, method: string, par
   const token = await getMcpAccessToken(userId);
   const response = await fetch(getRobinhoodMcpUrl(), {
     method: "POST",
+    // Bound every Robinhood MCP call (incl. place_equity_order) so a hung connection can't block
+    // the order path / strategy run indefinitely.
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",

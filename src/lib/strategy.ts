@@ -28,7 +28,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -1330,7 +1330,7 @@ async function proposeTrades(input: {
       })
     },
     async () => {
-      const response = await fetch(url, {
+      const response = await llmFetch(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1518,7 +1518,7 @@ async function proposeTrades(input: {
       })
     },
     async () => {
-      const bearResponse = await fetch(url, {
+      const bearResponse = await llmFetch(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",

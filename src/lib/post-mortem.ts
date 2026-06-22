@@ -5,7 +5,7 @@ import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat } from "./performance";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
@@ -129,7 +129,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         output: (result) => summarizeOpenAiResponseText(result.text)
       },
       async () => {
-        const response = await fetch(url, {
+        const response = await llmFetch(url, {
           method: "POST",
           headers: {
             "content-type": "application/json",
