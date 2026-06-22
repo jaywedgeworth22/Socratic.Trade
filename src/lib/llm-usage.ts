@@ -8,8 +8,8 @@
 
 import crypto from "crypto";
 import { getDb } from "./db";
-import type { LlmKeySource } from "./db-api-keys";
-export { keyFingerprint } from "./db-api-keys";
+import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, type LlmKeySource } from "./db-api-keys";
+export { keyFingerprint };
 
 export interface LlmUsageEntry {
   userId: string;
@@ -159,4 +159,34 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
     totalTokens: Number(r.total_tokens),
     costUsd: Number(r.cost_usd)
   }));
+}
+
+export interface KeyDescriptor {
+  /** Last 4 chars of the key — a safe display convention (computed at read time, never persisted). */
+  last4: string;
+  /** Human label, e.g. "operator (openai)", "u_abc (anthropic)", "operator env (openai)". */
+  label: string;
+}
+
+/**
+ * Resolve a non-secret, human-readable descriptor (last-4 + label) for a usage row's opaque
+ * `keyRef`, by matching the fingerprint against the LIVE key stores. Returns undefined once the key
+ * is detached — the ledger keeps the fingerprint, but a friendly label is only available while the
+ * key is still attached. The last-4 is computed at read time and never stored.
+ */
+export function describeUsageKey(row: { keyRef: string | null; userId: string; provider: string }): KeyDescriptor | undefined {
+  if (!row.keyRef) return undefined;
+  // The user's own stored key (for `local` this is the migrated operator key).
+  const own = getUserApiKey(row.userId, row.provider)?.apiKey;
+  if (own && keyFingerprint(own) === row.keyRef) {
+    const label = row.userId === LOCAL_USER ? `operator (${row.provider})` : `${row.userId} (${row.provider})`;
+    return { last4: own.slice(-4), label };
+  }
+  // The operator's env key (the failover that served a tenant).
+  const envVar = apiKeyEnvVarForService(row.provider);
+  const envKey = envVar ? process.env[envVar]?.trim() : undefined;
+  if (envKey && keyFingerprint(envKey) === row.keyRef) {
+    return { last4: envKey.slice(-4), label: `operator env (${row.provider})` };
+  }
+  return undefined;
 }

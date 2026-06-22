@@ -150,6 +150,34 @@ describe("LLM usage ledger", () => {
     expect(ownRows.reduce((s, r) => s + r.calls, 0)).toBe(1);
     expect(byKey.every((r) => r.keyRef !== null)).toBe(true);
   });
+
+  it("describeUsageKey resolves a human label (last-4 + name) from the live key store", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "env-operator-key-ABCD");
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    const { describeUsageKey, keyFingerprint } = await import("../src/lib/llm-usage");
+
+    upsertUserApiKey("u_tenant", "openai", "tenant-own-key-WXYZ");
+    upsertUserApiKey("local", "openai", "local-key-7788");
+
+    // A tenant's own key → labeled by user + last-4.
+    expect(describeUsageKey({ keyRef: keyFingerprint("tenant-own-key-WXYZ")!, userId: "u_tenant", provider: "openai" })).toEqual({
+      last4: "WXYZ",
+      label: "u_tenant (openai)"
+    });
+    // The `local` primary user → "operator" label.
+    expect(describeUsageKey({ keyRef: keyFingerprint("local-key-7788")!, userId: "local", provider: "openai" })).toEqual({
+      last4: "7788",
+      label: "operator (openai)"
+    });
+    // A tenant served by the operator's env failover → "operator env" label, env key's last-4.
+    expect(describeUsageKey({ keyRef: keyFingerprint("env-operator-key-ABCD")!, userId: "u_other", provider: "openai" })).toEqual({
+      last4: "ABCD",
+      label: "operator env (openai)"
+    });
+    // A detached/unknown key (no longer in the store) → no label, fingerprint still in the ledger.
+    expect(describeUsageKey({ keyRef: keyFingerprint("deleted-key")!, userId: "u_tenant", provider: "openai" })).toBeUndefined();
+    expect(describeUsageKey({ keyRef: null, userId: "u_tenant", provider: "openai" })).toBeUndefined();
+  });
 });
 
 describe("Alpaca market-data credential (shared data, per-user trading)", () => {
