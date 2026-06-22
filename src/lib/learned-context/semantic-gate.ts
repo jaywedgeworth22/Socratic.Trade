@@ -29,8 +29,10 @@ import type { LearnedContextCandidate, LearnedContextRiskTier } from "../types";
 import { classifyRiskTier } from "./classify";
 
 export interface SemanticGateOptions {
-  /** Injectable LLM for offline/unit testing. Defaults to getLLM() (MockLLM when no key configured). */
+  /** Injectable LLM for offline/unit testing. Defaults to getLLM(userId) (MockLLM when no key). */
   llm?: ChatLLM;
+  /** The requesting user — threaded to getLLM so the gate's LLM call is per-user keyed + usage-attributed. */
+  userId?: string;
 }
 
 /** Flag: the LLM gate is ON unless the env var is explicitly "off". Any other value (incl. unset) = on. */
@@ -119,7 +121,7 @@ export async function classifyWithSemanticGate(
   // 3. LLM semantic gate. May UPGRADE keyword 'fact' → 'risk'; otherwise keeps 'fact'.
   // 4. FAIL-SAFE: any throw / unparseable output falls back to the keyword result ('fact').
   try {
-    const llm = opts.llm ?? getLLM();
+    const llm = opts.llm ?? getLLM(opts.userId);
     const userMessage = JSON.stringify({
       subject: candidate.subject ?? "",
       value: candidate.value ?? "",

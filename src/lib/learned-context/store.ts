@@ -75,7 +75,8 @@ export async function ingestLearned(
     return { written: null, dropped: "pii", pending: null, pendingId: null, tier: "fact" };
   }
 
-  const tier = await classifyWithSemanticGate(candidate, opts);
+  // Thread userId so the gate's LLM call uses this user's key + failover and is usage-attributed.
+  const tier = await classifyWithSemanticGate(candidate, { ...opts, userId });
 
   if (tier !== "fact") {
     // CHAT origin is HARD-CAPPED at 'fact' — a chat message can NEVER produce a pending risk item.

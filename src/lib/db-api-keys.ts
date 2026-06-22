@@ -214,24 +214,157 @@ export function deleteUserApiKey(userId: string, service: string): void {
   }
 }
 
+// ── Credential tiers (multi-user key resolution) ────────────────────────────
+//
+// The app behaves multi-user with a default `local` operator user. Tier decides whether the env
+// fallback is a GLOBAL fallback (operator-funded shared resource) or operator-only (a credential a
+// non-`local` user must not borrow):
+//
+//   per-user-only         → env serves ONLY `local` (and no-userId background callers, which map
+//                           to `local`). A non-`local` user with no stored key fails closed. This
+//                           is reserved for isolation/cost-critical credentials: BROKER keys
+//                           (trades execute under an account) and LLM keys (operator-funded spend;
+//                           LLM additionally gets a gated operator failover — see
+//                           resolveLlmCredential). It is also the safe DEFAULT for any unlisted
+//                           service, so a newly-added credential fails closed rather than leaking.
+//   shared-operator-infra → env stays a GLOBAL fallback for everyone, because the resource is
+//                           operator-funded and non-personal: MARKET DATA (public quotes/bars/
+//                           fundamentals — cached in a shared tier benefiting all; a user's own key
+//                           still overrides and stays private/pooled), the RAG corpus, the macro
+//                           feed, the congressional scraper, notifications. Per-user keys here add
+//                           onboarding friction for no isolation benefit.
+//
+// Bootstrap secrets (ENCRYPTION_KEY, DATABASE_URL, Sentry/Langfuse, webhook/admin tokens, RH OAuth
+// app config) never flow through this resolver — they are read directly at startup.
+export type CredTier = "per-user-only" | "shared-operator-infra";
+
+export const LOCAL_USER = "local";
+
+// Per-user-only (env = `local` operator only): openai, anthropic, alpaca_paper_api_key,
+// alpaca_paper_secret_key — and any UNLISTED service (the fail-closed default). Everything below is
+// operator-funded shared infrastructure where env is a justified global fallback for all users.
+const API_KEY_TIER: Record<string, CredTier> = {
+  // Market data — public, operator-funded, shared cache (a user's own key still wins + stays private).
+  finnhub: "shared-operator-infra",
+  fmp: "shared-operator-infra",
+  alphavantage: "shared-operator-infra",
+  marketstack: "shared-operator-infra",
+  tradier: "shared-operator-infra",
+  massive: "shared-operator-infra",
+  massive_s3_endpoint: "shared-operator-infra",
+  massive_bucket: "shared-operator-infra",
+  massive_access_key_id: "shared-operator-infra",
+  massive_secret_access_key: "shared-operator-infra",
+  fintechstudios: "shared-operator-infra",
+  // Macro / corpus / scraper / app-level infra.
+  fred: "shared-operator-infra", // free public macro data; one uniform regime signal for all
+  apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
+  pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
+  voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
+  sec_edgar_user_agent: "shared-operator-infra" // a UA string SEC requires, not a secret; one per app
+};
+
+export function credTierForService(service: string): CredTier {
+  return API_KEY_TIER[normalizeApiKeyService(service)] ?? "per-user-only";
+}
+
 export function resolveApiKeyWithSource(service: string, userId?: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
   const canonical = normalizeApiKeyService(service);
+  const envVar = apiKeyEnvVarForService(canonical);
+
+  // 1. A per-user stored key always wins.
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", service: canonical };
+    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
   }
-  const envVar = apiKeyEnvVarForService(canonical);
+
   const envKey = envVar ? process.env[envVar] : undefined;
-  if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
+
+  // 2. shared-operator-infra: env is a global fallback for ANY user (incl. no-userId background).
+  if (credTierForService(canonical) === "shared-operator-infra") {
+    if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
+    return { source: "none", envVar, service: canonical };
+  }
+
+  // 3. per-user-only: NO env fallback for anyone — not even `local`. The operator's own env
+  //    broker/LLM keys are migrated into the `local` per-user store at boot
+  //    (migrateLocalEnvCredentials), so `local` resolves from the store like every other user.
+  //    No stored key → fail closed. (`local` is the primary user, not a privileged operator.)
   return { source: "none", envVar, service: canonical };
 }
 
 /**
- * Resolves the API key for a given service, checking per-user storage first,
- * then falling back to the environment variable.
+ * Resolves the API key for a given service, checking per-user storage first, then the env
+ * fallback — global for shared-operator-infra services, `local`-only for per-user-only ones.
  */
 export function resolveApiKey(service: string, userId?: string): string | undefined {
   return resolveApiKeyWithSource(service, userId).key;
+}
+
+// ── LLM credential resolution (per-user-first, operator-funded failover) ─────
+//
+// LLM keys (openai/anthropic) are per-user-only in the generic resolver above, so `local` keeps
+// using the env key and non-`local` users never silently borrow it there. But the owner wants a
+// flag-gated OPERATOR-FUNDED FAILOVER: when a real tenant has no LLM key of their own, fall back
+// to the operator's env key so the app still works for them — for now (the operator may disable
+// this later). Because that means a tenant spends the operator's budget, the failover is paired
+// with per-user usage tracking (see llm-usage.ts): every call records who spent and on whose key.
+export type LlmKeySource = "user" | "operator" | "none";
+
+/** Whether the operator's env LLM key may serve non-`local` tenants as a failover (default on). */
+export function llmOperatorFallbackEnabled(): boolean {
+  const v = (process.env.LLM_OPERATOR_FALLBACK ?? "on").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+/**
+ * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
+ * operator-funded failover so callers can attribute usage/cost. `local` is the operator, so its
+ * env key is always "operator" (its own). A non-`local` tenant only reaches the env key when the
+ * failover is enabled.
+ */
+export function resolveLlmCredential(service: "openai" | "anthropic", userId?: string): { key?: string; source: LlmKeySource } {
+  const canonical = normalizeApiKeyService(service);
+  if (userId) {
+    const userKey = getUserApiKey(userId, canonical);
+    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user" };
+  }
+  // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
+  // per-user store at boot, so `local` resolves "user" above; this serves users without their own
+  // key. No `local` special case — when the failover is off, everyone (incl. `local`) needs a key.
+  if (!llmOperatorFallbackEnabled()) return { source: "none" };
+  const envVar = apiKeyEnvVarForService(canonical);
+  const envKey = envVar ? process.env[envVar] : undefined;
+  return envKey ? { key: envKey, source: "operator" } : { source: "none" };
+}
+
+// Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
+// migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
+// resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
+const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+
+/**
+ * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
+ * per-user key store. Safe to call repeatedly (only seeds a service `local` doesn't already have a
+ * key for) and on every boot. Returns which services were seeded. Call from the server boot hook,
+ * NOT the hot resolver path. Shared-tier keys (market data, RAG, macro) are NOT migrated — they stay
+ * a global env fallback for all users.
+ */
+export function migrateLocalEnvCredentials(): { migrated: string[] } {
+  const migrated: string[] = [];
+  for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
+    const envVar = API_KEY_ENV_MAP[svc];
+    const envVal = envVar ? process.env[envVar]?.trim() : undefined;
+    if (envVal && !getUserApiKey(LOCAL_USER, svc)?.apiKey) {
+      try {
+        upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");
+        migrated.push(svc);
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  return { migrated };
 }
 
 // ── Connected accounts ──────────────────────────────────────────────────────

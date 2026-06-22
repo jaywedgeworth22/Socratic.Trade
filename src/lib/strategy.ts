@@ -52,7 +52,8 @@ import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, resolveApiKey, setInternalSetting } from "./db";
+import { getInternalSetting, getUserSetting, resolveLlmCredential, setInternalSetting } from "./db";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
@@ -1005,8 +1006,10 @@ async function proposeTrades(input: {
   ragContext?: string;
   learnedContext?: string;
 }): Promise<TradeProposal[]> {
-  const openaiKey = resolveApiKey("openai", input.userId);
+  const cred = resolveLlmCredential("openai", input.userId);
+  const openaiKey = cred.key;
   if (!openaiKey) return fallbackProposal(input);
+  const llmKeySource = cred.source === "operator" ? "operator" : "user";
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -1336,6 +1339,7 @@ async function proposeTrades(input: {
         throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
       }
       const payload = await response.json();
+      recordLlmUsage({ userId: input.userId, provider: "openai", model, context: "strategy", keySource: llmKeySource, ...extractLlmUsage(payload) });
       const text = extractOpenAiText(payload);
 
       if (!text) {

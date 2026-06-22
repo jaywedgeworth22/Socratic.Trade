@@ -1,0 +1,35 @@
+import { NextResponse } from "next/server";
+import { getLlmUsageSummary } from "@/lib/llm-usage";
+import { llmOperatorFallbackEnabled } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth/admin";
+
+export const dynamic = "force-dynamic";
+
+// Admin/diagnostic route: per-user LLM usage + cost, grouped by (user, provider, key source).
+// This is the visibility that gates the operator-funded LLM failover — `operatorFunded` isolates
+// spend where a NON-`local` tenant used the operator's env key.
+//
+// Query params:
+//   sinceDays         Window in days (default 30)
+//   operatorFundedOnly  "true" → only rows where a non-local tenant spent the operator key
+export async function GET(request: Request) {
+  const denied = requireAdmin(request);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const sinceDays = Number(url.searchParams.get("sinceDays")) || 30;
+  const operatorFundedOnly = url.searchParams.get("operatorFundedOnly") === "true";
+  const sinceIso = new Date(Date.now() - sinceDays * 24 * 60 * 60_000).toISOString();
+
+  const rows = getLlmUsageSummary({ sinceIso, operatorFundedOnly });
+  const operatorFunded = rows.filter((r) => r.keySource === "operator" && r.userId !== "local");
+
+  return NextResponse.json({
+    sinceDays,
+    operatorFallbackEnabled: llmOperatorFallbackEnabled(),
+    totalCostUsd: rows.reduce((s, r) => s + r.costUsd, 0),
+    operatorFundedCostUsd: operatorFunded.reduce((s, r) => s + r.costUsd, 0),
+    operatorFundedTenants: Array.from(new Set(operatorFunded.map((r) => r.userId))),
+    rows
+  });
+}

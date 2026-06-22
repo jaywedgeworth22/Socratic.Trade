@@ -23,6 +23,13 @@ export async function register() {
     await import("./sentry.server.config");
   }
 
+  // Migrate the operator's env broker/LLM keys into the `local` primary user's stores, so key
+  // resolution is uniformly per-user (no special `local` env branch). Idempotent.
+  const { migrateLocalEnvCredentials } = await import("./src/lib/db");
+  migrateLocalEnvCredentials();
+  const { migrateLocalRobinhoodToken } = await import("./src/lib/mcp-oauth");
+  migrateLocalRobinhoodToken();
+
   const { startObservability } = await import("./src/lib/observability");
   await startObservability();
 
