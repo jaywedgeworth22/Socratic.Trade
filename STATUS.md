@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`docs/deploy-handoff`): **Production auto-deploy is LIVE + backfilled handoff docs.** `.github/workflows/deploy.yml` deploys every push to `main` (and manual dispatch) to the self-hosted PM2 box via a `trading-live`-labeled runner on the owner's M-series Mac: token-auth `git fetch` → `git reset --hard FETCH_HEAD` → `npm ci` → `npm run build` → `pm2 restart trading`. Activated/debugged across PRs #79 (move into `.github/workflows/`), #81 (fetch via `GITHUB_TOKEN` — launchd runner has no git creds/TTY), #82 (`reset --hard FETCH_HEAD` not `checkout main` — `trading-live` is a linked worktree sharing the `main` checkout). Deploy run #6 green; `trading.jays.services` serves HTTP 302 (auth gate) = up. This change backfills the skipped handoff: new `docs/deployment.md` runbook, new `docs/rollouts/2026-06-22-deploy-workflow-activated.md`, and `ci-pending/README.md` deploy section corrected to the real design. Owner note: live `/access-denied` just means the visitor email isn't allowlisted (`PRIMARY_USER_EMAIL`/`ADMIN_USER_EMAILS`/CF Access) — not a deploy bug.
 - 2026-06-22 (`ci/activate-e2e`): **Activated the Playwright smoke workflow.** `git mv
   ci-pending/e2e.yml .github/workflows/e2e.yml` — the smoke (`npm run test:e2e`, now passing after
   `e2e/smoke-fix`) runs on every PR/push. Reframed `ci-pending/README.md` from "staged" to reference
