@@ -215,6 +215,18 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
     .run(new Date().toISOString(), status, summary, id, userId);
 }
 
+/**
+ * Most recent strategy-run start time for a user (ISO string), or null if none. The scheduler
+ * rehydrates its in-memory cadence clock from this on boot so a restart/HMR/deploy doesn't fire an
+ * immediate run regardless of the configured cadence (userSchedules starts empty each process).
+ */
+export function getLastStrategyRunStartedAt(userId: string = "local"): string | null {
+  const row = getDb()
+    .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ?")
+    .get(userId) as { last: string | null } | undefined;
+  return row?.last ?? null;
+}
+
 export function listStrategyRuns(limit = 20, userId: string = "local"): StrategyRunRow[] {
   type RawRow = {
     id: string;

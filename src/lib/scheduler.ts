@@ -5,7 +5,7 @@
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
 import { checkAllUserPriceAlerts } from "./alerts";
-import { audit, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
+import { audit, getLastStrategyRunStartedAt, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
@@ -129,8 +129,10 @@ async function tick(): Promise<void> {
 
     for (const userId of users) {
       if (!userSchedules[userId]) {
+        // Rehydrate the cadence clock from the last real run so a restart/HMR/deploy doesn't fire an
+        // immediate run regardless of cadence (in-memory userSchedules starts empty each process).
         userSchedules[userId] = {
-          lastRunAt: null,
+          lastRunAt: getLastStrategyRunStartedAt(userId),
           nextRunAt: null
         };
       }
