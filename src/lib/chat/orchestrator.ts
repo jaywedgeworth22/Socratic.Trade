@@ -44,7 +44,9 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     // dropped+audited, never written. This keeps chat structurally write-isolated from the brain's
     // risk knobs while letting it contribute advisory facts.
     for (const candidate of extractLearnedCandidates(message)) {
-      ingestLearned(userId, candidate, "chat");
+      // Awaited: ingest now runs the async semantic gate. The chat hard-cap still holds — a gate
+      // 'risk' verdict on a chat candidate is DROPPED (never queued) inside ingestLearned.
+      await ingestLearned(userId, candidate, "chat");
     }
     const memories = retrieve(userId);
     const memorySummary = memories.map((m) => `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`).join("\n");
