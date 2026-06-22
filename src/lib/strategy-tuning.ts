@@ -10,7 +10,7 @@ import {
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { symbolsForPolicyUniverse } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
@@ -370,7 +370,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
       })
     },
     async () => {
-      const response = await fetch(url, {
+      const response = await llmFetch(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",

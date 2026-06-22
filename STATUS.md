@@ -24,6 +24,13 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`reliability/llm-timeout`): **Bounded LLM + Robinhood-order fetch timeouts.** LLM HTTP
+  calls and the Robinhood MCP order path had no timeout — a half-open connection could hang the caller
+  indefinitely (and hold the per-user strategy run lock). New `llmFetch()` + `LLM_TIMEOUT_MS=60s` in
+  `llm-request.ts`, applied to bull/bear (`strategy.ts`), `red-team`, `strategy-tuning`,
+  `proposal-revalidation`, `post-mortem`, and `chat/llm` (Anthropic+OpenAI); `callRobinhoodMcpMethod`
+  gets `AbortSignal.timeout(30s)` (covers `place_equity_order`). tsc clean, 791 tests (+3), build green.
+  See `docs/rollouts/2026-06-22-llm-fetch-timeout.md`.
 - 2026-06-22 (`reliability/scheduler-cadence`): **Scheduler cadence rehydrate on boot.** The scheduler
   fired a run on the first tick after every restart/HMR/deploy regardless of cadence (in-memory
   `userSchedules.lastRunAt` starts null). Now seeds `lastRunAt` from the last real `strategy_runs` row

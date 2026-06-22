@@ -9,6 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
+import { llmFetch } from "../llm-request";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -265,7 +266,7 @@ export class MockLLM implements ChatLLM {
 type Transport = (body: any, apiKey: string) => Promise<any>;
 
 async function defaultTransport(body: any, apiKey: string): Promise<any> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await llmFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -363,7 +364,7 @@ type OpenAITransport = (body: any, apiKey: string) => Promise<any>;
 
 async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
   const url = process.env.OPENAI_CHAT_URL ?? "https://api.openai.com/v1/chat/completions";
-  const res = await fetch(url, {
+  const res = await llmFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body)
