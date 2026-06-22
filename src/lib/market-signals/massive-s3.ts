@@ -38,7 +38,9 @@ function cfg(userId?: string) {
   return { accessKey, secret, host, bucket, region };
 }
 
-const sha256hex = (s: crypto.BinaryLike): string => crypto.createHash("sha256").update(s).digest("hex");
+// `s` is narrowed to string (both callers pass strings): @types/node 26's Hash.update()
+// no longer accepts the full BinaryLike (ArrayBuffer is excluded).
+const sha256hex = (s: string): string => crypto.createHash("sha256").update(s).digest("hex");
 const hmac = (key: crypto.BinaryLike, s: string): Buffer => crypto.createHmac("sha256", key).update(s).digest();
 
 /** GET a single S3 object via SigV4 (path-style). Returns the raw bytes, or null on any failure. */

@@ -1,5 +1,5 @@
 {
-  "name": "agentic-trading-dashboard",
+  "name": "robinhood-agentic-dashboard",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,10 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "gitleaks": "gitleaks detect --source . --verbose"
+    "gitleaks": "gitleaks detect --source . --verbose",
+    "litestream:replicate": "node scripts/litestream.mjs replicate",
+    "litestream:restore": "node scripts/litestream.mjs restore",
+    "litestream:dry-run": "node scripts/litestream.mjs dry-run"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
@@ -31,9 +34,9 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "lightweight-charts": "^5.2.0",
-    "lucide-react": "^1.21.0",
+    "lucide-react": "^0.468.0",
     "motion": "^12.40.0",
-    "next": "^16.2.9",
+    "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-resizable-panels": "^4.11.2",
@@ -42,13 +45,13 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "voyageai": "^0.4.0",
-    "zod": "^4.4.3"
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4.3.1",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.16.0",
