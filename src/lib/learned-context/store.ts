@@ -4,9 +4,10 @@
 //
 // WRITE side (ingestLearned):
 //   - Runs the fail-closed classifier (classify.ts) + PII gate on every candidate.
-//   - tier 'fact'                 → written as a row (scope='private' in this slice).
-//   - tier 'risk'/'strategy-directive' → AUDIT-LOG-AND-DROP. The pending-changes queue is a later
-//     slice, so nothing above 'fact' is written ANYWHERE that could reach the brain.
+//   - tier 'fact'  → written as scope='shared' if the user's contributeShared pref is on,
+//                    otherwise scope='private'. PII is always excluded upstream.
+//   - tier 'risk'/'strategy-directive' → route to the pending-changes queue (autonomous/ingest)
+//     or HARD-CAP drop (chat). Nothing above 'fact' is EVER written as scope='shared'.
 //   - Chat-origin candidates are HARD-CAPPED at 'fact': a chat message can never produce a
 //     risk-tier change; if it classifies above 'fact' it is dropped+audited.
 //
@@ -25,6 +26,7 @@ import {
   setStrategyPrompt,
   supersedeLearnedContext
 } from "../db";
+import { getLearnedContextSharing } from "../db-settings";
 import type {
   LearnedContextCandidate,
   LearnedContextOrigin,
@@ -124,11 +126,17 @@ export async function ingestLearned(
     return { written: existing, dropped: null, pending: null, pendingId: null, tier };
   }
 
+  // Determine scope: if the user has opted-in to contributing their facts to the shared pool,
+  // write this row as scope='shared' (with provenance via contributorUserId). Otherwise private.
+  // SAFETY: only fact-tier rows ever reach this code path — risk/strategy-directive rows are
+  // routed to the pending queue above and NEVER land here.
+  const { contributeShared } = getLearnedContextSharing(userId);
+  const scope = contributeShared ? "shared" : "private";
+
   const row: LearnedContextRow = {
     id: randomUUID(),
     userId,
-    // Slice scope decision: write fact rows as private ONLY. Cross-user shared facts are deferred.
-    scope: "private",
+    scope,
     kind: candidate.kind,
     subject: candidate.subject,
     symbol,
@@ -154,8 +162,13 @@ export async function ingestLearned(
 
 /**
  * READ-ONLY retrieval of advisory fact rows for a decision. Returns the live private fact rows
- * (plus opted-in shared rows once that slice lands) relevant to the given symbols, formatted as
- * advisory bullet strings for the strategy prompt's `learnedContext` DATA section.
+ * plus, when the user's includeShared preference is on (default true), all scope='shared' rows
+ * from any contributor, formatted as advisory bullet strings for the strategy prompt's
+ * `learnedContext` DATA section.
+ *
+ * ISOLATION GUARANTEE: a different user's PRIVATE (scope='private') row is NEVER returned to
+ * this user — the listLearnedContextForDecision query only widens to scope='shared' rows, never
+ * to another user's private rows.
  *
  * The `regime` argument is accepted for forward-compatibility (regime-conditioned facts) but is
  * not yet used as a filter in this slice.
@@ -168,7 +181,12 @@ export function retrieveLearnedContext(
 ): string[] {
   const limit = options.limit ?? 12;
   const perContributorCap = options.perContributorCap ?? 6;
-  const rows = listLearnedContextForDecision(userId, symbols, options.includeShared ?? false);
+  // When options.includeShared is explicitly supplied (e.g. from tests), use it; otherwise
+  // read the user's persistent preference (default: includeShared=true).
+  const includeShared = options.includeShared !== undefined
+    ? options.includeShared
+    : getLearnedContextSharing(userId).includeShared;
+  const rows = listLearnedContextForDecision(userId, symbols, includeShared);
 
   // Per-contributor cap so one prolific source can't crowd out the rest (matters once shared rows
   // are enabled; harmless for the private-only slice).

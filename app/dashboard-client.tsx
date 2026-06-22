@@ -2583,6 +2583,40 @@ function SettingsContent({
       setPoolConsentLoading(false);
     }
   }
+
+  // ── Learned-context sharing state ────────────────────────────────────────
+  // includeShared defaults TRUE (user benefits from the pool); contributeShared defaults FALSE
+  // (nothing is shared without explicit opt-in). Loaded on first visit to the "data" section.
+  const [lcSharing, setLcSharing] = useState<{ includeShared: boolean; contributeShared: boolean } | null>(null);
+  const [lcSharingLoading, setLcSharingLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/learned-context/sharing")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setLcSharing(d as { includeShared: boolean; contributeShared: boolean }); })
+      .catch(() => { /* leave null — toggles render as disabled until loaded */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function updateLcSharing(patch: { includeShared?: boolean; contributeShared?: boolean }) {
+    if (lcSharingLoading) return;
+    setLcSharingLoading(true);
+    try {
+      const res = await fetch("/api/learned-context/sharing", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      const updated = await res.json() as { includeShared: boolean; contributeShared: boolean };
+      setLcSharing(updated);
+    } catch {
+      /* best-effort */
+    } finally {
+      setLcSharingLoading(false);
+    }
+  }
+
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
@@ -2948,6 +2982,49 @@ function SettingsContent({
           </label>
           <p className="text-[11px] text-faint">
             Your choice applies immediately. You can toggle sharing at any time.
+          </p>
+
+          {/* ── Learned-context (AI learnings) sharing ── */}
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">AI-learned facts sharing</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Control whether you benefit from other users&apos; shared learnings and whether your own
+                learned facts are contributed to the shared pool. Only structural market facts are ever
+                shared — risk and strategy directives are never shared. PII is always excluded.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Include shared learnings</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.includeShared ? "On — your AI decisions include facts shared by other users." : "Off — only your own learned facts are used."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.includeShared ?? true}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ includeShared: v }); }}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Contribute my learnings to the shared pool</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.contributeShared ? "On — new facts you learn are shared with opted-in users." : "Off — your learned facts stay private (default)."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.contributeShared ?? false}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ contributeShared: v }); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
+            directives go through a human approval queue and are never shared automatically.
           </p>
         </div>
       )}
