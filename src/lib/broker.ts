@@ -8,7 +8,7 @@ export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"
   }
   if (policy.activeBroker === "test") {
     // Local Test broker: real quotes, simulated fills, no real broker connection.
-    return getTestGateway();
+    return getTestGateway(userId);
   }
   // Robinhood (MCP-only) is the remaining broker.
   return getRobinhoodGateway(userId);
