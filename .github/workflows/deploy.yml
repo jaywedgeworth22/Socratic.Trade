@@ -48,11 +48,14 @@ jobs:
           cd "$DIR"
           # The launchd runner has no stored git credentials / no TTY, so the
           # repo's HTTPS remote can't authenticate on its own. Fetch with the
-          # job's GITHUB_TOKEN (auto-masked in logs) and force the worktree to
-          # the fetched main. Untracked files (.env.local, data/app.db,
-          # data/logos/) are preserved by checkout -f.
+          # job's GITHUB_TOKEN (auto-masked in logs).
           git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
-          git checkout -f -B main FETCH_HEAD
+          # trading-live is a LINKED worktree sharing the clone with the main
+          # integration worktree (which has `main` checked out), so we can't
+          # check out `main` here. Hard-reset this worktree's working tree to the
+          # fetched commit instead — no branch switch. Untracked files
+          # (.env.local, data/app.db, data/logos/) are left untouched.
+          git reset --hard FETCH_HEAD
           git --no-pager log --oneline -1
           echo "::endgroup::"
 
