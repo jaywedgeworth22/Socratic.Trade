@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude-litestream`): **Litestream WAL replication LIVE on Cloudflare R2 (P2-5).** Litestream 0.5.12 installed and running as PM2 sidecar `litestream` via `scripts/run-litestream.sh`, replicating `~/apps/trading-live/data/app.db` → R2 bucket `trading-live-backups`. First ~9.4 MB snapshot verified uploaded; `replica sync` each second, restart_time 0. 0.5.x is single-replica (dropped the local-file replica) and uses `litestream ltx` (not `snapshots`). PR #47. **Follow-up: rotate the R2 token (pasted in chat; scoped to that one bucket).** See `docs/rollouts/2026-06-21-litestream-r2-live.md`.
 - 2026-06-21 (`agent/claude`): **P0-3/P1-2/P1-7 — VIX Yahoo fallback + congress floor + exposure defaults.** Live ^VIX from Yahoo Finance (key-free) replaces "Unknown regime" when no FRED key is configured; `hasNotableWebSignal` now requires buyCount≥2 AND netSignal≥2 (single-member disclosures no longer trigger rank-lift); `maxGrossExposurePct`/`maxNetExposurePct` defaults tightened 100→80 to enforce a 20% cash buffer. tsc clean, 593 tests all pass (+20). See `docs/rollouts/2026-06-21-p1-macro-signal-exposure.md`.
 - 2026-06-21 (`agent/claude`): **P1-4/5/6 — congress disclosedAt windowing + scorecard floor + deterministic Bear veto.** PR #35.
 - 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**
