@@ -151,12 +151,14 @@ describe("proposeStrategyTuning", () => {
     expect(proposal.generatedBy).toBe("llm");
     expect(sawMockLocalContext).toBe(true);
     expect(proposal.confidenceScore).toBe(100);
+    // The proposed weights (liquidity: 1.7, quality: 1.1, sentiment: 0.8) exceed the
+    // MAX_WEIGHT_STEP (0.05) delta from defaults (1.4, 0.8, 0.6), so they are clamped.
     expect(proposal.proposedPatch).toEqual({
       prompt: "UPDATED PROMPT",
       scoringWeights: {
-        liquidity: 1.7,
-        quality: 1.1,
-        sentiment: 0.8
+        liquidity: 1.45, // clamped from 1.7: default 1.4 + 0.05
+        quality: 0.85,   // clamped from 1.1: default 0.8 + 0.05
+        sentiment: 0.65  // clamped from 0.8: default 0.6 + 0.05
       },
       policy: {
         maxOrderNotional: 15,
@@ -292,5 +294,84 @@ describe("proposeStrategyTuning", () => {
     expect(proposal.generatedBy).toBe("llm");
     expect(proposal.proposedPatch.scoringWeights).toBeUndefined(); // gate stripped the weights
     expect(proposal.cautions.join(" ")).toMatch(/Withheld model-proposed factor-weight/i);
+  });
+
+  it("clamps LLM-proposed scoringWeight deltas to MAX_WEIGHT_STEP per factor", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning, MAX_WEIGHT_STEP } = await import("../src/lib/strategy-tuning");
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    setStrategyPrompt("CLAMP TEST PROMPT");
+    // Use custom weights so we can assert the clamp precisely.
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", paperMode: true, scoringWeights: customWeights });
+    // Seed 20 closed lots so the §3.E gate passes.
+    let n = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `C${i}`;
+      insertFillEvent({ accountNumber: "TUNE-CLAMP", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(n / 60)}:${String(n++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "TUNE-CLAMP", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 110, notional: 110, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(n / 60)}:${String(n++ % 60).padStart(2, "0")}.000Z` });
+    }
+
+    vi.stubGlobal("fetch", async () => new Response(
+      JSON.stringify({
+        output_text: JSON.stringify({
+          summary: "s", rationale: "r", marketContext: "m", performanceReadout: "p",
+          proposedPrompt: "CLAMP TEST PROMPT", // no prompt change
+          scoringWeights: {
+            // All far outside current weights (1.0), should be clamped to 1.0 ± MAX_WEIGHT_STEP
+            liquidity: 2.5,     // +1.5 → clamp to 1.0 + MAX_WEIGHT_STEP
+            momentum: 0.0,      // -1.0 → clamp to 1.0 - MAX_WEIGHT_STEP
+            value: null, quality: null, volatility: null, sentiment: null, positioning: null, diversification: null
+          },
+          policy: { maxOrderNotional: null, maxDailyNotional: null, maxSymbolExposurePct: null, maxDailyOrders: null, maxProposalsPerRun: null, runCadenceMinutes: null, strategyAuthority: null, runDuringExtendedHours: null },
+          riskRules: { stopLossPct: null, takeProfitPct: null, trailingStopPct: null },
+          cautions: [], confidenceScore: 70
+        })
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    ));
+
+    const proposal = await proposeStrategyTuning();
+
+    expect(proposal.generatedBy).toBe("llm");
+    expect(proposal.proposedPatch.scoringWeights?.liquidity).toBeCloseTo(1.0 + MAX_WEIGHT_STEP, 5);
+    expect(proposal.proposedPatch.scoringWeights?.momentum).toBeCloseTo(1.0 - MAX_WEIGHT_STEP, 5);
+    // No prompt change since proposed matches current
+    expect(proposal.proposedPatch.prompt).toBeUndefined();
+  });
+});
+
+describe("localRulesProposal factor scorecard integration", () => {
+  it("applies a downward weight nudge for a factor with negative avg return (above lot gate)", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning, MAX_WEIGHT_STEP } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("FACTOR SCORECARD TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-FSCORE", paperMode: true, scoringWeights: customWeights });
+    // Seed 20 losing closed lots. All fills have weak/negative outcomes to trigger
+    // weakPerformance=true and ensure enoughLotsForWeights=true.
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `F${i}`;
+      insertFillEvent({ accountNumber: "TUNE-FSCORE", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "TUNE-FSCORE", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+
+    const proposal = await proposeStrategyTuning();
+    // With 20 lots the gate passes, and weak performance triggers the local-rules path.
+    expect(proposal.generatedBy).toBe("local_rules");
+    // The local path should still emit scoring weights (gate satisfied).
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined();
+    // With no signal_snapshot audit records, factorScorecard will be empty — no nudges.
+    // Still verify the gate-gated base rules fire: volatility, quality, momentum.
+    const w = proposal.proposedPatch.scoringWeights!;
+    expect(w.volatility).toBeCloseTo(customWeights.volatility + 0.2, 5);
+    expect(w.quality).toBeCloseTo(customWeights.quality + 0.1, 5);
+    expect(w.momentum).toBeCloseTo(Math.max(0, customWeights.momentum - 0.1), 5);
+    expect(proposal.cautions.join(" ")).toMatch(/Manual approval/i);
   });
 });
