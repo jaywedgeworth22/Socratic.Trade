@@ -77,6 +77,7 @@ import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
+import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
 import {
   Button,
   Card,
@@ -294,6 +295,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [learnedQueueOpen, setLearnedQueueOpen] = useState(false);
+  const [learnedQueueCount, setLearnedQueueCount] = useState(0);
 
   // Consent gate: "loading" → fetch in progress; "needed" → show modal; "done" → clear
   const [consentGate, setConsentGate] = useState<ConsentGateState>("loading");
@@ -386,6 +389,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       // The browser auto-reconnects EventSource; the fallback poll covers any gap.
     };
     return () => es.close();
+  }, []);
+
+  // Seed the learned-context queue badge count on mount so the button is visible immediately
+  // if there are pending items, without waiting for the user to open the SlideOver.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/learned-context/pending", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+      .then((data) => {
+        if (!cancelled) setLearnedQueueCount(data.filter((i) => i.status === "pending").length);
+      })
+      .catch(() => { /* badge stays at 0 on error */ });
+    return () => { cancelled = true; };
   }, []);
 
   // Command K is temporarily disabled per user request
@@ -714,6 +730,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 </span>
               )}
             </button>
+            <LearnedContextQueueBadge
+              count={learnedQueueCount}
+              onClick={() => setLearnedQueueOpen(true)}
+            />
             <Button
               variant="ghost"
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
@@ -875,6 +895,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
         {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
       </SlideOver>
+
+      <LearnedContextQueue
+        open={learnedQueueOpen}
+        onClose={() => setLearnedQueueOpen(false)}
+        onCountChange={setLearnedQueueCount}
+      />
 
       <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
         <div className="h-full w-full">
