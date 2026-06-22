@@ -1,16 +1,16 @@
-# CI / Deploy workflows (staged — not activated)
+# CI / Deploy workflows — reference
 
-These workflow definitions are staged here instead of `.github/workflows/` because the
-current git push credential lacks the GitHub OAuth `workflow` scope (pushing files under
-`.github/workflows/` is rejected without it). Move them with a workflow-scoped token to
-activate.
+All workflow definitions are now **active** in `.github/workflows/`:
 
-## CI workflows
+- `ci.yml` — the required `verify` check (tsc → vitest → build)
+- `security.yml` — gitleaks secret scan
+- `e2e.yml` — Playwright smoke (`npm run test:e2e`)
+- `deploy.yml` — production deploy on push to `main`
 
-    git mv ci-pending/ci.yml ci-pending/e2e.yml ci-pending/security.yml .github/workflows/
-
-(`ci.yml`, `e2e.yml`, and `security.yml` may already be active on the remote — check the
-Actions tab before moving to avoid duplicates.)
+They were previously **staged here** because the agents' automated push path
+(`scripts/land.sh`) refuses `.github/workflows/` diffs (the agents' token lacks the GitHub
+OAuth `workflow` scope). The owner activated them with a workflow-scoped push. This
+directory now keeps only the deploy/runner setup notes below as operations reference.
 
 ## Deploy workflow (`deploy.yml`)
 
@@ -18,9 +18,7 @@ Auto-deploys every push to `main` (i.e. every merged PR) to the self-hosted prod
 host: `git reset --hard origin/main` → `npm ci` → `npm run build` → `pm2 restart trading`
 in `~/apps/trading-live`. Also exposes a manual **Run workflow** button.
 
-Activate with:
-
-    git mv ci-pending/deploy.yml .github/workflows/
+Already active (was activated with `git mv ci-pending/deploy.yml .github/workflows/`).
 
 It only resets **tracked** files, so `.env.local`, `data/app.db`, and `data/logos/` in the
 production worktree are preserved. Any uncommitted hand-edits to *tracked* files on the prod
