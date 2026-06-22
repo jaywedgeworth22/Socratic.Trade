@@ -24,6 +24,21 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`agent/claude-congress-share`): **Outbound data-share to congress.trade (App A) — default OFF.**
+  New `src/lib/congress-share.ts` forwards the company `refs` + daily `closes` + `^GSPC` series this app
+  already fetches to App A's idempotent `POST /api/admin/securities/import`, so App A can avoid spending the
+  *shared* daily FMP quota. Two triggers: (1) **after each scan** — `scanMarket()` fire-and-forgets
+  `shareScanRefs` (candidate refs, per-symbol 6h throttle, rollback-on-failure); (2) **nightly batch** — the
+  scheduler tick runs `runCongressDailyShareIfDue` once/UTC-day over the union of all users' watchlist +
+  policy-universe symbols, POSTing `prices`+`spx` in capped chunks (≤2000 tickers / ≤20000 closes/call).
+  Manual ops trigger: `POST /api/admin/congress-share` (admin-gated, token-only). **Correction to the brief:**
+  App B never calls FMP `/v3/profile` or `/v3/historical-price-full` (its only FMP use is fundamentals
+  enrichment), so refs/prices/spx come from the screener enrichment + the `fetchDailyOHLC` cascade, not FMP —
+  but sharing them still conserves App A's quota. Gated on `CONGRESS_TRADE_TOKEN` + `CONGRESS_SHARE_ENABLED`
+  (both off by default); token is server-only; every POST is timeout-bounded + self-guarded. tsc clean ·
+  `npm test` 884 pass (95 files, +25 new) · build green. See `docs/congress-trade-share.md` and
+  `docs/rollouts/2026-06-22-congress-trade-share.md`. **Next:** owner sets the token + flag in the target
+  worktree's `.env.local`, then optionally test via the admin route before enabling the auto hooks.
 - 2026-06-22 (`fix/ux-account-authority-watchlist`): **UX fixes + watchlist self-heal bug.** (1) Consent dialog: dropped contradictory "One-time choice"; (2) account dropdown no longer doubles the env suffix ("Alpaca (Paper) (paper)" → "Alpaca (Paper)" — omit `(environment)` when the label already contains it); (3) strategy-authority labels renamed user-facing "Decide" → "Autonomous" (values `propose`/`decide` unchanged) across dropdowns/confirms/subtitle/help/tooltip; (4) **root-cause bug**: `PUT /api/policy` 400'd the whole policy on any unsupported symbol, and since the client re-sends the full policy a stale `BTC` in `additionalSymbols` bricked *every* update (why Autonomous toggle failed) — now `sanitizeSymbolList()` normalizes+drops unsupported symbols (equity-only) instead of erroring (self-heals); broker `getAccounts()` wrapped in try/catch (no raw 500/HTML); client `updatePolicy` never toasts HTML bodies. Add-time validation in Settings kept. tsc clean · policy tests 42/42 · `npm test` 855 pass / 1 pre-existing unrelated fail (`cache-provenance`) · build green. Owner: delete the stale Alpaca paper account via Accounts → Remove. See `docs/rollouts/2026-06-22-ux-consent-account-authority-watchlist.md`.
 - 2026-06-22 (`sim/funded-test-account`): **Funded local simulator for the Test broker.** `TestBrokerGateway`
   (`robinhood.ts`) returned a $0 unfunded portfolio (buying power 0 → couldn't simulate trades); now it is a

@@ -1,3 +1,4 @@
+import { shareScanRefs } from "./congress-share";
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import type { GroupedDailyBar } from "./market-signals/massive";
 import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
@@ -57,7 +58,12 @@ export async function scanMarket(
   scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
   userId?: string
 ): Promise<MarketScan> {
-  return nasdaqDelayedProvider.scan(symbols, positions, { scoringWeights, ttlMs: marketCacheTtlMs(), userId });
+  const scan = await nasdaqDelayedProvider.scan(symbols, positions, { scoringWeights, ttlMs: marketCacheTtlMs(), userId });
+  // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
+  // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
+  // throttled and fully self-guarded, so it never delays or breaks a scan. Fire-and-forget.
+  void shareScanRefs(scan);
+  return scan;
 }
 
 export const nasdaqDelayedProvider: MarketDataProvider = {
