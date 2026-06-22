@@ -3892,9 +3892,18 @@ function IntegrationsSection({
     );
   }
 
+  // The app's active account: prefer the explicitly-selected one, else the flagged-active row (mirrors
+  // activeConnectedAccountFor). Used to mark which row is ACTIVE vs merely Connected.
+  const activeId = policy.connectedAccountId ?? accounts?.find((a) => a.isActive)?.id;
+  // Only surface the Robinhood MCP status card when Robinhood is actually in play — configured in env,
+  // authenticated, or already connected as an account. Otherwise it's noise (a disconnected card by default).
+  const showRobinhoodCard = Boolean(
+    mcpHealth?.configured || mcpHealth?.authenticated || accounts?.some((a) => a.broker === "robinhood")
+  );
+
   return (
     <div className="space-y-3">
-      <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />
+      {showRobinhoodCard && <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />}
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted">
@@ -3924,17 +3933,22 @@ function IntegrationsSection({
         <div className="space-y-2">
           {accounts.map(acc => {
             const info = formatAccountInfo(acc);
+            const isActive = acc.id === activeId;
             return (
               <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-fg">{info.title}</span>
-                    {info.showBadges && acc.isActive && (
+                    {info.showBadges && (isActive ? (
                       <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                        CONNECTED
+                        ACTIVE
                       </span>
-                    )}
-                    {info.showBadges && acc.isActive && policy?.strategyAuthority === "decide" && (
+                    ) : (
+                      <span className="rounded-full bg-surface-3/60 border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                        Connected
+                      </span>
+                    ))}
+                    {info.showBadges && isActive && policy?.strategyAuthority === "decide" && (
                       <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-400">
                         AUTONOMOUS
                       </span>
