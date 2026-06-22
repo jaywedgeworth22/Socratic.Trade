@@ -95,15 +95,33 @@ export function findMcpOAuthStateByRandom(randomPart: string): { key: string; va
   return findInternalSettingByKeyLike<McpOAuthState>(`robinhood_mcp_oauth_state:%:${randomPart}`);
 }
 
-export async function completeMcpOAuthCallback(input: { code: string; state: string }): Promise<McpOAuthTokens> {
+export async function completeMcpOAuthCallback(input: {
+  code: string;
+  state: string;
+  /**
+   * The userId resolved from the browser session that hit the callback. When provided, it
+   * must match the userId the flow was initiated under (`stateBlob.userId`). This stops an
+   * attacker-initiated flow (state bound to the attacker) from being completed in a victim's
+   * session — i.e. binding a freshly-minted broker token under the wrong userId. In
+   * production the callback request always carries a verified identity (middleware enforces
+   * it); in single-operator/dev both sides are 'local', so the check is a no-op there.
+   */
+  expectedUserId?: string;
+}): Promise<McpOAuthTokens> {
   const config = requireOAuthConfig();
 
-  // Recover the state blob by scanning on the random suffix — userId is not
-  // available from the OAuth redirect (no session cookie at callback time).
+  // Recover the state blob by scanning on the random suffix — the redirect carries only the
+  // random `state`, not the userId (the userId is never placed in the OAuth redirect URL).
   const found = findMcpOAuthStateByRandom(input.state);
   if (!found) throw new Error("Robinhood MCP OAuth state was not found or already used.");
   const { key: stateKey, value: stateBlob } = found;
   deleteInternalSetting(stateKey);
+
+  // Cross-check the completing session against the initiating session. The state row is
+  // consumed above regardless, so a mismatched attempt can't be retried with the same state.
+  if (input.expectedUserId !== undefined && input.expectedUserId !== stateBlob.userId) {
+    throw new Error("Robinhood MCP OAuth state does not belong to the current session.");
+  }
 
   const client = await getOrRegisterClient(config);
   const body = new URLSearchParams({
