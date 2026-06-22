@@ -13,10 +13,11 @@ import { symbolsForPolicyUniverse } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
-import { getClosedLotCount, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT } from "./performance";
+import { getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type {
   FillEvent,
+  MarketFactor,
   MarketScan,
   PerformanceSummary,
   ScoringWeights,
@@ -24,6 +25,16 @@ import type {
   StrategyTuningProposal,
   TradingPolicy
 } from "./types";
+
+/**
+ * Maximum per-factor weight delta allowed in a single tuning step.
+ * Phase-7 §3.E / strategic-framework §5 doc: "no more than a 5-point change per factor at a
+ * time." The scoring weights run on a 0.6–1.4 multiplier scale; "5 points" maps to 0.05 on
+ * that scale (consistent with treating each 0.01 increment as one "point" on the same
+ * percentage basis the doc uses). This is intentionally tighter than the local-rules 0.1-0.2
+ * steps: the LLM path is unconstrained by design pressure so we clamp defensively.
+ */
+export const MAX_WEIGHT_STEP = 0.05;
 
 type LatestDecisionPayload = {
   summary?: string;
@@ -139,6 +150,13 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   const missedOpportunities = summarizeMissedOpportunities(
     getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30 })
   );
+  // Factor-outcome history: realized win-rate and avg-return grouped by dominant entry factor.
+  // Gated by the same closed-lot minimum — below the gate the sample is too thin to trust
+  // per-factor attribution.
+  const factorScorecard: FactorScorecardStat[] = accountNumber && closedLotCount >= minLotsForWeights
+    ? getFactorScorecard(accountNumber, source, {}, userId)
+    : [];
+
   const executionMode = llmExecutionMode(executionState);
   const context = {
     currentDate: new Date().toISOString(),
@@ -175,17 +193,18 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
         }
       : undefined,
     ...(missedOpportunities.count > 0 ? { missedOpportunities } : {}),
+    ...(factorScorecard.length > 0 ? { factorScorecard } : {}),
     macro
   };
 
   const cred = resolveLlmCredential("openai", userId);
   const openaiKey = cred.key;
   if (!openaiKey) {
-    return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities });
+    return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard });
   }
 
   const payload = await requestLlmTuning(context, openaiKey, userId, cred.source === "operator" ? "operator" : "user");
-  const proposedPatch = toPatch(payload, prompt);
+  const proposedPatch = toPatch(payload, prompt, policy.scoringWeights);
   const cautions = [...payload.cautions];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
   // null factor weights below the gate, but never trust prose for a safety rule —
@@ -468,8 +487,20 @@ function extractResponseText(payload: unknown): string | undefined {
   return typeof responseText === "string" ? responseText : undefined;
 }
 
-function toPatch(payload: LlmTuningPayload, currentPrompt: string): StrategyTuningPatch {
-  const scoringWeights = pruneNumeric(payload.scoringWeights);
+function toPatch(payload: LlmTuningPayload, currentPrompt: string, currentWeights?: ScoringWeights): StrategyTuningPatch {
+  const rawWeights = pruneNumeric(payload.scoringWeights);
+  // Clamp each proposed weight so the delta from the current weight is bounded to MAX_WEIGHT_STEP
+  // (Phase-7 §3.E / strategic-framework §5: "no more than a 5-point change per factor at a time").
+  // This prevents an LLM from proposing a jump from e.g. 1.4 → 2.5 in a single step.
+  const scoringWeights: Partial<Record<keyof ScoringWeights, number>> = {};
+  for (const [key, proposed] of Object.entries(rawWeights) as [keyof ScoringWeights, number][]) {
+    const current = currentWeights?.[key];
+    if (typeof current === "number") {
+      scoringWeights[key] = round(clamp(proposed, current - MAX_WEIGHT_STEP, current + MAX_WEIGHT_STEP));
+    } else {
+      scoringWeights[key] = proposed;
+    }
+  }
   const policyPatch = prunePolicy(payload.policy);
   const riskRules = pruneNumeric(payload.riskRules);
   return {
@@ -515,6 +546,7 @@ function localRulesProposal(input: {
   latestDecision?: LatestDecisionPayload;
   closedLotCount: number;
   missedOpportunities?: MissedOpportunitySummary;
+  factorScorecard?: FactorScorecardStat[];
 }): StrategyTuningProposal {
   const perf = compactPerformance(input.performance, input.policy.paperMode);
   const weakPerformance = typeof perf?.averageReturnPct === "number" && perf.averageReturnPct < 0;
@@ -528,20 +560,49 @@ function localRulesProposal(input: {
 
   const riskMultiplier = weakPerformance ? 0.8 : 1;
   const maxOrderNotional = Math.max(1, Math.round((input.policy.maxOrderNotional ?? 100) * riskMultiplier));
+
+  // Derive factor-outcome weight nudges: factors with negative avg return get a small downward
+  // nudge (−MAX_WEIGHT_STEP); factors with both positive avg return AND win rate ≥ 60% get a
+  // small upward nudge (+MAX_WEIGHT_STEP). Only applied when the closed-lot gate is satisfied
+  // and the factor has at least 3 trades (thin per-factor buckets shouldn't drive changes).
+  // These nudges override the general weakPerformance deltas for the specific factors they cover.
+  const factorNudges: Partial<Record<MarketFactor, number>> = {};
+  const factorNudgeCautions: string[] = [];
+  if (enoughLotsForWeights && input.factorScorecard && input.factorScorecard.length > 0) {
+    for (const stat of input.factorScorecard) {
+      if (stat.trades < 3) continue;
+      const current = input.policy.scoringWeights[stat.factor as keyof ScoringWeights];
+      if (typeof current !== "number") continue;
+      if (stat.avgReturnPct < 0) {
+        factorNudges[stat.factor as MarketFactor] = round(clamp(current - MAX_WEIGHT_STEP, 0, Infinity));
+        factorNudgeCautions.push(`Factor '${stat.factor}' has negative avg return (${stat.avgReturnPct.toFixed(2)}%) across ${stat.trades} trades — nudging weight down by ${MAX_WEIGHT_STEP}.`);
+      } else if (stat.shrunkWinRate >= 60 && stat.avgReturnPct > 0) {
+        factorNudges[stat.factor as MarketFactor] = round(current + MAX_WEIGHT_STEP);
+        factorNudgeCautions.push(`Factor '${stat.factor}' has strong outcomes (${stat.shrunkWinRate}% win rate, ${stat.avgReturnPct.toFixed(2)}% avg return, ${stat.trades} trades) — nudging weight up by ${MAX_WEIGHT_STEP}.`);
+      }
+    }
+  }
+
   // Only adjust factor weights once the realized sample is large enough to trust;
   // below the gate we still improve the prompt and risk sizing, just not the weights.
+  // Factor-outcome nudges (if any) take precedence over the general weakPerformance adjustment
+  // for the keys they cover; the rest of the general adjustment still applies.
   const scoringWeights: Partial<ScoringWeights> = !enoughLotsForWeights
     ? {}
-    : weakPerformance
-      ? {
-          volatility: round(input.policy.scoringWeights.volatility + 0.2),
-          quality: round(input.policy.scoringWeights.quality + 0.1),
-          momentum: Math.max(0, round(input.policy.scoringWeights.momentum - 0.1))
-        }
-      : {
-          diversification: round(input.policy.scoringWeights.diversification + 0.1),
-          sentiment: round(input.policy.scoringWeights.sentiment + 0.1)
-        };
+    : (() => {
+        const base: Partial<ScoringWeights> = weakPerformance
+          ? {
+              volatility: round(input.policy.scoringWeights.volatility + 0.2),
+              quality: round(input.policy.scoringWeights.quality + 0.1),
+              momentum: Math.max(0, round(input.policy.scoringWeights.momentum - 0.1))
+            }
+          : {
+              diversification: round(input.policy.scoringWeights.diversification + 0.1),
+              sentiment: round(input.policy.scoringWeights.sentiment + 0.1)
+            };
+        // Apply factor nudges on top; they replace any key already set by the base rule.
+        return { ...base, ...factorNudges };
+      })();
 
   return {
     summary: lowSample
@@ -579,7 +640,8 @@ function localRulesProposal(input: {
       ...(lowSample ? ["The trade sample is still small, so avoid overfitting."] : []),
       ...(input.missedOpportunities?.recurringFactor && input.missedOpportunities.recurringFactorCount
         ? [`Missed-opportunity signal: ${input.missedOpportunities.count} skipped name(s) rose; '${input.missedOpportunities.recurringFactor}' was the recurring dominant factor in ${input.missedOpportunities.recurringFactorCount} of them — consider whether scoringWeights under-weight it (subject to the closed-lot gate).`]
-        : [])
+        : []),
+      ...factorNudgeCautions
     ],
     confidenceScore: lowSample ? 45 : weakPerformance ? 65 : 55,
     generatedBy: "local_rules"
