@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude-flaky-lock`): **Fix flaky CI timeout in `approval-lock.test.ts`.** The two tests that let `executeProposal` run its full broker-review path (no broker → retry/backoff > 5s on loaded CI runners) got a 20s per-test timeout; they assert lock behavior, not timing. Stops intermittent `Test timed out in 5000ms` failures that were blocking PR merges. tsc clean, 4/4 pass. See `docs/rollouts/2026-06-21-flaky-approval-lock-timeout.md`.
 - 2026-06-21 (`agent/claude-db-split-v2`): **refactor(db): split db.ts (2964 lines) into 8 focused modules.** Pure mechanical extraction — db.ts retains schema/migration/getDb()/audit() and re-exports all 8 modules as a barrel for zero consumer breakage. Re-derived from current main (supersedes stale PR #46). tsc clean, 704/704 tests green, build green. See `docs/rollouts/2026-06-21-db-split-v2.md`.
 
 
