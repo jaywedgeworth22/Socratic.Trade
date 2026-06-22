@@ -1,4 +1,5 @@
 import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots } from "./db";
+import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
@@ -31,6 +32,10 @@ export interface ClosedLot {
   confidence?: number;
   /** Sector the position was opened in (stamped at fill time), for the sector dimension. */
   sector?: string;
+  /** Max Adverse Excursion (% from entry price, typically negative for longs) persisted after post-mortem. */
+  mae?: number;
+  /** Max Favorable Excursion (% from entry price, typically positive for longs) persisted after post-mortem. */
+  mfe?: number;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -113,13 +118,43 @@ export function recordFillFromProposal(input: {
   const quantityInput = positiveNumber(input.execution?.filledQuantity) ?? positiveNumber(input.proposal.quantity);
   const impliedPrice = quantityInput && notional > 0 ? notional / quantityInput : undefined;
   const reviewPrice = priceFromReview(input.review?.raw);
-  const price =
+  const basePrice =
     positiveNumber(executionPrice) ??
     positiveNumber(proposedPrice) ??
     positiveNumber(marketPrice) ??
     positiveNumber(reviewPrice) ??
     positiveNumber(impliedPrice) ??
     0;
+  // Deterministic execution-cost model for SIMULATED fills (default OFF). Real broker (live) fills
+  // already carry their realized price, so only frictionless paper fills are adjusted — this makes
+  // the learning loop net-of-cost rather than certifying a frictionless edge that won't survive a
+  // live fill. With no env configured this is a no-op (price === basePrice), so existing P&L is
+  // untouched.
+  const costCfg = executionCostConfig();
+  let price = basePrice;
+  if (costCfg.enabled && input.source === "paper" && basePrice > 0) {
+    // bid/ask come from either the trimmed summary or the full candidate; daily volume (for the
+    // sqrt-impact term) is only on the full topCandidates quote. When the symbol isn't a scan
+    // candidate (e.g. an exit of a held name) the impact term is simply omitted.
+    const full = input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+    const summary = input.marketScan?.quotesBySymbol[symbol];
+    const bid = full?.bid ?? summary?.bid;
+    const ask = full?.ask ?? summary?.ask;
+    const spreadBps =
+      typeof bid === "number" && typeof ask === "number" && bid > 0 && ask > 0
+        ? ((ask - bid) / ((ask + bid) / 2)) * 1e4
+        : undefined;
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    const orderNotional = (quantityInput && quantityInput > 0 ? quantityInput * basePrice : notional) || 0;
+    const costBps = estimateExecutionCostBps({
+      spreadBps,
+      orderNotional,
+      dollarVol,
+      baseSlippageBps: costCfg.baseSlippageBps,
+      impactCoeff: costCfg.impactCoeff
+    });
+    price = applyExecutionCost(basePrice, input.proposal.side, costBps);
+  }
   const quantity =
     quantityInput ?? (price > 0 && notional > 0 ? notional / price : 0);
   const finalNotional =
@@ -196,23 +231,42 @@ export function getPaperPortfolioProjection(input: {
     if (fill.quantity <= 0 || fill.price <= 0) continue;
     const symbol = normalizeSymbol(fill.symbol);
     const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
+    const q = current.quantity;
     if (fill.side === "buy" || fill.side === "short") {
+      // Opening side: a `buy` increases quantity (+), a `short` decreases it (-). When the fill
+      // lands on an OPPOSITE-side position it closes that position first (and may flip past zero);
+      // it must NOT blend opposite-side cost into averageCost — averageCost is only re-weighted on
+      // a same-side increase, left intact on a partial opposite-side close, and re-based to the fill
+      // price on a flip. (T5: opposite-side averaging guard.)
       const isShort = fill.side === "short";
-      const quantityChange = isShort ? -fill.quantity : fill.quantity;
+      const dir = isShort ? -1 : 1;
       const fillCost = fill.quantity * fill.price;
-      const currentCost = current.averageCost * Math.abs(current.quantity);
-      const nextQuantity = current.quantity + quantityChange;
+      const nextQuantity = q + dir * fill.quantity;
       const nextAbsQuantity = Math.abs(nextQuantity);
-      
-      const nextAverageCost = nextAbsQuantity > 0 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
-      positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
+      const sameSide = q === 0 || Math.sign(q) === dir;
+      let nextAverageCost: number;
+      if (sameSide) {
+        const currentCost = current.averageCost * Math.abs(q);
+        nextAverageCost = nextAbsQuantity > 0.000001 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
+      } else if (nextAbsQuantity <= 0.000001) {
+        nextAverageCost = 0; // fully closed the opposite-side position
+      } else if (Math.sign(nextQuantity) === Math.sign(q)) {
+        nextAverageCost = current.averageCost; // partial close of the opposite side; remaining basis unchanged
+      } else {
+        nextAverageCost = fill.price; // flipped: the excess opens a fresh position at the fill price
+      }
+      if (nextAbsQuantity <= 0.000001) positions.delete(symbol);
+      else positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
       cash += isShort ? fillCost : -fillCost;
     } else {
+      // Closing side: a `sell` may only reduce a LONG, a `cover` only a SHORT. A wrong-sign or flat
+      // close (sell with no long / cover with no short) matches nothing and is skipped — never deepen
+      // the opposite-side position. (T5: wrong-sign/flat close guard.)
       const isCover = fill.side === "cover";
-      const matchedQuantity = Math.min(Math.abs(current.quantity), fill.quantity);
-      const quantityChange = isCover ? matchedQuantity : -matchedQuantity;
-      const nextQuantity = current.quantity + quantityChange;
-      
+      const sameSide = isCover ? q < 0 : q > 0;
+      if (!sameSide) continue;
+      const matchedQuantity = Math.min(Math.abs(q), fill.quantity);
+      const nextQuantity = q + (isCover ? matchedQuantity : -matchedQuantity);
       if (Math.abs(nextQuantity) <= 0.000001) positions.delete(symbol);
       else positions.set(symbol, { ...current, quantity: nextQuantity });
       cash += isCover ? -matchedQuantity * fill.price : matchedQuantity * fill.price;
@@ -282,19 +336,24 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       continue;
     }
 
+    // A closing fill matches only OPENING lots of the correct side: a "sell" closes
+    // "long" lots, a "cover" closes "short" lots. Select the first SAME-SIDE lot (FIFO)
+    // and skip opposite-side lots — never consume an opposite-side lot at $0 P&L, which
+    // would silently erase a real open position from the books.
+    const wantSide: "long" | "short" = fill.side === "cover" ? "short" : "long";
     let remaining = fill.quantity;
-    while (remaining > 0 && lots.get(symbol)!.length > 0) {
-      const lot = lots.get(symbol)![0];
+    const symbolLots = lots.get(symbol)!;
+    while (remaining > 0) {
+      const idx = symbolLots.findIndex((l) => l.side === wantSide);
+      if (idx === -1) break; // no matching open lot to close against
+      const lot = symbolLots[idx];
       const matched = Math.min(remaining, lot.quantity);
-      let pnl = 0;
-      let returnPct = 0;
-      if (fill.side === "sell" && lot.side === "long") {
-        pnl = matched * (fill.price - lot.price);
-        returnPct = lot.price > 0 ? ((fill.price - lot.price) / lot.price) * 100 : 0;
-      } else if (fill.side === "cover" && lot.side === "short") {
-        pnl = matched * (lot.price - fill.price);
-        returnPct = lot.price > 0 ? ((lot.price - fill.price) / lot.price) * 100 : 0;
-      }
+      const pnl = fill.side === "cover"
+        ? matched * (lot.price - fill.price)
+        : matched * (fill.price - lot.price);
+      const returnPct = lot.price > 0
+        ? (fill.side === "cover" ? (lot.price - fill.price) / lot.price : (fill.price - lot.price) / lot.price) * 100
+        : 0;
       realized += pnl;
       // Attribute the realized outcome to the thesis/regime the lot was *opened* under,
       // and carry entry/exit context for excursion (MAE/MFE) analysis.
@@ -315,7 +374,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       addAttribution(attribution, fill, pnl);
       lot.quantity -= matched;
       remaining -= matched;
-      if (lot.quantity <= 0.000001) lots.get(symbol)!.shift();
+      if (lot.quantity <= 0.000001) symbolLots.splice(idx, 1);
     }
   }
 
@@ -325,7 +384,9 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
     const current = currentPrices[symbol];
     for (const lot of symbolLots) {
       if (Math.abs(lot.quantity) > 0.000001) {
-        openLots.push({ symbol, quantity: lot.quantity, entryPrice: lot.price, side: lot.side, entryAt: lot.entryAt });
+        // Signed quantity: positive for longs, negative for shorts (matches EquityPosition convention)
+        const signedQty = lot.side === "short" ? -lot.quantity : lot.quantity;
+        openLots.push({ symbol, quantity: signedQty, entryPrice: lot.price, side: lot.side, entryAt: lot.entryAt });
       }
       if (!current) continue;
       if (lot.side === "long") {

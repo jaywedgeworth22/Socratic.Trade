@@ -16,7 +16,10 @@ export const BROWSER_UA =
  * Overridable via SEC_EDGAR_USER_AGENT for users who want to use their own contact.
  */
 export function secUserAgent(): string {
-  return resolveApiKey("sec_edgar_user_agent", "local") ?? "RobinhoodAgenticTrading/1.0 (contact: admin@localhost)";
+  return (
+    resolveApiKey("sec_edgar_user_agent", "local") ??
+    "Agentic Trading (personal research; set SEC_EDGAR_USER_AGENT for real contact)"
+  );
 }
 
 export function sleep(ms: number): Promise<void> {

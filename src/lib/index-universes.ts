@@ -169,3 +169,16 @@ export function symbolsForPolicyUniverse(policy: Pick<TradingPolicy, "includedIn
   }
   return Array.from(symbols);
 }
+
+const ALL_VALID_SYMBOLS = new Set<string>([
+  ...SP500_SYMBOLS,
+  ...NASDAQ100_SYMBOLS,
+  ...DOW30_SYMBOLS
+]);
+
+export function isValidAppSymbol(symbol: string): boolean {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return false;
+  return ALL_VALID_SYMBOLS.has(normalized);
+}
+

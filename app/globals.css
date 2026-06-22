@@ -16,11 +16,12 @@
   --line-strong: rgba(203, 211, 221, 0.6);
   --fg: #0f1722;
   --muted: #4f5f70;
-  --faint: #637489;
+  --faint: #55657a;
   --accent: #0e9f6e;
   --accent-fg: #ffffff;
   --up: #0e9f6e;
   --down: #e11d48;
+  --down-fg: #ffffff;
   --warn: #c2740a;
   --info: #2563eb;
   --ring: rgba(14, 159, 110, 0.45);
@@ -43,6 +44,7 @@
   --accent-fg: #04130d;
   --up: #34d399;
   --down: #fb5e74;
+  --down-fg: #2b0a10;
   --warn: #fbbf24;
   --info: #60a5fa;
   --ring: rgba(16, 185, 129, 0.5);
@@ -65,6 +67,7 @@
   --color-accent-fg: var(--accent-fg);
   --color-up: var(--up);
   --color-down: var(--down);
+  --color-down-fg: var(--down-fg);
   --color-warn: var(--warn);
   --color-info: var(--info);
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
@@ -116,16 +119,20 @@ body::before {
     radial-gradient(circle at 85% 15%, color-mix(in oklab, var(--accent) 30%, transparent) 0%, transparent 50%),
     radial-gradient(circle at 15% 85%, color-mix(in oklab, var(--info) 30%, transparent) 0%, transparent 50%);
   animation: orb1 24s ease-in-out infinite;
-  opacity: 0.9;
+  opacity: 0.45; /* subtle in light mode; .dark restores full intensity */
 }
 
 body::after {
   background:
     radial-gradient(circle at 15% 15%, color-mix(in oklab, var(--warn) 15%, transparent) 0%, transparent 40%),
-    radial-gradient(circle at 85% 85%, color-mix(in oklab, var(--down) 15%, transparent) 0%, transparent 40%);
+    radial-gradient(circle at 85% 85%, color-mix(in oklab, var(--info) 12%, transparent) 0%, transparent 40%);
   animation: orb2 28s ease-in-out infinite reverse;
-  opacity: 0.7;
+  opacity: 0.3;
 }
+
+/* Dark mode keeps the vivid mesh; light mode stays calm so cards don't wash out. */
+.dark body::before { opacity: 0.9; }
+.dark body::after { opacity: 0.7; }
 
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -188,4 +195,36 @@ body::after {
 
 .animate-pulse-fast {
   animation: pulse-fast 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Accessibility: honor the OS "reduce motion" setting — stop the perpetual
+   background orbs, skeleton shimmer, and fast pulse. */
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after,
+  .skeleton::after,
+  .animate-pulse-fast {
+    animation: none !important;
+  }
+}
+
+/* iOS Safari auto-zooms the page when a focused form control has font-size < 16px.
+   Below the `sm` breakpoint, force 16px so tapping any input never zooms. */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Safe-area insets: paired with viewport-fit=cover (app/layout.tsx) so content
+   clears the notch / home indicator in landscape on notched devices. env() is
+   0 on devices without insets, so desktop and portrait are unaffected. */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

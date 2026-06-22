@@ -23,6 +23,9 @@ const SOURCE_LABELS: Record<string, string> = {
   "yahoo-finance": "Yahoo Finance",
   "nasdaq-delayed-screener": "Nasdaq",
   "alpaca-quotes": "Alpaca",
+  "alpaca-snapshot": "Alpaca",
+  "alpaca-news": "Alpaca",
+  "massive-vwap": "Massive",
   "broker-quotes": "Broker quotes",
   robinhood: "Robinhood",
   "robinhood-quotes": "Robinhood",
@@ -213,6 +216,9 @@ export function formatNotificationDisplay(
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {
     title = "Strategy Run Failed";
+  } else if (event.type === "proposal_withdrawn") {
+    const expired = stringValue(payload.source) === "expiry";
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
   }
 
   return {

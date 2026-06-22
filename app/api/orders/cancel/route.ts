@@ -2,6 +2,7 @@ import { audit, getPolicy } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
 import { emitDashboardEvent } from "@/lib/events";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const { orderId } = await request.json();
   const userId = resolveRequestUserId(request);
+  const limited = enforceRateLimit(userId, "orders/cancel", RATE_LIMITS.orders);
+  if (limited) return limited;
   const policy = getPolicy(userId);
   if (!policy.accountNumber) return new NextResponse("No selected account.", { status: 400 });
   if (!orderId) return new NextResponse("orderId is required.", { status: 400 });

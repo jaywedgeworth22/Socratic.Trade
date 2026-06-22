@@ -1,22 +1,25 @@
-export const DEFAULT_REQUEST_USER_ID = "local";
-export const REQUEST_USER_ID_HEADER = "x-user-id";
-export const REQUEST_USER_ID_QUERY_PARAM = "userId";
+// Resolve the authenticated app userId for a request.
+//
+// SECURITY: identity is established by `middleware.ts` (verified Cloudflare Access email today; Auth.js
+// next), which forwards a trusted `x-authenticated-user-email` header and strips client-supplied hints.
+// We map that verified email → a stable userId here. We NEVER trust a client-supplied `x-user-id`,
+// `?userId`, or body `userId` — those were the old IDOR vectors. In production, middleware 401s any
+// request that lacks a verified identity, so the dev fallback below is only reachable in dev/test.
 
-interface RequestUserBody {
-  userId?: unknown;
-}
+import { DEV_USER_ID, userIdForEmail } from "./auth/identity";
 
-export function resolveRequestUserId(request: Request, body?: RequestUserBody): string {
-  return (
-    normalizeUserId(request.headers.get(REQUEST_USER_ID_HEADER)) ??
-    normalizeUserId(new URL(request.url).searchParams.get(REQUEST_USER_ID_QUERY_PARAM)) ??
-    normalizeUserId(body?.userId) ??
-    DEFAULT_REQUEST_USER_ID
-  );
-}
+/** Header set by middleware after it verifies identity. Client-supplied copies are stripped by middleware. */
+export const AUTHENTICATED_EMAIL_HEADER = "x-authenticated-user-email";
 
-function normalizeUserId(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+/** Back-compat: the dev/test fallback identity. */
+export const DEFAULT_REQUEST_USER_ID = DEV_USER_ID;
+
+/**
+ * The trusted userId for this request. `_body` is accepted for call-site compatibility but ignored — body
+ * `userId` is no longer an identity source.
+ */
+export function resolveRequestUserId(request: Request, _body?: unknown): string {
+  const email = request.headers.get(AUTHENTICATED_EMAIL_HEADER);
+  if (email && email.includes("@")) return userIdForEmail(email);
+  return DEV_USER_ID;
 }

@@ -99,14 +99,17 @@ describe("persistence and notifications", () => {
       label: "Alpaca Test",
       apiKey: "key-123",
       apiSecret: "secret-456",
+      baseUrl: "https://paper-api.alpaca.markets/v2",
       isActive: true
     });
 
     const listed = listConnectedAccounts().find((account) => account.id === accountId);
     expect(listed?.apiKey).toBeUndefined();
     expect(listed?.apiSecret).toBeUndefined();
+    expect(listed?.baseUrl).toBe("https://paper-api.alpaca.markets/v2");
     expect(getActiveConnectedAccount()?.apiKey).toBe("key-123");
     expect(getActiveConnectedAccount()?.apiSecret).toBe("secret-456");
+    expect(getActiveConnectedAccount()?.baseUrl).toBe("https://paper-api.alpaca.markets/v2");
 
     upsertConnectedAccount({
       id: accountId,
@@ -115,13 +118,16 @@ describe("persistence and notifications", () => {
       environment: "paper",
       accountNumber: "PA-TEST",
       label: "Renamed Alpaca",
+      baseUrl: "https://paper-api.alpaca.markets/v2",
       isActive: true
     });
 
     expect(getActiveConnectedAccount()?.label).toBe("Renamed Alpaca");
     expect(getActiveConnectedAccount()?.apiKey).toBe("key-123");
+    expect(getActiveConnectedAccount()?.baseUrl).toBe("https://paper-api.alpaca.markets/v2");
     expect(() => setActiveConnectedAccount("missing-account")).toThrow("Connected account not found.");
     expect(getActiveConnectedAccount()?.id).toBe(accountId);
+
   });
 
   it("keeps active broker paper account separate from the Test policy toggle", async () => {
@@ -236,6 +242,80 @@ describe("persistence and notifications", () => {
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
     }
   }, 15_000);
+
+  it("records a pre-run portfolio snapshot before any proposals execute", async () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    // No OpenAI key → proposeTrades uses fallback (no network call) → run completes as a
+    // no-op. We just need to verify a snapshot was written with the run's runId.
+    delete process.env.OPENAI_API_KEY;
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("nasdaq.com")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-06-21",
+              table: {
+                rows: [
+                  {
+                    symbol: "AAPL",
+                    lastsale: "$200",
+                    pctchange: "1%",
+                    volume: "1000000",
+                    marketCap: "3000000000000",
+                    sector: "Technology",
+                    industry: "Consumer Electronics"
+                  }
+                ]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      const { listPortfolioSnapshots, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
+      const { runStrategyOnce } = await import("../src/lib/strategy");
+
+      const mockAccountId = randomUUID();
+      // The test broker's getAccounts() always returns accountNumber "TEST", so the policy
+      // must also reference "TEST" for the account-selection check to pass.
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "test",
+        environment: "paper",
+        accountNumber: "TEST",
+        label: "Pre-Snapshot Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+      setPolicy({
+        ...DEFAULT_POLICY,
+        systemState: "active",
+        paperMode: true,
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        strategyAuthority: "decide"
+      });
+
+      const snapshotsBefore = listPortfolioSnapshots("TEST").length;
+      const result = await runStrategyOnce();
+      expect(result.status).toBe("completed");
+      // After the run, at least two snapshots must exist (pre-run + post-run).
+      const snapshotsAfter = listPortfolioSnapshots("TEST");
+      expect(snapshotsAfter.length).toBeGreaterThan(snapshotsBefore);
+      // The pre-run snapshot is the first snapshot written for this runId.
+      const runSnapshots = snapshotsAfter.filter((s) => s.runId === result.runId);
+      expect(runSnapshots.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
+    }
+  }, 20_000);
 
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
@@ -368,4 +448,27 @@ describe("persistence and notifications", () => {
     expect(event.status).toBe("sent");
     expect(event.webhookUrl).toBe("https://example.test/webhook");
   });
+
+  it("sanitizes custom Alpaca baseUrl and instantiates client correctly", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    const userId = `alpaca-base-url-user-${randomUUID()}`;
+    const accountId = randomUUID();
+
+    upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-URL-TEST",
+      label: "Custom Alpaca",
+      apiKey: "PK-KEY",
+      baseUrl: "https://custom-alpaca-endpoint.com/v2/",
+      isActive: true
+    });
+
+    const gateway1 = getAlpacaGateway(userId);
+    expect(((gateway1 as any).alpaca).configuration.baseUrl).toBe("https://custom-alpaca-endpoint.com");
+  });
 });
+

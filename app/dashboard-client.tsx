@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ExternalLink,
   Gauge,
+  HelpCircle,
   Hourglass,
   Info,
   KeyRound,
@@ -40,18 +41,18 @@ import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { deriveMetrics } from "@/lib/derived-metrics";
 import { deriveExecutionState, type ExecutionState } from "@/lib/execution-mode";
 import {
-  cellTitle,
   companyTitle,
   enrichPositionsForDisplay,
   formatNotificationDisplay,
   formatShareQuantity,
+  friendlySource,
   quoteTitle,
   ratingTitle,
   receivedLabel,
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
-import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse } from "@/lib/index-universes";
+import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse, isValidAppSymbol } from "@/lib/index-universes";
 import { DEFAULT_TICKER_LOGO_DISPLAY, isTickerLogoDisplay } from "@/lib/ticker-logos";
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import type {
@@ -63,17 +64,20 @@ import type {
   ScoringWeights,
   StrategyTuningProposal,
   TradingPolicy,
-  TradeProposal
+  TradeProposal,
+  ConnectedAccount
 } from "@/lib/types";
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
-import { compactMoney, compactNum, formatPct, money, signedMoney } from "./dashboard-widgets";
+import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
+import { AssistantView } from "./ui/assistant-console";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
+import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
 import {
   Button,
   Card,
@@ -90,11 +94,12 @@ import {
   inputClass
 } from "./ui/primitives";
 import { ThemeToggle } from "./ui/theme";
+import { CommandPalette, type Command } from "./ui/command-palette";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "market" | "macro" | "performance" | "tax" | "strategy";
-type FeedTab = "activity" | "runs" | "notifications";
+type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
+type FeedTab = "activity" | "runs" | "notifications" | "audit";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
@@ -127,12 +132,6 @@ function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
 
 function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
   return deriveExecutionState(snapshot.policy, activeConnectedAccountFor(snapshot));
-}
-
-function executionTone(state: ExecutionState): "info" | "up" | "down" {
-  if (state.mode === "broker/live") return "down";
-  if (state.mode === "broker/paper") return "up";
-  return "info";
 }
 
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
@@ -194,6 +193,98 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
+// ── Shared market-data pool consent gate ─────────────────────────────────
+
+type ConsentGateState = "loading" | "needed" | "done";
+
+function ConsentGate({ onResolved }: { onResolved: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+
+  async function respond(accepted: boolean) {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await fetch("/api/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accepted })
+      });
+    } catch {
+      /* best-effort — proceed regardless of network error */
+    }
+    onResolved();
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consent-title"
+      aria-describedby="consent-body"
+      className="fixed inset-0 z-[2000] flex items-center justify-center p-4"
+    >
+      {/* Opaque backdrop — blocks all interaction beneath */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[3px]" />
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <Network size={18} />
+          </span>
+          <div>
+            <h2 id="consent-title" className="text-base font-semibold text-fg">
+              Shared market-data pool
+            </h2>
+            <p className="mt-0.5 text-xs text-muted">One-time choice — can be changed later in Settings</p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div id="consent-body" className="space-y-3 text-sm leading-relaxed text-muted">
+          <p>
+            When enabled, general market data you pull through your own API keys or broker MCP —
+            quotes, fundamentals, price history, and news — is contributed to a shared cache
+            that other consenting users can read. In return, you read data others have contributed,
+            reducing API spend and enriching everyone&apos;s market view.
+          </p>
+          <p>
+            <strong className="font-semibold text-fg">Your personal account data is never shared.</strong>{" "}
+            Positions, orders, balances, P&amp;L, and credentials remain strictly private and never
+            leave your device.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void respond(false)}
+            className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            Decline
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void respond(true)}
+            className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50"
+          >
+            {submitting ? "Saving…" : "Agree & Continue"}
+          </button>
+        </div>
+
+        {/* Muted reassurance */}
+        <p className="text-[11px] text-faint text-center">
+          You can enable or disable pooling at any time under Settings → Data.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
@@ -204,8 +295,30 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [learnedQueueOpen, setLearnedQueueOpen] = useState(false);
+  const [learnedQueueCount, setLearnedQueueCount] = useState(0);
+
+  // Consent gate: "loading" → fetch in progress; "needed" → show modal; "done" → clear
+  const [consentGate, setConsentGate] = useState<ConsentGateState>("loading");
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/consent")
+      .then((r) => (r.ok ? (r.json() as Promise<{ needsConsent: boolean }>) : null))
+      .then((data) => {
+        if (cancelled) return;
+        setConsentGate(data?.needsConsent === true ? "needed" : "done");
+      })
+      .catch(() => {
+        // Network error: don't block the app — skip the gate
+        if (!cancelled) setConsentGate("done");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const [killConfirm, setKillConfirm] = useState(false);
+  const [decideConfirm, setDecideConfirm] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
   // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
@@ -275,14 +388,43 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     };
     for (const type of ["run-complete", "order", "proposal", "dirty"]) es.addEventListener(type, refresh);
     es.addEventListener("market-data", refreshMarketData);
+    // Refresh the pending-learned badge when a new pending item is queued server-side
+    es.addEventListener("pending-learned-change", () => {
+      void fetch("/api/learned-context/pending", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+        .then((data) => { setLearnedQueueCount(data.filter((i) => i.status === "pending").length); })
+        .catch(() => { /* badge stays as-is on error */ });
+    });
     es.onerror = () => {
       // The browser auto-reconnects EventSource; the fallback poll covers any gap.
     };
     return () => es.close();
   }, []);
 
-  // Command K is temporarily disabled per user request
-  // (Shortcut logic was removed from here)
+  // Seed the learned-context queue badge count on mount so the button is visible immediately
+  // if there are pending items, without waiting for the user to open the SlideOver.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/learned-context/pending", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<Array<{ status: string }>>) : []))
+      .then((data) => {
+        if (!cancelled) setLearnedQueueCount(data.filter((i) => i.status === "pending").length);
+      })
+      .catch(() => { /* badge stays at 0 on error */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // ⌘K / Ctrl-K command palette
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   async function load(options: { quiet?: boolean } = {}) {
     if (!options.quiet) setBusy(true);
@@ -471,7 +613,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const pendingCount = snapshot.pendingProposals.length;
   const setupBlocked = Boolean(enableBlockedReason);
   const autonomyStatus = policy.systemState === "halted"
-    ? { tone: "down" as const, label: "Halted" }
+    ? { tone: "down" as const, label: "Inactive" }
     : policy.systemState === "active" && setupBlocked
       ? { tone: "warn" as const, label: "Setup Needed" }
     : policy.systemState === "active"
@@ -499,146 +641,201 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 
 
   const safetyBanner = executionBanner(executionState);
+
+  const paletteCommands: Command[] = [
+    { id: "tab-decision", label: "Go to Decision", hint: "Decision tab", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
+    { id: "tab-assistant", label: "Go to Assistant", hint: "Assistant tab", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("assistant") },
+    { id: "tab-market", label: "Go to Market Scan", hint: "Market tab", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
+    { id: "tab-macro", label: "Go to Macro", hint: "Macro tab", icon: <Network size={15} />, run: () => setWorkspaceTab("macro") },
+    { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
+    { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={15} />, run: () => setWorkspaceTab("strategy") },
+    { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
+    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
+    { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
+    { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
+    { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
+    { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
+    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
+    { id: "refresh", label: "Refresh dashboard", icon: <RefreshCw size={15} />, run: () => void load() },
+  ];
+
   return (
-    <div className="flex min-h-dvh flex-col overflow-x-hidden xl:h-dvh xl:overflow-hidden">
+    <div className="flex min-h-dvh flex-col overflow-x-hidden lg:h-dvh lg:overflow-hidden">
+      {/* ── ⌘K Command Palette ──────────────────────────────────────── */}
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={paletteCommands} />
+      {/* ── Shared market-data pool consent gate (blocking until answered) ── */}
+      {consentGate === "needed" && (
+        <ConsentGate onResolved={() => setConsentGate("done")} />
+      )}
       {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
-        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide", safetyBanner.className)}
+        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide", safetyBanner.className)}
         title={executionState.clarification}
       >
         {safetyBanner.text}
       </div>
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md xl:h-14 xl:flex-nowrap xl:px-4 xl:py-0">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
-            <Zap size={17} className="fill-current" />
-          </span>
-          <div className="leading-tight">
-            <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
-            <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
-                {autonomyStatus.label}
-              </div>
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={marketStatus.tone} />
-                {marketStatus.label}
-              </div>
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Dot tone={executionTone(executionState)} />
-                <span title={executionState.clarification}>{executionState.label} Mode</span>
+      <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:py-0 xl:px-4">
+        {/* Left Side: Logo, Title, Status, and Pills */}
+        <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-3 w-full xl:w-auto xl:justify-start xl:gap-4">
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Zap size={17} className="fill-current" />
+            </span>
+            <div className="leading-tight">
+              <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
+              <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
+                  {autonomyStatus.label}
+                </div>
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  <Dot tone={marketStatus.tone} />
+                  {marketStatus.label}
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="ml-2 hidden items-center gap-2 lg:flex">
-          <StatusPill label="Universe" value={universeLabelText} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
-          <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
-        </div>
-
-        <div className="ml-0 flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:ml-auto">
-          <div
-            className="hidden items-center gap-1.5 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2.5 py-1 md:flex"
-            title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
-          >
-            <span className="text-xs font-medium text-muted">Mode</span>
-            <select
-              className="bg-transparent text-xs font-medium text-fg outline-none"
-              value={policy.strategyAuthority}
-              onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}
-            >
-              <option value="propose">Propose → you approve</option>
-              <option value="decide">Decide → auto-executes</option>
-            </select>
-          </div>
           <div className="flex items-center gap-2">
-            <select
-              className="h-9 max-w-[13rem] rounded-lg border border-line bg-surface/50 px-2.5 text-sm font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-none"
-              value={policy.connectedAccountId ?? ""}
-              onChange={(e) => {
-                const id = e.target.value;
-                if (id === "manage") {
-                  setAccountsOpen(true);
+            <StatusPill label="Universe" value={universeLabelText} title="The set of symbols the agent is allowed to trade (Settings → Operate)." />
+            <DailyRiskPill pct={dailyNotionalPct} used={dailyStats.notional} cap={policy.maxDailyNotional ?? 0} />
+          </div>
+        </div>
+
+        {/* Right Side: Selects, Utilities, Actions */}
+        <div className="flex flex-col gap-2.5 w-full lg:flex-row lg:items-center lg:justify-end xl:w-auto xl:flex-nowrap xl:gap-3">
+          {/* Sub-container 1: Selects and Utility tools */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
+            <div
+              className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
+              title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
+            >
+              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
+              <select
+                aria-label="Approval mode"
+                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
+                value={policy.strategyAuthority}
+                onChange={(e) => {
+                  const next = e.target.value as TradingPolicy["strategyAuthority"];
+                  if (next === "decide" && policy.strategyAuthority !== "decide") {
+                    setDecideConfirm(true);
+                  } else {
+                    void updatePolicy({ strategyAuthority: next });
+                  }
+                }}
+              >
+                <option value="propose">Propose → you approve</option>
+                <option value="decide">Decide → auto-executes</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5 lg:gap-2">
+              <select
+                aria-label="Active account"
+                className="h-8 max-sm:h-11 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
+                value={policy.connectedAccountId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (id === "manage") {
+                    setAccountsOpen(true);
+                    return;
+                  }
+                  void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                }}
+              >
+                <option value="" disabled>Select Account...</option>
+                {snapshot.connectedAccounts?.map(acc => (
+                  <option key={acc.id} value={acc.id}>{acc.broker === "test" ? acc.label : `${acc.label} (${acc.environment})`}</option>
+                ))}
+                <option value="manage">Manage Accounts...</option>
+              </select>
+            </div>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Refresh" onClick={() => load()} disabled={busy}>
+              <RefreshCw size={15} className={cn(busy && "animate-spin")} />
+            </IconButton>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => setSettingsOpen(true)}>
+              <SettingsIcon size={15} />
+            </IconButton>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Help" onClick={() => setHelpOpen(true)}>
+              <HelpCircle size={15} />
+            </IconButton>
+            <ThemeToggle />
+          </div>
+
+          {/* Sub-container 2: Action buttons */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
+            <button
+              onClick={() => setFeedOpen(true)}
+              aria-label={pendingCount > 0 ? `Activity — ${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}` : "Activity"}
+              className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
+            >
+              <ActivityIcon size={15} /> <span className="hidden sm:inline">Activity</span>
+              {pendingCount > 0 && (
+                <span aria-live="polite" className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+            <LearnedContextQueueBadge
+              count={learnedQueueCount}
+              onClick={() => setLearnedQueueOpen(true)}
+            />
+            <Button
+              variant="ghost"
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              onClick={() => setNodeEditorOpen(true)}
+            >
+              <Network size={15} /> <span className="hidden sm:inline">Flow</span>
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              onClick={() => setStudioOpen(true)}
+            >
+              <BrainCircuit size={15} /> <span className="hidden sm:inline">Strategy</span>
+            </Button>
+            <Button
+              variant={enableBlockedReason ? "ghost" : "primary"}
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              title={enableBlockedReason}
+              onClick={() => {
+                if (enableBlockedReason) {
+                  routeSetupBlocker(enableBlockedReason);
                   return;
                 }
-                void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                void runStrategy();
+              }}
+              disabled={busy}
+            >
+              <Zap size={15} /> <span className="hidden sm:inline">Run once</span>
+            </Button>
+            <Button
+              variant={policy.systemState === "halted" ? "primary" : "danger"}
+              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
+              onClick={() => {
+                if (policy.systemState === "halted" && enableBlockedReason) {
+                  routeSetupBlocker(enableBlockedReason);
+                  return;
+                }
+                setKillConfirm(true);
               }}
             >
-              <option value="" disabled>Select Account...</option>
-              {snapshot.connectedAccounts?.map(acc => (
-                <option key={acc.id} value={acc.id}>{acc.broker === "test" ? acc.label : `${acc.label} (${acc.environment})`}</option>
-              ))}
-              <option value="manage">Manage Accounts...</option>
-            </select>
+              {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />}{" "}
+              <span className="hidden sm:inline">{policy.systemState === "halted" ? "Start" : "Stop"}</span>
+            </Button>
           </div>
-          <IconButton label="Refresh" onClick={() => load()} disabled={busy}>
-            <RefreshCw size={15} className={cn(busy && "animate-spin")} />
-          </IconButton>
-          <button
-            onClick={() => setFeedOpen(true)}
-            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-3 text-sm font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50"
-          >
-            <ActivityIcon size={15} /> Activity
-            {pendingCount > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => setNodeEditorOpen(true)}>
-            <Network size={15} /> Flow
-          </Button>
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => setStudioOpen(true)}>
-            <BrainCircuit size={15} /> Strategy
-          </Button>
-          <IconButton label="Settings" onClick={() => setSettingsOpen(true)}>
-            <SettingsIcon size={15} />
-          </IconButton>
-          <ThemeToggle />
-          <Button
-            variant={enableBlockedReason ? "ghost" : "primary"}
-            size="sm"
-            className="h-9"
-            title={enableBlockedReason}
-            onClick={() => {
-              if (enableBlockedReason) {
-                routeSetupBlocker(enableBlockedReason);
-                return;
-              }
-              void runStrategy();
-            }}
-            disabled={busy}
-          >
-            <Zap size={15} /> Run once
-          </Button>
-          <Button
-            variant={policy.systemState === "halted" ? "primary" : "danger"}
-            size="sm"
-            className="h-9"
-            title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
-            onClick={() => {
-              if (policy.systemState === "halted" && enableBlockedReason) {
-                routeSetupBlocker(enableBlockedReason);
-                return;
-              }
-              setKillConfirm(true);
-            }}
-          >
-            {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />} {policy.systemState === "halted" ? "Start" : "Stop"}
-          </Button>
         </div>
       </header>
 
       {/* ── Body grid ───────────────────────────────────────────── */}
-      <div className="grid flex-1 grid-cols-1 gap-3 p-3 xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 xl:block">
+      <div className="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="hidden min-h-0 lg:block">
           <PortfolioRail snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
         </aside>
 
-        <main className="flex min-w-0 flex-col gap-3 xl:min-h-0">
-          <div className="xl:hidden">
+        <main className="flex min-w-0 flex-col gap-3 lg:min-h-0">
+          <div className="lg:hidden">
             <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
           <div className="flex min-w-0 items-center justify-between overflow-x-auto">
@@ -647,6 +844,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               onChange={setWorkspaceTab}
               tabs={[
                 { id: "decision", label: "Decision" },
+                { id: "assistant", label: "Assistant" },
                 { id: "market", label: "Market Scan" },
                 { id: "macro", label: "Macro" },
                 { id: "performance", label: "Performance" },
@@ -661,7 +859,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-visible xl:overflow-auto">
+          <div
+            role="tabpanel"
+            id={`tabpanel-${workspaceTab}`}
+            aria-labelledby={`tab-${workspaceTab}`}
+            tabIndex={0}
+            className="min-h-0 flex-1 overflow-visible lg:overflow-auto"
+          >
             {workspaceTab === "decision" && (
               <DecisionView
                 snapshot={snapshot}
@@ -671,17 +875,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 reject={rejectProposal}
                 scan={drilldownScan}
                 onDrilldown={setDrilldownSymbol}
+                tickerLogoDisplay={tickerLogoDisplay}
               />
+            )}
+            {workspaceTab === "assistant" && (
+              <AssistantView executionState={executionStateFor(snapshot)} approveProposal={approveProposal} rejectProposal={rejectProposal} />
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
                 <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} tickerLogoDisplay={tickerLogoDisplay} />
-                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />
+                <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
             {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
-            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
+            {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "strategy" && (
               <StrategyView
                 snapshot={snapshot}
@@ -719,7 +927,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             tabs={[
               { id: "activity", label: "Activity" },
               { id: "runs", label: "Runs" },
-              { id: "notifications", label: "Notifications" }
+              { id: "notifications", label: "Notifications" },
+              { id: "audit", label: "Audit Log" }
             ]}
           />
         </div>
@@ -727,12 +936,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           {feedTab === "activity" && <ActivityFeed snapshot={snapshot} />}
           {feedTab === "runs" && <RunHistory snapshot={snapshot} />}
           {feedTab === "notifications" && <NotificationsList snapshot={snapshot} />}
+          {feedTab === "audit" && <AuditLog snapshot={snapshot} />}
         </div>
       </SlideOver>
 
       <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
         {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
       </SlideOver>
+
+      <LearnedContextQueue
+        open={learnedQueueOpen}
+        onClose={() => setLearnedQueueOpen(false)}
+        onCountChange={setLearnedQueueCount}
+      />
 
       <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
         <div className="h-full w-full">
@@ -758,7 +974,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, tax & notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, Tax, & Notifications" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -771,11 +987,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           setTickerLogoDisplay={updateTickerLogoDisplay}
           openAccounts={() => setAccountsOpen(true)}
           load={load}
+          onRequestDecideConfirm={() => setDecideConfirm(true)}
         />
       </Modal>
 
       <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect and switch supported accounts" icon={<Wallet size={18} />} size="lg">
-        <IntegrationsSection accounts={snapshot.connectedAccounts || []} onSaved={load} />
+        <IntegrationsSection accounts={snapshot.connectedAccounts || []} policy={policy} onSaved={load} />
+      </Modal>
+
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="Safety limits, tax logic, pricing & MCP" icon={<HelpCircle size={18} />} size="lg">
+        <HelpContent policy={policy} snapshot={snapshot} />
       </Modal>
 
       <ConfirmModal
@@ -794,6 +1015,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         confirmLabel={policy.systemState === "halted" ? "Start" : "Stop"}
         tone={policy.systemState === "halted" ? "primary" : "danger"}
       />
+
+      <ConfirmModal
+        open={decideConfirm}
+        onClose={() => setDecideConfirm(false)}
+        onConfirm={() => {
+          setDecideConfirm(false);
+          void updatePolicy({ strategyAuthority: "decide" });
+        }}
+        title="Enable autonomous execution?"
+        body="Decide mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
+        confirmLabel="Enable auto-execute"
+        tone="danger"
+      />
     </div>
   );
 }
@@ -803,7 +1037,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 function StatusPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={title}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">{label}</span>
       <span className="tnum text-[13px] leading-tight text-fg">{value}</span>
     </div>
   );
@@ -814,7 +1048,7 @@ function DailyRiskPill({ pct, used, cap }: { pct: number; used: number; cap: num
   const bar = tone === "down" ? "bg-down" : tone === "warn" ? "bg-warn" : "bg-accent";
   return (
     <div className="flex flex-col rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-3 py-1" title={`${money(used)} of ${money(cap)} daily volume limit used`}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">Daily volume</span>
       <div className="flex items-center gap-1.5">
         <span className="tnum text-[13px] leading-tight text-fg">{pct}%</span>
         <span className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-3/50 backdrop-blur-md">
@@ -842,7 +1076,7 @@ function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: Dashb
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
-          <p className="text-xs text-faint">{modeLabel} account</p>
+          <p className="text-xs text-faint">{getPortfolioAccountSubtitle(snapshot)}</p>
         </div>
         <Chip tone={mode === "paper" ? "info" : modeLabel === "Paper" ? "up" : "down"}>{modeLabel}</Chip>
       </div>
@@ -896,12 +1130,20 @@ function PortfolioRail({
 
   const enriched = enrichPositionsForDisplay(positions, total).sort((a, b) => b.marketValue - a.marketValue);
 
+  // Portfolio balances come from the active *broker* account (its API). Attribute Value/P&L to that
+  // broker + the account's last-synced time — but ONLY for a real broker. In Test mode (local
+  // simulation) there is no upstream provider, so we leave the plain label rather than invent one.
+  const activeAcc = activeConnectedAccountFor(snapshot);
+  const brokerSource = activeAcc && activeAcc.broker !== "test" ? activeAcc.broker : undefined;
+  const brokerAsOf = brokerSource ? activeAcc?.updatedAt : undefined;
+  const valueTitle = brokerSource ? dataPointTitle("Account value", brokerSource, brokerAsOf) : undefined;
+
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <PanelHeader title="Portfolio" subtitle={`${modeLabel} account`} icon={<Wallet size={16} />} />
+      <PanelHeader title="Portfolio" subtitle={getPortfolioAccountSubtitle(snapshot)} icon={<Wallet size={16} />} />
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
-        <StatTile label="Value" value={money(total)} />
-        <StatTile label="P&L" value={signedMoney(dayPnl)} tone={dayPnl >= 0 ? "up" : "down"} />
+        <StatTile label="Value" value={money(total)} title={valueTitle} />
+        <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
       </div>
       <div className="px-4 py-3">
         {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No allocation yet" />}
@@ -926,7 +1168,7 @@ function PortfolioRail({
                     <div className="tnum text-[11px] text-faint">{formatShareQuantity(p.quantity, p.symbol)} sh · {p.allocPct.toFixed(1)}%</div>
                   </td>
                   <td className="px-2 py-1.5 text-right tnum text-fg">{money(p.marketValue)}</td>
-                  <td className={cn("px-2 py-1.5 text-right tnum", p.pnl >= 0 ? "text-up" : "text-down")}>
+                  <td className={cn("px-2 py-1.5 text-right tnum", p.pnl > 0 ? "text-up" : p.pnl < 0 ? "text-down" : "text-fg")}>
                     <div>{signedMoney(p.pnl)}</div>
                     <div className="text-[11px]">{formatPct(p.returnPct)}</div>
                   </td>
@@ -1035,7 +1277,8 @@ function DecisionView({
   approve,
   reject,
   scan,
-  onDrilldown
+  onDrilldown,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
@@ -1044,33 +1287,56 @@ function DecisionView({
   reject: (id: string) => void;
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const decision = snapshot.latestStrategyRun;
   const pending = snapshot.pendingProposals;
   return (
     <div className="space-y-3">
+      {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
+        <Card className="overflow-hidden">
+          <PanelHeader title="Pending approval" subtitle="No proposals awaiting review" icon={<CheckCircle size={16} />} />
+          <EmptyState icon={<CheckCircle size={18} />} title="All clear — no pending approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
+        </Card>
+      )}
       {pending.length > 0 && (
         <Card className="overflow-hidden">
           <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
-            {pending.map((p) => (
-              <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                <div className="flex items-center gap-2">
-                  <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
-                  <SymbolButton symbol={p.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="text-base font-semibold text-fg" title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)} />
-                  <span className="ml-auto tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
+            {pending.map((p) => {
+              const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              return (
+                <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
+                  {accountLabel && (
+                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
+                      {accountLabel}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
+                    <SymbolButton
+                      symbol={p.proposal.symbol}
+                      scan={scan}
+                      onDrilldown={onDrilldown}
+                      className="text-base font-semibold text-fg"
+                      title={companyTitle(p.proposal.symbol, symbolMetaBySymbol)}
+                      logoDisplay={tickerLogoDisplay}
+                      showLogo
+                    />
+                    <span className="ml-auto tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-fg/85" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                  <div className="mt-3 flex gap-2">
+                    <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
+                      <Check size={14} /> Approve
+                    </Button>
+                    <Button variant="ghost" size="sm" className="flex-1" disabled={busy} onClick={() => reject(p.id)}>
+                      <XCircle size={14} /> Reject
+                    </Button>
+                  </div>
                 </div>
-                <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-muted" title={p.proposal.rationale}>{p.proposal.rationale}</p>
-                <div className="mt-3 flex gap-2">
-                  <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
-                    <Check size={14} /> Approve
-                  </Button>
-                  <Button variant="ghost" size="sm" className="flex-1" disabled={busy} onClick={() => reject(p.id)}>
-                    <XCircle size={14} /> Reject
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}
@@ -1082,25 +1348,51 @@ function DecisionView({
           icon={<Sparkles size={16} />}
         />
         {!decision ? (
-          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Choose an account and tradable universe, then use Run to generate the agent's first decision." />
+          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
-            <div className={cn("rounded-xl border px-3 py-2 text-[13px]", decision.status === "failed" ? "border-down/30 bg-down/10 text-down" : "border-info/25 bg-info/10 text-fg")}>
+            <div className={cn("rounded-xl border px-3 py-2 text-[13px]",
+              decision.status !== "failed"
+                ? "border-info/25 bg-info/10 text-fg"
+                : /no account|account selected|no symbols|universe is empty|empty universe/i.test(decision.summary || "")
+                  ? "border-warn/30 bg-warn/10 text-warn"
+                  : "border-down/30 bg-down/10 text-down")}>
               {decision.summary}
             </div>
-            {decision.proposals.map((item, i) => (
-              <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
-                  <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
-                  <SymbolButton symbol={item.proposal.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)} />
-                  <span className="tnum text-xs text-muted" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
-                  {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
+            {decision.proposals.map((item, i) => {
+              const accountLabel = getProposalAccountLabel(decision.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              return (
+                <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
+                  {accountLabel && (
+                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
+                      {accountLabel}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {item.status === "paper" ? (
+                      <span className="text-xs font-bold text-muted uppercase tracking-wider">TEST</span>
+                    ) : (
+                      <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
+                    )}
+                    <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
+                    <SymbolButton
+                      symbol={item.proposal.symbol}
+                      scan={scan}
+                      onDrilldown={onDrilldown}
+                      className="font-semibold text-fg"
+                      title={companyTitle(item.proposal.symbol, symbolMetaBySymbol)}
+                      logoDisplay={tickerLogoDisplay}
+                      showLogo
+                    />
+                    <span className="tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
+                    {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
+                  </div>
+                  <p className="mt-2 text-[13px] leading-snug text-fg/85">{item.proposal.rationale}</p>
+                  {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
                 </div>
-                <p className="mt-2 text-[13px] leading-snug text-muted">{item.proposal.rationale}</p>
-                {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
-              </div>
-            ))}
+              );
+            })}
+            <p className="text-[11px] text-faint">Automated, for this single owner account — not investment advice. Past performance is not indicative of future results.</p>
           </div>
         )}
       </Card>
@@ -1111,6 +1403,21 @@ function DecisionView({
 /* ───────────────────────── Market scan view ───────────────────────── */
 
 const DASH = <span className="text-faint">—</span>;
+
+// Sticky-right treatment for the Score "verdict" column (header + body cells). `right-0` pins it
+// to the right edge of the horizontally-scrolling table; the solid `--bg` base (theme-reactive in
+// light/dark) keeps it opaque so scrolled cells don't show through the table's translucent
+// `--surface` tints; the left border + shadow separate the pinned cell from the content sliding
+// under it. `z-[1]` keeps the pinned column above its scrolling row siblings without fighting the
+// header's own stacking.
+//
+// Hover: the row's translucent `hover:bg-surface-2/50` can't show through this cell's opaque base,
+// so we re-create the highlight as an OPAQUE composite — `--surface-2` layered over `--bg` via a
+// background-image gradient — applied on the row's `group` hover. This keeps the pinned cell in
+// sync with its row's highlight while never going see-through (so scrolled cells never bleed in).
+const SCAN_PINNED_RIGHT_CLASS =
+  "sticky right-0 z-[1] bg-[var(--bg)] border-l border-line shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.18)] " +
+  "group-hover:bg-[linear-gradient(var(--surface-2),var(--surface-2)),linear-gradient(var(--bg),var(--bg))]";
 
 type ScanColumn = {
   id: string;
@@ -1138,10 +1445,52 @@ function vwapDeltaPct(q: MarketQuote): number | undefined {
   return ((q.price - q.vwap) / q.vwap) * 100;
 }
 
+/**
+ * Shared "what is this data point, where did it come from, and when did it arrive?" tooltip.
+ * Returns the label on its own, then `Source: <pretty provider>` when a source is known, then
+ * the human "Received HH:MM" stamp when an `asOf` timestamp is known — each on its own line.
+ * Source attribution must be the *specific field's* provider (e.g. `quote.sources?.peRatio`),
+ * never a fabricated or quote-level provider. With no source and no time it is just the label.
+ */
+function dataPointTitle(label: string, source?: string, asOf?: string): string {
+  const parts = [label];
+  if (source) parts.push(`Source: ${friendlySource(source)}`);
+  const received = receivedLabel(asOf);
+  if (received) parts.push(received);
+  return parts.join("\n");
+}
+
+/**
+ * Tooltip for a DERIVED/[CALCULATED] column: keep the column's existing methodology blurb,
+ * then append "Computed from <input fields> · Received HH:MM". Attribution is to the INPUT
+ * fields' own providers (gathered honestly from `quote.sources`) — we never invent a provider
+ * for a value no upstream API emitted. The provider line is only shown when at least one input
+ * field actually has a recorded source.
+ */
+function derivedTitle(
+  explanation: string,
+  inputs: string,
+  q: MarketQuote,
+  sourceFields: Array<keyof NonNullable<MarketQuote["sources"]>>
+): string {
+  const providers = Array.from(
+    new Set(
+      sourceFields
+        .map((field) => q.sources?.[field])
+        .filter((value): value is string => Boolean(value))
+        .map((value) => friendlySource(value))
+    )
+  );
+  const received = receivedLabel(q.asOf);
+  const computed = [`Computed from ${inputs}`, received].filter(Boolean).join(" · ");
+  const provenance = providers.length > 0 ? `\nInput source: ${providers.join(" + ")}` : "";
+  return `${explanation}\n${computed}${provenance}`;
+}
+
 function vwapTitle(q: MarketQuote): string | undefined {
   const delta = vwapDeltaPct(q);
   if (typeof delta !== "number") return undefined;
-  return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${cellTitle("VWAP", q.sources?.vwap)}`;
+  return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${dataPointTitle("VWAP", q.sources?.vwap, q.asOf)}`;
 }
 
 const SCAN_COLUMNS: ScanColumn[] = [
@@ -1150,74 +1499,109 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "price", label: "Price", title: "Last traded price (delayed). Source: NASDAQ delayed screener, refined by Yahoo / broker quotes when available.", align: "right", sortKey: "price",
     render: (q) => <span className="tnum">{money(q.price)}</span>, cellTitle: (q) => quoteTitle("Quote", q) },
   { id: "intradayChangePct", label: "Chg", title: "Intraday price change, percent vs the prior session's close.", align: "right", sortKey: "intradayChangePct",
-    render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down") },
-  { id: "vsVwap", label: "vs VWAP", title: "Last price vs latest daily VWAP. Source: Massive grouped daily bars when available.", align: "right", sortValue: vwapDeltaPct,
+    render: (q) => <span className="tnum">{formatPct(q.intradayChangePct)}</span>, cellClass: (q) => (q.intradayChangePct >= 0 ? "text-up" : "text-down"),
+    cellTitle: (q) => dataPointTitle("Intraday change", q.sources?.intradayChangePct, q.asOf) },
+  { id: "vsVwap", label: "vs VWAP", title: "Last price vs latest daily VWAP. Source: Alpaca real-time snapshot, or Massive grouped daily bars — hover a cell for the actual source.", align: "right", sortValue: vwapDeltaPct,
     render: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? <span className="tnum">{formatPct(v)}</span> : DASH; },
     cellClass: (q) => { const v = vwapDeltaPct(q); return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
     cellTitle: vwapTitle },
   { id: "volume", label: "Vol", title: "Shares traded today (falls back to the 10-day average when reported after hours). Source: screener / Finnhub.", align: "right", sortKey: "volume",
-    render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH) },
+    render: (q) => (q.volume > 0 ? <span className="tnum text-muted">{compactNum(q.volume)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Volume", q.sources?.volume, q.asOf) },
   { id: "marketCap", label: "Mkt Cap", title: "Market capitalization = share price × shares outstanding.", align: "right", sortKey: "marketCap",
-    render: (q) => (q.marketCap && q.marketCap > 0 ? <span className="tnum text-muted">{compactMoney(q.marketCap)}</span> : DASH) },
+    render: (q) => (q.marketCap && q.marketCap > 0 ? <span className="tnum text-muted">{compactMoney(q.marketCap)}</span> : DASH),
+    // marketCap = price × shares outstanding; no API emits it directly, so attribute to the price source.
+    cellTitle: (q) => derivedTitle("Market capitalization = share price × shares outstanding.", "price × shares outstanding", q, ["price"]) },
   { id: "peRatio", label: "P/E", title: "Price-to-Earnings ratio = price ÷ trailing-12-month earnings per share; lower is cheaper relative to earnings. 'n/a' = negative/zero earnings (no meaningful ratio); '—' = no data. Source: Yahoo / FMP / Finnhub.", align: "right", sortKey: "peRatio",
-    render: (q) => <span className="tnum text-muted">{q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—"}</span>, cellTitle: (q) => cellTitle("P/E ratio", q.sources?.peRatio) },
+    render: (q) => <span className="tnum text-muted">{q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—"}</span>, cellTitle: (q) => dataPointTitle("P/E ratio", q.sources?.peRatio, q.asOf) },
   { id: "fcfYield", label: "FCF%", title: "Free-cash-flow yield = trailing free cash flow ÷ market cap; higher means more cash generated per dollar of value. Source: Yahoo Finance.", align: "right", sortKey: "fcfYield",
-    render: (q) => (typeof q.fcfYield === "number" ? <span className="tnum text-muted">{q.fcfYield.toFixed(1)}%</span> : DASH), cellTitle: (q) => cellTitle("Free-cash-flow yield", q.sources?.fcfYield) },
+    render: (q) => (typeof q.fcfYield === "number" ? <span className="tnum text-muted">{q.fcfYield.toFixed(1)}%</span> : DASH), cellTitle: (q) => dataPointTitle("Free-cash-flow yield", q.sources?.fcfYield, q.asOf) },
   { id: "debtToEquity", label: "D/E", title: "Debt-to-Equity = total debt ÷ shareholder equity; lower means less leverage. Source: Yahoo Finance.", align: "right", sortKey: "debtToEquity",
-    render: (q) => (typeof q.debtToEquity === "number" ? <span className="tnum text-muted">{q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)}</span> : DASH), cellTitle: (q) => cellTitle("Debt / equity", q.sources?.debtToEquity) },
+    render: (q) => (typeof q.debtToEquity === "number" ? <span className="tnum text-muted">{q.debtToEquity > 10 ? (q.debtToEquity / 100).toFixed(2) : q.debtToEquity.toFixed(2)}</span> : DASH), cellTitle: (q) => dataPointTitle("Debt / equity", q.sources?.debtToEquity, q.asOf) },
   { id: "epsGrowth", label: "EPS gr", title: "Earnings-per-share growth, year over year (e.g. +15%). Source: Yahoo Finance.", align: "right", sortKey: "epsGrowth",
-    render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => cellTitle("EPS growth (YoY)", q.sources?.epsGrowth) },
+    render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => dataPointTitle("EPS growth (YoY)", q.sources?.epsGrowth, q.asOf) },
   { id: "dividendYield", label: "Div", title: "Annual dividend yield = trailing dividends per share ÷ price. Source: Yahoo / Finnhub.", align: "right", sortKey: "dividendYield",
-    render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH) },
+    render: (q) => (typeof q.dividendYield === "number" ? <span className="tnum text-muted">{q.dividendYield.toFixed(2)}%</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Dividend yield", q.sources?.dividendYield, q.asOf) },
   // ── Backend-derived ratios (computed by us, not returned by any API). See src/lib/derived-metrics.ts. ──
   { id: "peg", label: "PEG", title: "[CALCULATED] PEG ratio = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive. Blank when unprofitable or no growth.", align: "right", sortValue: (q) => deriveMetrics(q).peg,
     render: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? <span className="tnum">{v.toFixed(2)}</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? (v < 1 ? "text-up" : v > 2.5 ? "text-down" : "") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).peg; return typeof v === "number" ? (v < 1 ? "text-up" : v > 2.5 ? "text-down" : "") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] PEG ratio = P/E ÷ EPS-growth%. <1 is cheap for its growth, >2 is expensive.", "P/E and EPS growth", q, ["peRatio", "epsGrowth"]) },
   { id: "roe", label: "ROE", title: "[CALCULATED] Return on equity = EPS ÷ book value per share, where BVPS = price ÷ P/B. Higher = more efficient use of capital; negative = losing money on equity.", align: "right", sortValue: (q) => deriveMetrics(q).roe,
     render: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? <span className="tnum">{v.toFixed(1)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).roe; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Return on equity = EPS ÷ book value per share, where BVPS = price ÷ P/B.", "EPS, P/B and price", q, ["eps", "price"]) },
   { id: "earnYld", label: "Earn Yld", title: "[CALCULATED] Earnings yield = EPS ÷ price (the inverse of P/E). Usable when P/E is n/a; negative = the company is losing money.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).earnYld,
     render: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).earnYld; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Earnings yield = EPS ÷ price (the inverse of P/E).", "EPS and price", q, ["eps", "price"]) },
   { id: "payout", label: "Payout", title: "[CALCULATED] Dividend payout ratio = dividends per share ÷ EPS. >100% means the dividend exceeds earnings and may be unsustainable.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).payout,
     render: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(0)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" && v > 100 ? "text-down" : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).payout; return typeof v === "number" && v > 100 ? "text-down" : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Dividend payout ratio = dividends per share ÷ EPS.", "dividend yield, EPS and price", q, ["dividendYield", "eps", "price"]) },
   { id: "dollarVolM", label: "$ Vol", title: "[CALCULATED] Daily dollar volume = price × volume — liquidity gauge for position sizing and slippage.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).dollarVolM,
-    render: (q) => { const v = deriveMetrics(q).dollarVolM; return typeof v === "number" ? <span className="tnum text-muted">{compactMoney(v * 1e6)}</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).dollarVolM; return typeof v === "number" ? <span className="tnum text-muted">{compactMoney(v * 1e6)}</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Daily dollar volume = price × volume — liquidity gauge for sizing and slippage.", "price and volume", q, ["price", "volume"]) },
   { id: "spreadBps", label: "Spread", title: "[CALCULATED] Bid-ask spread in basis points = (ask − bid) ÷ mid × 10000 — execution cost; wide spreads favor limit orders.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).spreadBps,
-    render: (q) => { const v = deriveMetrics(q).spreadBps; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).spreadBps; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Bid-ask spread in basis points = (ask − bid) ÷ mid × 10000 — execution cost.", "bid and ask", q, ["bid", "ask"]) },
   { id: "sectorRelStrength", label: "Sec RS", title: "[CALCULATED] Sector relative strength = this name's intraday % move minus the average move of its sector among the scan candidates. Positive = outperforming its sector today.", align: "right", defaultHidden: true, sortKey: "sectorRelStrength",
     render: (q) => (typeof q.sectorRelStrength === "number" ? <span className="tnum">{q.sectorRelStrength >= 0 ? "+" : ""}{q.sectorRelStrength.toFixed(2)}%</span> : DASH),
-    cellClass: (q) => (typeof q.sectorRelStrength === "number" ? (q.sectorRelStrength >= 0 ? "text-up" : "text-down") : "") },
+    cellClass: (q) => (typeof q.sectorRelStrength === "number" ? (q.sectorRelStrength >= 0 ? "text-up" : "text-down") : ""),
+    cellTitle: (q) => derivedTitle("[CALCULATED] Sector relative strength = this name's intraday % move minus the average move of its sector among scan candidates.", "intraday change and sector", q, ["intradayChangePct", "sector"]) },
   { id: "marginOfSafety", label: "MoS", title: "[CALCULATED] Margin of safety = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share). Positive = trading below intrinsic value.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).marginOfSafety,
     render: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? <span className="tnum">{v >= 0 ? "+" : ""}{v.toFixed(0)}%</span> : DASH; },
-    cellClass: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; } },
+    cellClass: (q) => { const v = deriveMetrics(q).marginOfSafety; return typeof v === "number" ? (v >= 0 ? "text-up" : "text-down") : ""; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Margin of safety = (Graham value − price) ÷ price, where Graham value = √(22.5 × EPS × book value per share).", "EPS, P/B and price", q, ["eps", "price"]) },
   { id: "pctFromHigh", label: "% off Hi", title: "[CALCULATED] % from the 52-week high = (price − 52w high) ÷ high. 0 = at the high (breakout zone); deeply negative = a large pullback.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).pctFromHigh,
-    render: (q) => { const v = deriveMetrics(q).pctFromHigh; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}%</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).pctFromHigh; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(1)}%</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] % from the 52-week high = (price − 52w high) ÷ high.", "price and 52-week high", q, ["price"]) },
   { id: "rr52w", label: "R:R", title: "[CALCULATED] Reward:risk to the 52-week band = (52w high − price) ÷ (price − 52w low). >1 = more upside room to the high than downside to the low.", align: "right", defaultHidden: true, sortValue: (q) => deriveMetrics(q).rr52w,
-    render: (q) => { const v = deriveMetrics(q).rr52w; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}</span> : DASH; } },
+    render: (q) => { const v = deriveMetrics(q).rr52w; return typeof v === "number" ? <span className="tnum text-muted">{v.toFixed(2)}</span> : DASH; },
+    cellTitle: (q) => derivedTitle("[CALCULATED] Reward:risk to the 52-week band = (52w high − price) ÷ (price − 52w low).", "price and the 52-week high/low band", q, ["price"]) },
+  // shortPercentOfFloat / beta carry no per-field provenance in EnrichmentSources, so we stamp
+  // the value's freshness (asOf) but never fabricate a provider for them.
   { id: "shortPercentOfFloat", label: "Short %", title: "Percent of the tradable float sold short. High (>15–20%) raises short-squeeze potential but also signals bearish positioning. Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "shortPercentOfFloat",
-    render: (q) => (typeof q.shortPercentOfFloat === "number" ? <span className="tnum text-muted">{q.shortPercentOfFloat.toFixed(1)}%</span> : DASH) },
+    render: (q) => (typeof q.shortPercentOfFloat === "number" ? <span className="tnum text-muted">{q.shortPercentOfFloat.toFixed(1)}%</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Short % of float", undefined, q.asOf) },
   { id: "beta", label: "Beta", title: "Beta — sensitivity to the broad market (1.0 = moves with the market; >1 amplifies moves, <1 dampens them). Source: Yahoo Finance.", align: "right", defaultHidden: true, sortKey: "beta",
-    render: (q) => (typeof q.beta === "number" ? <span className="tnum text-muted">{q.beta.toFixed(2)}</span> : DASH) },
+    render: (q) => (typeof q.beta === "number" ? <span className="tnum text-muted">{q.beta.toFixed(2)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Beta", undefined, q.asOf) },
   { id: "bid", label: "Bid", title: "Best bid — the highest price a buyer is currently willing to pay. Shown when broker quotes are available.", align: "right", defaultHidden: true, sortKey: "bid",
-    render: (q) => (typeof q.bid === "number" ? <span className="tnum text-muted">{money(q.bid)}</span> : DASH) },
+    render: (q) => (typeof q.bid === "number" ? <span className="tnum text-muted">{money(q.bid)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Best bid", q.sources?.bid, q.asOf) },
   { id: "ask", label: "Ask", title: "Best ask — the lowest price a seller is currently willing to accept. Shown when broker quotes are available.", align: "right", defaultHidden: true, sortKey: "ask",
-    render: (q) => (typeof q.ask === "number" ? <span className="tnum text-muted">{money(q.ask)}</span> : DASH) },
+    render: (q) => (typeof q.ask === "number" ? <span className="tnum text-muted">{money(q.ask)}</span> : DASH),
+    cellTitle: (q) => dataPointTitle("Best ask", q.sources?.ask, q.asOf) },
   { id: "sentiment", label: "Sentiment", title: "News sentiment 0–100 (50 = neutral), scored from recent headlines with keyword/NLP analysis. Source: Alpha Vantage / Finnhub.", sortKey: "sentiment",
     render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : DASH), cellTitle: (q) => sentimentTitle(q) },
   { id: "analystScore", label: "Rating", title: "Analyst consensus 0–100, blended across providers (Strong Buy = 100 … Strong Sell = 0). Source: Yahoo / FMP / Finnhub.", sortKey: "analystScore",
     render: (q) => (q.analystRating ? <RatingChip score={q.analystScore} label={q.analystRating} /> : DASH), cellTitle: (q) => ratingTitle(q) },
   { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
     render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
-  { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", sortKey: "sector",
-    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH) },
+  { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
+    render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH),
+    cellTitle: (q) => dataPointTitle("Sector", q.sources?.sector, q.asOf) },
+  // Score is intentionally LAST so it renders at the far right — the "verdict" column the eye
+  // lands on after scanning a row. Default sort is by score desc.
   { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
-    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span> }
+    render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span>,
+    // Composite of many scored factors; attribute to the underlying input fields' providers, never a single invented source.
+    cellTitle: (q) => derivedTitle("[CALCULATED] Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors (weights on the Strategy tab).", "the scan's per-factor inputs", q, ["price", "volume", "intradayChangePct", "peRatio", "sentiment"]) }
 ];
 
-const DEFAULT_SCAN_COLS = SCAN_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.id);
-const SCAN_COLS_KEY = "scan-visible-cols";
+// Default-visible columns — chosen by a 4-expert trading-desk panel (2026-06-21) now that Alpaca
+// supplies REAL bid/ask/spread/VWAP. Reading left-to-right, the row answers one question — "is this
+// name moving, leading, in a tradeable spot, and can I get filled cheaply right now?": identity →
+// price → momentum (Chg) → intraday VWAP benchmark → sector relative strength → distance from the
+// 52-week high (entry timing) → dollar-volume liquidity → execution block (Spread flanked by the real
+// Bid/Ask) → Score (far-right "verdict", default sort). Everything else is one click away via
+// "Configure columns". This explicit list is the source of truth; the per-column `defaultHidden`
+// flags are legacy and no longer consulted for the default set.
+const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "vsVwap", "sectorRelStrength", "pctFromHigh", "dollarVolM", "spreadBps", "bid", "ask", "score"];
+// v3: bumped so the execution-aware default (real bid/ask/spread/VWAP) replaces a saved v2 column set.
+const SCAN_COLS_KEY = "scan-visible-cols-v3";
 
 function MarketScanView({
   snapshot,
@@ -1269,7 +1653,12 @@ function MarketScanView({
       const data = (await res.json()) as MarketScan;
       if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
     } catch (error) {
-      setScanError(error instanceof Error ? error.message : "Market scan failed.");
+      // A network-level fetch rejection surfaces an unhelpful, browser-specific message
+      // ("Load failed" on WebKit/Safari, "Failed to fetch" on Chromium). Translate those to a
+      // plain sentence; pass through real server messages (a non-OK response with body text).
+      const raw = error instanceof Error ? error.message : "";
+      const isNetwork = /load failed|failed to fetch|networkerror|the network connection was lost|aborted/i.test(raw);
+      setScanError(isNetwork ? "Couldn't reach the scan service." : raw || "Market scan failed.");
     } finally {
       setScanLoading(false);
     }
@@ -1296,7 +1685,7 @@ function MarketScanView({
         <EmptyState
           icon={<LineChartIcon size={20} />}
           title={scanLoading ? "Scanning the market…" : "No market scan yet"}
-          hint={scanError || "Choose a base index or add symbols, then refresh the scan."}
+          hint={scanError || (scanLoading ? "Fetching quotes and enrichment data…" : "Choose a base index or add symbols, then refresh the scan.")}
         />
         <div className="flex justify-center px-4 pb-4">
           <Button variant="ghost" size="sm" onClick={onConfigureUniverse}><SettingsIcon size={14} /> Configure universe</Button>
@@ -1316,7 +1705,7 @@ function MarketScanView({
     ? `No quotes returned · ${liveScan ? "live" : scan.cached ? "cached" : "latest"}`
     : `${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`;
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <PanelHeader
         title="Market scan"
         subtitle={subtitle}
@@ -1350,7 +1739,13 @@ function MarketScanView({
         }
       />
       {scanError && (
-        <p className="mx-4 mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">{scanError}</p>
+        // We're past the no-data guard, so the table below is showing a valid (captured/last)
+        // scan — a failed live refresh is non-critical here. Show a subtle muted note, not an
+        // alarming red banner, so "Couldn't reach the scan service" never contradicts a populated
+        // table (the previous behavior the user flagged).
+        <p className="mx-4 mt-3 rounded-lg border border-line bg-surface-2/40 px-3 py-1.5 text-[12px] text-faint">
+          {scanError} Showing the last scan from {new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+        </p>
       )}
       {sorted.length === 0 ? (
         <div className="px-4 pb-4">
@@ -1364,40 +1759,79 @@ function MarketScanView({
           </div>
         </div>
       ) : (
-        <div className="h-[min(600px,65vh)] p-2">
+        <div className="h-[min(600px,65vh)] overflow-x-auto p-2">
           <TableVirtuoso
             data={sorted}
+            overscan={600}
+            initialItemCount={Math.min(sorted.length, 20)}
             components={{
-              Table: (props) => <table {...props} className="w-full text-[13px]" />,
+              Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
-              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
+              // `group` lets the right-pinned Score cell mirror the row hover tint (it has its own
+              // opaque base bg, so it can't inherit the row's translucent hover directly).
+              TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="group cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
             }}
             fixedHeaderContent={() => (
               <tr className="border-b border-line bg-surface/50 text-[11px] uppercase text-faint shadow-sm backdrop-blur-xl">
-                {cols.map((c) => (
+                {cols.map((c) => {
+                  // Score is pinned to the right edge so the "verdict" column stays visible even
+                  // when many columns are toggled on and the table scrolls horizontally. The solid
+                  // --bg base (theme-reactive) keeps the pinned cell opaque so scrolled content
+                  // doesn't bleed through the translucent --surface tint; SCAN_PINNED_RIGHT_CLASS
+                  // adds the left divider + shadow that separates it from the scrolled body.
+                  const pinned = c.id === "score";
+                  return (
                   <th
                     key={c.id}
                     title={c.title}
                     onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
-                    className={cn("cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg", c.align === "right" ? "text-right" : "text-left")}
+                    className={cn(
+                      "cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg",
+                      c.align === "right" ? "text-right" : "text-left",
+                      pinned && SCAN_PINNED_RIGHT_CLASS
+                    )}
                   >
                     {c.label}
                     <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                   </th>
-                ))}
+                  );
+                })}
               </tr>
             )}
             itemContent={(index, q) => (
               <>
-                {cols.map((c) => (
-                  <td key={c.id} title={[c.cellTitle?.(q), dataReceived].filter(Boolean).join("\n") || undefined} className={cn("px-2.5 py-1.5", c.align === "right" && "text-right", c.cellClass?.(q))}>
+                {cols.map((c) => {
+                  const pinned = c.id === "score";
+                  const cellTip = c.cellTitle?.(q);
+                  // Stamp the scan-level "Received …" only when the cell's own tooltip doesn't already
+                  // carry a per-field "Received …" line (dataPointTitle/derivedTitle add one from q.asOf
+                  // when it's a real ISO time) — avoids a duplicate received stamp on the same tooltip.
+                  const tip = [cellTip, cellTip?.includes("Received ") ? undefined : dataReceived]
+                    .filter(Boolean)
+                    .join("\n") || undefined;
+                  return (
+                  <td
+                    key={c.id}
+                    title={tip}
+                    className={cn(
+                      "px-2.5 py-1.5",
+                      c.align === "right" && "text-right",
+                      c.cellClass?.(q),
+                      // Mirror the header: pin Score to the right edge with the same opaque base
+                      // (rows have no base bg of their own, only a hover tint). The row's hover
+                      // highlight is re-created as an opaque composite via group-hover inside
+                      // SCAN_PINNED_RIGHT_CLASS so the pinned cell tracks its row.
+                      pinned && SCAN_PINNED_RIGHT_CLASS
+                    )}
+                  >
                     {c.id === "symbol" ? (
                       <SymbolButton symbol={q.symbol} quote={q} onDrilldown={onDrilldown} className="font-semibold text-fg" title={q.companyName ?? "Open symbol intelligence"} logoDisplay={tickerLogoDisplay} showLogo />
                     ) : (
                       c.render(q)
                     )}
                   </td>
-                ))}
+                  );
+                })}
               </>
             )}
           />
@@ -1410,7 +1844,7 @@ function MarketScanView({
 function SentimentChip({ value }: { value: number }) {
   const tone = value >= 60 ? "up" : value <= 40 ? "down" : "neutral";
   const label = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
-  return <Chip tone={tone}>{label} {value}</Chip>;
+  return <Chip tone={tone}>{label} · {value}</Chip>;
 }
 
 function freshness(fetchedAt?: string): string {
@@ -1424,7 +1858,7 @@ function freshness(fetchedAt?: string): string {
 
 /** Surfaces the full scraped congressional + insider datasets (the scan's Congress column
  *  only shows symbols that overlap the scan; this shows everything recently disclosed). */
-function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void }) {
+function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void; tickerLogoDisplay: TickerLogoDisplay }) {
   const sm = snapshot.smartMoney;
   const ws = snapshot.webSources;
   const congress = sm?.congress ?? [];
@@ -1444,7 +1878,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
             {congress.map((t, i) => (
               <div key={`${t.symbol}-${t.member}-${t.tradedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                 <Chip tone={t.side === "buy" ? "up" : "down"}>{t.side === "buy" ? "BUY" : "SELL"}</Chip>
-                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} />
+                <SymbolButton symbol={t.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(t.symbol, snapshot.symbolMetaBySymbol ?? {})} logoDisplay={tickerLogoDisplay} showLogo />
                 <span className="truncate text-muted" title={`${t.member} (${t.chamber})`}>{t.member}</span>
                 <span className="ml-auto whitespace-nowrap text-faint">{t.tradedAt}</span>
               </div>
@@ -1468,7 +1902,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
               return (
                 <div key={`${f.symbol}-${f.owner}-${f.filedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                   <Chip tone={net > 0 ? "up" : net < 0 ? "down" : "neutral"}>{net > 0 ? "BUY" : net < 0 ? "SELL" : "MIXED"}</Chip>
-                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} />
+                  <SymbolButton symbol={f.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(f.symbol, snapshot.symbolMetaBySymbol ?? {})} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="truncate text-muted" title={f.owner}>{f.owner}</span>
                   <span className="ml-auto whitespace-nowrap text-faint">{f.filedAt}</span>
                 </div>
@@ -1484,7 +1918,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSn
 function RatingChip({ score, label }: { score?: number; label: string }) {
   // Mirror the Sentiment chip: green for Buy-ish, red for Sell-ish, neutral for Hold.
   const tone = score === undefined ? "neutral" : score >= 65 ? "up" : score <= 40 ? "down" : "neutral";
-  return <Chip tone={tone}>{typeof score === "number" ? `${label} ${score}` : label}</Chip>;
+  return <Chip tone={tone}>{typeof score === "number" ? `${label} · ${score}` : label}</Chip>;
 }
 
 /** Map the raw market session to a status label + dot tone (green open, grey closed). */
@@ -1532,10 +1966,10 @@ function PerformanceView({
       <Card className="lg:col-span-2">
         <PanelHeader title="Equity" subtitle={`${modeLabel} account`} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
-          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={realized >= 0 ? "up" : "down"} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={unrealized >= 0 ? "up" : "down"} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
+          <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={pnlTone(realized)} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={pnlTone(unrealized)} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
-          <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={avgReturn >= 0 ? "up" : "down"} title="Average percentage return per closed lot." />
+          <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={pnlTone(avgReturn)} title="Average percentage return per closed lot." />
         </div>
         <div className="h-64 p-4">
           <EquityCurve data={curve} />
@@ -1565,12 +1999,14 @@ function TaxView({
   snapshot,
   symbolMetaBySymbol,
   scan,
-  onDrilldown
+  onDrilldown,
+  tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   symbolMetaBySymbol: DashboardSnapshot["symbolMetaBySymbol"];
   scan: MarketScan | null;
   onDrilldown: (q: MarketQuote) => void;
+  tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const tax = snapshot.tax;
   if (!tax) {
@@ -1591,9 +2027,9 @@ function TaxView({
           actions={<Chip tone={tax.settings.washSaleGuard ? "up" : "warn"}>Wash-sale guard {tax.settings.washSaleGuard ? "on" : "off"}</Chip>}
         />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 sm:grid-cols-4">
-          <StatTile label="Short-term realized" value={signedMoney(tax.shortTermRealized)} tone={tax.shortTermRealized >= 0 ? "up" : "down"} sub={`taxed ~${tax.settings.shortTermRatePct}% (ordinary)`} />
-          <StatTile label="Long-term realized" value={signedMoney(tax.longTermRealized)} tone={tax.longTermRealized >= 0 ? "up" : "down"} sub={`taxed ~${tax.settings.longTermRatePct}%`} />
-          <StatTile label="Est. tax liability" value={money(tax.estimatedTaxLiability)} tone="down" sub="this year, on realized gains" />
+          <StatTile label="Short-term realized" value={signedMoney(tax.shortTermRealized)} tone={pnlTone(tax.shortTermRealized)} sub={`taxed ~${tax.settings.shortTermRatePct}% (ordinary)`} />
+          <StatTile label="Long-term realized" value={signedMoney(tax.longTermRealized)} tone={pnlTone(tax.longTermRealized)} sub={`taxed ~${tax.settings.longTermRatePct}%`} />
+          <StatTile label="Est. tax liability" value={money(tax.estimatedTaxLiability)} tone={tax.estimatedTaxLiability > 0 ? "down" : "neutral"} sub="this year, on realized gains" />
           <StatTile label="Disallowed (wash sale)" value={money(tax.disallowedWashSaleLoss)} tone={tax.disallowedWashSaleLoss > 0 ? "warn" : "neutral"} sub="losses you can't deduct" />
         </div>
       </Card>
@@ -1617,7 +2053,7 @@ function TaxView({
               <span className="text-xs font-medium text-muted">Wash sales detected this year</span>
               {tax.washSales.slice(0, 6).map((w, i) => (
                 <div key={`${w.symbol}-${i}`} className="flex items-center justify-between text-[13px]">
-                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} />
+                  <SymbolButton symbol={w.symbol} scan={scan} onDrilldown={onDrilldown} className="font-semibold text-fg" title={companyTitle(w.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo />
                   <span className="tnum text-faint">{new Date(w.soldAt).toLocaleDateString()} · {money(w.disallowedLoss)} disallowed</span>
                 </div>
               ))}
@@ -1636,7 +2072,7 @@ function TaxView({
               <tbody>
                 {tax.harvestCandidates.map((h) => (
                   <tr key={h.symbol} className="border-b border-line/50">
-                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} /></td>
+                    <td className="py-1.5 font-semibold text-fg"><SymbolButton symbol={h.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(h.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo /></td>
                     <td className="py-1.5 text-right tnum text-muted">{formatShareQuantity(h.quantity, h.symbol)} sh</td>
                     <td className="py-1.5 text-right tnum text-down">{signedMoney(h.unrealizedLoss)}</td>
                   </tr>
@@ -1666,7 +2102,7 @@ function TaxView({
               <tbody>
                 {tax.openLots.map((lot, i) => (
                   <tr key={`${lot.symbol}-${i}`} className="border-b border-line/50">
-                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} /></td>
+                    <td className="px-2 py-1.5 font-semibold text-fg"><SymbolButton symbol={lot.symbol} scan={scan} onDrilldown={onDrilldown} title={companyTitle(lot.symbol, symbolMetaBySymbol)} logoDisplay={tickerLogoDisplay} showLogo /></td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{formatShareQuantity(lot.quantity, lot.symbol)}</td>
                     <td className="px-2 py-1.5 text-right tnum text-muted">{lot.daysHeld}</td>
                     <td className="px-2 py-1.5">
@@ -2024,33 +2460,60 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
   const runs = snapshot.strategyRuns ?? [];
-  if (runs.length === 0) return <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />;
+  const sched = snapshot.scheduler;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="border-b border-line text-[11px] uppercase text-faint">
-            <th className="px-2 py-1.5 text-left font-semibold">Time</th>
-            <th className="px-2 py-1.5 text-left font-semibold">Status</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Test</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
-            <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => (
-            <tr key={run.id} className="border-b border-line/50">
-              <td className="whitespace-nowrap px-2 py-1.5 text-muted">{new Date(run.startedAt).toLocaleString()}</td>
-              <td className="px-2 py-1.5"><Chip tone={run.status === "completed" ? "up" : run.status === "failed" ? "down" : "warn"}>{run.status}</Chip></td>
-              <td className="px-2 py-1.5 text-right tnum">{run.placedCount}</td>
-              <td className="px-2 py-1.5 text-right tnum">{run.paperCount}</td>
-              <td className="px-2 py-1.5 text-right tnum">{run.blockedCount}</td>
-              <td className="max-w-[220px] truncate px-2 py-1.5 text-faint" title={run.summary}>{run.summary}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {sched && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-muted">
+          <span className="font-semibold uppercase tracking-wide text-faint text-[10px]">Scheduler</span>
+          {sched.lastRunAt && (
+            <span title={sched.lastRunAt}>
+              Last: <span className="text-fg">{new Date(sched.lastRunAt).toLocaleString()}</span>
+            </span>
+          )}
+          {sched.nextRunAt && (
+            <span title={sched.nextRunAt}>
+              Next: <span className="text-fg">{new Date(sched.nextRunAt).toLocaleString()}</span>
+            </span>
+          )}
+          {typeof sched.runsToday === "number" && (
+            <span>
+              Today: <span className="text-fg">{sched.runsToday}</span>
+            </span>
+          )}
+          {!sched.lastRunAt && !sched.nextRunAt && <span className="text-faint">No runs scheduled yet</span>}
+        </div>
+      )}
+      {runs.length === 0 ? (
+        <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-line text-[11px] uppercase text-faint">
+                <th className="px-2 py-1.5 text-left font-semibold">Time</th>
+                <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Placed</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Test</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Blocked</th>
+                <th className="px-2 py-1.5 text-left font-semibold">Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.id} className="border-b border-line/50">
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted">{new Date(run.startedAt).toLocaleString()}</td>
+                  <td className="px-2 py-1.5"><Chip tone={run.status === "completed" ? "up" : run.status === "failed" ? "down" : "warn"}>{run.status}</Chip></td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.placedCount}</td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.paperCount}</td>
+                  <td className="px-2 py-1.5 text-right tnum">{run.blockedCount}</td>
+                  <td className="max-w-[220px] truncate px-2 py-1.5 text-faint" title={run.summary}>{run.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -2078,6 +2541,26 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
           );
         })
       )}
+    </div>
+  );
+}
+
+function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const items = snapshot.auditFeed ?? [];
+  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No audit events yet" hint="Policy changes, order decisions, and system events appear here." />;
+  return (
+    <div className="space-y-1.5">
+      {items.slice(0, 100).map((item) => (
+        <div key={item.id} className="rounded-lg border border-line/60 bg-surface-2/40 px-3 py-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[11px] text-faint">{new Date(item.createdAt).toLocaleString()}{item.symbol && ` · ${item.symbol}`}{item.companyName && ` (${item.companyName})`}</div>
+              <div className="mt-0.5 text-sm text-fg">{item.title}</div>
+              {item.detail && <div className="mt-0.5 text-[12px] text-muted">{item.detail}</div>}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2168,7 +2651,8 @@ function SettingsContent({
   tickerLogoDisplay,
   setTickerLogoDisplay,
   openAccounts,
-  load
+  load,
+  onRequestDecideConfirm
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -2181,11 +2665,75 @@ function SettingsContent({
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
   openAccounts: () => void;
   load: () => Promise<void>;
+  onRequestDecideConfirm: () => void;
 }) {
-  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications";
+  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications" | "data";
   const [section, setSection] = useState<Section>("operate");
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  // ── Shared data pool consent state ──────────────────────────────────────
+  const [poolConsent, setPoolConsent] = useState<boolean | null>(null);
+  const [poolConsentLoading, setPoolConsentLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/consent")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPoolConsent(Boolean(d?.accepted)); })
+      .catch(() => { /* leave null — show toggle in indeterminate/off state */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function setPoolConsentValue(accepted: boolean) {
+    if (poolConsentLoading) return;
+    setPoolConsentLoading(true);
+    try {
+      await fetch("/api/consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accepted })
+      });
+      setPoolConsent(accepted);
+    } catch {
+      /* best-effort — keep local state unchanged on failure */
+    } finally {
+      setPoolConsentLoading(false);
+    }
+  }
+
+  // ── Learned-context sharing state ────────────────────────────────────────
+  // includeShared defaults TRUE (user benefits from the pool); contributeShared defaults FALSE
+  // (nothing is shared without explicit opt-in). Loaded on first visit to the "data" section.
+  const [lcSharing, setLcSharing] = useState<{ includeShared: boolean; contributeShared: boolean } | null>(null);
+  const [lcSharingLoading, setLcSharingLoading] = useState(false);
+  useEffect(() => {
+    if (section !== "data") return;
+    let cancelled = false;
+    void fetch("/api/learned-context/sharing")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setLcSharing(d as { includeShared: boolean; contributeShared: boolean }); })
+      .catch(() => { /* leave null — toggles render as disabled until loaded */ });
+    return () => { cancelled = true; };
+  }, [section]);
+
+  async function updateLcSharing(patch: { includeShared?: boolean; contributeShared?: boolean }) {
+    if (lcSharingLoading) return;
+    setLcSharingLoading(true);
+    try {
+      const res = await fetch("/api/learned-context/sharing", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      const updated = await res.json() as { includeShared: boolean; contributeShared: boolean };
+      setLcSharing(updated);
+    } catch {
+      /* best-effort */
+    } finally {
+      setLcSharingLoading(false);
+    }
+  }
+
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
@@ -2202,14 +2750,30 @@ function SettingsContent({
 
   function addAllowlist() {
     if (draft.trim() === "") return;
-    const next = normalizeSymbols([...policy.additionalSymbols, ...draft.split(/[,\s]+/)]);
+    const inputs = draft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    const invalid = inputs.filter(s => !isValidAppSymbol(s));
+    if (invalid.length > 0) {
+      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      });
+      return;
+    }
+    const next = normalizeSymbols([...policy.additionalSymbols, ...inputs]);
     setDraft("");
     updatePolicy({ additionalSymbols: next });
   }
 
   function addBlocklist() {
     if (blockDraft.trim() === "") return;
-    const next = normalizeSymbols([...(policy.blocklist || []), ...blockDraft.split(/[,\s]+/)]);
+    const inputs = blockDraft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    const invalid = inputs.filter(s => !isValidAppSymbol(s));
+    if (invalid.length > 0) {
+      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      });
+      return;
+    }
+    const next = normalizeSymbols([...(policy.blocklist || []), ...inputs]);
     setBlockDraft("");
     updatePolicy({ blocklist: next });
   }
@@ -2236,19 +2800,22 @@ function SettingsContent({
 
   return (
     <>
-      <div className="space-y-4">
-        <Tabs
-          value={section}
-          onChange={(v) => setSection(v as Section)}
-          tabs={[
-            { id: "operate", label: "Operate" },
-            { id: "display", label: "Display" },
-            { id: "keys", label: "API Keys" },
-            { id: "tax", label: "Tax" },
-            { id: "tuning", label: "Tuning" },
-            { id: "notifications", label: "Notifications" }
-          ]}
-        />
+      <div className="min-h-[60vh] space-y-4">
+        <div className="overflow-x-auto">
+          <Tabs
+            value={section}
+            onChange={(v) => setSection(v as Section)}
+            tabs={[
+              { id: "operate", label: "Operate" },
+              { id: "display", label: "Display" },
+              { id: "keys", label: "API Keys" },
+              { id: "tax", label: "Tax" },
+              { id: "tuning", label: "Tuning" },
+              { id: "notifications", label: "Notifications" },
+              { id: "data", label: "Data" }
+            ]}
+          />
+        </div>
 
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -2351,7 +2918,18 @@ function SettingsContent({
             </Field>
           </div>
           <Field label="Strategy authority" className="sm:col-span-2">
-            <select className={inputClass} value={policy.strategyAuthority} onChange={(e) => updatePolicy({ strategyAuthority: e.target.value as TradingPolicy["strategyAuthority"] })}>
+            <select
+              className={inputClass}
+              value={policy.strategyAuthority}
+              onChange={(e) => {
+                const next = e.target.value as TradingPolicy["strategyAuthority"];
+                if (next === "decide" && policy.strategyAuthority !== "decide") {
+                  onRequestDecideConfirm();
+                } else {
+                  void updatePolicy({ strategyAuthority: next });
+                }
+              }}
+            >
               <option value="propose">LLM proposes — you approve</option>
               <option value="decide">LLM decides — runs autonomously</option>
             </select>
@@ -2383,25 +2961,27 @@ function SettingsContent({
 
         {section === "display" && (
           <div className="space-y-3">
-            <Field label="Ticker logos" hint="Applies to portfolio symbols, Market Scan rows, and symbol intelligence headers">
+            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}
                 onChange={setTickerLogoDisplay}
                 options={[
-                  { value: "tile", label: "Normal tile" },
-                  { value: "transparent", label: "Transparent" },
+                  { value: "tile", label: "Small Tile" },
+                  { value: "transparent", label: "Medium" },
                   { value: "off", label: "Off" }
                 ]}
               />
             </Field>
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
-              {(["AAPL", "MSFT", "NVDA"] as const).map((symbol) => (
-                <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
-                  <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
-                  <span>{symbol}</span>
-                </div>
-              ))}
-            </div>
+            {tickerLogoDisplay !== "off" && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-bg/60 px-3 py-3">
+                {(["AAPL", "MSFT", "NVDA", "BRK.B"] as const).map((symbol) => (
+                  <div key={symbol} className="inline-flex items-center gap-2 text-sm font-semibold text-fg">
+                    <TickerLogo symbol={symbol} display={tickerLogoDisplay} size="md" />
+                    <span>{symbol}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2496,6 +3076,83 @@ function SettingsContent({
           </p>
           <p className="text-xs text-faint">
             Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.
+          </p>
+        </div>
+      )}
+
+      {section === "data" && (
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">Shared data pool</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Opting in shares the general market data you pull with your own provider keys / broker MCP —
+                quotes, fundamentals, price history, and news — with other opted-in users, and gives you
+                access to the data they&apos;ve pulled (the shared pool). Your personal account data —
+                positions, orders, balances, P&amp;L, and credentials — is never shared.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Sharing</span>
+              <span className="block text-xs text-faint">
+                {poolConsent === null ? "Loading…" : poolConsent ? "Sharing on — you contribute to and read from the shared pool." : "Sharing off — you use only your own data."}
+              </span>
+            </span>
+            <Switch
+              checked={Boolean(poolConsent)}
+              onChange={(v) => { if (!poolConsentLoading && poolConsent !== null) void setPoolConsentValue(v); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Your choice applies immediately. You can toggle sharing at any time.
+          </p>
+
+          {/* ── Learned-context (AI learnings) sharing ── */}
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+              <Network size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">AI-learned facts sharing</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Control whether you benefit from other users&apos; shared learnings and whether your own
+                learned facts are contributed to the shared pool. Only structural market facts are ever
+                shared — risk and strategy directives are never shared. PII is always excluded.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Include shared learnings</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.includeShared ? "On — your AI decisions include facts shared by other users." : "Off — only your own learned facts are used."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.includeShared ?? true}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ includeShared: v }); }}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Contribute my learnings to the shared pool</span>
+              <span className="block text-xs text-faint">
+                {lcSharing === null ? "Loading…" : lcSharing.contributeShared ? "On — new facts you learn are shared with opted-in users." : "Off — your learned facts stay private (default)."}
+              </span>
+            </span>
+            <Switch
+              checked={lcSharing?.contributeShared ?? false}
+              onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ contributeShared: v }); }}
+            />
+          </label>
+          <p className="text-[11px] text-faint">
+            Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
+            directives go through a human approval queue and are never shared automatically.
           </p>
         </div>
       )}
@@ -2600,6 +3257,50 @@ function RangeField({ label, value, min, max, step, onCommit }: { label: string;
 }
 
 /* ───────────────────────── Helpers ───────────────────────── */
+
+function getProposalAccountLabel(accountNumber: string | undefined, connectedAccounts: ConnectedAccount[] | undefined): string {
+  if (!accountNumber) return "";
+  const acc = connectedAccounts?.find(
+    (a) => a.accountNumber === accountNumber || (a.accountNumber && accountNumber && (a.accountNumber.endsWith(accountNumber) || accountNumber.endsWith(a.accountNumber)))
+  );
+  
+  const last4 = accountNumber.slice(-4);
+  const suffix = `x${last4}`;
+  
+  if (acc) {
+    if (acc.broker === "robinhood") {
+      return `Agentic ${suffix}`;
+    }
+    if (acc.broker === "alpaca" || acc.broker === "alpaca-mcp") {
+      return acc.environment === "paper" ? `Paper ${suffix}` : `Brokerage ${suffix}`;
+    }
+    if (acc.broker === "test") {
+      return `Test ${suffix}`;
+    }
+  }
+  
+  if (accountNumber === "test" || accountNumber.toLowerCase().includes("test")) {
+    return `Test ${suffix}`;
+  }
+  if (accountNumber.startsWith("PA")) {
+    return `Paper ${suffix}`;
+  }
+  return `Brokerage ${suffix}`;
+}
+
+function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
+  const activeAcc = activeConnectedAccountFor(snapshot);
+  if (!activeAcc || activeAcc.broker === "test") {
+    return "Local Simulation";
+  }
+  if (activeAcc.broker === "robinhood") {
+    return "Robinhood Agentic Account";
+  }
+  if (activeAcc.broker === "alpaca" || activeAcc.broker === "alpaca-mcp") {
+    return activeAcc.environment === "paper" ? "Alpaca Paper Account" : "Alpaca Brokerage Account";
+  }
+  return `${activeAcc.label} Account`;
+}
 
 function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
   if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
@@ -2723,6 +3424,8 @@ function renderActionTitle(title: string) {
   );
 }
 
+
+
 type ApiKeyStatus = {
   service: string;
   label: string;
@@ -2745,7 +3448,7 @@ function ApiKeysSection() {
   const loadKeys = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/keys?userId=local", { cache: "no-store" });
+      const res = await fetch("/api/keys", { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       const body = (await res.json()) as { keys?: ApiKeyStatus[] };
       setKeys(body.keys ?? []);
@@ -2784,7 +3487,7 @@ function ApiKeysSection() {
   async function clearKey(row: ApiKeyStatus) {
     setBusyService(row.service);
     try {
-      const res = await fetch(`/api/keys?userId=local&service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
+      const res = await fetch(`/api/keys?service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(await res.text());
       toast.success(`${row.label} saved key cleared.`);
       await loadKeys();
@@ -2866,11 +3569,45 @@ function ApiKeysSection() {
   );
 }
 
-function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapshot["connectedAccounts"], onSaved: () => Promise<void> }) {
+function IntegrationsSection({
+  accounts,
+  policy,
+  onSaved
+}: {
+  accounts: DashboardSnapshot["connectedAccounts"];
+  policy: TradingPolicy;
+  onSaved: () => Promise<void>;
+}) {
   const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
+
+  const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
+    if (acc.broker === "test") {
+      return {
+        title: "Test",
+        subtitle: "Local · Temporary",
+        showBadges: false
+      };
+    }
+    if (acc.broker === "robinhood") {
+      return {
+        title: acc.label || "Agentic Robinhood",
+        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}`,
+        showBadges: true
+      };
+    }
+    // Alpaca & Alpaca MCP
+    const isMCP = acc.broker === "alpaca-mcp";
+    const brokerName = isMCP ? "Alpaca MCP" : "Alpaca";
+    const isPaper = acc.environment === "paper";
+    return {
+      title: isPaper ? "Paper" : "Brokerage",
+      subtitle: `${brokerName} · ${acc.accountNumber || "No account number"}`,
+      showBadges: true
+    };
+  };
 
   const refreshMcpHealth = useCallback(async () => {
     setMcpBusy(true);
@@ -2931,7 +3668,18 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
   }
 
   async function save() {
-    if (!editing?.broker || !editing?.environment) return;
+    if (!editing?.broker) return;
+    const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
+    if (isAlpaca) {
+      if (!editing.accountNumber?.trim()) {
+        toast.error("Account Number is required for Alpaca.");
+        return;
+      }
+      const isPaper = editing.accountNumber.trim().toUpperCase().startsWith("PA");
+      editing.environment = isPaper ? "paper" : "live";
+    } else {
+      editing.environment = editing.environment || "live";
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/connected-accounts", {
@@ -2966,35 +3714,77 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
   }
 
   if (editing) {
+    const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
-        <h4 className="text-sm font-semibold text-fg">{editing.id ? "Edit Account" : `Add ${editing.broker === "alpaca" ? "Alpaca" : "Robinhood"} Account`}</h4>
+        <h4 className="text-sm font-semibold text-fg">
+          {editing.id
+            ? "Edit Account"
+            : editing.broker === "robinhood"
+              ? "Add Robinhood Account"
+              : editing.broker === "alpaca-mcp"
+                ? "Add Alpaca MCP Account"
+                : "Add Alpaca Account"}
+        </h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          {editing.broker === "alpaca" ? (
-            <Field label="Environment">
-              <select className={inputClass} value={editing.environment || "paper"} onChange={e => setEditing({ ...editing, environment: e.target.value as any })}>
-                <option value="paper">Alpaca Paper</option>
-                <option value="live">Alpaca Brokerage (Real Money)</option>
-              </select>
-            </Field>
+          {isAlpaca ? (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
+              For Alpaca, environment (Paper vs Brokerage) is derived automatically from the account number (Paper accounts start with &quot;PA&quot;).
+            </div>
           ) : (
-            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted">
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
               Robinhood uses OAuth through MCP and syncs the agentic Brokerage account. No API key fields are required here.
             </div>
           )}
           <Field label="Label (Optional)">
-            <input className={inputClass} value={editing.label || ""} onChange={e => setEditing({ ...editing, label: e.target.value })} placeholder={editing.broker === "alpaca" ? "e.g. Alpaca Paper" : "e.g. Robinhood Agentic"} />
+            <input
+              className={inputClass}
+              value={editing.label || ""}
+              onChange={e => setEditing({ ...editing, label: e.target.value })}
+              placeholder={
+                editing.broker === "robinhood"
+                  ? "e.g. Robinhood Agentic"
+                  : editing.broker === "alpaca-mcp"
+                    ? "e.g. Alpaca MCP Paper"
+                    : "e.g. Alpaca Paper"
+              }
+            />
           </Field>
-          <Field label="Account Number (Optional)">
-            <input className={inputClass} value={editing.accountNumber || ""} onChange={e => setEditing({ ...editing, accountNumber: e.target.value })} placeholder="e.g. PA12345" />
+          <Field label={isAlpaca ? "Account Number (Required)" : "Account Number (Optional)"}>
+            <input
+              className={inputClass}
+              value={editing.accountNumber || ""}
+              onChange={e => {
+                const val = e.target.value;
+                const isPaper = val.trim().toUpperCase().startsWith("PA");
+                setEditing({
+                  ...editing,
+                  accountNumber: val,
+                  environment: isPaper ? "paper" : "live"
+                });
+              }}
+              placeholder="e.g. PA12345"
+            />
           </Field>
-          {editing.broker === "alpaca" && (
+          {isAlpaca && (
             <>
               <Field label="API Key">
                 <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
               </Field>
               <Field label="API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
+              </Field>
+              <Field label="API Endpoint URL (Optional)">
+                <input
+                  className={inputClass}
+                  value={editing.baseUrl || ""}
+                  onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                  placeholder={
+                    editing.broker === "alpaca-mcp"
+                      ? "e.g. http://localhost:8000/sse"
+                      : "e.g. https://paper-api.alpaca.markets/v2"
+                  }
+                />
               </Field>
             </>
           )}
@@ -3016,19 +3806,17 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
           Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {!accounts?.some(a => a.broker === "robinhood") && (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
-              if (mcpHealth?.authenticated) { void syncRobinhood(); }
-              else { window.location.href = "/api/auth/robinhood/start"; }
-            }}>
-              <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
-            <Plus size={14} className="mr-1" /> Connect Alpaca Paper Account
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+            if (mcpHealth?.authenticated) { void syncRobinhood(); }
+            else { window.location.href = "/api/auth/robinhood/start"; }
+          }}>
+            <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "live" })}>
-            <Plus size={14} className="mr-1" /> Connect Alpaca Brokerage Account
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca Account
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca-mcp", environment: "paper" })}>
+            <Plus size={14} className="mr-1" /> Connect Alpaca MCP Account
           </Button>
         </div>
       </div>
@@ -3039,26 +3827,61 @@ function IntegrationsSection({ accounts, onSaved }: { accounts: DashboardSnapsho
         </div>
       ) : (
         <div className="space-y-2">
-          {accounts.map(acc => (
-            <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-fg">{acc.label || acc.broker}</span>
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${acc.environment === "live" ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"}`}>
-                    {acc.environment}
-                  </span>
-                  {acc.isActive && <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Active</span>}
+          {accounts.map(acc => {
+            const info = formatAccountInfo(acc);
+            return (
+              <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-fg">{info.title}</span>
+                    {info.showBadges && acc.isActive && (
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                        CONNECTED
+                      </span>
+                    )}
+                    {info.showBadges && acc.isActive && policy?.strategyAuthority === "decide" && (
+                      <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-400">
+                        AUTONOMOUS
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-faint">
+                    {info.subtitle}
+                    {acc.capabilities && (
+                      <span className="ml-2">
+                        {acc.capabilities.accountType !== "brokerage" && (
+                          <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400 uppercase">
+                            {acc.capabilities.accountType === "roth_ira" ? "Roth IRA" : "Trad IRA"}
+                          </span>
+                        )}
+                        {acc.capabilities.marginEnabled && (
+                          <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400 uppercase">Margin</span>
+                        )}
+                        {acc.capabilities.shortSelling && (
+                          <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400 uppercase">Short</span>
+                        )}
+                        {acc.capabilities.optionsTrading && (
+                          <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400 uppercase">
+                            Options{acc.capabilities.optionsLevel !== undefined ? ` L${acc.capabilities.optionsLevel}` : ""}
+                          </span>
+                        )}
+                        {acc.capabilities.cryptoTrading && (
+                          <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400 uppercase">Crypto</span>
+                        )}
+                        {acc.capabilities.futuresTrading && (
+                          <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400 uppercase">Futures</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-faint capitalize">
-                  {acc.broker} &middot; {acc.accountNumber || "No account number"}
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
+                  <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
-                <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -3125,6 +3948,208 @@ function RobinhoodMcpStatusCard({
           <div className="mt-1 text-[12px] text-muted">
             {visibleTools.join(", ")}
             {(health?.tools.length ?? 0) > visibleTools.length && `, +${(health?.tools.length ?? 0) - visibleTools.length} more`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
+  type Section = "overview" | "guardrails" | "tax" | "fintech" | "mcp";
+  const [section, setSection] = useState<Section>("overview");
+
+  const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
+
+  return (
+    <div className="space-y-4">
+      <Tabs
+        value={section}
+        onChange={(v) => setSection(v as Section)}
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "guardrails", label: "Guardrails" },
+          { id: "tax", label: "Tax & Wash-sale" },
+          { id: "fintech", label: "Fintech Studios" },
+          { id: "mcp", label: "MCP Connection" }
+        ]}
+      />
+
+      {section === "overview" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Welcome to the <strong>Robinhood Agentic Trading</strong> dashboard. This platform leverages autonomous and semi-autonomous AI agents powered by LLMs to scan markets, enrich symbol datasets, formulate trading theses, and execute orders.
+          </p>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg flex items-center gap-1.5">
+              <Sparkles size={14} className="text-accent" /> How the System Works
+            </div>
+            <ol className="list-decimal pl-4 space-y-1">
+              <li><strong>Market Scan:</strong> The system continuously scans index universes (e.g. S&amp;P 500) to find candidate symbols.</li>
+              <li><strong>Enrichment:</strong> Fetches company profiles, premium news from Fintech Studios, and analyst reviews.</li>
+              <li><strong>AI Analysis:</strong> Executes prompts through the configured model (e.g. Claude) to score symbols and formulate trade suggestions.</li>
+              <li><strong>Execution:</strong> Approves or proposes orders based on your selected risk policies and safety limits.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {section === "guardrails" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Safety guardrails prevent runaway trading and keep allocations within your risk tolerance. Customize these in the <strong>Settings → Operate</strong> tab.
+          </p>
+          <div className="grid gap-2.5">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Gauge size={14} className="text-info" /> Daily Notional Ceiling
+              </div>
+              <p>
+                Maximum combined dollar amount of order executions permitted per day. Currently set to: <strong className="text-fg">${policy.maxDailyNotional ?? "Unlimited"}</strong>.
+              </p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Shield size={14} className="text-info" /> Trading Authority Mode
+              </div>
+              <p>
+                Currently in <strong className="text-fg">{policy.strategyAuthority === "decide" ? "Autonomous (Decide)" : "Semi-Autonomous (Propose)"}</strong> mode.
+              </p>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li><strong>Propose Mode:</strong> Order proposals are staged and require your explicit click to send to the brokerage.</li>
+                <li><strong>Decide Mode:</strong> The agent places orders autonomously when matching signals are identified.</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Hourglass size={14} className="text-info" /> Hourly Ceiling
+              </div>
+              <p>
+                Maximum notional executed in a rolling 60-minute window. Set to <strong className="text-fg">${policy.maxHourlyNotional ?? "Unlimited"}</strong>. Breaches automatically drop authority to Propose mode.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {section === "tax" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Tax rules govern how estimated liability is calculated and protect against costly regulatory tax traps like wash sales.
+          </p>
+          <div className="grid gap-2.5">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Percent size={14} className="text-warn" /> Wash-Sale Guardrail
+              </div>
+              <p>
+                <strong>Status: {taxSettings.washSaleGuard ? "Enabled" : "Disabled"}</strong>
+              </p>
+              <p className="mt-1">
+                Under IRC §1091, selling a security at a loss and rebuying it within 30 days disallows claiming the capital loss for tax purposes. The system's wash-sale guard prevents rebuying any security sold at a loss within a rolling 30-day window.
+              </p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Landmark size={14} className="text-warn" /> Account Sheltering
+              </div>
+              <p>
+                Tax treatments differ by account type:
+              </p>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li><strong>Taxable:</strong> Estimated tax liability is deducted from display returns (if configured) and subject to the 30-day lockout.</li>
+                <li><strong>IRA (Roth / Traditional):</strong> Tax-sheltered with 0% tax liability estimates and no in-account wash-sale blocks (though losses in taxable accounts still apply).</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {section === "fintech" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            <strong>Fintech Studios (PowerIntell.AI)</strong> supplies real-time financial news, press releases, regulatory updates, and sentiment analysis scores.
+          </p>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg flex items-center gap-1.5">
+              <Zap size={14} className="text-accent" /> Operation Credit Costs
+            </div>
+            <ul className="list-disc pl-4 space-y-0.5">
+              <li><strong>Symbol Search:</strong> 6 credits per query (returns 25 articles).</li>
+              <li><strong>AI Article Summary:</strong> 5 credits per summary.</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg">Monthly Run Projections (5-Ticker Portfolio)</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-line text-faint">
+                    <th className="pb-1.5">Scenario</th>
+                    <th className="pb-1.5">Frequency</th>
+                    <th className="pb-1.5 text-right">Est. Cost</th>
+                    <th className="pb-1.5 text-right">Recommended Plan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line/40">
+                  <tr>
+                    <td className="py-1.5 font-medium text-fg">Daily EOD scan</td>
+                    <td className="py-1.5 text-faint">Once/day (22 days)</td>
+                    <td className="py-1.5 text-right font-mono">660 credits/mo</td>
+                    <td className="py-1.5 text-right text-up font-medium">Free ($0/mo)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1.5 font-medium text-fg">Intra-day tracking</td>
+                    <td className="py-1.5 text-faint">3 scans/day (22 days)</td>
+                    <td className="py-1.5 text-right font-mono">1,980 credits/mo</td>
+                    <td className="py-1.5 text-right text-up font-medium">Starter ($20/mo)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1.5 font-medium text-fg">High Frequency</td>
+                    <td className="py-1.5 text-faint">10 scans/day (22 days)</td>
+                    <td className="py-1.5 text-right font-mono">6,600 credits/mo</td>
+                    <td className="py-1.5 text-right text-up font-medium">Pro ($40/mo)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-faint mt-1">
+              Note: Unused credits in the Starter tier roll over up to 1,500 credits.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {section === "mcp" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            The <strong>Model Context Protocol (MCP)</strong> enables your desktop AI agent (e.g. Claude Desktop) to connect directly to the Fintech Studios API and run advanced queries dynamically.
+          </p>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg flex items-center gap-1.5">
+              <Network size={14} className="text-accent" /> MCP Integration Benefits
+            </div>
+            <ul className="list-disc pl-4 space-y-1">
+              <li><strong>Dynamic Tool Use:</strong> Allows the agent to query news articles, filter by regulatory event tags, and request summary analysis on demand.</li>
+              <li><strong>Real-time Research:</strong> The agent can conduct deep multi-turn market research loops in the background when evaluating trading proposals.</li>
+              <li><strong>Decoupled Key Management:</strong> Keys are registered securely in the desktop config, not exposed to client dashboard scripts.</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+            <div className="font-semibold text-fg">Fintech Studios MCP Server Command</div>
+            <pre className="mt-1 block overflow-x-auto rounded bg-bg/50 px-2 py-1.5 font-mono text-[11px] text-fg border border-line/60">
+{`"fintechstudios": {
+  "command": "npx",
+  "args": ["-y", "@fintechstudios/mcp-server"],
+  "env": {
+    "FINTECH_STUDIOS_API_KEY": "fts_live_..."
+  }
+}`}
+            </pre>
+            <p className="text-[11px] text-faint mt-1.5">
+              Configured in Claude Desktop configuration at:<br />
+              <code className="text-fg font-mono">~/Library/Application Support/Claude/claude_desktop_config.json</code>
+            </p>
           </div>
         </div>
       )}

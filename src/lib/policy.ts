@@ -1,6 +1,7 @@
-import type { EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
 import { symbolsForPolicyUniverse } from "./index-universes";
+import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -14,8 +15,36 @@ export interface PolicyContext {
   marketScan?: MarketScan;
   /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
   washSaleLockedSymbols?: Set<string>;
+  /**
+   * User identifier. Required for the wash-sale gate to resolve the cross-account locked set
+   * when washSaleLockedSymbols is not pre-populated by the caller.
+   */
+  userId?: string;
+  /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
+  accountCapabilities?: AccountCapabilities;
+  /**
+   * True only for real-capital brokerage (LIVE) execution. Test/local simulation and broker-Paper
+   * accounts are NOT live and can never violate the Pattern-Day-Trader rule, so the PDT gate below
+   * is skipped unless this is explicitly true. Absent/false ⇒ never PDT-gated (safe default).
+   */
+  isLiveExecution?: boolean;
+  /**
+   * Day-trades already executed on this account over the rolling 5-business-day PDT window
+   * (FINRA Rule 4210). Computed by db.countDayTradesInLastBusinessDays and threaded in like the
+   * other precomputed counts (dailyOrderCount/dailyNotionalUsed). Absent ⇒ treated as 0.
+   */
+  priorDayTradeCount?: number;
   now?: Date;
 }
+
+/**
+ * Minimum equity a LIVE MARGIN account must hold to trade on margin. SEC/FINRA RETIRED the
+ * Pattern-Day-Trader rule (FINRA Notice 26-10, 2026): the old $25,000 minimum and the
+ * 4-day-trades-in-5-business-days limit no longer exist. The replacement framework is broker-side
+ * real-time intraday-margin monitoring plus this $2,000 minimum for margin accounts. We enforce only
+ * the static minimum here and defer intraday margin to the broker — we no longer count day-trades.
+ */
+export const MARGIN_MINIMUM_EQUITY = 2_000;
 
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
@@ -26,23 +55,46 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.systemState === "liquidating" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is liquidating. Only close orders allowed.");
   if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
-  const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-  if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-  if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  // Universe/blocklist applies to OPENING trades only. Never block a risk-reducing exit
+  // (sell/cover) because the symbol was removed from the universe or blocklisted — that
+  // would trap a position in a name you flagged precisely to get out of.
+  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  if (isOpening) {
+    const allowedSymbols = allowedSymbolsForPolicy(context.policy);
+    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+  }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
+  // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
+  // Permissive default — brackets should be encouraged when stop rules are active.
+  if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const bracketPermitted =
+      context.policy.permittedOrderTypes.includes("bracket" as any) ||
+      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+    if (!bracketPermitted) {
+      reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
+    }
+  }
   if (!context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
     reasons.push("Extended-hours orders are disabled.");
   }
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
-  // SHORT_SELLING: Feature gate. When shortSellingEnabled is true, short/cover
-  // proposals pass through to the guardrails below. When false (default), they
-  // are unconditionally rejected. Flip this flag + implement the SHORT_SELLING
-  // TODOs below + confirm broker support before enabling.
+  // SHORT_SELLING: Two-layer gate.
+  // Layer 1 — policy flag: shortSellingEnabled must be true.
+  // Layer 2 — account capability: the connected broker/account must report shortSelling=true.
+  //   Robinhood MCP always reports false (MCP docs: "no short sells").
+  //   Alpaca: parsed from account.shorting_enabled.
+  //   When accountCapabilities is absent (legacy row), we treat shortSelling as false.
   if (proposal.side !== "buy" && proposal.side !== "sell") {
-    if (!context.policy.shortSellingEnabled) {
-      reasons.push(`Order side "${proposal.side}" is not supported. Only "buy" and "sell" are permitted.`);
+    const brokerSupportsShort = context.accountCapabilities?.shortSelling === true;
+    if (!context.policy.shortSellingEnabled || !brokerSupportsShort) {
+      const why = !context.policy.shortSellingEnabled
+        ? `short-selling is disabled in policy`
+        : `the connected account does not support short selling`;
+      reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
       if (proposal.side === "short") {
         if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
@@ -58,7 +110,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
   
-  const isOpening = proposal.side === "buy" || proposal.side === "short";
+  // MARGIN-ACCOUNT MINIMUM (replaces the retired Pattern-Day-Trader gate). SEC/FINRA RETIRED the PDT
+  // rule (FINRA Notice 26-10, 2026): there is no longer a $25,000 minimum or a 4-day-trades-in-5-days
+  // limit. The new framework is broker-side real-time intraday-margin monitoring plus a $2,000 minimum
+  // equity for MARGIN accounts. So we no longer count day-trades; we enforce ONLY the static $2,000
+  // margin minimum on a LIVE/real-capital MARGIN account and defer intraday margin to the broker.
+  // Scope: LIVE execution only (Test/local sim and broker-Paper are never gated); opening legs only;
+  // cash (non-margin) accounts are never gated here (they aren't subject to the margin minimum).
+  if (
+    isOpening &&
+    context.isLiveExecution === true &&
+    context.accountCapabilities?.marginEnabled === true &&
+    context.portfolio.totalMarketValue < MARGIN_MINIMUM_EQUITY
+  ) {
+    reasons.push(
+      `margin_minimum: this LIVE margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
+        `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} minimum required to trade on margin (the PDT rule was retired — FINRA Notice 26-10).`
+    );
+  }
+
   const effectiveMaxOrderNotional = Math.min(
     context.policy.maxOrderNotional ?? Infinity,
     context.policy.maxOrderPctOfNav ? (context.policy.maxOrderPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
@@ -83,8 +153,34 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
     reasons.push("Daily order count limit would be exceeded.");
   }
+  // Affordability: block an opening order the account can't fund rather than outsourcing the
+  // check to the broker's margin rejection. buyingPower is broker-accurate for live/paper
+  // (margin-aware) and cash for Test; a non-positive/non-finite value (a gateway that doesn't
+  // report it) is treated as "unknown" and never blocks, so this can't false-positive.
+  if (
+    isOpening &&
+    Number.isFinite(context.portfolio.buyingPower) &&
+    context.portfolio.buyingPower > 0 &&
+    estimatedNotional > context.portfolio.buyingPower
+  ) {
+    reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds available buying power $${context.portfolio.buyingPower.toFixed(2)}.`);
+  }
   if (proposal.side === "sell" && sellQuantityExceedsHoldings(proposal, context.positions)) {
     reasons.push(`Sell quantity exceeds current ${symbol} holdings.`);
+  }
+
+  // An exit (sell/cover) must carry a resolvable size. A size-less exit (neither quantity nor
+  // dollarAmount) slips past the holdings/notional checks above (they no-op on an undefined
+  // quantity) and books a ZERO-quantity phantom fill the dashboard reports as a successful close
+  // while the position stays fully open and exposed. Deterministic sizing resolves LLM-emitted
+  // exits to the full position before they reach here, so a size-less exit at the gate is a real
+  // defect — reject it rather than silently no-op the stop.
+  if (
+    (proposal.side === "sell" || proposal.side === "cover") &&
+    proposal.quantity == null &&
+    proposal.dollarAmount == null
+  ) {
+    reasons.push(`${symbol} exit must specify a quantity or dollar amount.`);
   }
 
   const crisisOpeningExposureReason = deRiskInCrisisReason(proposal, context, estimatedNotional);
@@ -92,12 +188,24 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
   // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
   // the last 30 days, which would disallow the loss. Configurable via taxSettings.
+  // Wash sales are only relevant for BUY orders (re-establishing a long position).
+  // Covers are buy-to-close on a short and do NOT re-establish the sold long position,
+  // so they are intentionally excluded here.
+  //
+  // Authoritative cross-account enforcement (architecture-blueprint §3.3): if the
+  // caller did not pre-populate washSaleLockedSymbols, resolve it now using
+  // getUserWashSaleLockedSymbols so the gate cannot be silently bypassed by a caller
+  // that omits the locked set.
   if (
     proposal.side === "buy" &&
-    (context.policy.taxSettings?.washSaleGuard ?? true) &&
-    context.washSaleLockedSymbols?.has(symbol)
+    (context.policy.taxSettings?.washSaleGuard ?? true)
   ) {
-    reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    const lockedSymbols: Set<string> =
+      context.washSaleLockedSymbols ??
+      (context.userId != null ? getUserWashSaleLockedSymbols(context.userId, context.now ?? new Date()) : new Set<string>());
+    if (lockedSymbols.has(symbol)) {
+      reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+    }
   }
 
   if (isOpening && proposal.side === "short" && context.policy.maxShortExposurePct) {
@@ -113,12 +221,41 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
     reasons.push(`Projected ${symbol} exposure ${projectedSymbolExposurePct.toFixed(2)}% exceeds ${context.policy.maxSymbolExposurePct}%.`);
   }
-  if (context.policy.maxSymbolExposureNotional) {
+  if (context.policy.maxSymbolExposureNotional && isOpening) {
     const existingPosition = context.positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const existingValue = existingPosition ? Math.abs(existingPosition.marketValue) : 0;
+    // Opening orders (buy/short) ADD exposure. Closing orders (sell/cover) always
+    // reduce symbol exposure and must never be blocked — guard on isOpening above.
     const projectedNotional = existingValue + estimatedNotional;
     if (projectedNotional > context.policy.maxSymbolExposureNotional) {
       reasons.push(`Projected ${symbol} notional exposure $${projectedNotional.toFixed(2)} exceeds cap $${context.policy.maxSymbolExposureNotional.toFixed(2)}.`);
+    }
+  }
+
+  // Whole-portfolio gross/net exposure caps. Gross = Σ|marketValue| (total market
+  // involvement / leverage); net = Σ marketValue (directional bias). Each blocks only an
+  // order that pushes the metric FURTHER past its cap — a risk-reducing close is always
+  // allowed. These mainly bite once short selling is enabled. Defaults are 100% (non-binding).
+  if (context.policy.maxGrossExposurePct || context.policy.maxNetExposurePct) {
+    const totalValue = context.portfolio.totalMarketValue;
+    if (totalValue > 0) {
+      const grossNow = context.positions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
+      const netNow = context.positions.reduce((sum, p) => sum + p.marketValue, 0);
+      const grossProjected = isOpening ? grossNow + estimatedNotional : Math.max(0, grossNow - estimatedNotional);
+      const netDelta = proposal.side === "buy" || proposal.side === "cover" ? estimatedNotional : -estimatedNotional;
+      const netProjected = netNow + netDelta;
+      if (context.policy.maxGrossExposurePct) {
+        const grossCap = (context.policy.maxGrossExposurePct / 100) * totalValue;
+        if (grossProjected > grossCap && grossProjected > grossNow) {
+          reasons.push(`Projected gross exposure $${grossProjected.toFixed(2)} exceeds gross cap $${grossCap.toFixed(2)} (${context.policy.maxGrossExposurePct}%).`);
+        }
+      }
+      if (context.policy.maxNetExposurePct) {
+        const netCap = (context.policy.maxNetExposurePct / 100) * totalValue;
+        if (Math.abs(netProjected) > netCap && Math.abs(netProjected) > Math.abs(netNow)) {
+          reasons.push(`Projected net exposure $${netProjected.toFixed(2)} exceeds net cap $${netCap.toFixed(2)} (${context.policy.maxNetExposurePct}%).`);
+        }
+      }
     }
   }
 
@@ -134,7 +271,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     approved: reasons.length === 0,
     reasons,
     projectedSymbolExposurePct,
-    dailyNotionalUsed: context.dailyNotionalUsed + estimatedNotional
+    // Opening sides accumulate daily notional; closing sides (sell/cover) do not (matches the
+    // daily/hourly cap checks above, which are gated on isOpening). (T14)
+    dailyNotionalUsed: context.dailyNotionalUsed + (isOpening ? estimatedNotional : 0)
   };
 }
 
@@ -288,10 +427,3 @@ function sectorCapFor(policy: TradingPolicy, sector: string): number | undefined
   return match?.[1];
 }
 
-function currentPriceForPosition(position: EquityPosition, marketScan?: MarketScan): number | undefined {
-  const symbol = normalizeSymbol(position.symbol);
-  const scanPrice = marketScan?.quotesBySymbol[symbol]?.price;
-  if (scanPrice && scanPrice > 0) return scanPrice;
-  if (position.quantity > 0) return position.marketValue / position.quantity;
-  return undefined;
-}

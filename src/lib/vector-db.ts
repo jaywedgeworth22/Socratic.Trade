@@ -5,6 +5,11 @@ import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
+/** Scope values written into vector metadata. New vectors carry this; legacy vectors lack it. */
+export const SHARED_SCOPE = "shared" as const;
+export const PRIVATE_SCOPE = "private" as const;
+export type VectorScope = typeof SHARED_SCOPE | typeof PRIVATE_SCOPE;
+
 export interface StoreContextsResult {
   /** Documents handed in (after trimming/empty-filter). */
   attempted: number;
@@ -148,9 +153,13 @@ async function indexExists(pc: Pinecone): Promise<boolean> {
 }
 
 function cleanMetadata(metadata: ContextDocument["metadata"], text: string, userId: string): RecordMetadata {
-  const out: Record<string, string | number | boolean | string[]> = { text, userId };
+  // Derive scope from the userId sentinel used to signal the shared/public tier.
+  // New vectors carry an explicit `scope` field; legacy vectors written before this change
+  // do NOT have it (backward-compat: they are still matched via the userId filter).
+  const scope: VectorScope = userId === "local" ? SHARED_SCOPE : PRIVATE_SCOPE;
+  const out: Record<string, string | number | boolean | string[]> = { text, userId, scope };
   for (const [key, value] of Object.entries(metadata)) {
-    if (key === "text" || key === "userId") continue;
+    if (key === "text" || key === "userId" || key === "scope") continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
@@ -406,16 +415,52 @@ export async function getVectorStoreStats(userId: string = "local"): Promise<Vec
   }
 }
 
+export interface RetrievedChunk {
+  /** Real Pinecone vector id (NOT a fabricated `<SYMBOL>#i`). */
+  id: string;
+  text: string;
+  score: number;
+  source?: string;
+  /** The chunk's own acceptance_datetime/timestamp (NOT the query's as_of). */
+  as_of?: string;
+  doc_type?: string;
+  section?: string;
+  url?: string;
+  /** 'shared' for public/shared-tier docs, 'private' for user-private docs. Undefined for legacy pre-scope vectors. */
+  scope?: VectorScope;
+}
+
+/** Map a raw Pinecone match to a chunk carrying REAL provenance (id, score, acceptance date, url). */
+export function matchToChunk(match: any): RetrievedChunk {
+  const md = (match?.metadata ?? {}) as Record<string, unknown>;
+  const asOf = md.acceptance_datetime ?? md.as_of ?? md.timestamp;
+  const rawScope = md.scope;
+  const scope: VectorScope | undefined =
+    rawScope === SHARED_SCOPE || rawScope === PRIVATE_SCOPE ? rawScope : undefined;
+  return {
+    id: String(match?.id ?? ""),
+    text: typeof md.text === "string" ? md.text : "",
+    score: typeof match?.score === "number" ? match.score : 0,
+    source: typeof md.source === "string" ? md.source : undefined,
+    as_of: asOf != null ? String(asOf) : undefined,
+    doc_type: typeof md.doc_type === "string" ? md.doc_type : undefined,
+    section: typeof md.section === "string" ? md.section : undefined,
+    url: typeof md.url === "string" ? md.url : undefined,
+    scope
+  };
+}
+
 /**
- * Retrieve relevant documents from Pinecone for a given query and symbol.
+ * Retrieve relevant chunks from Pinecone with REAL provenance (id/score/as_of/url) so answers can
+ * be grounded and honestly cited.
  */
-export async function retrieveContext(
+export async function retrieveContextDetailed(
   query: string,
   symbol: string,
   limit: number = 3,
   userId: string = "local",
   options?: { asOf?: string }
-): Promise<string[]> {
+): Promise<RetrievedChunk[]> {
   const sanitizedUserId = sanitizeUserId(userId);
   const { pc, voyage } = getClients(sanitizedUserId);
   if (!pc || !voyage) return [];
@@ -435,14 +480,22 @@ export async function retrieveContext(
 
     let matches: any[] = [];
 
+    // The shared-tier filter uses $or to match BOTH new vectors (scope=='shared') and legacy
+    // pre-scope vectors (userId=='local'). This is the backward-compat coexistence strategy:
+    // scope is authoritative for new vectors; userId is the fallback for old ones.
+    const sharedTierFilter = {
+      symbol: { $eq: symbol },
+      $or: [
+        { scope: { $eq: SHARED_SCOPE } },
+        { userId: { $eq: "local" } }
+      ]
+    };
+
     if (sanitizedUserId === "local") {
       const results = await index.query({
         vector: embedding,
         topK: fetchK,
-        filter: {
-          symbol: { $eq: symbol },
-          userId: { $eq: "local" }
-        },
+        filter: sharedTierFilter,
         includeMetadata: true,
       });
       matches = results.matches || [];
@@ -460,10 +513,7 @@ export async function retrieveContext(
         index.query({
           vector: embedding,
           topK: fetchK,
-          filter: {
-            symbol: { $eq: symbol },
-            userId: { $eq: "local" }
-          },
+          filter: sharedTierFilter,
           includeMetadata: true,
         })
       ]);
@@ -491,10 +541,22 @@ export async function retrieveContext(
       : matches;
     return withinAsOf
       .slice(0, limit)
-      .map((match) => match.metadata?.text as string)
-      .filter(Boolean);
+      .map(matchToChunk)
+      .filter((c) => c.text);
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);
     return [];
   }
+}
+
+/** Back-compat string[] view (used by strategy.ts) — thin wrapper over retrieveContextDetailed. */
+export async function retrieveContext(
+  query: string,
+  symbol: string,
+  limit: number = 3,
+  userId: string = "local",
+  options?: { asOf?: string }
+): Promise<string[]> {
+  const chunks = await retrieveContextDetailed(query, symbol, limit, userId, options);
+  return chunks.map((c) => c.text).filter(Boolean);
 }

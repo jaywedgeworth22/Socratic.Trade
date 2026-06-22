@@ -1,5 +1,6 @@
-import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveApiKey } from "./db";
+import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
@@ -7,8 +8,13 @@ import type { MarketQuoteSummary, TradeProposal } from "./types";
 
 export interface RedTeamDebateResult {
   rejected: boolean;
+  /** True only when the debate actually ran and returned a verdict (vs skipped / failed-open). */
+  available: boolean;
   reason: string;
 }
+
+/** Abort the Red Team LLM call after this long so a hung provider can't wedge the run lock. */
+const RED_TEAM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 45_000;
 
 export async function debateProposal(
   proposal: TradeProposal,
@@ -19,8 +25,10 @@ export async function debateProposal(
   const policy = getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
-  const openaiKey = resolveApiKey("openai", userId);
-  if (!openaiKey) return { rejected: false, reason: "Red Team debate skipped because OpenAI is not configured." };
+  const cred = resolveLlmCredential("openai", userId);
+  const openaiKey = cred.key;
+  if (!openaiKey) return { rejected: false, available: false, reason: "Red Team debate skipped because OpenAI is not configured." };
+  const keySource = cred.source === "operator" ? "operator" : "user";
   
   const systemPrompt = `You are the Red Team Risk Agent. Your job is to rigorously critique the strategy's high-conviction trade proposals.
   
@@ -111,18 +119,22 @@ Respond with a JSON object containing:
             "content-type": "application/json",
             authorization: `Bearer ${openaiKey}`
           },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          // A hung provider would otherwise hold the per-user run lock until the OS socket
+          // timeout, starving the scheduler's concurrency slots. Abort and fail closed.
+          signal: AbortSignal.timeout(RED_TEAM_TIMEOUT_MS)
         });
 
         if (!response.ok) {
           console.warn("Red Team LLM call failed", await response.text());
           return {
             text: undefined,
-            debate: { rejected: false, reason: "Red Team debate failed to execute." }
+            debate: { rejected: false, available: false, reason: "Red Team debate failed to execute." }
           };
         }
 
         const payload = await response.json();
+        recordLlmUsage({ userId, provider: "openai", model, context: "red-team", keySource, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
@@ -133,6 +145,7 @@ Respond with a JSON object containing:
             text,
             debate: {
               rejected: !!parsed.rejected,
+              available: true,
               reason: parsed.reason || "No reason provided."
             }
           };
@@ -140,7 +153,7 @@ Respond with a JSON object containing:
 
         return {
           text: undefined,
-          debate: { rejected: false, reason: "Red Team evaluation returned no response." }
+          debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response." }
         };
       }
     );
@@ -149,5 +162,5 @@ Respond with a JSON object containing:
     console.error("Failed to debate proposal:", error);
   }
 
-  return { rejected: false, reason: "Red Team evaluation errored out." };
+  return { rejected: false, available: false, reason: "Red Team evaluation errored out." };
 }

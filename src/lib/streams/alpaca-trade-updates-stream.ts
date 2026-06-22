@@ -34,8 +34,10 @@ export function startAlpacaTradeUpdatesStream(): void {
     console.warn("[stream:alpaca-trades] global WebSocket unavailable; not starting.");
     return;
   }
-  const key = resolveApiKey("alpaca_paper_api_key");
-  const secret = resolveApiKey("alpaca_paper_secret_key");
+  // Process-level background worker (no per-request user): keyed to the `local` operator.
+  // Multi-user fill streaming is a deferred refactor — fills observed here are the operator's.
+  const key = resolveApiKey("alpaca_paper_api_key", "local");
+  const secret = resolveApiKey("alpaca_paper_secret_key", "local");
   if (!key) {
     console.warn("[stream:alpaca-trades] missing Alpaca API key; not starting.");
     return;

@@ -24,6 +24,246 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`safety/persistence-hardening`): **Migration framework + money/data-loss fixes.**
+  From the post-fix "what's left" re-audit; rebuilt onto the split `db.ts` + next16/zod4. Adds a
+  `PRAGMA user_version` migration framework (`runMigrations`/`getSchemaVersion`; `migrate()` stays the
+  idempotent baseline, next schema change goes in `MIGRATIONS`); an **ENCRYPTION_KEY boot fail-fast**
+  (`assertEncryptionKeyAvailable` throws if the ephemeral random key would silently decrypt stored
+  creds to `''`); **no fabricated `$100`** in Alpaca review (`estimateReviewNotional` fails closed;
+  `getEquityQuotes` logs swallowed errors); **side-aware universe/blocklist gate** (sell/cover exits
+  never blocked); **synthetic-stop live exits booked `pending_reconciliation`**. tsc clean, 772 tests
+  (+8), build green. CI workflow activation is PR #50. See
+  `docs/rollouts/2026-06-21-persistence-safety-hardening.md`.
+- 2026-06-21 (`feat/per-user-key-resolution`): **Multi-user API-key resolution (no special `local`) + operator-funded LLM failover with per-user usage tracking.** `resolveApiKeyWithSource` (`db-api-keys.ts`) is tier-aware: **per-user-only** keys (broker `alpaca_*` + LLM `openai`/`anthropic`, and any unlisted service) have **no env fallback for anyone** — at boot the operator's env values are migrated into the `local` primary user's store (`migrateLocalEnvCredentials`/`migrateLocalRobinhoodToken` via `instrumentation.ts`), so every user incl. `local` resolves from their own stored keys/OAuth; **shared-operator-infra** keys (all market data, FRED, Pinecone/Voyage, Apify, SEC UA) keep a global env fallback (operator-funded public data; a user's own key still overrides + joins the consent pool). LLM uses `resolveLlmCredential`: per-user key first, else the operator env key as a **flag-gated failover for any user** (`LLM_OPERATOR_FALLBACK`, default on) — every call recorded in a new `llm_usage` ledger (`llm-usage.ts`, tokens/cost/keySource) at `GET /api/admin/llm-usage`. Closed direct-`process.env` bypasses (`alpaca.ts`, `mcp-oauth.ts`, `massive-s3.ts`, `congress.ts`) + threaded userId through the chat orchestrator and learned-context semantic gate (adversarial-review fixes — were silently spending the operator LLM key unattributed). tsc clean, **763 tests**, build green. Built in isolated `~/apps/trading-keys` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-21-per-user-key-resolution-llm-ledger.md`.
+- 2026-06-21 (`agent/claude-docs-pr-policy`): **Corrected AGENTS.md (PR policy + db.ts split + stale counts).** Documented the required `verify` CI check (ruleset-enforced; `--admin` does NOT bypass; merge with `--squash --auto`), repointed the daily-notional trap to `db-execution.ts` + added a note that `db.ts` is now an 8-module barrel, refreshed the test count (~723/81), and fixed the backwards AGENTS.md↔CLAUDE.md symlink description. See `docs/rollouts/2026-06-21-agents-md-pr-policy-fix.md`.
+- 2026-06-21 (`agent/claude-litestream-dedup`): **Removed dead Litestream stub.** Deleted `scripts/litestream.mjs` + the 3 `litestream:*` npm scripts + the old `LITESTREAM_DB_PATH`/`LITESTREAM_REPLICA_URL` env vars (never run); reconciled `docs/ops-observability-security.md` to the live PM2+R2 setup. Single Litestream implementation now (the verified-live one from #47). tsc clean, 723 tests pass, build green. See `docs/rollouts/2026-06-21-litestream-dedup.md`.
+- 2026-06-21 (`agent/claude-flaky-lock`): **Fix flaky CI timeout in `approval-lock.test.ts`.** The two tests that let `executeProposal` run its full broker-review path (no broker → retry/backoff > 5s on loaded CI runners) got a 20s per-test timeout; they assert lock behavior, not timing. Stops intermittent `Test timed out in 5000ms` failures that were blocking PR merges. tsc clean, 4/4 pass. See `docs/rollouts/2026-06-21-flaky-approval-lock-timeout.md`.
+- 2026-06-21 (`agent/claude-db-split-v2`): **refactor(db): split db.ts (2964 lines) into 8 focused modules.** Pure mechanical extraction — db.ts retains schema/migration/getDb()/audit() and re-exports all 8 modules as a barrel for zero consumer breakage. Re-derived from current main (supersedes stale PR #46). tsc clean, 704/704 tests green, build green. See `docs/rollouts/2026-06-21-db-split-v2.md`.
+
+
+
+- 2026-06-21 (`agent/claude-litestream`): **Litestream WAL replication LIVE on Cloudflare R2 (P2-5).** Litestream 0.5.12 installed and running as PM2 sidecar `litestream` via `scripts/run-litestream.sh`, replicating `~/apps/trading-live/data/app.db` → R2 bucket `trading-live-backups`. First ~9.4 MB snapshot verified uploaded; `replica sync` each second, restart_time 0. 0.5.x is single-replica (dropped the local-file replica) and uses `litestream ltx` (not `snapshots`). PR #47. **Follow-up: rotate the R2 token (pasted in chat; scoped to that one bucket).** See `docs/rollouts/2026-06-21-litestream-r2-live.md`.
+- 2026-06-21 (`feat/csrf-rate-limit-admin`): **SECURITY-HARDENING — CSRF origin guard + per-user rate limiting + admin-role gate.** Added `src/lib/auth/csrf.ts` (same-origin Sec-Fetch-Site/Origin check, wired into `middleware.ts` for state-changing `/api/*`; webhooks/health exempt), `src/lib/rate-limit.ts` (in-process sliding window, no deps; fail-open on error, 429 over limit; applied to OAuth start/callback, `orders/cancel`, `proposals/[id]/approve`), and `src/lib/auth/admin.ts` `requireAdmin` (ADMIN_USER_EMAILS allowlist + primary operator, default-deny in prod; composes with the legacy x-admin-token/non-prod gate; wired into all six `app/api/admin/*` routes). tsc clean, 642 tests pass (+19), build green. See `docs/rollouts/2026-06-21-csrf-rate-limit-admin.md`.
+- 2026-06-21 (`agent/claude`): **P0-3/P1-2/P1-7 — VIX Yahoo fallback + congress floor + exposure defaults.** Live ^VIX from Yahoo Finance (key-free) replaces "Unknown regime" when no FRED key is configured; `hasNotableWebSignal` now requires buyCount≥2 AND netSignal≥2 (single-member disclosures no longer trigger rank-lift); `maxGrossExposurePct`/`maxNetExposurePct` defaults tightened 100→80 to enforce a 20% cash buffer. tsc clean, 593 tests all pass (+20). See `docs/rollouts/2026-06-21-p1-macro-signal-exposure.md`.
+- 2026-06-22 (`claude/app-strategic-framework-xh9bdw`): **Staged production deploy workflow.** Added `ci-pending/deploy.yml` (auto-deploy `main`/merged PRs + manual dispatch → self-hosted PM2 host: `git reset --hard origin/main` → `npm ci` → `npm run build` → `pm2 restart trading`, preserving untracked `.env.local`/`data/`) and expanded `ci-pending/README.md` with activation, self-hosted-runner setup, and an SSH alternative. Staged in `ci-pending/` because the push token lacks `workflow` scope. Owner must `git mv` it into `.github/workflows/` + register the `trading-live` runner (or set SSH secrets) to activate. See `docs/rollouts/2026-06-22-deploy-workflow-staged.md`.
+- 2026-06-21 (`claude/app-strategic-framework-xh9bdw`): **Ticker logos default to transparent + tile-monogram fallback.** `DEFAULT_TICKER_LOGO_DISPLAY` `tile`→`transparent`; `TickerLogo` now renders a tile monogram (first 1–2 letters) when a logo image fails to load instead of a bare gap (explicit `fallback` prop still wins). Addresses a user report; the separate "Logo source (GitHub/logo.dev) picker does nothing" complaint was already fixed on `main` (commit `e61ec84` removed the picker; deterministic GitHub→logo.dev cascade) and only needs a deploy. tsc clean · `ticker-logos` test updated & green · `npm test` 647 pass / 1 pre-existing unrelated fail (`cache-provenance`, date-sensitive) · build clean. See `docs/rollouts/2026-06-21-ticker-logo-transparent-default-tile-fallback.md`.
+- 2026-06-21 (`claude/app-strategic-framework-xh9bdw`): **Plain-English strategic-framework doc.** Added `docs/strategic-framework.md` — a college-level, no-investing-experience-assumed outline of the whole strategy (three execution modes, six evaluation lenses, factor weighting matrix, learning loop, safety gates) with an explicit honest weaknesses/limits/risks section (unproven factor weights, no rigorous backtester, free-tier data gaps, keyword sentiment, advisory-only weight shifts + 20-trade cold start, short/cover not fully proven, single-process scheduler, no holiday calendar). Living doc with its own changelog; update it as the strategy is refined. Docs-only. See `docs/rollouts/2026-06-21-strategic-framework-plain-english.md`.
+- 2026-06-21 (`agent/claude`): **P1-4/5/6 — congress disclosedAt windowing + scorecard floor + deterministic Bear veto.** PR #35.
+- 2026-06-21 (`agent/claude`): **Best-source precedence + source/time provenance tooltips.**
+  Reordered the enrichment cascade so the real-time `AlpacaSnapshotEnrichmentProvider` wins the
+  price-family fields (price/bid/ask/volume/vwap/intradayChangePct) over delayed providers (it only
+  supplies market data, so fundamentals sourcing is untouched; self-skips without Alpaca keys). Added
+  a shared `dataPointTitle(label, source, asOf)` (+ `derivedTitle`) so hovering ANY Market-Scan cell
+  shows `Source: <provider> · Received HH:MM`, attributed to that field's own `sources[field]`
+  (derived cols → "Computed from <inputs>"; no-provenance cols → time only; never fabricated).
+  `StatTile` carries source/time app-wide; `SOURCE_LABELS` polished (alpaca-snapshot→"Alpaca"). tsc
+  clean · **593 tests** · adversarially verified · see
+  `docs/rollouts/2026-06-21-best-source-and-provenance-tooltips.md`.
+- 2026-06-21 (`agent/claude`): **Scan default columns (expert panel) + Alpaca VWAP/feed.**
+  A 4-persona financial-expert panel chose a new 11-column execution-aware default for the Market
+  Scan — `symbol·price·Chg·vsVWAP·SecRS·%offHi·$Vol·Spread·Bid·Ask·Score` (bid/ask now default-on
+  per owner mandate; `SCAN_COLS_KEY`→v3). Alpaca snapshot provider now also maps real **VWAP**
+  (lights the existing "vs VWAP" column) and the data feed is env-configurable (`ALPACA_DATA_FEED`,
+  default `iex`; SIP is 403 on the free plan). Also fixed 5 tsc errors another lane left in
+  `test/deterministic-bear.test.ts`. tsc clean · **580 tests** · live VWAP verified · see
+  `docs/rollouts/2026-06-21-scan-default-columns-alpaca-vwap.md`.
+- 2026-06-21 (`agent/claude`): **P1 edge quality — congress disclosedAt windowing + scorecard noise floor + deterministic Bear veto.** Three financial-expert-panel P1 items: (1) `aggregateCongressSignals` now windows on `disclosedAt` (not `tradedAt`) so only market-visible disclosures count; (2) LLM scorecard filters raised ≥2→≥5 trades; (3) `deterministicBearFilter` (sync, no LLM) runs before Bear: hard-vetos phantom exits + below-median buys in crisis regime, flags momentum overextension. tsc clean, 573 tests (+16). Commit: `61b560e`. See `docs/rollouts/2026-06-21-p1-edge-quality.md`.
+- 2026-06-21 (`agent/claude-ui`, PR pending): **UI/UX deferred-fix pass.** Cleared a batch from
+  the issue register: Strategy-Flow rework (REL-6), safe-area insets (IPH-9/IOS-1), dark-mode
+  danger contrast (A11Y-7), scoped chart gradient (MISC-1), deleted dead `app/ui/dashboard/*`
+  (DUP-1, also closing CPY-7/VIS-2), safety-banner casing (CPY-9), Activity aria (A11Y-5),
+  pill-label sizes (A11Y-8), scan-table overscan (SCN-2). Done in an isolated worktree off `main`
+  to avoid racing the live `agent/claude` session. tsc clean · **557 tests** · build clean · see
+  `docs/rollouts/2026-06-21-ui-ux-deferred-fixes.md`.
+
+- 2026-06-21 (`agent/claude`, PR #32): **PDT-rule repeal + Alpaca scan data + consent UI.**
+  FINRA Notice 26-10 retired the Pattern-Day-Trader rule ($25k / 4-trades-in-5-days) → replaced
+  the `policy.ts` PDT gate with a `MARGIN_MINIMUM_EQUITY` ($2,000) margin-account gate (LIVE +
+  `marginEnabled` + equity < $2k, opening legs only); day-trade counting kept but now informational.
+  New `AlpacaSnapshotEnrichmentProvider` feeds real bid/ask/price/volume/intraday-change into the
+  Market Scan (replacing fabricated spreads), consent-gated, verified live against the linked paper
+  account. Settings gained a "Data" tab that states the shared-pool deal + a consent toggle
+  (`GET/POST /api/consent`). tsc clean · **557 tests** · see
+  `docs/rollouts/2026-06-21-pdt-repeal-alpaca-scan-consent-ui.md`.
+
+- 2026-06-21 (`safety/deep-fixes`): **Execution-section CAS + synthetic-stop re-entrancy + boot
+  autonomy interlock.** Three failure-mode-review deep fixes (the auth middleware #1, the drawdown
+  circuit breaker #7, and the approval-path run-lock were already on `main`). Adds an atomic DB
+  compare-and-swap (`claimProposalForExecution`) at both `executeProposal` commit points — defense in
+  depth alongside the existing run-lock so concurrent/retried approvals can't double-place; the
+  synthetic-stop monitor now claims each stop (`claimSyntheticStop`/`revertSyntheticStopClaim`) +
+  a `globalThis`-pinned per-user in-flight guard in the scheduler (deterministic refId for broker
+  dedupe); and `reconcileAutonomyOnBoot()` reverts persisted `active` autonomy to `halted` on boot
+  unless `AUTONOMY_RESUME_ON_BOOT=1`. tsc clean · tests green (+8) · build green. See
+  `docs/rollouts/2026-06-21-execution-cas-and-boot-interlock.md`.
+- 2026-06-21: **Responsive UI spacing and sizing tweaks.** Stretched selects and text fields to be max-sm:h-11 on mobile device headers, constrained widths to prevent layout breaking, and aligned header elements cleanly.
+- 2026-06-21: **Proposal UI refinements, account details, and text contrast improvements.** Updated the proposed decisions card inside `DecisionView` to display a custom bold, smaller `TEST` label instead of the green chip for paper test status. Plumbed the connected account details (`Agentic x####`, `Brokerage x####`, `Paper x####`) to the top-left of each proposal card. Surfaced ticker logos directly in the proposal boxes beside the ticker. Hardened text contrast by changing size/cost labels to `text-fg font-medium` and rationale text to `text-fg/85`. Customised the portfolio panel and mobile summary titles to indicate the specific broker/environment (e.g., `Alpaca Paper Account` or `Robinhood Agentic Account`). Verified all 416 unit tests, type check, and Next.js build pass cleanly.
+- 2026-06-21: **Responsive header layout, logo options, and ticker validation.** Redesigned the header component to stack cleanly as `flex-col` on mobile/tablet and `lg:flex-row` on desktop, preventing overlap with the top safety banner. Aligned the green Zap logo to the top of the title text. Renamed autonomy status `"Halted"` to `"Inactive"`. Changed Settings subtitle to `"Risk, Tax, & Notifications"`. Renamed Ticker logo options to "Small Tile" and "Medium". Integrated logo source selection ("Option 1: Auto", "Option 2: GitHub only", "Option 3: logo.dev only") with backend routing. Added symbol validation to Watchlist, Additional Watchlist, and Ignore List (Blocklist) to restrict input to valid S&P 500, Nasdaq 100, and Dow 30 components. Passed all 416 unit tests, Next.js build, and type check.
+- 2026-06-21 (`claude/pr-ready-by-default-convention`): **PR convention codified in `AGENTS.md`.** Every branch meant for `main` gets a PR, and PRs open **ready for review by default — not drafts** (this repo has no required CI/branch protection and a sole approver, so a draft only adds a "mark ready" step with no protection). Draft is reserved for genuine WIP, flagged in the PR body. This overrides the harness default of opening PRs as drafts. Docs-only; new "## Pull requests" section in `AGENTS.md`. See `docs/rollouts/2026-06-21-pr-ready-by-default-convention.md`.
+- 2026-06-21 (`agent/claude`): **Deferred backlog continuation (multi-agent, autonomous).** Worked the remaining panel backlog in the isolated `~/apps/trading-claude` worktree using background agents (sonnet) on disjoint files + inline money-path work, committing + ff-merging each chunk to `main`. Landed: macro Unknown-regime, not-advice disclaimers (chat + Decision surface), real SEC EDGAR UA, pinned Score column, **factor orthogonalization** (tanh momentum + less double-counting), **clientOrderId broker-truth reconcile** (recovers a crashed-mid-placement order from the broker — completes the atomic-placement loop), **evidence-floor sizing** (unproven theses sized at the floor, not 28%), and a **per-tick pending-fill reconciler** (Robinhood). tsc clean, **456 tests**. Remaining (next session): run-lock approval path, native Alpaca brackets, PDT/Reg-T gate, migration ledger, db.ts split, Litestream, Robinhood fundamentals. See `docs/rollouts/2026-06-21-deferred-continuation-multiagent.md`.
+- 2026-06-21: **Short/cover broker-side translation (money-path).** Broker adapters forwarded our 4-value `OrderSide` raw to buy/sell-only broker APIs, so a live `short`/`cover` was invalid (and the synthetic-stops engine emits `cover` outside the policy gate). New `src/lib/broker-side.ts` (`toBrokerSide`: short→sell, cover→buy); `alpaca.ts` translates on both order paths (Alpaca supports shorting, still gated by `shortSellingEnabled`); `robinhood.ts` `toMcpOrder` fails closed (throws on short/cover — no equity shorting). 423 tests (new `test/broker-side.test.ts`, incl. Alpaca SDK-mocked end-to-end), tsc + build clean. Built in isolated worktree off clean `main`; landing via PR. Rollout: `docs/rollouts/2026-06-21-short-cover-broker-side-translation.md`.
+- 2026-06-21: **Auth hardening — strip client identity headers on public routes.** The `middleware.ts` PUBLIC_PREFIXES branch (`/api/health`, `/api/webhooks`) forwarded requests unchanged, so a forged `x-authenticated-user-email`/`x-user-id` could pass to a public handler. New edge-safe `src/lib/auth/strip-identity.ts` (`stripClientIdentityHeaders`); both middleware branches now strip identity before forwarding (public stays unauthenticated — webhooks unaffected). Not exploitable today; closes the latent footgun. 459 tests (new `test/strip-identity.test.ts`), tsc + build clean. Isolated worktree off clean `main`; landing via PR. Rollout: `docs/rollouts/2026-06-21-strip-identity-public-routes.md`.
+- 2026-06-21: **Git author identity rule (GitHub email privacy).** Codified in `AGENTS.md`: all commits/pushes use the owner's GitHub noreply email (`12656028+jaywedgeworth22@users.noreply.github.com`), never the real email. Repo-local `user.email` already set repo-wide (all worktrees inherit via shared `.git/config`; global stays the real email for other repos). Rollout: `docs/rollouts/2026-06-21-git-email-identity-rule.md`.
+- 2026-06-21 (`agent/claude`): **Deferred-task sweep — P0 safety re-application + IC backtest + buying-power gate.** Worked the financial-expert-panel backlog in the ISOLATED `~/apps/trading-claude` worktree. Landed: (1) `bddaa35` the full P0 safety slice — size-less-exit reject + full-position resolve, fail-closed Red Team (`available` flag + 45s timeout → human review), atomic crash-recoverable order placement (`placing` intent row + `ref_id` persistence + run-start stale sweep) on both autonomous + approval paths, account-level drawdown/daily-loss kill-switch (`src/lib/risk-breaker.ts`), real `/api/health` probe + scheduler heartbeat, SSE per-tenant filter (+12 tests); (2) `4ea77a8` an IC backtest harness (`src/lib/backtest.ts` — Spearman factor ICs over `signal_snapshot` audits → advisory IC-derived weights, dev-gated `GET /api/admin/backtest-ic`, +10 tests); (3) `71698a5` a buying-power affordability gate (+4 tests). tsc clean, **441 tests**. Restored the wiped panel review doc (`docs/reviews/2026-06-21-financial-expert-panel.md`). **Hand off:** merge `agent/claude` → `main` deliberately. Remaining (staged in the rollout note): cost model, PDT gate, clientOrderId broker-truth sweep, native brackets, factor orthogonalization, real macro feed, P3 polish. See `docs/rollouts/2026-06-21-deferred-tasks-p0-backtest.md`.
+- 2026-06-21: **Logo source toggle + logo.dev integration.** Added logo.dev as a cascade fallback behind GitHub in the `/api/logos/ticker` proxy. Client detects dark/light mode via MutationObserver and passes `&theme=`. Added `LOGO_DEV_TOKEN` env var support. Added a "Logo source" Segmented control in Settings → Display so the user can compare GitHub vs logo.dev logos live. Preference stored in localStorage, propagated to all TickerLogo instances via custom event. API route accepts `?source=auto|github|logodev` and reorders the cascade. LOGO_DEV_TOKEN added to `.env.local` and documented in `.env.example`. Rollout note: `docs/rollouts/2026-06-21-logo-dev-toggle.md`.
+- 2026-06-21: **Accounts connection modal and list formatting simplification.** Simplified Alpaca connection buttons to a single "Connect Alpaca Account" and derived Paper vs Brokerage environment dynamically based on `PA` account number prefix. Enforced required account numbers for Alpaca. Reformatted connected accounts listing with custom titles, green `CONNECTED` and red `AUTONOMOUS` status indicators, and localized test account formatting.
+- 2026-06-21: **Alpaca MCP connection & multi-account connection buttons.** Added Alpaca MCP paper/live support, implemented standard JSON-RPC SSE tool call routing with REST client fallback, fixed order type mapping build issues, and ensured all connection buttons remain visible in the dashboard UI for multi-account linking. Verified: tsc clean, 401 tests green, build OK. Rollout note: `docs/rollouts/2026-06-21-alpaca-mcp-integration.md`.
+- 2026-06-21 (`agent/claude`): **Multi-agent coordination — verified + gap-filled; landing via PR.** The
+  landing protocol that stops the `main` push-races + Q0 worktree collision was already implemented on
+  `main` (pre-push hook, `scripts/land.sh`, `core.hooksPath` wiring, AGENTS.md protocol). A 4-agent design
+  workflow independently reproduced + validated it and surfaced the honest limits. Added a `land.sh`
+  self-heal preflight (auto-sets `core.hooksPath` so a non-bootstrapped worktree still gets the main-push
+  guard — closes red-team gap #3), **resolved Q0** (option a), and documented the review +
+  residual-limits in `docs/reviews/2026-06-21-multi-agent-coordination-review.md`. Limits that need Jay:
+  no server branch protection (private repo → consider GitHub Pro/Team + merge queue); `--no-verify`
+  bypass; hooks guard pushes not file-writes; CI inert until `gh auth refresh -s workflow`. **This change
+  is landing via `scripts/land.sh` (PR), not a direct push** — dog-fooding the protocol. See
+  `docs/rollouts/2026-06-21-coordination-verify-and-gapfill.md`.
+- 2026-06-21 (`agent/claude`): **Chat NOW tranche shipped + I4 (real citations).** Executed the approved
+  NOW tranche on `main` (`7d766de`→`7a675e8`): I1 stop quote fabrication, I2 server-side disclaimer guard
+  + `PROMPT_VERSION 0.4.0`, I3 multi-turn transcript replay, I6 read-only state tools
+  (positions/portfolio/watchlist/alerts/proposals — one-way, no execution), I13 router-matched
+  suggested-prompt chips (8-K framing). Then on `agent/claude`: **I4** — `retrieveContextDetailed`
+  returns REAL provenance (vector id, score, the chunk's own acceptance date, filing url) so citations
+  stop fabricating `<SYMBOL>#i` / the query's as_of; the UI renders citation chips as filing links.
+  Verified: tsc clean, **412 tests**. Running questions log: `docs/open-questions-for-jay.md` (Q0 =
+  worktree collision — a concurrent agent is mid-edit on `main`'s `strategy.ts`/`db.ts`/etc., so this
+  lane moved to the isolated `~/apps/trading-claude` worktree and lands via PR). See
+  `docs/rollouts/2026-06-21-chat-now-tranche-and-i4.md`.
+- 2026-06-21 (`agent/claude`): **Best-of-each branch reconciliation landed on `main`.** A 7-agent
+  comparison (`docs/reviews/2026-06-21-branch-reconciliation-best-of-each.md`) resolved the parallel
+  agent lanes; the recommended picks were cherry-picked + verified: **tuner missed-opportunity
+  counterfactuals** (`6fa51b5`), **SQLite/LLM safety hardening** (`877bb45`, incl. a `\n` prompt bug),
+  **AccountCapabilities + two-layer short gate + CI workflow activation** (`d014842`), **logo.dev
+  cascade fallback** (`e5dd681`, complementary to main's tile-contrast fix), and **lucide-react 1.21**.
+  The antigravity responsive header was already correctly merged to `main` (no regressions — `lg:`
+  shell / `min-h-16` / aria-labels / Score-col-2 all intact). **Held:** @types/node 26 (tsc break),
+  eslint 10 (peer conflict), zod 4 + next 16 (need migrations). Verified: tsc clean, **404 tests**,
+  build green. See `docs/rollouts/2026-06-21-best-of-each-integration.md`.
+- 2026-06-21: **Chat/RAG/learning advisory — HYBRID decision + issue log + roadmap.** A 5-agent expert
+  panel (RAG, NL-finance-chat, onboarding, prompt/tools, LLM-learning) reviewed the chat assistant and
+  unanimously landed on **HYBRID**: ISOLATE write surfaces (execution, strategy weight/risk tuning,
+  conversation memory) but SHARE the read substrate (RAG corpus, user constraints, and NEW read-only
+  views of positions/P&L/proposals/watchlist/scorecards) — one-way (outcomes flow into chat; chat
+  opinions never steer the trading brain except a confirm-gated constraints→policy path). Logged 13
+  tracked issues incl. **3 ship-blockers in the shipped chat** (quotes fabricate `change_pct:0`;
+  refusal+disclaimer live only in MockLLM so they vanish on the real-LLM path; single-turn —
+  `chat_turns` never replayed), the user-guidance design, and a NOW/NEXT/LATER roadmap. User decisions:
+  multi-LLM choice (key provisioning deferred), **NOW tranche approved**, constraint→policy via explicit
+  confirm + lean integrated learning. Docs only — no code. See `docs/chat-assistant-rag-learning.md` +
+  `docs/rollouts/2026-06-21-chat-rag-learning-advisory.md`.
+- 2026-06-21: **Responsive header command buttons.** Restructured header buttons to shrink gracefully on narrow screens and wrap cleanly into exactly 2 lines below the `md` (768px) breakpoint.
+- 2026-06-21: **UI/UX + iPad/iPhone audit and quick-win implementation.** Ran two
+  multi-agent audits (real-Chrome desktop walkthrough → 64-agent review/verify/synthesis; source-grounded
+  iPad/iPhone → 27-agent) and shipped the quick wins + high-severity fixes: Market Scan **Score → column 2**
+  + horizontal scroll; **zero P&L/tax values now neutral** (`pnlTone`); **light-mode ticker logos fixed**
+  (dark tile); **reduced-motion guard** + **iOS 16px inputs**; **macro sparkline polarity** + "Broad USD"
+  relabel; Settings tab overflow + no-jump min-height; drilldown header truncation/dedup; a11y (select
+  labels, tabpanel ARIA, ≥44px touch targets); chart vertical-touch-scroll; **iPad cockpit shell `xl`→`lg`**;
+  and **setup-state run failures render amber** instead of red. Verified: tsc clean, **386 tests**, build
+  green; live-confirmed on :4100. Full reports:
+  `docs/reviews/2026-06-20-ui-ux-and-mobile-audit.md`; **itemized status-tagged backlog of every
+  issue:** `docs/reviews/2026-06-21-ui-ux-issue-register.md`; rollout:
+  `docs/rollouts/2026-06-20-ui-ux-audit-and-quick-wins.md`. **Deferred:** F1 backend root cause
+  (`src/lib/strategy.ts` `policy.accountNumber` wiring — UI softened only); deleting the **dead
+  `app/ui/dashboard/{views,components,utils,settings}.tsx`** parallel implementation; header overflow menu;
+  full safe-area/`viewport-fit=cover`. Merged to `main` (2026-06-21).
+- 2026-06-21 (`claude/minor-cleanups-data-providers`): **Minor cleanup, zero behavior change.**
+  Removed the unused `export const fallbackProvider` alias in `src/lib/data-providers.ts` (confirmed
+  referenced nowhere else; `noopProvider` kept — used by tests). Added clarifying one-line comments in
+  `src/lib/db.ts` `dailyExecutionStats` / `notionalInLastMinutes` explaining notional caps intentionally
+  count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt
+  (notional = 0) — comments only, no logic change. tsc clean, 371 tests pass, build OK. See
+  `docs/rollouts/2026-06-21-data-providers-cleanup.md`.
+- 2026-06-21 (`claude/proposal-timestamps-ui-t7qab1`): **Proposal staleness —
+  UI + expiry policy + on-run LLM re-validation.** (Part 1, UI) Pending-approval
+  cards show `Proposed <date, time> · <relative age>` with an escalating staleness
+  state; removed the redundant "Test Mode" brand-block line + dead
+  `executionTone()`; fixed the "too thin"/clipped command bar (`xl:h-14`/`xl:py-0`
+  → `min-h-16`). (Part 2, backend) New `src/lib/proposal-revalidation.ts`:
+  **deterministic hard expiry** (`policy.proposalExpiryMinutes`, default 2880 =
+  2 days; runs at run-start AND every scheduler tick → status `expired`) and a
+  **cadence-gated on-run LLM re-check** (`proposalRevalidateCadenceHours`, default
+  0 = every run; not optional) that, inside `runStrategyOnce`, asks the LLM whether
+  each *due* still-pending proposal still stands — **regular market hours only** (no
+  overnight checks). Dropdown: Every run / Once per day / Every 5 days.
+  `reaffirm` stamps `last_revalidated_at` (UI: "Re-checked X ago — still
+  advised"), `withdraw` → status `withdrawn` + `proposal_withdrawn` notification.
+  Safe-by-default: ambiguous LLM output keeps the proposal; market closed / no
+  `OPENAI_API_KEY` ⇒ LLM pass skips but deterministic expiry still runs. Both
+  surfaced as **dropdowns** + a notification toggle in Settings → Risk. The
+  **Flow** button was a question (static React Flow pipeline visualizer,
+  `app/ui/strategy-flow.tsx`) — left in place. tsc clean, **314 tests** (+7),
+  build green. See
+  `docs/rollouts/2026-06-21-proposal-timestamps-and-header-cleanup.md`.
+- 2026-06-21 (`chore/safety-quick-wins`): **Failure-mode review + first safety quick-wins.**
+  A 12-agent failure-mode brainstorm (114 findings → ~70 distinct) plus a 5-agent
+  adversarial verification of the Top 5 (4 confirmed, 1 — "synthetic stops are an
+  ungated real-trade cannon" — substantially overstated, crit→low). Full writeup:
+  `docs/reviews/2026-06-20-failure-mode-brainstorm.md`. Landed the first quick-win
+  batch (no behavior change to the money path): SQLite `busy_timeout=5000` +
+  `synchronous=NORMAL` PRAGMAs, bull/bear `JSON.parse` guards (degrade instead of
+  crashing the run), `bearSystemPrompt` `\n` join fix, `confidenceScore` clamp +
+  schema bounds, and **CI activation** (`ci-pending/*.yml` → `.github/workflows/`).
+  tsc clean, 390 tests, build green. NOTE: pushing the CI workflows needs the
+  GitHub token re-scoped (`gh auth refresh -h github.com -s workflow`). Deep fixes
+  still open: auth layer (T1), execution-section CAS/atomicity (T4/T5), portfolio
+  circuit breaker (#7), boot-time autonomy interlock (T3). See
+  `docs/rollouts/2026-06-21-safety-quick-wins.md`.
+- 2026-06-21: **AccountCapabilities classifier.** Added `AccountCapabilities` interface
+  covering equity, shortSelling, options (CBOE level 0–4), futures, crypto, margin, and
+  accountType (brokerage/IRA/crypto_exchange). Wired into Robinhood and Alpaca gateways,
+  DB persistence (JSON column + migration), policy two-layer short gate, strategy context,
+  and coloured capability badges on account cards. Robinhood MCP confirmed: shortSelling
+  always false. tsc clean · 390 tests · build OK. See `docs/rollouts/2026-06-21-account-capabilities.md`.
+- 2026-06-21: **Alpaca custom base URL & test encryption environment fix.** Added support for custom API base URL for connected Alpaca accounts, and cleaned early-import environment loading inside `src/lib/db.ts` to bypass test environments. Upserted active Alpaca paper trading credentials successfully.
+- 2026-06-20: **Alpaca Custom Base URL, DB Encryption Fix & Fintech Studios Integration.** Added custom API endpoint/base URL override in Alpaca account UI, sanitizing trailing `/v2` automatically. Fixed Next.js early-boot race condition by dynamically loading `.env.local` inside `src/lib/db.ts` to ensure stable credentials encryption across server restarts. Integrated Fintech Studios sentiment/news provider in the enrichment cascade. tsc clean, 390 tests, build OK. See `docs/rollouts/2026-06-20-alpaca-custom-base-url-and-db-fix.md`.
+- 2026-06-20: **Money-path safety plan (T1–T14) merged to main.** All 14 tasks complete:
+  side-aware notional/exposure caps (T1/T10), partial-fill reconciliation (T2), FIFO lot matcher (T3),
+  paper-projection guards (T5), db notional tests (T6), short exits (T8), recordFill tests (T9),
+  red-team fail-open (T11), tax long-only pin (T12), explicit daily-reset timezone (T13),
+  `account_number → __unassigned__` sentinel (T14-db). 386 tests, tsc clean, build clean.
+  See rollout `docs/rollouts/2026-06-20-money-path-merge-gate.md`.
+- **Completed follow-ups:** gross/net exposure caps added to Settings UI (NumberField + RangeField
+  sliders; 0 = no cap); `OpenLot.quantity` now signed (negative for shorts, matches `EquityPosition`).
+- 2026-06-20: **AI order-drafting "Assistant" tab (chat → confirm → place).** A 5-agent design panel
+  chose a hybrid surface; built per the user's picks (full Assistant tab; live/brokerage allowed with a
+  red real-order confirm; inline confirm). New `app/ui/assistant-console.tsx` + an `assistant`
+  WorkspaceTab: a chat draft from `/api/chat` is bridged via a new `POST /api/proposals/from-draft`
+  (dry-run preview, or insert a `proposed` row — idempotent on `runId='chat:'+draftId`) into the
+  UNCHANGED approve → `executeProposal` rail, so the chat module gains **no** execution capability. The
+  destination pill derives from the live `executionState`; the mapper (`src/lib/chat/promote-draft.ts`)
+  sets the required `TradeProposal` fields and rejects non-buy/sell. tsc clean, 371 tests, build OK,
+  verified live (a halted system correctly blocks at the dry-run before any row is minted). See
+  `docs/rollouts/2026-06-20-ai-order-drafting-assistant-tab.md`.
+- 2026-06-20 (`agent/claude`): **Codex lane reconciled + money-path T5 (paper-projection guards).**
+  Codex is usage-capped for days, so Claude took over its lane: a 3-agent parity audit had already
+  confirmed Codex's only unmerged commit (tax-treatment + hourly-cap WIP) is fully superseded by
+  `main` (R1/R3) with an explicit DO-NOT-MERGE, so there was no unique code to land — reconciled
+  `agent/codex` to current `main` (merge favoring main, src now byte-identical), reset its stale local
+  `data/app.db` (old `taxation_type NOT NULL` schema), and verified 4101 serving 200. Then advanced the
+  money path: fixed **T5** — `getPaperPortfolioProjection` side-blindness (wrong-sign/flat closes +
+  opposite-side cost averaging), pinned with 6 tests. tsc clean, 365 tests. `agent/codex`, `agent/claude`,
+  `main` pushed. See `docs/rollouts/2026-06-20-money-path-t5-paper-projection.md` +
+  `docs/rollouts/2026-06-20-codex-tax-notional-wip-superseded.md`.
+- 2026-06-20 (`agent/claude` → `main`): **Landed Claude lane to `main`; last `node:crypto` holdout reconciled.**
+  Merged `main` into `agent/claude` to catch up on the 6 Atlas ports + the committed `node:crypto`
+  instrumentation fix (`03c6f27`), then merged `agent/claude` → `main` (no-ff) to land the money-path
+  tranche-1 fixes below. Fixed the one holdout `03c6f27` missed — `src/lib/memory/store.ts` now imports
+  bare `crypto`, not `node:crypto` (mandatory: the `node:` scheme breaks the Next.js instrumentation
+  webpack build with `UnhandledSchemeError`). 4100 (PM2 `trading-claude`) verified serving 200; `main` +
+  `agent/claude` pushed to origin. See `docs/rollouts/2026-06-20-claude-lane-integration-and-node-crypto-reconcile.md`.
+- 2026-06-20 (`agent/claude`): **Money-path safety — tranche 1 (4 bug fixes + 20 tests).**
+  From an adversarially-verified audit (38 findings → 12 confirmed → 14-task plan): fixed the
+  side-blind per-symbol notional cap that could block automated de-risking exits (T1,
+  `policy.ts`), dropped Alpaca partial fills (T2, `strategy.ts` `reconcilePendingFills`,
+  idempotent), the side-blind FIFO matcher that erased opposite-side lots at $0 P&L (T3,
+  `performance.ts`), and shorts getting no / wrong-side protective exits (T8, `strategy.ts` +
+  `synthetic-stops.ts`). Pinned with 20 regression tests (short/cover P&L signs, side-aware
+  caps, enabled-path short guardrails, partial-fill booking, synthetic-stop cover exit). tsc
+  clean, 327 tests, build green. Remaining: T5/T6/T9–T14 (coverage + cleanup; T10 = gross/net
+  exposure-gate design decision). Landed to `main` 2026-06-20 via integration merge (see entry above).
+  See `docs/rollouts/2026-06-20-money-path-safety-fixes.md`.
 - 2026-06-20: **Atlas public repo retired + 6 subsystems ported to TS.** Reviewed `jaywedgeworth22/public`
   (the "Atlas" BFF) via a 14-agent inventory, preserved it whole (git bundle of all 9 branches + source →
   `reference/atlas-public-src/`), retired its live deployment (uninstalled the `com.jays.trading` BFF + the

@@ -42,7 +42,7 @@ function Section({ icon, title, tiles }: { icon: React.ReactNode; title: string;
   );
 }
 
-function Sparkline({ data, up }: { data: number[]; up: boolean }) {
+function Sparkline({ data, colorClass }: { data: number[]; colorClass: string }) {
   const w = 120;
   const h = 30;
   const min = Math.min(...data);
@@ -56,7 +56,7 @@ function Sparkline({ data, up }: { data: number[]; up: boolean }) {
     })
     .join(" ");
   return (
-    <span className={up ? "text-up" : "text-down"}>
+    <span className={colorClass}>
       <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" className="block">
         <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
       </svg>
@@ -66,13 +66,15 @@ function Sparkline({ data, up }: { data: number[]; up: boolean }) {
 
 function TrendsSection({ history }: { history?: Record<string, number[]> }) {
   if (!history) return null;
+  // `polarity` drives sparkline color: "inverse" = rising is bad (VIX, credit spreads),
+  // "neutral" = direction isn't inherently good/bad (yields, USD, oil) so it stays gray.
   const defs = [
-    { key: "tenY", label: "10Y yield", suffix: "%" },
-    { key: "twoY", label: "2Y yield", suffix: "%" },
-    { key: "vix", label: "VIX", suffix: "" },
-    { key: "hyCreditSpread", label: "HY spread", suffix: "%" },
-    { key: "usd", label: "USD index", suffix: "" },
-    { key: "wti", label: "WTI oil", suffix: "" }
+    { key: "tenY", label: "10Y yield", suffix: "%", polarity: "neutral" },
+    { key: "twoY", label: "2Y yield", suffix: "%", polarity: "neutral" },
+    { key: "vix", label: "VIX", suffix: "", polarity: "inverse" },
+    { key: "hyCreditSpread", label: "HY spread", suffix: "%", polarity: "inverse" },
+    { key: "usd", label: "Broad USD", suffix: "", polarity: "neutral" },
+    { key: "wti", label: "WTI oil", suffix: "", polarity: "neutral" }
   ];
   const items = defs
     .map((d) => ({ ...d, data: history[d.key] }))
@@ -87,14 +89,18 @@ function TrendsSection({ history }: { history?: Record<string, number[]> }) {
           const first = it.data[0];
           const up = last >= first;
           const chg = first !== 0 ? ((last - first) / first) * 100 : 0;
+          const toneCls =
+            it.polarity === "inverse" ? (up ? "text-down" : "text-up")
+              : it.polarity === "neutral" ? "text-muted"
+                : up ? "text-up" : "text-down";
           return (
             <div key={it.key} className="rounded-lg border border-line/60 bg-surface/40 p-3">
               <div className="flex items-baseline justify-between">
                 <span className="text-faint text-[11px] uppercase tracking-wide">{it.label}</span>
                 <span className="tnum text-xs text-fg">{last.toFixed(2)}{it.suffix}</span>
               </div>
-              <div className="mt-2"><Sparkline data={it.data} up={up} /></div>
-              <div className={`tnum mt-1 text-[11px] ${up ? "text-up" : "text-down"}`}>{up ? "+" : ""}{chg.toFixed(1)}% / 90d</div>
+              <div className="mt-2"><Sparkline data={it.data} colorClass={toneCls} /></div>
+              <div className={`tnum mt-1 text-[11px] ${toneCls}`}>{chg >= 0 ? "+" : ""}{chg.toFixed(1)}% / 90d</div>
             </div>
           );
         })}
@@ -225,7 +231,7 @@ export function MacroBoardView({ snapshot }: { snapshot: DashboardSnapshot }) {
   const liquidity: Tile[] = [
     { label: "M2 growth", value: str(macro.m2GrowthYoY), title: "M2 money supply, YoY growth." },
     { label: "M2 supply", value: str(macro.m2MoneySupply) },
-    { label: "USD index", value: str(macro.usdIndex), title: "Broad trade-weighted dollar; strong $ pressures multinationals/commodities." },
+    { label: "Broad USD", value: str(macro.usdIndex), title: "Broad trade-weighted USD index (FRED DTWEXBGS, ~120) — NOT the ICE Dollar Index (DXY, ~100). A strong $ pressures multinationals/commodities." },
     { label: "WTI oil", value: str(macro.wtiOil) },
     { label: "Unemployment", value: str(macro.unemploymentRate) },
     { label: "Initial claims", value: str(macro.initialClaims), title: "Weekly initial jobless claims." },

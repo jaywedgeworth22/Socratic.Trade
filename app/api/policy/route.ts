@@ -1,6 +1,6 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
-import { isIndexUniverse } from "@/lib/index-universes";
+import { isIndexUniverse, isValidAppSymbol } from "@/lib/index-universes";
 import { normalizeSymbol } from "@/lib/money";
 import { getBrokerGateway } from "@/lib/broker";
 import { resolveRequestUserId } from "@/lib/request-user";
@@ -70,6 +70,12 @@ export async function PUT(request: Request) {
 }
 
 async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
+  for (const symbol of policy.additionalSymbols || []) {
+    if (!isValidAppSymbol(symbol)) return `Symbol ${symbol} in additional watchlist is not supported by the app.`;
+  }
+  for (const symbol of policy.blocklist || []) {
+    if (!isValidAppSymbol(symbol)) return `Symbol ${symbol} in ignore list is not supported by the app.`;
+  }
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
@@ -79,6 +85,8 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.maxSymbolExposurePct !== undefined && (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100)) return "maxSymbolExposurePct must be between 0 and 100.";
   if (policy.maxDailyOrders <= 0) return "maxDailyOrders must be positive.";
   if (policy.runCadenceMinutes < 1) return "runCadenceMinutes must be at least 1 minute.";
+  if (policy.proposalExpiryMinutes !== undefined && (!Number.isFinite(policy.proposalExpiryMinutes) || policy.proposalExpiryMinutes < 0)) return "proposalExpiryMinutes must be 0 (off) or a positive number of minutes.";
+  if (policy.proposalRevalidateCadenceHours !== undefined && (!Number.isFinite(policy.proposalRevalidateCadenceHours) || policy.proposalRevalidateCadenceHours < 0)) return "proposalRevalidateCadenceHours must be 0 (off) or a positive number of hours.";
   if (Object.values(policy.scoringWeights).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0)) return "scoring weights must be non-negative numbers.";
   if (Object.values(policy.sectorCaps).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "sector caps must be between 0 and 100.";
   if (Object.values(policy.riskRules).some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
@@ -123,5 +131,5 @@ function normalizeSectorCaps(value: unknown): Record<string, number> {
 }
 
 function isNotificationEvent(value: unknown): value is NotificationEventType {
-  return ["fill", "block", "run_failed", "pending_approval", "kill_switch"].includes(String(value));
+  return ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"].includes(String(value));
 }

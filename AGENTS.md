@@ -47,7 +47,7 @@ Run all three, in this order, before saying a change is complete:
 
 ```bash
 npx tsc --noEmit   # type errors — fast, do this first
-npm test           # vitest, ~195 tests across 27 files as of 2026-06-18
+npm test           # vitest, ~723 tests across 81 files as of 2026-06-21
 npm run build      # full Next.js build; also re-checks types
 ```
 
@@ -89,11 +89,24 @@ Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-pre
   your `agent/<name>` branch. Your **live in-progress edits** appear at your port via HMR —
   open it in a browser; no refresh/rebuild needed.
 - **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
-- **Land work via git:** commit on your `agent/<name>` branch, then merge to `main` (in the
-  integration worktree; ff or PR). `git merge origin/main` into your branch to stay current.
-- **`npm run build` only affects YOUR worktree.** Verify with `npx tsc --noEmit` + `npm test`;
-  if a build wipes your `.next` and your live preview starts erroring (`ENOENT .next/...`),
-  just `pm2 restart trading-<you>`. It never affects another agent or production.
+- **Land work via the landing script — never push directly to main:**
+  ```bash
+  bash scripts/land.sh
+  ```
+  This script: (1) refuses to run from the main integration worktree or on branch `main`;
+  (2) fetches origin; (3) merges `origin/main` — aborts on conflict so you can resolve;
+  (4) runs `npx tsc --noEmit` → `npm test` → `npm run build` — aborts on any failure;
+  (5) refuses if your diff includes `.github/workflows/` (token lacks workflow scope — use
+  `ci-pending/` staging instead); (6) pushes your agent branch and opens a PR via `gh`.
+  After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
+- **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
+  by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
+  - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
+    and `git push origin agent/foo:main`).
+  - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
+  - Emergency human override (use sparingly): `HOOKS_ALLOW_MAIN_PUSH=1 git push origin ...`
+- **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and your live
+  preview starts erroring (`ENOENT .next/...`), restart it: `pm2 restart trading-<you>`.
 - **PM2:** `pm2 restart trading-<you>` / `pm2 list` are fine; do **not** `pm2 delete`/rename
   another agent's app or `trading`; run `pm2 save` after intentional changes. Never run a
   build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
@@ -116,7 +129,8 @@ PM2 preview.
   the others. It already does this: background runs land on `cursor/*` branches (e.g.
   `origin/cursor/setup-dev-environment-*`) — merge them like any `agent/*` branch.
 - **Handoff still applies.** Cursor auto-loads `AGENTS.md` (and `.cursor/rules/`); `AGENTS.md`
-  *is* `CLAUDE.md` (symlink) and already carries the Pre-Commit / Handoff Protocol above. Before
+  is the real file and `CLAUDE.md` is a symlink to it, so both carry the same content (incl. the
+  Pre-Commit / Handoff Protocol above) — edit `AGENTS.md` to change either. Before
   any commit from Cursor, update `STATUS.md` + a `docs/rollouts/` note + `PLAN.md` like every
   other tool.
 
@@ -142,8 +156,17 @@ deployment machine.
   `src/lib/policy.ts` and `src/lib/performance.ts` now include short/cover
   branches, but this is still high-risk code. If you touch risk, P&L, order
   accounting, or persistence, verify all four sides explicitly. In particular,
-  check `src/lib/db.ts` daily-notional tracking before assuming short/cover are
-  fully production-ready.
+  check daily-notional tracking before assuming short/cover are fully
+  production-ready — it now lives in `src/lib/db-execution.ts` (see next note).
+- **`src/lib/db.ts` is now a barrel, not a monolith.** As of 2026-06-21 it was split
+  into eight focused modules — `db-settings`, `db-learning`, `db-profiles`,
+  `db-execution`, `db-proposals`, `db-fills`, `db-notifications`, `db-api-keys` — and
+  `db.ts` keeps only schema/migration/`getDb()`/`audit()` plus `export * from
+  "./db-*"` re-exports. Consumers still `import { X } from "./db"` unchanged. When
+  editing persistence, edit the owning module; when adding a NEW table, put the
+  `CREATE TABLE` in `db.ts`'s `migrate()` and the CRUD in the matching `db-*` module
+  (this split-vs-modified boundary is a known merge-conflict trap — see
+  `docs/rollouts/2026-06-21-db-split-v2.md`).
 - **Per-field enrichment sourcing** (`src/lib/data-providers.ts`): when adding
   a new enriched field (e.g. another fundamentals metric), wire it through all
   of: the `SymbolEnrichment` interface, `EnrichmentSourcedField` union, the
@@ -168,6 +191,67 @@ deployment machine.
   not interchangeable — check `eps` to decide which one applies.
 - Tests use a temp SQLite file per run via `DATABASE_URL=file:<tmpdir>/...`
   (see `beforeAll` in test files) — don't point tests at the dev `data/app.db`.
+
+## Git author identity (GitHub email privacy)
+
+The owner's real email must **never** be published to the public GitHub repo. When committing or
+pushing to GitHub, every commit's author/committer email MUST be the owner's GitHub **noreply**
+address:
+
+```
+12656028+jaywedgeworth22@users.noreply.github.com
+```
+
+**Where the email is configured:**
+
+- **Global** (`~/.gitconfig`, `git config --global user.email`) = the owner's real email
+  `mail@jaywedgeworth.com`. This is correct for the owner's *other* repos — do not change it.
+- **This repo** overrides that with a repo-local `user.email` set to the noreply address. Because
+  `extensions.worktreeConfig` is **off**, a repo-local `git config user.email` lives in the shared
+  `.git/config` and applies to **all** linked worktrees (`~/apps/trading-claude`, `-codex`,
+  `-antigravity`, `-live`, the `main` integration tree, and any temporary `git worktree add` dirs).
+
+**Rules for every agent (Claude, Codex, Antigravity, Cursor):**
+
+- Before committing, confirm `git config user.email` resolves to the noreply address. If you ever see
+  `mail@jaywedgeworth.com` as the effective email in a worktree, fix it before committing:
+  `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com"` (writes the shared
+  repo-local config — covers all worktrees).
+- The repo-local config is **not tracked**, so a fresh clone or a config reset loses it — restore it
+  with the command above. New `git worktree add` dirs inherit it automatically.
+- If a commit was already made with the real email, amend before pushing:
+  `git config user.email "12656028+jaywedgeworth22@users.noreply.github.com" && git commit --amend --reset-author --no-edit`.
+
+## Pull requests
+
+- **Every branch intended to land on `main` gets a PR.** Don't push a feature
+  branch and leave it without one. (Long-lived integration/release branches like
+  `main` and the `agent/*` lanes, throwaway experiments, and stacked-PR bases are
+  the only exceptions — none of which is normal change delivery.)
+- **Open PRs as READY for review by default — not as drafts.** The owner is
+  effectively the sole approver, so a draft only adds a "mark ready" step before
+  merge. This rule **overrides** any tool/harness default that says to open PRs as
+  drafts.
+- **Use a draft PR only for genuine work-in-progress** you explicitly don't want
+  merged yet (e.g. partial work parked between sessions, or wanting Copilot/CI eyes
+  before it's finished) — and say so in the PR description. Mark it ready as soon
+  as it's complete and verified.
+- **A required `verify` CI check gates every merge to `main`.** A GitHub Actions
+  workflow named `verify` runs `tsc --noEmit` → `npm test` → `npm run build` on each
+  PR, and it **must be green before the PR can merge** — enforced by a repo **ruleset**.
+  Notes that bite if you don't know this:
+  - The check is a *ruleset*, not classic branch protection — `gh api
+    repos/.../branches/main/protection` returns **404 "Branch not protected"**, which
+    looks unprotected but is NOT.
+  - `gh pr merge <n> --squash --admin` does **NOT** bypass it (`Required status check
+    "verify" is failing`). Don't waste time on `--admin`.
+  - **Merge with `gh pr merge <n> --squash --auto`** — auto-merge IS enabled on this
+    repo, so this lands the PR the instant `verify` goes green (no babysitting).
+  - If `verify` fails on a known flake (e.g. a timing-sensitive test), re-run just the
+    failed jobs: `gh run rerun <run-id> --failed`. The `approval-lock` broker-path
+    tests were a recurring offender — fixed 2026-06-21 with a 20s per-test timeout.
+  - Because `verify` runs `npm run build`, a PR that breaks the build cannot merge —
+    always run the full tsc/test/build trio locally before pushing.
 
 ## Don't
 

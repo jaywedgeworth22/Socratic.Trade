@@ -8,8 +8,8 @@ import {
 } from "../src/lib/ticker-logos";
 
 describe("ticker logo helpers", () => {
-  it("defaults to the normal tile display", () => {
-    expect(DEFAULT_TICKER_LOGO_DISPLAY).toBe("tile");
+  it("defaults to the transparent display (falls back to a tile monogram on logo failure)", () => {
+    expect(DEFAULT_TICKER_LOGO_DISPLAY).toBe("transparent");
     expect(isTickerLogoDisplay("tile")).toBe(true);
     expect(isTickerLogoDisplay("transparent")).toBe(true);
     expect(isTickerLogoDisplay("off")).toBe(true);

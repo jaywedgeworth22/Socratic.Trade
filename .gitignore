@@ -42,3 +42,6 @@ did.bin
 * [0-9].js
 * [0-9].json
 * [0-9].css
+
+# Agent decision-note scratch written to the repo root — not app code; keep out of git.
+/memory/

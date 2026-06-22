@@ -1,4 +1,4 @@
-import { getStrategyProfile, updateStrategyProfile } from "@/lib/db";
+import { deleteStrategyProfile, getStrategyProfile, updateStrategyProfile } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 
@@ -24,6 +24,21 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     }, userId);
     return NextResponse.json(profile);
   } catch (error) {
-    return new NextResponse(error instanceof Error ? error.message : "Profile update failed.", { status: 400 });
+    const message = error instanceof Error ? error.message : "Profile update failed.";
+    if (message === "Strategy profile not found.") return new NextResponse(message, { status: 404 });
+    return new NextResponse(message, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  const userId = resolveRequestUserId(request);
+  try {
+    deleteStrategyProfile(id, userId);
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Profile delete failed.";
+    if (message === "Strategy profile not found.") return new NextResponse(message, { status: 404 });
+    return new NextResponse(message, { status: 400 });
   }
 }

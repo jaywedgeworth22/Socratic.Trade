@@ -142,6 +142,8 @@ export function PriceChart({ symbol }: { symbol: string }) {
           timeScale: { borderColor: grid, fixLeftEdge: true, fixRightEdge: true },
           crosshair: { mode: lc.CrosshairMode.Normal },
           handleScale: { axisPressedMouseMove: false },
+          // Let vertical touch drags scroll the page (not pan the chart); horizontal still pans time.
+          handleScroll: { vertTouchDrag: false },
         });
         chart = c;
         chartRef.current = c;
@@ -219,7 +221,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
               key={tf}
               onClick={() => updateTimeframe(tf)}
               className={cn(
-                "px-2 py-0.5 text-[11px] font-medium rounded transition-colors",
+                "rounded px-2 py-0.5 text-[11px] font-medium transition-colors touch-manipulation max-sm:min-h-[40px] max-sm:px-3",
                 activeTimeframe === tf ? "bg-[var(--accent)] text-white" : "text-faint hover:text-fg hover:bg-surface-2"
               )}
             >

@@ -3,7 +3,7 @@ import { getRobinhoodGateway, getTestGateway } from "./robinhood";
 import { getAlpacaGateway } from "./alpaca";
 
 export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"): BrokerGateway {
-  if (policy.activeBroker === "alpaca") {
+  if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") {
     return getAlpacaGateway(userId);
   }
   if (policy.activeBroker === "test") {
@@ -11,5 +11,5 @@ export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"
     return getTestGateway();
   }
   // Robinhood (MCP-only) is the remaining broker.
-  return getRobinhoodGateway();
+  return getRobinhoodGateway(userId);
 }

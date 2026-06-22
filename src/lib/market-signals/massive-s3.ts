@@ -30,14 +30,17 @@ export interface FlatFileBar {
 
 function cfg(userId?: string) {
   const accessKey = resolveApiKey("massive_access_key_id", userId) ?? "";
-  const secret = resolveApiKey("massive_secret_access_key", userId) ?? resolveApiKey("massive", userId) ?? "";
+  // SigV4 needs the dedicated S3 secret; never borrow the REST key (missing → fail cleanly).
+  const secret = resolveApiKey("massive_secret_access_key", userId) ?? "";
   const host = (resolveApiKey("massive_s3_endpoint", userId) ?? "https://files.massive.com").replace(/^https?:\/\//, "");
   const bucket = resolveApiKey("massive_bucket", userId) ?? "flatfiles";
   const region = process.env.MASSIVE_S3_REGION ?? "us-east-1";
   return { accessKey, secret, host, bucket, region };
 }
 
-const sha256hex = (s: crypto.BinaryLike): string => crypto.createHash("sha256").update(s).digest("hex");
+// `s` is narrowed to string (both callers pass strings): @types/node 26's Hash.update()
+// no longer accepts the full BinaryLike (ArrayBuffer is excluded).
+const sha256hex = (s: string): string => crypto.createHash("sha256").update(s).digest("hex");
 const hmac = (key: crypto.BinaryLike, s: string): Buffer => crypto.createHmac("sha256", key).update(s).digest();
 
 /** GET a single S3 object via SigV4 (path-style). Returns the raw bytes, or null on any failure. */

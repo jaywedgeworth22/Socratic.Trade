@@ -25,7 +25,7 @@ export const DEFAULT_RISK_RULES: RiskRules = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   webhookUrl: "",
-  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert"]
+  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"]
 };
 
 export const DEFAULT_POLICY: TradingPolicy = {
@@ -40,10 +40,12 @@ export const DEFAULT_POLICY: TradingPolicy = {
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,
   maxSymbolExposurePct: 25,
-  maxGrossExposurePct: 100,
-  maxNetExposurePct: 100,
+  maxGrossExposurePct: 80,  // keep ≥20% cash buffer by default; users can raise in policy settings
+  maxNetExposurePct: 80,    // consistent with gross; net > gross is impossible for long-only anyway
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
+  proposalExpiryMinutes: 2880,
+  proposalRevalidateCadenceHours: 0,
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,

@@ -1,4 +1,10 @@
-import { resolveApiKey } from "./db";
+import { resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { BROWSER_UA, politeFetchJson } from "./web-sources/http";
+
+// Minimal Yahoo Finance chart shape — only the fields we read.
+interface VixYahooResponse {
+  chart?: { result?: Array<{ indicators?: { quote?: Array<{ close?: (number | null)[] }> } }> };
+}
 
 export interface MacroData {
   fedFundsRate: string;
@@ -46,22 +52,100 @@ const DEFAULT_MACRO: MacroData = {
   asOf: new Date().toISOString().split("T")[0]
 };
 
-const cache: { expiresAt: number; data: MacroData | null } = {
-  expiresAt: 0,
-  data: null
-};
+// ── Cache-provenance scoping (mirrors src/lib/history.ts) ─────────────────────
+// FRED macro data is fetched with whichever API key the calling user has
+// configured. A user-keyed fetch must NOT silently populate the global shared
+// cache and be served to every other user for 24h — that cross-user data leak
+// is the bug this scoping fixes.
+//
+// Allowed-to-share providers (env/free keys whose data is freely redistributable):
+//   - FRED keys stored as env vars (source === "env") are operator keys meant for
+//     all users — sharing is correct.
+//   - No unauthenticated FRED tier exists; without any key, we return defaults.
+//
+// User-keyed FRED results are kept private unless MARKET_DATA_SHARE_USER_KEYED_MACRO
+// is explicitly set to "1"/"true"/"yes"/"on" (owner-controlled opt-in, default OFF).
+//
+// Safe default: unknown/ambiguous provenance → private (never shared).
+
+type MacroCacheScope = "shared" | "private";
+
+interface MacroCacheEntry { expiresAt: number; data: MacroData }
+
+// Two separate caches: one for data from env/operator keys (shared across all
+// users), one Map for per-user private entries (user-keyed, not shared).
+const sharedMacroCache: { entry: MacroCacheEntry | null } = { entry: null };
+const privateMacroCache = new Map<string, MacroCacheEntry>();
+
+function macroCacheScopeForKeySource(source: ApiKeySource): MacroCacheScope {
+  if (source === "env") return "shared";   // operator key — safe to share
+  if (source === "user") {
+    // User's own stored FRED key: private by default; shared only when the
+    // opt-in flag is set.  Treat "none" (no key) as shared so the "unavailable"
+    // default result is also globally shared (it carries no licensed data).
+    return shareUserKeyedMacro() ? "shared" : "private";
+  }
+  // source === "none": no key at all — the DEFAULT_MACRO constant with
+  // asOf="unavailable" is public and safe to share globally.
+  return "shared";
+}
+
+function shareUserKeyedMacro(): boolean {
+  const value = (process.env.MARKET_DATA_SHARE_USER_KEYED_MACRO ?? "off").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function readMacroCache(scope: MacroCacheScope, userId: string | undefined, now: number): MacroData | null {
+  if (scope === "private") {
+    const key = `user:${userId ?? "local"}`;
+    const entry = privateMacroCache.get(key);
+    if (entry && entry.expiresAt > now) return entry.data;
+    // Fall through to shared as a secondary read: if the user previously
+    // triggered a shared (env-key) fetch, serve it rather than re-fetching.
+  }
+  const shared = sharedMacroCache.entry;
+  if (shared && shared.expiresAt > now) return shared.data;
+  return null;
+}
+
+function writeMacroCache(scope: MacroCacheScope, userId: string | undefined, data: MacroData, expiresAt: number): void {
+  if (scope === "shared") {
+    sharedMacroCache.entry = { expiresAt, data };
+  } else {
+    privateMacroCache.set(`user:${userId ?? "local"}`, { expiresAt, data });
+  }
+}
 
 const CACHE_TTL_MS = 24 * 60 * 60_000; // Macro data moves slowly; cache 24h
 
 export async function fetchMacroData(userId?: string): Promise<MacroData> {
   const now = Date.now();
-  if (cache.data && cache.expiresAt > now) {
-    return cache.data;
-  }
+  const { source } = resolveApiKeyWithSource("fred", userId);
+  const scope = macroCacheScopeForKeySource(source);
 
-  const apiKey = resolveApiKey("fred", userId);
+  const cached = readMacroCache(scope, userId, now);
+  if (cached) return cached;
+
+  const apiKey = resolveApiKeyWithSource("fred", userId).key;
   if (!apiKey) {
-    return DEFAULT_MACRO;
+    // No FRED key for the full FRED suite. Try to at least fetch live ^VIX from Yahoo Finance
+    // (key-free) so the regime classifier gets a real volatility reading instead of staying
+    // "Unknown". Other macro fields stay at DEFAULT_MACRO approximations — VIX is the primary
+    // regime axis anyway (see determineMarketRegime).
+    const liveVix = await fetchVixFromYahoo();
+    if (liveVix !== null) {
+      const lightMacro: MacroData = {
+        ...DEFAULT_MACRO,
+        vix: liveVix.toFixed(2),
+        asOf: new Date().toISOString().split("T")[0]
+      };
+      writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
+      return lightMacro;
+    }
+    // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
+    const fallback = { ...DEFAULT_MACRO, asOf: "unavailable" };
+    writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
+    return fallback;
   }
 
   try {
@@ -116,12 +200,37 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       asOf: new Date().toISOString().split("T")[0]
     };
 
-    cache.data = data;
-    cache.expiresAt = now + CACHE_TTL_MS;
+    writeMacroCache(scope, userId, data, now + CACHE_TTL_MS);
     return data;
   } catch (error) {
     console.error("[macro] failed to fetch macroeconomic data:", error);
-    return DEFAULT_MACRO;
+    // Fetch failed — same as unsourced: flag it so the regime classifier stays Unknown.
+    return { ...DEFAULT_MACRO, asOf: "unavailable" };
+  }
+}
+
+/** Clear both caches (test helper). */
+export function clearMacroCacheForTests(): void {
+  sharedMacroCache.entry = null;
+  privateMacroCache.clear();
+}
+
+/** Fetch the latest ^VIX close from Yahoo Finance (no API key required). Returns null on any failure. */
+async function fetchVixFromYahoo(): Promise<number | null> {
+  try {
+    const url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=5d&interval=1d";
+    const json = await politeFetchJson<VixYahooResponse>(url, {
+      headers: { "user-agent": BROWSER_UA, accept: "application/json" }
+    });
+    const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close ?? [];
+    // Walk back from the end to find the most recent non-null close.
+    for (let i = closes.length - 1; i >= 0; i--) {
+      const c = closes[i];
+      if (typeof c === "number" && Number.isFinite(c) && c > 0) return c;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -159,6 +268,9 @@ export function pruneMacro(
  * dense enough to learn from. Richer macro detail still reaches the LLM via the prompt.
  */
 export function determineMarketRegime(macro: MacroData): string {
+  // Unsourced macro (no FRED key) carries asOf "unavailable". Don't assert a confident regime off
+  // fabricated constants — return an explicit Unknown so downstream conditioning/caps stay neutral.
+  if (macro.asOf === "unavailable") return "Unknown (no macro feed)";
   const vix = parseFloat(macro.vix);
   const fedFunds = parseFloat(macro.fedFundsRate);
   const dgs10 = parseFloat(macro.dgs10Treasury);

@@ -1,7 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
-import type { EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import type { AccountCapabilities, EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
+
+// Mock the tax module so the authoritative wash-sale gate tests don't need a DB.
+vi.mock("../src/lib/tax", () => ({
+  getUserWashSaleLockedSymbols: vi.fn((_userId: string) => new Set<string>()),
+}));
+
+// Minimal AccountCapabilities that grants short-selling for tests that verify the enabled path.
+const shortCapableAccount: AccountCapabilities = {
+  equityTrading: true,
+  shortSelling: true,
+  optionsTrading: false,
+  futuresTrading: false,
+  cryptoTrading: false,
+  marginEnabled: true,
+  accountType: "brokerage"
+};
 
 const portfolio: Portfolio = {
   accountNumber: "A1",
@@ -21,11 +38,11 @@ const enabledPolicy: TradingPolicy = {
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
-  additionalSymbols: ["AAPL", "VOO"]
+  additionalSymbols: ["AAPL", "TSLA"]
 };
 
 const proposal: TradeProposal = {
-  symbol: "VOO",
+  symbol: "TSLA",
   side: "buy",
   type: "market",
   dollarAmount: 10,
@@ -57,7 +74,7 @@ describe("evaluateTradeProposal", () => {
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10,
-      washSaleLockedSymbols: new Set(["VOO"])
+      washSaleLockedSymbols: new Set(["TSLA"])
     });
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
@@ -71,13 +88,51 @@ describe("evaluateTradeProposal", () => {
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10,
-      washSaleLockedSymbols: new Set(["VOO"])
+      washSaleLockedSymbols: new Set(["TSLA"])
     });
     expect(decision.approved).toBe(true);
   });
 
+  // Authoritative cross-account wash-sale gate (architecture-blueprint §3.3):
+  // the gate must block the buy even when the caller omits washSaleLockedSymbols,
+  // resolving the set via getUserWashSaleLockedSymbols(userId) itself.
+  it("blocks a buy of a wash-sale-locked symbol at the gate even when washSaleLockedSymbols is omitted", () => {
+    vi.mocked(getUserWashSaleLockedSymbols).mockReturnValueOnce(new Set(["TSLA"]));
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10,
+      userId: "user-test",
+      // intentionally omitting washSaleLockedSymbols — gate must resolve it itself
+    });
+    expect(getUserWashSaleLockedSymbols).toHaveBeenCalledWith("user-test", expect.any(Date));
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
+  });
+
+  it("does not call getUserWashSaleLockedSymbols when washSaleLockedSymbols is pre-populated", () => {
+    vi.mocked(getUserWashSaleLockedSymbols).mockClear();
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10,
+      washSaleLockedSymbols: new Set(["TSLA"]),
+      userId: "user-test",
+    });
+    // Pre-populated set is used directly; no extra DB call.
+    expect(getUserWashSaleLockedSymbols).not.toHaveBeenCalled();
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
+  });
+
   it("blocks symbols outside the allowed universe", () => {
-    const decision = evaluateTradeProposal({ ...proposal, symbol: "TSLA" }, context());
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "MSFT" }, context());
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
   });
@@ -108,13 +163,13 @@ describe("evaluateTradeProposal", () => {
   });
 
   it("subtracts the ignore list from selected indexes and additional watchlist symbols", () => {
-    const policy: TradingPolicy = { ...enabledPolicy, includedIndices: ["dow30"], additionalSymbols: ["AAPL", "VOO"], blocklist: ["AAPL", "GS"] };
+    const policy: TradingPolicy = { ...enabledPolicy, includedIndices: ["dow30"], additionalSymbols: ["AAPL", "TSLA"], blocklist: ["AAPL", "GS"] };
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const blockedDecision = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, { ...context(), policy, estimatedNotional: 10 });
 
     expect(allowedSymbols).not.toContain("AAPL");
     expect(allowedSymbols).not.toContain("GS");
-    expect(allowedSymbols).toContain("VOO");
+    expect(allowedSymbols).toContain("TSLA");
     expect(blockedDecision.approved).toBe(false);
     expect(blockedDecision.reasons.join(" ")).toContain("not in the allowed universe");
   });
@@ -303,6 +358,7 @@ describe("evaluateTradeProposal", () => {
           maxSymbolExposurePct: 50,
           tuning: { crisisMaxOpeningExposurePct: 5 }
         },
+        accountCapabilities: shortCapableAccount,
         positions: [
           ...positions,
           { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }
@@ -328,7 +384,7 @@ describe("evaluateTradeProposal", () => {
       context()
     );
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "short" is not supported');
+    expect(decision.reasons.join(" ")).toContain('Order side "short" rejected');
   });
 
   it("rejects cover proposals", () => {
@@ -337,7 +393,140 @@ describe("evaluateTradeProposal", () => {
       context()
     );
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "cover" is not supported');
+    expect(decision.reasons.join(" ")).toContain('Order side "cover" rejected');
+  });
+
+  // T1 — maxSymbolExposureNotional must be side-aware (regression for the side-blind cap
+  // that could block automated de-risking exits).
+  it("maxSymbolExposureNotional blocks an opening buy that pushes symbol notional over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "buy", dollarAmount: 500 },
+      { ...context(500), policy: { ...enabledPolicy, maxSymbolExposureNotional: 1200 } }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("notional exposure");
+  });
+
+  it("maxSymbolExposureNotional does NOT block a risk-reducing sell", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 2, dollarAmount: undefined, type: "market" },
+      { ...context(500), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
+  it("maxSymbolExposureNotional does NOT block a full-position exit sell", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(1000), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
+  it("maxSymbolExposureNotional does NOT block a quantity-only market sell when estimatedNotional is zero", () => {
+    // Regression for: a market sell with quantity-only (no price, no dollarAmount) produces
+    // estimatedNotional=0. The old code computed projectedNotional = max(0, existingValue - 0)
+    // = existingValue, which blocked the sell when existingValue > cap. Closing orders are now
+    // unconditionally allowed.
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(0), policy: { ...enabledPolicy, maxSymbolExposureNotional: 800 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("notional exposure");
+  });
+
+  // T7 — enabled-path short/cover guardrails.
+  it("short without a mandatory stop-loss is rejected when short selling is enabled", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "MSFT", side: "short", dollarAmount: 1000 },
+      { ...context(1000), policy: { ...enabledPolicy, shortSellingEnabled: true, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 0 } }, accountCapabilities: shortCapableAccount }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("mandatory stop-loss");
+  });
+
+  it("short over maxShortOrderNotional is rejected", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "MSFT", side: "short", dollarAmount: 5000 },
+      { ...context(5000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortOrderNotional: 1000, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } }, accountCapabilities: shortCapableAccount }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("max short order limit");
+  });
+
+  it("opening short over maxShortExposurePct is rejected", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "MSFT", side: "short", dollarAmount: 6000 },
+      { ...context(6000), policy: { ...enabledPolicy, shortSellingEnabled: true, maxShortExposurePct: 50, riskRules: { ...enabledPolicy.riskRules, shortStopLossPct: 10 } }, accountCapabilities: shortCapableAccount }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("short exposure");
+  });
+
+  it("cover exceeding the held short is rejected", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 3, dollarAmount: undefined, type: "market" },
+      {
+        ...context(100),
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("exceeds current TSLA short");
+  });
+
+  it("a valid in-range cover is approved", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, type: "market" },
+      {
+        ...context(1000),
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
+
+  // T10 — whole-portfolio gross/net exposure gates (previously silent no-ops).
+  it("maxGrossExposurePct blocks an opening buy that pushes gross over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "buy", dollarAmount: 9500 },
+      { ...context(9500), policy: { ...enabledPolicy, maxGrossExposurePct: 100 } }
+    );
+    // grossNow 1000 (AAPL) + 9500 = 10500 > 10000 cap → blocked.
+    expect(decision.reasons.join(" ")).toContain("gross exposure");
+  });
+
+  it("maxNetExposurePct blocks an opening buy that pushes net over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "buy", dollarAmount: 9500 },
+      { ...context(9500), policy: { ...enabledPolicy, maxNetExposurePct: 100 } }
+    );
+    expect(decision.reasons.join(" ")).toContain("net exposure");
+  });
+
+  it("gross/net caps do NOT block a risk-reducing sell even when already over the cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { ...context(1000), policy: { ...enabledPolicy, maxGrossExposurePct: 5, maxNetExposurePct: 5 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("gross exposure");
+    expect(decision.reasons.join(" ")).not.toContain("net exposure");
+  });
+
+  it("default 100% gross/net caps do not block a small in-policy order", () => {
+    const decision = evaluateTradeProposal(proposal, {
+      policy: enabledPolicy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: 0,
+      dailyOrderCount: 0,
+      estimatedNotional: 10
+    });
+    expect(decision.approved).toBe(true);
   });
 });
 

@@ -1,9 +1,11 @@
 import crypto from "crypto";
 import {
   audit,
+  claimSyntheticStop,
   deleteSyntheticStop,
   insertFillEvent,
   listSyntheticStops,
+  revertSyntheticStopClaim,
   upsertSyntheticStop,
   type SyntheticTrailingStop
 } from "./db";
@@ -78,7 +80,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   } catch {
     return result; // can't evaluate safely without positions
   }
-  const liveSymbols = new Set(positions.filter((p) => p.quantity > 0.000001).map((p) => normalizeSymbol(p.symbol)));
+  const liveSymbols = new Set(positions.filter((p) => Math.abs(p.quantity) > 0.000001).map((p) => normalizeSymbol(p.symbol)));
 
   // Purge stops whose position has closed (size hit 0).
   for (const stop of listSyntheticStops(accountNumber, userId)) {
@@ -88,23 +90,27 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     }
   }
 
-  // Auto-register a trailing stop for each long position when a trail % is configured.
+  // Auto-register a trailing stop for each open position when a trail % is configured.
+  // Longs trail from a high-watermark and exit with a sell; shorts (only when short
+  // selling is enabled) trail from a low-watermark and exit with a cover.
   const trailPct = policy.riskRules?.trailingStopPct ?? 0;
   if (trailPct > 0) {
     const existing = new Set(listSyntheticStops(accountNumber, userId).map((s) => s.symbol.toUpperCase()));
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
-      if (pos.quantity <= 0.000001 || existing.has(sym)) continue;
-      const mark = pos.quantity > 0 ? pos.marketValue / pos.quantity : pos.averageCost;
+      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
+      const isShort = pos.quantity < 0;
+      if (isShort && !policy.shortSellingEnabled) continue;
+      const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
       upsertSyntheticStop({
         id: `synstop-${userId}-${accountNumber}-${sym}`,
         userId,
         accountNumber,
         symbol: sym,
-        side: "long",
-        quantity: pos.quantity,
+        side: isShort ? "short" : "long",
+        quantity: Math.abs(pos.quantity),
         entryPrice: pos.averageCost,
-        extremePrice: Math.max(mark, pos.averageCost),
+        extremePrice: isShort ? Math.min(mark, pos.averageCost) : Math.max(mark, pos.averageCost),
         trailPercent: trailPct,
         status: "active"
       });
@@ -143,14 +149,24 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     }
 
     // Gated execution: fire the protective market exit (sell a long / cover a short).
-    const qty = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(stop.symbol))?.quantity ?? stop.quantity;
+    const posQty = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(stop.symbol))?.quantity ?? stop.quantity;
+    const qty = Math.abs(posQty); // order/fill quantity is always a positive magnitude (cover qty for shorts)
     if (qty <= 0.000001) {
       deleteSyntheticStop(stop.id, userId);
       continue;
     }
     const exitSide = stop.side === "long" ? "sell" : "cover";
+    // Atomically claim this stop (active -> triggered) BEFORE placing. If a previous tick's
+    // monitor is still mid-placement (slow broker call spanning the next 60s tick), it already
+    // claimed the stop and this run skips it — so the same protective exit can't fire twice.
+    if (!claimSyntheticStop(stop.id, userId)) {
+      audit("synthetic_stop_skipped_inflight", { symbol: stop.symbol, note: "already claimed/triggered by a concurrent monitor run" }, userId);
+      continue;
+    }
+    // Deterministic ref id (stop id + trigger price) so the broker's own client_order_id
+    // dedupe is a second line of defense against a duplicate exit.
+    const refId = `sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}`;
     try {
-      const refId = crypto.randomUUID();
       const exec = await gateway.placeEquityOrder({
         accountNumber,
         symbol: stop.symbol,
@@ -170,14 +186,22 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         quantity: qty,
         price,
         notional: qty * price,
-        status: "filled",
+        // Live exits are provisional at the quote price; reconcilePendingFills books the
+        // real fill price/qty from the broker (brokerOrderId is the match key). Booking
+        // 'filled' at the quote understates slippage at the worst possible moment. Paper/
+        // test fills have no reconciliation, so they're final.
+        status: source === "live" ? "pending_reconciliation" : "filled",
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });
+      // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
       result.exited++;
       audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId);
     } catch (err) {
+      // Placement failed/uncertain — re-arm the stop so a later tick can retry rather than
+      // leaving the position unprotected behind a stuck 'triggered' row.
+      revertSyntheticStopClaim(stop.id, userId);
       audit("synthetic_stop_error", { symbol: stop.symbol, error: err instanceof Error ? err.message : String(err) }, userId);
     }
   }

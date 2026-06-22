@@ -7,14 +7,36 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { canonicalTicker } from "../rag/chunk";
-import { resolveApiKey } from "../db";
-import { DISCLAIMER } from "./prompt";
+import { resolveLlmCredential } from "../db";
+import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
+import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
+
+/** Per-user attribution for the LLM usage ledger. When `userId` is set, run() records a usage row. */
+export interface LlmUsageOpts {
+  userId?: string;
+  keySource?: "user" | "operator";
+  context?: string;
+}
+
+/** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
+function recordChatUsage(opts: LlmUsageOpts, provider: "openai" | "anthropic", model: string, prompt: number, completion: number, saw: boolean): void {
+  if (!opts.userId) return;
+  recordLlmUsage({
+    userId: opts.userId,
+    provider,
+    model,
+    context: opts.context ?? "chat",
+    keySource: opts.keySource ?? "user",
+    promptTokens: saw ? prompt : undefined,
+    completionTokens: saw ? completion : undefined
+  });
+}
 
 const MAX_STEPS = 5;
 
 export interface Intent {
-  intent: "alert" | "order" | "watchlist_add" | "kb" | "advice" | "quote" | "chat";
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "chat";
   symbol?: string;
   alert?: { symbol: string; op: "<" | ">"; price: number };
   order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
@@ -63,6 +85,12 @@ export function classifyIntent(message: string): Intent {
       symbol: sym,
       doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
     };
+  if (
+    /\b(my (positions?|portfolio|holdings)|how (?:am i|is my account|are my (?:positions|holdings)) doing|how (?:'?s|is) my [a-z. ]*position|my (?:p&l|pnl|p ?and ?l|gains?|losses?))\b/.test(lc)
+  )
+    return { intent: "positions" };
+  if (/\b(my watchlist|what'?s on my watchlist|show (?:me )?my watchlist)\b/.test(lc)) return { intent: "watchlist_view" };
+  if (/\b(my alerts?|what alerts|active alerts?|show (?:me )?my alerts?)\b/.test(lc)) return { intent: "alerts_view" };
   if (/\b(should i|is it a good (buy|time)|recommend|what should i do|allocate)\b/.test(lc)) return { intent: "advice", symbol: sym };
   if (/\b(price|quote|trading at|how much is|what'?s)\b/.test(lc) && sym) return { intent: "quote", symbol: sym };
   if (sym) return { intent: "quote", symbol: sym };
@@ -70,15 +98,39 @@ export function classifyIntent(message: string): Intent {
 }
 
 function narrateQuote(quote: any, advice: boolean): string {
-  const dir = quote.change_pct >= 0 ? "up" : "down";
-  let text =
-    `${quote.symbol} is at $${quote.price_usd}, ${dir} ${Math.abs(quote.change_pct)}% ` +
-    `(as of ${quote.as_of}, ${quote.source} data, ${quote.session} session).`;
+  let lead = `${quote.symbol} is at $${quote.price_usd}`;
+  if (typeof quote.change_pct === "number" && Number.isFinite(quote.change_pct)) {
+    lead += `, ${quote.change_pct >= 0 ? "up" : "down"} ${Math.abs(quote.change_pct)}%`;
+  }
+  // Only narrate fields the source actually provided — never fabricate a 0% or a session.
+  const meta = [
+    quote.as_of ? `as of ${quote.as_of}` : null,
+    quote.source ? `${quote.source} data` : null,
+    quote.session ? `${quote.session} session` : null
+  ].filter(Boolean);
+  let text = meta.length ? `${lead} (${meta.join(", ")}).` : `${lead}.`;
   if (advice)
     text +=
       ` I can't tell you whether to buy or sell — that depends on your full financial picture, ` +
       `and I'm not a licensed advisor. I can lay out the trade-offs and you decide.`;
   return text;
+}
+
+function fmt(n: unknown): string {
+  return typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "—";
+}
+
+/**
+ * Ensure the "not investment advice" DISCLAIMER is present exactly once. The real Anthropic
+ * path used to append it only on an empty response (`text || DISCLAIMER`), so it could silently
+ * vanish on a non-empty answer — every user-facing reply must carry it. Idempotent: if the model
+ * already echoed the disclaimer, we don't double-append.
+ */
+function withDisclaimer(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return DISCLAIMER;
+  if (trimmed.includes(DISCLAIMER)) return trimmed;
+  return `${trimmed}\n\n${DISCLAIMER}`;
 }
 
 function groundedChat(message: string, memorySummary?: string): string {
@@ -155,7 +207,7 @@ export class MockLLM implements ChatLLM {
       return {
         text: `${lines.join("\n")}\n\n${DISCLAIMER}`,
         toolCalls,
-        citations: chunks.map((c: any) => ({ source: c.source, chunk_id: c.chunk_id, as_of: c.as_of }))
+        citations: chunks.map((c: any) => ({ source: c.source, chunk_id: c.chunk_id, as_of: c.as_of, url: c.url }))
       };
     }
 
@@ -168,6 +220,41 @@ export class MockLLM implements ChatLLM {
       return { text: `${result.item.symbol} ${tag} on your watchlist.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
     }
 
+    if (cls.intent === "positions") {
+      const positionsResult = await executeTool("get_positions", {});
+      const portfolioResult = await executeTool("get_portfolio", {});
+      toolCalls.push({ name: "get_positions", input: {}, result: positionsResult });
+      toolCalls.push({ name: "get_portfolio", input: {}, result: portfolioResult });
+      const positions = positionsResult?.positions ?? [];
+      const portfolio = portfolioResult?.portfolio;
+      const parts: string[] = [];
+      if (portfolio) parts.push(`Account value $${fmt(portfolio.totalMarketValue)}, cash $${fmt(portfolio.cash)}.`);
+      parts.push(
+        positions.length
+          ? `Positions: ${positions.map((p: any) => `${p.symbol} ${p.quantity} (~$${fmt(p.marketValue)})`).join(", ")}.`
+          : "No open positions."
+      );
+      return { text: `${parts.join(" ")}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "watchlist_view") {
+      const result = await executeTool("list_watchlist", {});
+      toolCalls.push({ name: "list_watchlist", input: {}, result });
+      const wl = result?.watchlist ?? [];
+      const text = wl.length ? `Your watchlist: ${wl.map((w: any) => w.symbol).join(", ")}.` : "Your watchlist is empty.";
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
+    if (cls.intent === "alerts_view") {
+      const result = await executeTool("list_alerts", {});
+      toolCalls.push({ name: "list_alerts", input: {}, result });
+      const al = result?.alerts ?? [];
+      const text = al.length
+        ? `Your armed alerts: ${al.map((a: any) => `${a.symbol} ${a.op} $${a.price}`).join(", ")}.`
+        : "You have no armed alerts.";
+      return { text: `${text}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+    }
+
     return { text: `${groundedChat(message, context.memorySummary)}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
   }
 }
@@ -177,7 +264,13 @@ type Transport = (body: any, apiKey: string) => Promise<any>;
 async function defaultTransport(body: any, apiKey: string): Promise<any> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      // Enable prompt-caching beta so cache_control blocks are honoured by the API.
+      "anthropic-beta": "prompt-caching-2024-07-31"
+    },
     body: JSON.stringify(body)
   });
   if (!res.ok) throw new Error(`anthropic ${res.status}`);
@@ -186,18 +279,50 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 
 /** Real Anthropic Messages API tool loop (server-side only). */
 export class AnthropicLLM implements ChatLLM {
-  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport) {}
+  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
 
-  async run({ system, message, tools, executeTool }: LlmRunArgs): Promise<LlmResult> {
-    const messages: any[] = [{ role: "user", content: message }];
+  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+    const messages: any[] = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let sawUsage = false;
+    // Replay prior turns for multi-turn context. Anthropic requires the first message to be user, so
+    // drop any leading assistant turn from the (chronological) history before appending the new message.
+    const prior = (history ?? []).slice();
+    while (prior.length && prior[0].role !== "user") prior.shift();
+    for (const h of prior) messages.push({ role: h.role, content: h.text });
+    messages.push({ role: "user", content: message });
     const toolCalls: ToolCall[] = [];
     let text = "";
 
+    // Prompt-caching: mark the stable SYSTEM_PROMPT prefix as ephemeral so Anthropic
+    // can reuse the cached KV across repeated calls. Only the dynamic suffix (user memory,
+    // if present) is left uncached. This is a no-op for non-Anthropic providers since they
+    // receive the plain-string `system` via a different transport.
+    const anthropicSystem: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> =
+      system === SYSTEM_PROMPT
+        ? // No dynamic suffix — entire system is stable; cache the whole thing.
+          [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }]
+        : system.startsWith(SYSTEM_PROMPT)
+          ? // Dynamic suffix present (user memory) — cache only the stable prefix.
+            [
+              { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+              { type: "text", text: system.slice(SYSTEM_PROMPT.length) }
+            ]
+          : // Unrecognised system string (custom override) — send as a single uncached block.
+            [{ type: "text", text: system }];
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const resp = await this.transport(
-        { model: this.model, max_tokens: 1024, system, messages, ...(tools?.length ? { tools } : {}) },
+        { model: this.model, max_tokens: 1024, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) },
         this.apiKey
       );
+      const u = extractLlmUsage(resp);
+      if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
+        sawUsage = true;
+        promptTokens += u.promptTokens ?? 0;
+        completionTokens += u.completionTokens ?? 0;
+      }
       const content = resp.content || [];
       messages.push({ role: "assistant", content });
       text = content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
@@ -223,16 +348,153 @@ export class AnthropicLLM implements ChatLLM {
       .filter((c) => c.name === "get_quote" && c.result && !c.result.error)
       .map((c) => ({ source: "get_quote", as_of: c.result.as_of }));
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
-      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of });
+      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
     }
+    recordChatUsage(this.usage, "anthropic", this.model, promptTokens, completionTokens, sawUsage);
+    return { text: withDisclaimer(text), toolCalls, citations };
+  }
+}
+
+// OpenAI Chat Completions transport — injectable for offline testing.
+type OpenAITransport = (body: any, apiKey: string) => Promise<any>;
+
+async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
+  const url = process.env.OPENAI_CHAT_URL ?? "https://api.openai.com/v1/chat/completions";
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`openai ${res.status}: ${detail.slice(0, 300)}`);
+  }
+  return res.json();
+}
+
+/**
+ * OpenAI Chat Completions tool loop for the chat assistant. Models the same
+ * injectable-transport approach as AnthropicLLM so it is fully testable offline.
+ *
+ * Tool calling follows the OpenAI function-calling protocol (tools/tool_calls).
+ * CHAT_LLM_MODEL defaults to gpt-4o-mini when CHAT_LLM=openai.
+ */
+export class OpenAILLM implements ChatLLM {
+  constructor(
+    private apiKey: string,
+    private model: string,
+    private transport: OpenAITransport = defaultOpenAITransport,
+    private usage: LlmUsageOpts = {}
+  ) {}
+
+  async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
+    // Build OpenAI messages array. Prior user/assistant turns first, then the current message.
+    const messages: any[] = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let sawUsage = false;
+    if (system) messages.push({ role: "system", content: system });
+    const prior = (history ?? []).slice();
+    // OpenAI requires alternating user/assistant; drop a leading assistant turn if present.
+    while (prior.length && prior[0].role !== "user") prior.shift();
+    for (const h of prior) messages.push({ role: h.role, content: h.text });
+    messages.push({ role: "user", content: message });
+
+    // Convert ChatLLM ToolSchema → OpenAI function-calling format.
+    const oaiTools =
+      tools && tools.length
+        ? tools.map((t) => ({
+            type: "function",
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: t.input_schema
+            }
+          }))
+        : undefined;
+
+    const toolCalls: ToolCall[] = [];
+    let text = "";
+
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const resp = await this.transport(
+        {
+          model: this.model,
+          max_tokens: 1024,
+          messages,
+          ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
+        },
+        this.apiKey
+      );
+
+      const u = extractLlmUsage(resp);
+      if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
+        sawUsage = true;
+        promptTokens += u.promptTokens ?? 0;
+        completionTokens += u.completionTokens ?? 0;
+      }
+      const choice = resp.choices?.[0];
+      if (!choice) break;
+      const assistantMsg = choice.message ?? {};
+      messages.push({ role: "assistant", content: assistantMsg.content ?? null, ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } : {}) });
+      text = typeof assistantMsg.content === "string" ? assistantMsg.content : "";
+
+      const calls: any[] = assistantMsg.tool_calls ?? [];
+      if (choice.finish_reason !== "tool_calls" || calls.length === 0) break;
+
+      const toolResults: any[] = [];
+      for (const tc of calls) {
+        const name: string = tc.function?.name ?? "";
+        let input: any;
+        try {
+          input = JSON.parse(tc.function?.arguments ?? "{}");
+        } catch {
+          input = {};
+        }
+        let result: any;
+        try {
+          result = await executeTool(name, input);
+        } catch (e) {
+          result = { error: "TOOL_FAILED", message: e instanceof Error ? e.message : String(e) };
+        }
+        toolCalls.push({ name, input, result });
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
+      }
+      // Push all tool results as individual messages (OpenAI requires one per tool_call_id).
+      for (const tr of toolResults) messages.push(tr);
+    }
+
+    const citations: Citation[] = toolCalls
+      .filter((c) => c.name === "get_quote" && c.result && !c.result.error)
+      .map((c) => ({ source: "get_quote", as_of: c.result.as_of }));
+    for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
+      for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
+    }
+    recordChatUsage(this.usage, "openai", this.model, promptTokens, completionTokens, sawUsage);
     return { text: text || DISCLAIMER, toolCalls, citations };
   }
 }
 
-export function getLLM(opts: { transport?: Transport } = {}): ChatLLM {
-  const key = resolveApiKey("anthropic");
-  if (process.env.CHAT_LLM === "anthropic" && key) {
-    return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport);
+/**
+ * Build the env-default chat LLM for a user. The key resolves per-user-first with the operator
+ * env key as a flag-gated failover (see resolveLlmCredential), and usage is attributed to `userId`.
+ * Passing no userId resolves the operator (`local`) key — preserves single-operator behaviour.
+ */
+export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
+  const chatLlm = process.env.CHAT_LLM;
+  if (chatLlm === "anthropic") {
+    const { key, source } = resolveLlmCredential("anthropic", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", context: "chat" };
+      return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport, usage);
+    }
+  }
+  if (chatLlm === "openai") {
+    const { key, source } = resolveLlmCredential("openai", userId);
+    if (key) {
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", context: "chat" };
+      return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", opts.openAITransport ?? defaultOpenAITransport, usage);
+    }
   }
   return new MockLLM();
 }

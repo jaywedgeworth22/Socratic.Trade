@@ -10,7 +10,7 @@ export type StrategyAuthority = "propose" | "decide";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert";
+export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
 
@@ -57,6 +57,57 @@ export interface ScoringWeights {
  */
 export type TaxationType = "taxable" | "roth_ira" | "traditional_ira";
 
+/**
+ * What a brokerage account can actually do. Populated from the broker API on
+ * connect and stored as a JSON blob alongside the account row. Every boolean
+ * field defaults to false so legacy/unpopulated rows are never accidentally
+ * granted a capability the broker hasn't confirmed.
+ *
+ * Future asset classes (futures, crypto) are included here so policy checks
+ * can reference capabilities.futuresTrading without a later schema change —
+ * they will simply read false until the broker gateway sets them.
+ */
+export interface AccountCapabilities {
+  /** Equity (stock/ETF) buying and selling. True for all current brokers. */
+  equityTrading: boolean;
+  /**
+   * Equity short selling (borrowing shares to sell).
+   * Robinhood MCP: always false — the MCP's review_equity_order explicitly
+   * prohibits short sells. Alpaca: parsed from account.shorting_enabled.
+   */
+  shortSelling: boolean;
+  /** Options contracts allowed at all. */
+  optionsTrading: boolean;
+  /**
+   * CBOE/broker options approval tier:
+   *   0 = none  1 = covered calls + cash-secured puts
+   *   2 = long calls/puts  3 = spreads/straddles  4 = naked/uncovered
+   * Undefined when optionsTrading is false or the broker does not report a level.
+   */
+  optionsLevel?: 0 | 1 | 2 | 3 | 4;
+  /** Futures/commodities contracts. Not supported by any current broker. */
+  futuresTrading: boolean;
+  /**
+   * Cryptocurrency spot trading. Not supported by current stock brokers.
+   * Reserved for future crypto-exchange connections — wire a crypto gateway
+   * and set this true there; stock brokers remain false.
+   */
+  cryptoTrading: boolean;
+  /** Whether the account has margin (borrowing) enabled. */
+  marginEnabled: boolean;
+  /** Broker's required maintenance margin percentage (e.g. 25 = 25%). */
+  marginRequirementPct?: number;
+  /**
+   * Account structure, which determines the applicable tax regime:
+   *   "brokerage"       → standard taxable account
+   *   "traditional_ira" → tax-deferred (contributions pre-tax; withdrawals taxed as income)
+   *   "roth_ira"        → tax-free growth (contributions post-tax; qualified withdrawals free)
+   *   "crypto_exchange" → crypto-only venue; taxable but no equity trading
+   * For new accounts this supersedes the separate taxationType field on ConnectedAccount.
+   */
+  accountType: "brokerage" | "traditional_ira" | "roth_ira" | "crypto_exchange";
+}
+
 export interface TaxSettings {
   /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
   taxationType?: TaxationType;
@@ -84,6 +135,18 @@ export interface TuningSettings {
   redTeamConvictionThreshold?: number;
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
+  /**
+   * Max value AI confidence may contribute to the conviction sizing multiplier (0–1) when the
+   * thesis's realized edge does NOT corroborate it. Caps only the UPSIDE — low confidence still
+   * shrinks size fully. Default 0.6. Prevents an inflated confidenceScore from sizing up a
+   * proven-but-mediocre thesis on AI conviction alone. (Reads only realized scorecard stats +
+   * the proposal's own confidenceScore — never learned_context.)
+   */
+  convictionCapUncorroborated?: number;
+  /** Shrunk realized win rate (%) at/above which conviction is treated as corroborated (cap lifts). Default 58. */
+  corroborationWinRatePct?: number;
+  /** Shrunk realized avg return (%) strictly above which conviction is treated as corroborated. Default 0. */
+  corroborationEdgePct?: number;
 }
 
 export interface RiskRules {
@@ -96,6 +159,18 @@ export interface RiskRules {
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
+  /**
+   * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
+   * before the system auto-halts new entries (systemState → "close_only") and fires a
+   * kill-switch notification. Undefined or <=0 disables. Unlike the per-position stopLossPct,
+   * this bounds the whole account's bleed, not one name's. Evaluated at the top of each run.
+   */
+  maxDrawdownPct?: number;
+  /**
+   * Account-level circuit breaker: max single-day equity loss (account currency) from the day's
+   * starting equity before auto-halting new entries. Undefined or <=0 disables.
+   */
+  maxDailyLossNotional?: number;
 }
 
 export interface NotificationSettings {
@@ -106,15 +181,30 @@ export interface NotificationSettings {
 export interface ConnectedAccount {
   id: string;
   userId: string;
-  broker: "alpaca" | "robinhood" | "test";
+  /**
+   * Broker identifier. Add new values here when connecting a new venue
+   * (e.g. "coinbase" for a crypto exchange) and wire a matching BrokerGateway.
+   */
+  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
   environment: "paper" | "live";
-  /** Tax treatment of this account (taxable vs Roth/Traditional IRA). Defaults to "taxable". */
+  /**
+   * @deprecated Use capabilities.accountType instead for new accounts.
+   * Retained for backwards compatibility with existing rows that predate
+   * the AccountCapabilities field.
+   */
   taxationType?: TaxationType;
   accountNumber?: string;
   label: string;
   apiKey?: string;
   apiSecret?: string;
+  baseUrl?: string;
   isActive: boolean;
+  /**
+   * Persisted snapshot of the capabilities last reported by the broker for
+   * this account. Populated on connect/re-sync; undefined for legacy rows
+   * (treat all capabilities as false when absent).
+   */
+  capabilities?: AccountCapabilities;
   createdAt: string;
   updatedAt: string;
 }
@@ -123,6 +213,8 @@ export interface BrokerageAccount {
   accountNumber: string;
   label: string;
   agenticAllowed: boolean;
+  /** Live capabilities reported by the broker for this account. */
+  capabilities?: AccountCapabilities;
 }
 
 export interface Portfolio {
@@ -156,6 +248,12 @@ export interface EquityOrder {
   createdAt: string;
   updatedAt?: string;
   placedAgent?: string;
+  /**
+   * The idempotency key we sent at placement (Alpaca `client_order_id`, Robinhood `ref_id`).
+   * Lets the run-start sweep match a stale "placing" intent against the broker's order list to
+   * recover an order whose placement response was lost (broker-truth-first reconciliation).
+   */
+  clientOrderId?: string;
 }
 
 export interface BrokerQuote {
@@ -194,6 +292,20 @@ export interface TradingPolicy {
   maxNetExposurePct?: number;
   maxDailyOrders: number;
   maxProposalsPerRun: number;
+  /**
+   * Hard time-to-live for a still-pending (unapproved/unrejected) proposal, in minutes.
+   * A proposal older than this is auto-expired (status → "expired") so the approval queue
+   * never implies the agent is still actively recommending an hours/days-old idea. 0 or
+   * undefined disables hard expiry — the on-run LLM re-validation below still applies.
+   */
+  proposalExpiryMinutes?: number;
+  /**
+   * How often each still-pending proposal is re-validated by the LLM, as the minimum hours
+   * between re-checks for a given proposal. Re-checks ride on strategy runs and happen during
+   * regular market hours only (never overnight). 0 = every run; 24 = once per day; 120 = every
+   * 5 days. Default 0 (every run).
+   */
+  proposalRevalidateCadenceHours?: number;
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
@@ -206,7 +318,7 @@ export interface TradingPolicy {
   taxSettings?: TaxSettings;
   tuning?: TuningSettings;
   activeProfileId?: string;
-  activeBroker?: "alpaca" | "robinhood" | "test";
+  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally
@@ -234,6 +346,15 @@ export interface TradeProposal {
   tradeThesisTag: string;
   entryMarketRegime: string;
   confidenceScore?: number;
+  /** Limit price for the take-profit leg of a bracket order. */
+  bracketTakeProfit?: number;
+  /** Stop price for the stop-loss leg of a bracket order. */
+  bracketStopLoss?: number;
+  /**
+   * Optional limit price for the stop-loss leg, making it a stop-limit order.
+   * When absent the stop-loss leg is a plain stop-market.
+   */
+  bracketStopLimit?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -442,6 +563,15 @@ export interface EquityOrderInput {
   stopPrice?: number;
   timeInForce: TimeInForce;
   marketHours: MarketHours;
+  /** Limit price for the take-profit leg of a bracket order. */
+  bracketTakeProfit?: number;
+  /** Stop price for the stop-loss leg of a bracket order. */
+  bracketStopLoss?: number;
+  /**
+   * Optional limit price for the stop-loss leg, making it a stop-limit order.
+   * When absent the stop-loss leg is a plain stop-market.
+   */
+  bracketStopLimit?: number;
 }
 
 export interface BrokerGateway {
@@ -483,6 +613,11 @@ export interface PendingProposal {
   proposal: TradeProposal;
   decision: PolicyDecision;
   review?: ReviewedOrder;
+  /** Last time a strategy run re-validated this still-pending proposal via the LLM. */
+  lastRevalidatedAt?: string;
+  /** The LLM's most recent re-validation note (why it still stands). */
+  revalidationNote?: string;
+  accountNumber?: string;
 }
 
 export interface StrategyOutcome {
@@ -708,4 +843,74 @@ export interface MemoryItem {
   hard: boolean;
   assertedAt: string;
   supersededBy: string | null;
+}
+
+// ── learned_context (the tiered crossover-learning store) ──────────────────────
+// A SQLite channel, distinct from user_memory and the Pinecone corpus, holding durable
+// learned FACTS that reach the strategy brain ONLY as advisory prompt DATA — never as a
+// numeric input to sizing or scoring weights. The risk classifier (classify.ts) is the
+// single chokepoint: anything not clearly a non-risk fact is fail-closed to 'risk' and, in
+// this fact-tier slice, is audit-logged-and-dropped (the pending queue is a later slice).
+export type LearnedContextScope = "private" | "shared";
+export type LearnedContextKind = "pattern" | "decision" | "fact";
+export type LearnedContextOrigin = "chat" | "autonomous" | "ingest";
+export type LearnedContextRiskTier = "fact" | "risk" | "strategy-directive";
+
+/** A persisted learned-context row. `supersededBy` non-null means a newer fact replaced it. */
+export interface LearnedContextRow {
+  id: string;
+  userId: string;
+  scope: LearnedContextScope;
+  kind: LearnedContextKind;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: LearnedContextOrigin;
+  riskTier: LearnedContextRiskTier;
+  confidence: number;
+  contributorUserId: string | null;
+  assertedAt: string;
+  supersededBy: string | null;
+  expiresAt: string | null;
+}
+
+/** A pre-persistence learned-context candidate (origin/scope are assigned at ingest time). */
+export interface LearnedContextCandidate {
+  kind: LearnedContextKind;
+  subject: string;
+  value: string;
+  symbol?: string | null;
+  source?: string;
+  confidence?: number;
+  /** Optional intent hint from the producer; the classifier may use it to force 'risk'. */
+  intent?: string;
+}
+
+/** Status of a queued risk-tier candidate awaiting explicit human confirmation. */
+export type LearnedContextPendingStatus = "pending" | "approved" | "rejected";
+
+/**
+ * A risk-tier candidate (tier 'risk' | 'strategy-directive') from an autonomous/ingest producer that
+ * was routed to the human confirmation queue instead of being audit-dropped. It lives OUTSIDE the
+ * brain until a human approves it; approval applies it SAFELY (advisory promote / prompt append) and
+ * NEVER auto-derives a numeric policy change. Chat-origin risk candidates are still hard-capped and
+ * never reach this queue.
+ */
+export interface LearnedContextPendingRow {
+  id: string;
+  userId: string;
+  scope: LearnedContextScope;
+  kind: LearnedContextKind;
+  subject: string;
+  symbol: string | null;
+  value: string;
+  source: string;
+  origin: LearnedContextOrigin;
+  /** Only the two human-confirmable tiers are ever queued. */
+  riskTier: Exclude<LearnedContextRiskTier, "fact">;
+  classifierReason: string | null;
+  createdAt: string;
+  status: LearnedContextPendingStatus;
+  resolvedAt: string | null;
 }

@@ -1,5 +1,32 @@
-import { describe, expect, it } from "vitest";
-import { evaluateStop } from "../src/lib/synthetic-stops";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { evaluateStop, runSyntheticStopMonitor } from "../src/lib/synthetic-stops";
+import { DEFAULT_POLICY } from "../src/lib/defaults";
+import { listFillEvents } from "../src/lib/db";
+import type { TradingPolicy } from "../src/lib/types";
+
+const broker = vi.hoisted(() => ({
+  positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
+  quotes: {} as Record<string, { price?: number }>,
+  placed: [] as Array<{ side: string; quantity: number; symbol: string }>
+}));
+
+vi.mock("../src/lib/broker", () => ({
+  getBrokerGateway: () => ({
+    getEquityPositions: async () => broker.positions,
+    getEquityQuotes: async () => broker.quotes,
+    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string }) => {
+      broker.placed.push(order);
+      return { orderId: "ord-1" };
+    }
+  })
+}));
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-synthstops-${randomUUID()}.db`)}`;
+});
 
 const longBase = { side: "long" as const, extremePrice: 100, trailPercent: 5, trailAmount: undefined, lastPrice: 100 };
 
@@ -35,5 +62,63 @@ describe("evaluateStop (synthetic trailing stop)", () => {
     expect(r.newExtreme).toBe(95); // a short's extreme tracks DOWN
     expect(r.triggerPrice).toBeCloseTo(98); // 95 + 3
     expect(r.triggered).toBe(false); // 95 < 98, not yet
+  });
+});
+
+describe("runSyntheticStopMonitor (orchestration)", () => {
+  function policyFor(account: string): TradingPolicy {
+    return {
+      ...DEFAULT_POLICY,
+      accountNumber: account,
+      paperMode: true,
+      shortSellingEnabled: true,
+      riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 }
+    };
+  }
+
+  beforeEach(() => {
+    broker.positions = [];
+    broker.quotes = {};
+    broker.placed = [];
+  });
+
+  it("auto-registers and fires a SELL to exit a long when the trail breaches (running)", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } }; // extreme 100, trail 5% → trigger ≤95; 90 breaches
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-LONG"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBe(10);
+  });
+
+  it("fires a COVER to exit a short when the trail breaches (running)", async () => {
+    broker.positions = [{ symbol: "TSLA", quantity: -5, averageCost: 100, marketValue: -500 }];
+    broker.quotes = { TSLA: { price: 110 } }; // short extreme 100, trail 5% → trigger ≥105; 110 breaches
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-SHORT"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("cover");
+    expect(broker.placed[0].quantity).toBe(5);
+  });
+
+  it("suppresses the exit order when not running (would-trigger only)", async () => {
+    broker.positions = [{ symbol: "TSLA", quantity: -5, averageCost: 100, marketValue: -500 }];
+    broker.quotes = { TSLA: { price: 110 } };
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-SUPPRESS"), false);
+    expect(result.triggered).toBe(1);
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+  });
+
+  it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {
+    broker.positions = [{ symbol: "NVDA", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { NVDA: { price: 90 } }; // breaches a 5% trail off extreme 100
+    const result = await runSyntheticStopMonitor("local", { ...policyFor("SYN-LIVE"), paperMode: false }, true);
+    expect(result.exited).toBe(1);
+    const fills = listFillEvents("SYN-LIVE", "live", 10, "local");
+    expect(fills).toHaveLength(1);
+    expect(fills[0].status).toBe("pending_reconciliation"); // reconcilePendingFills books the real fill
+    expect(fills[0].brokerOrderId).toBe("ord-1");
   });
 });

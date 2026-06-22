@@ -1,6 +1,9 @@
-import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveApiKey } from "./db";
-import { getRegimeScorecard, getThesisScorecard } from "./performance";
-import { getExcursionsByThesis } from "./learning-loop";
+import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveLlmCredential, upsertFillExcursionsByKey } from "./db";
+import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
+import { ingestLearned } from "./learned-context/store";
+import type { ThesisStat } from "./performance";
+import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
 import { withLlmGeneration } from "./observability";
@@ -8,8 +11,10 @@ import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
   const db = getDb();
-  const openaiKey = resolveApiKey("openai", userId);
+  const cred = resolveLlmCredential("openai", userId);
+  const openaiKey = cred.key;
   if (!openaiKey) return;
+  const keySource = cred.source === "operator" ? "operator" : "user";
   
   // Fetch latest 50 fill events with their corresponding proposals
   const rows = db.prepare(`
@@ -139,6 +144,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
+        recordLlmUsage({ userId, provider: "openai", model, context: "post-mortem", keySource, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
@@ -158,12 +164,86 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         timingByThesis
       }, userId);
     }
+
+    // Structured learned-context sink — runs IN PARALLEL with (does NOT gate or replace) the
+    // reflection_summary write above, converting the opaque blob into per-row, attributable,
+    // erasable FACTS over time. We emit only durable QUALITATIVE track-record facts (directional,
+    // no numeric percent/size) for well-sampled theses; the fail-closed classifier drops anything
+    // it deems risk-adjacent, and risk/sizing inferences are never written in this slice.
+    await writeThesisTrackRecordFacts(outcomesByThesis, userId);
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
+
+  // Background: enrich closed lots with MAE/MFE and persist back to fill_events.
+  // Runs unconditionally (no openaiKey required) in the background — never blocks
+  // the reflection LLM call above, never called from any synchronous order path.
+  persistExcursionsBackground(accountNumber, source, userId);
+}
+
+/**
+ * Fire-and-forget: enrich closed lots with MAE/MFE excursions (async network
+ * calls to Yahoo Finance) then write them back to fill_events so historical
+ * analysis panels can read them without re-fetching on every page load.
+ */
+function persistExcursionsBackground(
+  accountNumber: string,
+  source: "paper" | "live",
+  userId: string
+): void {
+  (async () => {
+    try {
+      const lots = getClosedLotsDetailed(accountNumber, source, userId);
+      const enriched = await enrichClosedLotsWithExcursions(lots);
+      for (const lot of enriched) {
+        if (lot.mae !== undefined && lot.mfe !== undefined && lot.symbol && lot.exitAt) {
+          upsertFillExcursionsByKey(accountNumber, lot.symbol, lot.exitAt, lot.mae, lot.mfe, userId);
+        }
+      }
+    } catch (err) {
+      console.error("persistExcursionsBackground failed:", err);
+    }
+  })();
 }
 
 function truncate(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
   return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+// Minimum closed lots before a thesis's realized record is durable enough to record as a fact.
+const MIN_LOTS_FOR_TRACK_RECORD_FACT = 5;
+
+/**
+ * Emit durable, QUALITATIVE track-record facts per well-sampled thesis into learned_context
+ * (origin='autonomous'). The phrasing is deliberately directional and carries NO numeric
+ * percent/size token, so the fail-closed classifier admits it as a fact rather than dropping it
+ * as a risk-adjacent (numeric) candidate. Untagged buckets are skipped. Best-effort: a failure
+ * here never affects the reflection write or any trading path.
+ */
+async function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userId: string): Promise<void> {
+  for (const stat of outcomesByThesis) {
+    if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
+    if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
+    const verdict = stat.shrunkAvgReturnPct > 0.5
+      ? "has a positive realized track record"
+      : stat.shrunkAvgReturnPct < -0.5
+        ? "has repeatedly lost on a realized basis"
+        : "has a roughly break-even realized track record";
+    try {
+      await ingestLearned(
+        userId,
+        {
+          kind: "pattern",
+          subject: `track_record:${stat.thesisTag}`,
+          value: `The "${stat.thesisTag}" thesis ${verdict} across closed trades for this account.`,
+          source: "inferred",
+          confidence: 0.6
+        },
+        "autonomous"
+      );
+    } catch (error) {
+      console.error("Failed to write thesis track-record fact:", error);
+    }
+  }
 }
