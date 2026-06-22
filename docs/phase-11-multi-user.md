@@ -158,9 +158,29 @@ Current market-data rule:
 ### M5 `[done]` Concurrent per-user execution
 The background scheduler `src/lib/scheduler.ts` iterates over all active users and triggers `runStrategyOnce(userId)`. It runs concurrently with a bounded limit (e.g. `MAX_CONCURRENCY = 3`) to balance API rate limits with overall throughput, collecting due users and racing promises.
 
-### M6 `[todo]` Identity / auth (last)
-A minimal login (or per-user API token) and a user switcher; until then the default
-`local` user is implicit. Per-user Robinhood account linking lives here.
+### M6 `[done]` Identity / auth (last)
+
+Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
+
+- **Fail-closed arming signal fixed**: the previous `NODE_ENV === "production"` gate was
+  unreliable in the edge runtime (Next.js inlines NODE_ENV at build time — at runtime in
+  the live deployment `isProd` was always `false`, causing every request to fail open).
+  Replaced with: `authConfigured = (CF_ACCESS_TRUST_EMAIL_HEADER === "1") || !!AUTH_SECRET`.
+  This is evaluated at request time. The moment either is set, auth is armed.
+
+- **Identity sources** (first match wins):
+  1. CF Access `cf-access-authenticated-user-email` header (when `CF_ACCESS_TRUST_EMAIL_HEADER=1`).
+  2. Auth.js v5 session JWT (verified via `jose/jwt/verify` in middleware; no next-auth in edge).
+  3. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
+
+- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, Google provider, JWT strategy),
+  `src/lib/auth/session-edge.ts` (edge-safe jose verifier), `app/api/auth/[...nextauth]/route.ts`
+  (route handlers), `app/login/page.tsx` (Sign in with Google).
+
+- **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
+  unchanged (PRIMARY fallback). All 799 existing tests pass.
+
+Per-user Robinhood account linking (originally noted in M6 scope) is deferred as a follow-up.
 
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real
