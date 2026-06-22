@@ -127,6 +127,11 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const workingPositions = account.positions;
     const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
 
+    // Pre-run snapshot: record the account state BEFORE any proposals execute so that
+    // post-mortem / reconciliation always has a pre-execution baseline even if the run
+    // crashes mid-loop. The post-run snapshot (below) remains for the final state.
+    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, portfolio: workingPortfolio, positions: workingPositions });
+
     // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
     // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
     // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)

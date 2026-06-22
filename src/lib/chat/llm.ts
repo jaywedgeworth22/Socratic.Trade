@@ -9,7 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { DISCLAIMER } from "./prompt";
+import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
 /** Per-user attribution for the LLM usage ledger. When `userId` is set, run() records a usage row. */
@@ -264,7 +264,13 @@ type Transport = (body: any, apiKey: string) => Promise<any>;
 async function defaultTransport(body: any, apiKey: string): Promise<any> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      // Enable prompt-caching beta so cache_control blocks are honoured by the API.
+      "anthropic-beta": "prompt-caching-2024-07-31"
+    },
     body: JSON.stringify(body)
   });
   if (!res.ok) throw new Error(`anthropic ${res.status}`);
@@ -289,9 +295,26 @@ export class AnthropicLLM implements ChatLLM {
     const toolCalls: ToolCall[] = [];
     let text = "";
 
+    // Prompt-caching: mark the stable SYSTEM_PROMPT prefix as ephemeral so Anthropic
+    // can reuse the cached KV across repeated calls. Only the dynamic suffix (user memory,
+    // if present) is left uncached. This is a no-op for non-Anthropic providers since they
+    // receive the plain-string `system` via a different transport.
+    const anthropicSystem: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> =
+      system === SYSTEM_PROMPT
+        ? // No dynamic suffix — entire system is stable; cache the whole thing.
+          [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }]
+        : system.startsWith(SYSTEM_PROMPT)
+          ? // Dynamic suffix present (user memory) — cache only the stable prefix.
+            [
+              { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+              { type: "text", text: system.slice(SYSTEM_PROMPT.length) }
+            ]
+          : // Unrecognised system string (custom override) — send as a single uncached block.
+            [{ type: "text", text: system }];
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const resp = await this.transport(
-        { model: this.model, max_tokens: 1024, system, messages, ...(tools?.length ? { tools } : {}) },
+        { model: this.model, max_tokens: 1024, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) },
         this.apiKey
       );
       const u = extractLlmUsage(resp);
