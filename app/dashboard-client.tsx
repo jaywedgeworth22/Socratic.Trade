@@ -193,6 +193,16 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
+// Symbols the user SENT (watchlist + ignore list) that the server dropped as unsupported (equity-only),
+// so we can warn explicitly instead of silently losing them. The server uses the same validity rule for
+// both lists, so a dropped symbol is absent from both saved lists.
+function droppedUnsupportedSymbols(sent: TradingPolicy, saved: TradingPolicy): string[] {
+  const up = (list: string[] | undefined): string[] => (list ?? []).map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const savedSet = new Set([...up(saved.additionalSymbols), ...up(saved.blocklist)]);
+  const sentAll = [...up(sent.additionalSymbols), ...up(sent.blocklist)];
+  return Array.from(new Set(sentAll.filter((s) => !savedSet.has(s))));
+}
+
 // ── Shared market-data pool consent gate ─────────────────────────────────
 
 type ConsentGateState = "loading" | "needed" | "done";
@@ -235,7 +245,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
             <h2 id="consent-title" className="text-base font-semibold text-fg">
               Shared market-data pool
             </h2>
-            <p className="mt-0.5 text-xs text-muted">One-time choice — can be changed later in Settings</p>
+            <p className="mt-0.5 text-xs text-muted">Can be changed later in Settings</p>
           </div>
         </div>
 
@@ -447,8 +457,24 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...snapshot.policy, ...patch })
       });
-      if (!response.ok) throw new Error(await response.text());
-      toast.success("Policy updated.");
+      if (!response.ok) {
+        // Surface a concise message; never dump an HTML error page (e.g. a 500) into the toast.
+        const raw = (await response.text().catch(() => "")).trim();
+        const message = raw && !raw.startsWith("<") && raw.length <= 300 ? raw : `Policy update failed (${response.status}).`;
+        throw new Error(message);
+      }
+      // The server drops unsupported symbols (equity-only) from the watchlist / ignore list. Detect any
+      // that were silently removed and warn explicitly, so nothing is ever thought to be watched when it
+      // isn't. (Add-time validation already blocks these at the input; this also catches legacy entries.)
+      const saved = (await response.json().catch(() => null)) as TradingPolicy | null;
+      const dropped = saved ? droppedUnsupportedSymbols({ ...snapshot.policy, ...patch }, saved) : [];
+      if (dropped.length > 0) {
+        toast.warning(`Removed unsupported symbol${dropped.length > 1 ? "s" : ""}: ${dropped.join(", ")}`, {
+          description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported, so these were not kept on the list."
+        });
+      } else {
+        toast.success("Policy updated.");
+      }
       await load({ quiet: true });
     } catch (policyError) {
       toast.error(policyError instanceof Error ? policyError.message : "Policy update failed.");
@@ -709,7 +735,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
               className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
-              title="Approval mode — Propose: the agent proposes and you approve each order. Decide: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
+              title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
               <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
               <select
@@ -725,8 +751,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                   }
                 }}
               >
-                <option value="propose">Propose → you approve</option>
-                <option value="decide">Decide → auto-executes</option>
+                <option value="propose">Propose</option>
+                <option value="decide">Autonomous</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5 lg:gap-2">
@@ -745,7 +771,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               >
                 <option value="" disabled>Select Account...</option>
                 {snapshot.connectedAccounts?.map(acc => (
-                  <option key={acc.id} value={acc.id}>{acc.broker === "test" ? acc.label : `${acc.label} (${acc.environment})`}</option>
+                  <option key={acc.id} value={acc.id}>{acc.broker === "test" || acc.label.toLowerCase().includes(acc.environment.toLowerCase()) ? acc.label : `${acc.label} (${acc.environment})`}</option>
                 ))}
                 <option value="manage">Manage Accounts...</option>
               </select>
@@ -1009,7 +1035,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         title={policy.systemState === "halted" ? "Start the system?" : "Stop the system?"}
         body={
           policy.systemState === "halted"
-            ? `This starts the system running. Only while running can orders be placed — and in ${policy.strategyAuthority === "decide" ? "Decide mode the agent executes approved orders automatically" : "Propose mode each order still waits for your approval"}. Account and universe checks still apply.`
+            ? `This starts the system running. Only while running can orders be placed — and in ${policy.strategyAuthority === "decide" ? "Autonomous mode the agent executes approved orders automatically" : "Propose mode each order still waits for your approval"}. Account and universe checks still apply.`
             : "This immediately stops all automated trading runs and blocks any new orders until you start it again."
         }
         confirmLabel={policy.systemState === "halted" ? "Start" : "Stop"}
@@ -1024,7 +1050,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           void updatePolicy({ strategyAuthority: "decide" });
         }}
         title="Enable autonomous execution?"
-        body="Decide mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
+        body="Autonomous mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
         confirmLabel="Enable auto-execute"
         tone="danger"
       />
@@ -2163,7 +2189,7 @@ function StrategyView({
       <Card className="lg:col-span-2">
         <PanelHeader
           title="Active strategy"
-          subtitle={policy.strategyAuthority === "decide" ? "LLM decides autonomously" : "LLM proposes, you approve"}
+          subtitle={policy.strategyAuthority === "decide" ? "Autonomous — auto-executes" : "Propose — you approve"}
           icon={<BrainCircuit size={16} />}
           actions={<Button size="sm" variant="ghost" onClick={onEdit}><SettingsIcon size={14} /> Edit in Studio</Button>}
         />
@@ -2955,8 +2981,8 @@ function SettingsContent({
                 }
               }}
             >
-              <option value="propose">LLM proposes — you approve</option>
-              <option value="decide">LLM decides — runs autonomously</option>
+              <option value="propose">Propose — you approve each order</option>
+              <option value="decide">Autonomous — auto-executes approved orders</option>
             </select>
           </Field>
           <Field label="Holding horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
@@ -4082,11 +4108,11 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
                 <Shield size={14} className="text-info" /> Trading Authority Mode
               </div>
               <p>
-                Currently in <strong className="text-fg">{policy.strategyAuthority === "decide" ? "Autonomous (Decide)" : "Semi-Autonomous (Propose)"}</strong> mode.
+                Currently in <strong className="text-fg">{policy.strategyAuthority === "decide" ? "Autonomous" : "Semi-Autonomous (Propose)"}</strong> mode.
               </p>
               <ul className="list-disc pl-4 mt-1 space-y-0.5">
                 <li><strong>Propose Mode:</strong> Order proposals are staged and require your explicit click to send to the brokerage.</li>
-                <li><strong>Decide Mode:</strong> The agent places orders autonomously when matching signals are identified.</li>
+                <li><strong>Autonomous Mode:</strong> The agent places orders autonomously when matching signals are identified.</li>
               </ul>
             </div>
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">
