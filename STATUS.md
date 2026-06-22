@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-21 (`agent/claude-litestream-dedup`): **Removed dead Litestream stub.** Deleted `scripts/litestream.mjs` + the 3 `litestream:*` npm scripts + the old `LITESTREAM_DB_PATH`/`LITESTREAM_REPLICA_URL` env vars (never run); reconciled `docs/ops-observability-security.md` to the live PM2+R2 setup. Single Litestream implementation now (the verified-live one from #47). tsc clean, 723 tests pass, build green. See `docs/rollouts/2026-06-21-litestream-dedup.md`.
 - 2026-06-21 (`agent/claude-db-split-v2`): **refactor(db): split db.ts (2964 lines) into 8 focused modules.** Pure mechanical extraction — db.ts retains schema/migration/getDb()/audit() and re-exports all 8 modules as a barrel for zero consumer breakage. Re-derived from current main (supersedes stale PR #46). tsc clean, 704/704 tests green, build green. See `docs/rollouts/2026-06-21-db-split-v2.md`.
 
 
