@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { determineMarketRegime, pruneMacro } from "../src/lib/macro";
+import { determineMarketRegime, evaluateVolatilityBrake, pruneMacro } from "../src/lib/macro";
 import type { MacroData } from "../src/lib/macro";
 
 const base: MacroData = {
@@ -52,6 +52,39 @@ describe("determineMarketRegime — VIX fallback light-macro", () => {
   it("returns Unknown when asOf is 'unavailable' (no FRED key AND VIX fetch failed)", () => {
     const noMacro: MacroData = { ...base, asOf: "unavailable" };
     expect(determineMarketRegime(noMacro)).toBe("Unknown (no macro feed)");
+  });
+});
+
+describe("evaluateVolatilityBrake", () => {
+  const calm = { ...base, vix: "15.00" };
+  it("does not brake in calm conditions", () => {
+    const r = evaluateVolatilityBrake(calm, { vvix: 90, skew: 120 }, { volPanicBrakeEnabled: true });
+    expect(r.brake).toBe(false);
+  });
+
+  it("brakes on an extreme VIX tail", () => {
+    const r = evaluateVolatilityBrake({ ...base, vix: "42" }, undefined, { volPanicBrakeEnabled: true });
+    expect(r.brake).toBe(true);
+    expect(r.reason).toContain("VIX");
+  });
+
+  it("brakes on VVIX or SKEW even when VIX is calm", () => {
+    expect(evaluateVolatilityBrake(calm, { vvix: 160 }, { volPanicBrakeEnabled: true }).brake).toBe(true);
+    expect(evaluateVolatilityBrake(calm, { skew: 165 }, { volPanicBrakeEnabled: true }).brake).toBe(true);
+  });
+
+  it("respects custom thresholds", () => {
+    expect(evaluateVolatilityBrake({ ...base, vix: "28" }, undefined, { volPanicBrakeEnabled: true, volPanicVixThreshold: 25 }).brake).toBe(true);
+    expect(evaluateVolatilityBrake({ ...base, vix: "28" }, undefined, { volPanicBrakeEnabled: true, volPanicVixThreshold: 40 }).brake).toBe(false);
+  });
+
+  it("is disabled when volPanicBrakeEnabled === false", () => {
+    expect(evaluateVolatilityBrake({ ...base, vix: "99" }, { vvix: 999, skew: 999 }, { volPanicBrakeEnabled: false }).brake).toBe(false);
+  });
+
+  it("never trips on unavailable macro or missing gauges (no false-trip on partial data)", () => {
+    expect(evaluateVolatilityBrake({ ...base, asOf: "unavailable", vix: "99" }, undefined, { volPanicBrakeEnabled: true }).brake).toBe(false);
+    expect(evaluateVolatilityBrake(undefined, undefined, { volPanicBrakeEnabled: true }).brake).toBe(false);
   });
 });
 

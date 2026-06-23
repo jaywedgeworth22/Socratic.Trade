@@ -284,6 +284,52 @@ export function determineMarketRegime(macro: MacroData): string {
   return inverted ? "Cautious (Inverted Curve)" : "Neutral (Normal Volatility)";
 }
 
+/** Tail-risk gauges the volatility panic brake reads (beyond VIX, which lives on MacroData). */
+export interface VolBrakeSignals {
+  vvix?: number;
+  skew?: number;
+}
+
+export interface VolBrakePolicy {
+  volPanicBrakeEnabled?: boolean;
+  volPanicVixThreshold?: number;
+  volPanicVvixThreshold?: number;
+  volPanicSkewThreshold?: number;
+}
+
+const VOL_BRAKE_DEFAULTS = { vix: 40, vvix: 150, skew: 160 } as const;
+
+/**
+ * Deterministic volatility panic brake. Returns brake=true when ANY configured tail-risk gauge
+ * (VIX from macro, Cboe VVIX/SKEW from market signals) is at/above its threshold. Pure + side-effect
+ * free so the caller decides whether to flip systemState. Disabled when volPanicBrakeEnabled === false.
+ * A missing gauge is simply skipped (never fabricated), so partial data can never false-trip the brake.
+ */
+export function evaluateVolatilityBrake(
+  macro: MacroData | undefined,
+  signals: VolBrakeSignals | undefined,
+  policy: VolBrakePolicy
+): { brake: boolean; reason?: string } {
+  if (policy.volPanicBrakeEnabled === false) return { brake: false };
+  const vixThreshold = policy.volPanicVixThreshold ?? VOL_BRAKE_DEFAULTS.vix;
+  const vvixThreshold = policy.volPanicVvixThreshold ?? VOL_BRAKE_DEFAULTS.vvix;
+  const skewThreshold = policy.volPanicSkewThreshold ?? VOL_BRAKE_DEFAULTS.skew;
+
+  const vix = macro && macro.asOf !== "unavailable" ? parseFloat(macro.vix) : NaN;
+  const tripped: string[] = [];
+  if (Number.isFinite(vix) && vixThreshold > 0 && vix >= vixThreshold) {
+    tripped.push(`VIX ${vix.toFixed(1)} ≥ ${vixThreshold}`);
+  }
+  if (typeof signals?.vvix === "number" && Number.isFinite(signals.vvix) && vvixThreshold > 0 && signals.vvix >= vvixThreshold) {
+    tripped.push(`VVIX ${signals.vvix.toFixed(1)} ≥ ${vvixThreshold}`);
+  }
+  if (typeof signals?.skew === "number" && Number.isFinite(signals.skew) && skewThreshold > 0 && signals.skew >= skewThreshold) {
+    tripped.push(`SKEW ${signals.skew.toFixed(1)} ≥ ${skewThreshold}`);
+  }
+  if (tripped.length === 0) return { brake: false };
+  return { brake: true, reason: `Volatility panic brake: ${tripped.join("; ")} — halting new entries (close_only).` };
+}
+
 async function fetchFredSeries(seriesId: string, apiKey: string, units?: string): Promise<string | undefined> {
   const unitsParam = units ? `&units=${units}` : "";
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&limit=1&sort_order=desc${unitsParam}&api_key=${apiKey}&file_type=json`;

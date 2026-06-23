@@ -45,6 +45,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   maxGrossExposurePct: 80,  // keep ≥20% cash buffer by default; users can raise in policy settings
   maxNetExposurePct: 80,    // consistent with gross; net > gross is impossible for long-only anyway
   maxEntryDriftPct: 10,     // reject a stale opening market/dollar order whose price drifted >10% from the proposed entry
+  maxOrderPctOfAdv: 5,      // cap an opening order at 5% of the name's recent daily $-volume (market-impact guard; rarely binds for small accounts/liquid names)
+  volPanicBrakeEnabled: true, // flip active→close_only on a rare VIX/VVIX/SKEW tail extreme (defaults below)
+  volPanicVixThreshold: 40,
+  volPanicVvixThreshold: 150,
+  volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,

@@ -1,4 +1,4 @@
-import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
+import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
@@ -16,6 +16,17 @@ export interface RedTeamDebateResult {
 
 /** Abort the Red Team LLM call after this long so a hung provider can't wedge the run lock. */
 const RED_TEAM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 45_000;
+
+/**
+ * Which LLM provider runs the Red Team (Bear) debate. Set RED_TEAM_LLM_PROVIDER=anthropic to run the
+ * critique on a DIFFERENT model family than the Bull proposer (which uses OpenAI), breaking the
+ * single-family "echo chamber" where the Bear shares the Bull's blind spots and concedes too easily.
+ * Default "openai" (no behavior change). Falls back to OpenAI if Anthropic is selected but no key is
+ * configured, so the (required) debate never silently skips.
+ */
+export function redTeamProvider(): "openai" | "anthropic" {
+  return (process.env.RED_TEAM_LLM_PROVIDER ?? "").trim().toLowerCase() === "anthropic" ? "anthropic" : "openai";
+}
 
 export async function debateProposal(
   proposal: TradeProposal,
@@ -62,6 +73,26 @@ Respond with a JSON object containing:
     },
     strategyPrompt: basePrompt
   });
+
+  // Optional cross-provider Bear: force the critique onto Anthropic (independent of the user's Bull
+  // model) so it doesn't share the Bull's structural biases. Falls through to the resolved endpoint
+  // above if no Anthropic key is configured, so the (required) debate never silently skips.
+  if (redTeamProvider() === "anthropic") {
+    const anthropic = resolveLlmCredential("anthropic", userId);
+    if (anthropic.key) {
+      return debateViaAnthropic({
+        apiKey: anthropic.key,
+        keySource: anthropic.source === "operator" ? "operator" : "user",
+        keyRef: anthropic.keyRef,
+        systemPrompt,
+        userContent,
+        proposal,
+        isBullish,
+        executionMode,
+        userId
+      });
+    }
+  }
 
   const isChatCompletions = transport === "chat-completions";
 
@@ -159,4 +190,84 @@ Respond with a JSON object containing:
   }
 
   return { rejected: false, available: false, reason: "Red Team evaluation errored out." };
+}
+
+/** Run the Red Team debate on Anthropic's Messages API (cross-provider Bear). Mirrors the OpenAI
+ *  path's fail-closed contract: any failure returns available:false so the caller routes to a human. */
+async function debateViaAnthropic(args: {
+  apiKey: string;
+  keySource: "operator" | "user";
+  keyRef?: string;
+  systemPrompt: string;
+  userContent: string;
+  proposal: TradeProposal;
+  isBullish: boolean;
+  executionMode: string;
+  userId: string;
+}): Promise<RedTeamDebateResult> {
+  const model = process.env.RED_TEAM_LLM_MODEL || "claude-haiku-4-5-20251001";
+  const body = {
+    model,
+    max_tokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate,
+    system: `${args.systemPrompt}\n\nRespond with ONLY the JSON object — no prose, no markdown fences.`,
+    messages: [{ role: "user", content: args.userContent }]
+  };
+  try {
+    const traced = await withLlmGeneration(
+      {
+        name: "trading.red-team.debate",
+        model,
+        userId: args.userId,
+        input: { provider: "anthropic", redTeam: true },
+        metadata: {
+          endpoint: "https://api.anthropic.com/v1/messages",
+          transport: "anthropic-messages",
+          symbol: args.proposal.symbol,
+          side: args.proposal.side,
+          isBullish: args.isBullish,
+          executionMode: args.executionMode
+        },
+        tags: ["red-team", "proposal-review", "anthropic"],
+        output: (result) => ({ rejected: result.debate.rejected, reasonChars: result.debate.reason.length })
+      },
+      async () => {
+        const response = await llmFetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": args.apiKey,
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(RED_TEAM_TIMEOUT_MS)
+        });
+        if (!response.ok) {
+          console.warn("Red Team (Anthropic) call failed", await response.text());
+          return { debate: { rejected: false, available: false, reason: "Red Team debate failed to execute." } };
+        }
+        const payload = await response.json();
+        recordLlmUsage({ userId: args.userId, provider: "anthropic", model, context: "red-team", keySource: args.keySource, keyRef: args.keyRef, ...extractLlmUsage(payload) });
+        const text: string | undefined = Array.isArray(payload.content)
+          ? payload.content.map((c: { text?: string }) => c?.text ?? "").join("")
+          : undefined;
+        let parsed: RedTeamDebateResult | null = null;
+        if (text) {
+          try {
+            const match = text.match(/\{[\s\S]*\}/);
+            if (match) parsed = JSON.parse(match[0]) as RedTeamDebateResult;
+          } catch {
+            parsed = null;
+          }
+        }
+        if (parsed) {
+          return { debate: { rejected: !!parsed.rejected, available: true, reason: parsed.reason || "No reason provided." } };
+        }
+        return { debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response." } };
+      }
+    );
+    return traced.debate;
+  } catch (error) {
+    console.error("Failed to debate proposal (Anthropic):", error);
+    return { rejected: false, available: false, reason: "Red Team evaluation errored out." };
+  }
 }
