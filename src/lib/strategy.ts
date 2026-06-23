@@ -28,7 +28,8 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -52,7 +53,7 @@ import { getBrokerGateway } from "./broker";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, resolveLlmCredential, setInternalSetting } from "./db";
+import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
@@ -1084,10 +1085,8 @@ async function proposeTrades(input: {
   ragContext?: string;
   learnedContext?: string;
 }): Promise<TradeProposal[]> {
-  const cred = resolveLlmCredential("openai", input.userId);
-  const openaiKey = cred.key;
+  const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   if (!openaiKey) return fallbackProposal(input);
-  const llmKeySource = cred.source === "operator" ? "operator" : "user";
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -1304,10 +1303,8 @@ async function proposeTrades(input: {
     ...(input.learnedContext ? { learnedContext: input.learnedContext } : {})
   };
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = resolveOpenAiModel(input.policy);
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const model = resolvedModel;
+  const isChatCompletions = transport === "chat-completions";
 
   const schema = {
     type: "object",
@@ -1426,7 +1423,7 @@ async function proposeTrades(input: {
         throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
       }
       const payload = await response.json();
-      recordLlmUsage({ userId: input.userId, provider: "openai", model, context: "strategy", keySource: llmKeySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
       const text = extractOpenAiText(payload);
 
       if (!text) {

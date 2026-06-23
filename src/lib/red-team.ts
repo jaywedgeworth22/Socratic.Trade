@@ -1,7 +1,8 @@
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
@@ -36,10 +37,8 @@ export async function debateProposal(
   const policy = getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
-  if (!openaiKey) return { rejected: false, available: false, reason: "Red Team debate skipped because OpenAI is not configured." };
-  const keySource = cred.source === "operator" ? "operator" : "user";
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
+  if (!openaiKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured." };
   
   const systemPrompt = `You are the Red Team Risk Agent. Your job is to rigorously critique the strategy's high-conviction trade proposals.
   
@@ -75,8 +74,9 @@ Respond with a JSON object containing:
     strategyPrompt: basePrompt
   });
 
-  // Optional cross-provider Bear: run the critique on Anthropic so it doesn't share the OpenAI Bull's
-  // structural biases. Falls through to the OpenAI path if no Anthropic key is configured.
+  // Optional cross-provider Bear: force the critique onto Anthropic (independent of the user's Bull
+  // model) so it doesn't share the Bull's structural biases. Falls through to the resolved endpoint
+  // above if no Anthropic key is configured, so the (required) debate never silently skips.
   if (redTeamProvider() === "anthropic") {
     const anthropic = resolveLlmCredential("anthropic", userId);
     if (anthropic.key) {
@@ -94,10 +94,7 @@ Respond with a JSON object containing:
     }
   }
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
-  const model = resolveOpenAiModel(policy);
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const isChatCompletions = transport === "chat-completions";
 
   const body = withLlmRequestBounds(
     isChatCompletions
@@ -164,7 +161,7 @@ Respond with a JSON object containing:
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "red-team", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "red-team", keySource, keyRef, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
