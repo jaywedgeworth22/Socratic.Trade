@@ -4,9 +4,11 @@ Goal: let multiple users use the app — logging in at the same or different tim
 each getting analysis and trade proposals tailored to **their own preferences and
 their own API keys**. Test mode stays the default; no live-trading behavior change.
 
-**For now (testing):** no login portal. A single default user (`local`) is active;
-everything is scoped to that user so the multi-user plumbing is exercised without
-auth. A real login/identity layer is the last milestone.
+**Current identity model:** middleware derives the request user from a verified
+Cloudflare Access email header or an Auth.js v5 session. The primary operator and
+configured aliases still map to the legacy `local` dataset; other allowed users
+map to isolated hashed user IDs. When auth is not configured locally, development
+falls back to `local`.
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/
@@ -36,11 +38,11 @@ auth. A real login/identity layer is the last milestone.
   `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
-- Request-level user resolution now has a central helper,
-  `resolveRequestUserId(request, body?)`, that reads the `x-user-id` header, then
-  `userId` query/body hints, and falls back to `local`. This is scaffolding only:
-  it preserves current no-auth behavior and does not represent completed
-  authentication or authorization.
+- Request-level user resolution now has central helpers,
+  `resolveRequestUser(request)` and `resolveRequestUserId(request, body?)`, that
+  read only middleware's trusted `x-authenticated-user-email` header. Body/query
+  `userId` hints are ignored; local development falls back to `local` only when
+  auth is not armed.
 - Ops foundation is now scaffolded for hosted/multi-user readiness: Infisical CLI
   wrappers for secret injection, local Gitleaks scanning, Sentry runtime error
   capture, Langfuse LLM traces with redacted summary capture by default, npm
@@ -97,6 +99,8 @@ does not render a separate disconnected MCP status panel. Mutable
 account/key/order/policy route handlers touched by this flow are marked
 `dynamic = "force-dynamic"` so production builds do not attempt static page-data
 collection for request-bound operations.
+API-key badges now distinguish "Your key" from "Operator env" so users can see
+whether usage is attached to their stored credential or an operator fallback.
 
 ### M2 `[partial]` Route providers through `resolveApiKey(service, userId)`
 Replace direct `process.env.X` reads in `data-providers.ts`, `macro.ts`, the LLM
@@ -108,6 +112,9 @@ Current partial implementation: account settings are broker-aware rather than
 Alpaca-only. Alpaca uses the active connected account first; Robinhood syncs the
 agentic brokerage account through MCP after OAuth; and the account UI presents
 supported account buttons instead of requiring a Paper account.
+The Alpaca account form states the two direct REST defaults
+(`https://paper-api.alpaca.markets/v2` and `https://api.alpaca.markets/v2`) and
+only asks for a custom endpoint when the user explicitly enables that override.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
@@ -169,9 +176,36 @@ Current market-data rule:
 ### M5 `[done]` Concurrent per-user execution
 The background scheduler `src/lib/scheduler.ts` iterates over all active users and triggers `runStrategyOnce(userId)`. It runs concurrently with a bounded limit (e.g. `MAX_CONCURRENCY = 3`) to balance API rate limits with overall throughput, collecting due users and racing promises.
 
-### M6 `[todo]` Identity / auth (last)
-A minimal login (or per-user API token) and a user switcher; until then the default
-`local` user is implicit. Per-user Robinhood account linking lives here.
+### M6 `[done]` Identity / auth (last)
+
+Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
+
+- **Fail-closed arming signal fixed**: the previous `NODE_ENV === "production"` gate was
+  unreliable in the edge runtime (Next.js inlines NODE_ENV at build time — at runtime in
+  the live deployment `isProd` was always `false`, causing every request to fail open).
+  Replaced with: `authConfigured = (CF_ACCESS_TRUST_EMAIL_HEADER === "1") || !!AUTH_SECRET`.
+  This is evaluated at request time. The moment either is set, auth is armed.
+
+- **Identity sources** (first match wins):
+  1. CF Access `cf-access-authenticated-user-email` header (when `CF_ACCESS_TRUST_EMAIL_HEADER=1`).
+  2. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
+  3. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
+
+- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, Google provider, JWT strategy),
+  `src/lib/auth/session-token.ts` (shared HS256 session encode/decode helper),
+  `src/lib/auth/session-edge.ts` (edge-safe session cookie verifier),
+  `app/api/auth/[...nextauth]/route.ts` (route handlers), `app/login/page.tsx`
+  (Sign in with Google), and `app/logout/route.ts`.
+
+- **Visible session controls**: the dashboard shows the signed-in email when available,
+  exposes a Sign out command, and `/logout` clears Auth.js cookies before routing through
+  Cloudflare Access logout when CF Access is trusted.
+
+- **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
+  unchanged (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior,
+  Auth.js cookies, CF Access, public Auth.js routes, and protected Robinhood OAuth routes.
+
+Per-user Robinhood account linking (originally noted in M6 scope) is deferred as a follow-up.
 
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real

@@ -16,6 +16,7 @@ import {
   Landmark,
   LayoutDashboard,
   LineChartIcon,
+  LogOut,
   Network,
   Pause,
   Percent,
@@ -105,6 +106,8 @@ const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
 const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
 const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
 const FEED_TAB_KEY = "dashboard-feed-tab";
+const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
+const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets/v2";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
   ok: boolean;
@@ -118,6 +121,21 @@ type RobinhoodMcpHealth = {
   error?: string;
   warning?: string;
 };
+
+function alpacaDefaultEndpointFor(environment: ConnectedAccount["environment"] | undefined): string {
+  return environment === "live" ? ALPACA_BROKERAGE_ENDPOINT : ALPACA_PAPER_ENDPOINT;
+}
+
+function normalizeEndpoint(value?: string): string {
+  return (value ?? "").trim().replace(/\/+$/, "");
+}
+
+function hasCustomAlpacaEndpoint(account: Partial<ConnectedAccount>): boolean {
+  if (account.broker !== "alpaca") return Boolean(account.baseUrl?.trim());
+  const endpoint = normalizeEndpoint(account.baseUrl);
+  if (!endpoint) return false;
+  return endpoint !== normalizeEndpoint(alpacaDefaultEndpointFor(account.environment));
+}
 
 function safeJson(value: string): unknown {
   try {
@@ -206,22 +224,55 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
 // decides the color + message so a live (Brokerage) session can never be mistaken for a
 // Test sandbox. Display-only — it does not place or gate orders.
-function executionBanner(state: ExecutionState): { className: string; text: string } {
+function brokerNameForBanner(state: ExecutionState): string {
+  if (state.broker === "alpaca" || state.broker === "alpaca-mcp") return "Alpaca";
+  if (state.broker === "robinhood") return "Robinhood";
+  return state.accountLabel ?? "Broker";
+}
+
+function executionBanner(state: ExecutionState): { className: string; title: string; content: React.ReactNode } {
   if (state.mode === "broker/live") {
+    const brokerName = brokerNameForBanner(state);
+    const title = `${brokerName} Brokerage Account`;
+    const detail = `orders route to ${state.accountLabel ?? `${brokerName} Brokerage`} • real money may be at risk`;
     return {
       className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 motion-safe:animate-pulse",
-      text: `Brokerage live. Approved orders can reach real money in ${state.accountLabel ?? "your broker account"}.`
+      title: `${title} • ${detail}`,
+      content: (
+        <>
+          <strong className="font-semibold not-italic">{title}</strong>
+          <span className="font-normal italic"> • {detail}</span>
+        </>
+      )
     };
   }
   if (state.mode === "broker/paper") {
+    const brokerName = brokerNameForBanner(state);
+    const title = `${brokerName} Paper Account`;
+    const routeLabel = state.broker === "alpaca" || state.broker === "alpaca-mcp" ? "Alpaca Paper" : `${brokerName} Paper`;
+    const detail = `orders route to ${routeLabel} • no real money is at risk`;
     return {
       className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
-      text: `Paper. Orders route to ${state.accountLabel ?? "a broker sandbox"}; no real money is at risk.`
+      title: `${title} • ${detail}`,
+      content: (
+        <>
+          <strong className="font-semibold not-italic">{title}</strong>
+          <span className="font-normal italic"> • {detail}</span>
+        </>
+      )
     };
   }
+  const title = "Test Account";
+  const detail = "local simulated fills only • no broker orders or real money at risk • broker paper account (e.g. Alpaca Paper Account) is more realistic";
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
-    text: "Test. Local simulated fills only; no broker orders or real money. Broker paper is more realistic."
+    title: `${title} • ${detail}`,
+    content: (
+      <>
+        <strong className="font-semibold not-italic">{title}</strong>
+        <span className="font-normal italic"> • {detail}</span>
+      </>
+    )
   };
 }
 
@@ -374,8 +425,8 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
           </p>
           <p>
             <strong className="font-semibold text-fg">Your personal account data is never shared.</strong>{" "}
-            Positions, orders, balances, P&amp;L, and credentials remain strictly private and never
-            leave your device.
+            Positions, orders, balances, P&amp;L, and credentials remain private to your account;
+            credentials stay encrypted and server-only.
           </p>
         </div>
 
@@ -806,8 +857,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const isOnlyOneIndex = selectedIndexLabels.length === 1 && policy.additionalSymbols.length === 0 && (policy.blocklist || []).length === 0;
   const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
   const executionState = executionStateFor(snapshot);
+  const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
+  const signedInEmail = snapshot.currentUser?.email;
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
   // fetched live scan, falling back to the captured run's scan if it's still loading.
@@ -839,6 +892,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     else setSettingsOpen(true);
   }
 
+  async function activateAccount(id: string) {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" });
+      if (!response.ok) throw await responseError(response, "Account switch failed");
+      await load({ quiet: true });
+    } catch (switchError) {
+      toast.error(switchError instanceof Error ? switchError.message : "Account switch failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function requestAutonomy(nextActive: boolean) {
     if (nextActive && enableBlockedReason) {
       routeSetupBlocker(enableBlockedReason);
@@ -847,7 +913,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
-  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === policy.accountNumber);
+  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === executionState.accountNumber);
   const riskCapsReady =
     (policy.maxDailyNotional ?? 0) > 0 &&
     (policy.maxOrderNotional ?? 0) > 0 &&
@@ -903,6 +969,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
     { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
     { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
+    { id: "sign-out", label: "Sign out", hint: signedInEmail ?? "Current session", icon: <LogOut size={15} />, run: () => { window.location.href = "/logout"; } },
   ];
 
   return (
@@ -921,9 +988,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
           safetyBanner.className
         )}
-        title={executionState.clarification}
+        title={safetyBanner.title}
       >
-        {safetyBanner.text}
+        {safetyBanner.content}
       </div>
       {/* ── Command bar ─────────────────────────────────────────── */}
       <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:py-0 xl:px-4">
@@ -984,14 +1051,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <select
                 aria-label="Active account"
                 className="h-8 max-sm:h-11 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
-                value={policy.connectedAccountId ?? ""}
-                onChange={(e) => {
+                value={activeAccountId}
+                onChange={async (e) => {
                   const id = e.target.value;
                   if (id === "manage") {
                     setAccountsOpen(true);
                     return;
                   }
-                  void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                  await activateAccount(id);
                 }}
               >
                 <option value="" disabled>Select Account...</option>
@@ -1008,6 +1075,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <HelpCircle size={15} />
             </IconButton>
             <ThemeToggle />
+            {signedInEmail && (
+              <span className="hidden max-w-[12rem] truncate text-[11px] text-faint md:inline" title={`Signed in as ${signedInEmail}`}>
+                {signedInEmail}
+              </span>
+            )}
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Log out" onClick={() => { window.location.href = "/logout"; }}>
+              <LogOut size={15} />
+            </IconButton>
           </div>
 
           {/* Sub-container 2: Action buttons */}
@@ -3474,7 +3549,8 @@ function SettingsContent({
                 Opting in shares the general market data you pull with your own provider keys / broker MCP —
                 quotes, fundamentals, price history, and news — with other opted-in users, and gives you
                 access to the data they&apos;ve pulled (the shared pool). Your personal account data —
-                positions, orders, balances, P&amp;L, and credentials — is never shared.
+                positions, orders, balances, P&amp;L, and credentials — is never shared with other users.
+                Credentials remain encrypted and server-only.
               </p>
             </div>
           </div>
@@ -3907,7 +3983,7 @@ function ApiKeysSection() {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userId: "local", service: row.service, apiKey: value, label: row.label })
+        body: JSON.stringify({ service: row.service, apiKey: value, label: row.label })
       });
       if (!res.ok) throw await responseError(res, `Failed to save ${row.label} key`);
       setDrafts((current) => ({ ...current, [row.service]: "" }));
@@ -3950,7 +4026,7 @@ function ApiKeysSection() {
       <div className="grid gap-2">
         {keys.map((row) => {
           const busy = busyService === row.service;
-          const sourceLabel = row.source === "user" ? "Set" : row.source === "env" ? "Using env" : "Not set";
+          const sourceLabel = row.source === "user" ? "Your key" : row.source === "env" ? "Operator env" : "Not set";
           const sourceTone = row.source === "user" ? "up" : row.source === "env" ? "info" : row.required ? "warn" : "neutral";
           const inputType = row.service === "sec_edgar_user_agent" ? "text" : "password";
           return (
@@ -4014,7 +4090,9 @@ function IntegrationsSection({
   policy: TradingPolicy;
   onSaved: () => Promise<void>;
 }) {
-  const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
+  type AccountDraft = Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]>;
+  const [editing, setEditing] = useState<AccountDraft | null>(null);
+  const [showCustomEndpoint, setShowCustomEndpoint] = useState(false);
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
 
@@ -4043,6 +4121,11 @@ function IntegrationsSection({
       showBadges: true
     };
   };
+
+  function openAccountEditor(account: AccountDraft) {
+    setShowCustomEndpoint(hasCustomAlpacaEndpoint(account));
+    setEditing(account);
+  }
 
   const refreshMcpHealth = useCallback(async () => {
     try {
@@ -4100,27 +4183,34 @@ function IntegrationsSection({
 
   async function save() {
     if (!editing?.broker) return;
-    const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
+    const draft = { ...editing };
+    const isAlpaca = draft.broker === "alpaca" || draft.broker === "alpaca-mcp";
     if (isAlpaca) {
-      if (!editing.accountNumber?.trim()) {
+      if (!draft.accountNumber?.trim()) {
         toast.error("Account Number is required for Alpaca.");
         return;
       }
-      const isPaper = editing.accountNumber.trim().toUpperCase().startsWith("PA");
-      editing.environment = isPaper ? "paper" : "live";
+      const isPaper = draft.accountNumber.trim().toUpperCase().startsWith("PA");
+      draft.environment = isPaper ? "paper" : "live";
     } else {
-      editing.environment = editing.environment || "live";
+      draft.environment = draft.environment || "live";
+    }
+    if (draft.broker === "alpaca") {
+      draft.baseUrl = showCustomEndpoint && draft.baseUrl?.trim()
+        ? draft.baseUrl.trim()
+        : alpacaDefaultEndpointFor(draft.environment);
     }
     setBusy(true);
     try {
       const res = await fetch("/api/connected-accounts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(editing)
+        body: JSON.stringify(draft)
       });
       if (!res.ok) throw await responseError(res, "Failed to save account");
       toast.success("Account saved.");
       setEditing(null);
+      setShowCustomEndpoint(false);
       await onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save account.");
@@ -4144,8 +4234,30 @@ function IntegrationsSection({
     }
   }
 
+  async function activateAccount(id: string) {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" });
+      if (!res.ok) throw await responseError(res, "Failed to activate account");
+      toast.success("Account selected.");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to activate account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (editing) {
     const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
+    const isAlpacaRest = editing.broker === "alpaca";
+    const isAlpacaMcp = editing.broker === "alpaca-mcp";
+    const inferredEnvironment = editing.accountNumber?.trim().toUpperCase().startsWith("PA")
+      ? "paper"
+      : editing.environment === "live"
+        ? "live"
+        : "paper";
+    const defaultAlpacaEndpoint = alpacaDefaultEndpointFor(inferredEnvironment);
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
         <h4 className="text-sm font-semibold text-fg">
@@ -4158,9 +4270,14 @@ function IntegrationsSection({
                 : "Add Alpaca Account"}
         </h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          {isAlpaca ? (
+          {isAlpacaRest ? (
             <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
-              For Alpaca, environment (Paper vs Brokerage) is derived automatically from the account number (Paper accounts start with &quot;PA&quot;).
+              Alpaca Paper uses <span className="font-mono text-fg">{ALPACA_PAPER_ENDPOINT}</span>; Alpaca Brokerage uses{" "}
+              <span className="font-mono text-fg">{ALPACA_BROKERAGE_ENDPOINT}</span>. The app picks Paper when the account number starts with &quot;PA&quot;.
+            </div>
+          ) : isAlpacaMcp ? (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
+              Alpaca MCP uses your MCP server URL, such as a local SSE endpoint. For direct Alpaca keys, use the regular Alpaca account option.
             </div>
           ) : (
             <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
@@ -4199,29 +4316,61 @@ function IntegrationsSection({
           </Field>
           {isAlpaca && (
             <>
-              <Field label="API Key">
+              <Field label="Alpaca API Key">
                 <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
               </Field>
-              <Field label="API Secret">
+              <Field label="Alpaca API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
-              <Field label="API Endpoint URL (Optional)">
-                <input
-                  className={inputClass}
-                  value={editing.baseUrl || ""}
-                  onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
-                  placeholder={
-                    editing.broker === "alpaca-mcp"
-                      ? "e.g. http://localhost:8000/sse"
-                      : "e.g. https://paper-api.alpaca.markets/v2"
-                  }
-                />
-              </Field>
+              {isAlpacaRest ? (
+                <>
+                  <label className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5 sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-accent"
+                      checked={showCustomEndpoint}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setShowCustomEndpoint(checked);
+                        setEditing({
+                          ...editing,
+                          baseUrl: checked ? (editing.baseUrl || "") : defaultAlpacaEndpoint
+                        });
+                      }}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-fg">Use a custom Alpaca endpoint</span>
+                      <span className="block text-xs text-faint">
+                        Leave off unless your endpoint is different from the Paper/Brokerage defaults. Current default: <span className="font-mono">{defaultAlpacaEndpoint}</span>.
+                      </span>
+                    </span>
+                  </label>
+                  {showCustomEndpoint && (
+                    <Field label="Custom API Endpoint URL">
+                      <input
+                        className={inputClass}
+                        value={editing.baseUrl || ""}
+                        onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                        placeholder={`Default: ${defaultAlpacaEndpoint}`}
+                      />
+                    </Field>
+                  )}
+                </>
+              ) : (
+                <Field label="MCP Endpoint URL">
+                  <input
+                    className={inputClass}
+                    value={editing.baseUrl || ""}
+                    onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                    placeholder="e.g. http://localhost:8000/sse"
+                  />
+                </Field>
+              )}
             </>
           )}
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => { setEditing(null); setShowCustomEndpoint(false); }}>Cancel</Button>
           <Button variant="primary" onClick={save} disabled={busy || !editing.broker}>Save Account</Button>
         </div>
       </div>
@@ -4244,10 +4393,10 @@ function IntegrationsSection({
           }}>
             <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+          <Button variant="ghost" size="sm" onClick={() => openAccountEditor({ broker: "alpaca", environment: "paper", baseUrl: ALPACA_PAPER_ENDPOINT })}>
             <Plus size={14} className="mr-1" /> Connect Alpaca Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca-mcp", environment: "paper" })}>
+          <Button variant="ghost" size="sm" onClick={() => openAccountEditor({ broker: "alpaca-mcp", environment: "paper" })}>
             <Plus size={14} className="mr-1" /> Connect Alpaca MCP Account
           </Button>
         </div>
@@ -4313,7 +4462,8 @@ function IntegrationsSection({
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
+                  {!isActive && <Button variant="ghost" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
+                  <Button variant="ghost" size="sm" onClick={() => openAccountEditor(acc)} disabled={busy}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>
               </div>

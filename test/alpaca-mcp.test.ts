@@ -93,7 +93,7 @@ describe("Alpaca MCP gateway adapter", () => {
     expect(calls[0].body.params.name).toBe("get_account_info");
   });
 
-  it("routes getEquityPositions() to get_positions tool", async () => {
+  it("routes getEquityPositions() to get_positions tool and preserves fractional quantity fields", async () => {
     vi.stubGlobal("fetch", async () => {
       return new Response(
         JSON.stringify({
@@ -103,7 +103,10 @@ describe("Alpaca MCP gateway adapter", () => {
             content: [
               {
                 type: "text",
-                text: JSON.stringify([{ symbol: "MSFT", qty: 20, avg_entry_price: 300, market_value: 6000 }])
+                text: JSON.stringify([
+                  { symbol: "MSFT", qty: 20, avg_entry_price: 300, market_value: 6000 },
+                  { symbol: "AAPL", quantity: "0.5", average_entry_price: "200", marketValue: "100" }
+                ])
               }
             ]
           }
@@ -117,7 +120,8 @@ describe("Alpaca MCP gateway adapter", () => {
     const positions = await gateway.getEquityPositions("MCP_ACC_1");
 
     expect(positions).toEqual([
-      { symbol: "MSFT", quantity: 20, averageCost: 300, marketValue: 6000, sector: undefined, industry: undefined }
+      { symbol: "MSFT", quantity: 20, averageCost: 300, marketValue: 6000, sector: undefined, industry: undefined },
+      { symbol: "AAPL", quantity: 0.5, averageCost: 200, marketValue: 100, sector: undefined, industry: undefined }
     ]);
   });
 

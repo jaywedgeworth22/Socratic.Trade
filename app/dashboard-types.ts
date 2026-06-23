@@ -39,6 +39,10 @@ export interface StrategyDecision {
 }
 
 export interface DashboardSnapshot {
+  currentUser?: {
+    userId: string;
+    email?: string;
+  };
   policy: TradingPolicy;
   strategyPrompt: string;
   accounts: BrokerageAccount[];
