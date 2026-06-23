@@ -101,6 +101,8 @@ type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
+const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
+const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
 const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
 const FEED_TAB_KEY = "dashboard-feed-tab";
 type RobinhoodMcpHealth = {
@@ -207,7 +209,7 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
 function executionBanner(state: ExecutionState): { className: string; text: string } {
   if (state.mode === "broker/live") {
     return {
-      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 animate-pulse",
+      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 motion-safe:animate-pulse",
       text: `Brokerage live. Approved orders can reach real money in ${state.accountLabel ?? "your broker account"}.`
     };
   }
@@ -221,6 +223,49 @@ function executionBanner(state: ExecutionState): { className: string; text: stri
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
     text: "Test. Local simulated fills only; no broker orders or real money. Broker paper is more realistic."
   };
+}
+
+type ReadinessItem = {
+  label: string;
+  detail: string;
+  ok: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
+function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface/70 px-3 py-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Readiness</span>
+          {items.map((item) => (
+            <span
+              key={item.label}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium",
+                item.ok ? "bg-up/10 text-up" : "bg-warn/10 text-warn"
+              )}
+              title={item.detail}
+            >
+              {item.ok ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+              {item.label}
+            </span>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {items
+            .filter((item) => !item.ok && item.onAction)
+            .slice(0, 2)
+            .map((item) => (
+              <Button key={item.label} size="sm" variant="ghost" onClick={item.onAction}>
+                {item.actionLabel ?? item.label}
+              </Button>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
@@ -281,15 +326,18 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await fetch("/api/consent", {
+      const response = await fetch("/api/consent", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accepted })
       });
+      if (!response.ok) throw new Error("Consent could not be saved.");
+      onResolved();
     } catch {
-      /* best-effort — proceed regardless of network error */
+      toast.error("Consent could not be saved. The dashboard will stay locked until this is resolved.");
+    } finally {
+      setSubmitting(false);
     }
-    onResolved();
   }
 
   return (
@@ -387,8 +435,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         setConsentGate(data?.needsConsent === true ? "needed" : "done");
       })
       .catch(() => {
-        // Network error: don't block the app — skip the gate
-        if (!cancelled) setConsentGate("done");
+        if (!cancelled) setConsentGate("needed");
       });
     return () => { cancelled = true; };
   }, []);
@@ -403,6 +450,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   // Market Scan tab uses) once on mount and keep it for drilldown lookups.
   const [tickerScan, setTickerScan] = useState<MarketScan | null>(null);
   const [tickerLogoDisplay, setTickerLogoDisplay] = useState<TickerLogoDisplay>(DEFAULT_TICKER_LOGO_DISPLAY);
+  const [compactExecutionBanner, setCompactExecutionBanner] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -422,6 +470,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const saved = localStorage.getItem(TICKER_LOGO_DISPLAY_KEY);
       if (isTickerLogoDisplay(saved)) setTickerLogoDisplay(saved);
+      setCompactExecutionBanner(
+        localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true" ||
+          localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true"
+      );
     } catch {
       /* ignore storage failures */
     }
@@ -431,6 +483,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     setTickerLogoDisplay(next);
     try {
       localStorage.setItem(TICKER_LOGO_DISPLAY_KEY, next);
+    } catch {
+      /* ignore storage failures */
+    }
+  }
+
+  function updateCompactExecutionBanner(next: boolean) {
+    setCompactExecutionBanner(next);
+    try {
+      localStorage.setItem(EXECUTION_BANNER_COMPACT_KEY, String(next));
+      localStorage.removeItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY);
     } catch {
       /* ignore storage failures */
     }
@@ -593,9 +655,40 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   async function approveProposal(proposalId: string) {
+    const pending = snapshot.pendingProposals.find((proposal) => proposal.id === proposalId);
+    let requestBody: Record<string, unknown> = {};
+    if (executionState.mode === "broker/live") {
+      if (!pending) {
+        toast.error("Live approval is unavailable because the proposal snapshot is stale. Refresh and try again.");
+        return;
+      }
+      const symbol = pending.proposal.symbol.trim().toUpperCase();
+      const expectedText = `APPROVE LIVE ${symbol}`;
+      const typedText = window.prompt(
+        `This can submit a live brokerage order for ${symbol}. Type ${expectedText} to continue.`
+      );
+      if (typedText === null) return;
+      if (typedText.trim().toUpperCase() !== expectedText) {
+        toast.warning("Live approval cancelled.", { description: `Required phrase: ${expectedText}` });
+        return;
+      }
+      requestBody = {
+        liveConfirmation: {
+          proposalId,
+          accountNumber: pending.accountNumber || snapshot.policy.accountNumber,
+          executionMode: executionState.mode,
+          estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
+          typedText
+        }
+      };
+    }
     setBusy(true);
     try {
-      const response = await fetch(`/api/proposals/${proposalId}/approve`, { method: "POST" });
+      const response = await fetch(`/api/proposals/${proposalId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(requestBody)
+      });
       if (!response.ok) throw await responseError(response, "Proposal approval failed");
       const body = (await response.json()) as { status: string; orderId?: string; reasons?: string[] };
       if (body.status === "blocked") {
@@ -696,9 +789,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   const policy = snapshot.policy;
-  const dailyStats = snapshot.dailyStats ?? { orderCount: 0, notional: 0 };
+  const dailyStats = snapshot.dailyStats ?? { orderCount: 0, openingOrderCount: 0, notional: 0 };
   const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
-  const remainingOrders = Math.max(0, policy.maxDailyOrders - dailyStats.orderCount);
+  const remainingOrders = Math.max(0, policy.maxDailyOrders - (dailyStats.openingOrderCount ?? dailyStats.orderCount));
   const enableBlockedReason = !policy.accountNumber
     ? "Select an account before enabling autonomy."
     : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
@@ -754,6 +847,45 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
+  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === policy.accountNumber);
+  const riskCapsReady =
+    (policy.maxDailyNotional ?? 0) > 0 &&
+    (policy.maxOrderNotional ?? 0) > 0 &&
+    (policy.maxDailyOrders ?? 0) > 0;
+  const readinessItems: ReadinessItem[] = [
+    {
+      label: "Account",
+      ok: Boolean(policy.accountNumber),
+      detail: policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected.",
+      actionLabel: "Accounts",
+      onAction: () => setAccountsOpen(true)
+    },
+    {
+      label: "Universe",
+      ok: allowedCount > 0,
+      detail: allowedCount > 0 ? `${allowedCount} symbols are allowed.` : "No base index or additional watchlist symbol is selected.",
+      actionLabel: "Settings",
+      onAction: () => setSettingsOpen(true)
+    },
+    {
+      label: "Risk Caps",
+      ok: riskCapsReady,
+      detail: riskCapsReady ? "Daily, order, and count caps are configured." : "Daily notional, order notional, and order-count caps must be positive.",
+      actionLabel: "Settings",
+      onAction: () => setSettingsOpen(true)
+    },
+    {
+      label: executionState.label,
+      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed === true,
+      detail: executionState.usesLocalSimulation
+        ? "Test mode uses local simulated fills."
+        : selectedBrokerAccount?.agenticAllowed === true
+          ? "Selected broker account is available for agentic execution."
+          : "Selected broker account is not currently available for agentic execution.",
+      actionLabel: "Accounts",
+      onAction: () => setAccountsOpen(true)
+    }
+  ];
 
   const safetyBanner = executionBanner(executionState);
 
@@ -781,9 +913,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
-      {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
-        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide", safetyBanner.className)}
+        role="status"
+        aria-live="polite"
+        className={cn(
+          "shrink-0 border-b text-center font-semibold tracking-wide",
+          compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
+          safetyBanner.className
+        )}
         title={executionState.clarification}
       >
         {safetyBanner.text}
@@ -894,6 +1031,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <Button
               variant={enableBlockedReason ? "ghost" : "primary"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              aria-label="Run strategy once"
               title={enableBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
               onClick={() => {
                 if (enableBlockedReason) {
@@ -909,6 +1047,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              aria-label={policy.systemState === "halted" ? "Start system" : "Stop system"}
               title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
               onClick={() => {
                 if (policy.systemState === "halted" && enableBlockedReason) {
@@ -935,6 +1074,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <div className="lg:hidden">
             <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
+          <ReadinessStrip items={readinessItems} />
           <div className="flex min-w-0 items-center justify-between overflow-x-auto">
             <Tabs
               value={workspaceTab}
@@ -1083,6 +1223,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           updatePolicy={updatePolicy}
           tickerLogoDisplay={tickerLogoDisplay}
           setTickerLogoDisplay={updateTickerLogoDisplay}
+          compactExecutionBanner={compactExecutionBanner}
+          setCompactExecutionBanner={updateCompactExecutionBanner}
           openAccounts={() => setAccountsOpen(true)}
           openStrategyStudio={() => {
             setSettingsOpen(false);
@@ -2822,6 +2964,8 @@ function SettingsContent({
   updatePolicy,
   tickerLogoDisplay,
   setTickerLogoDisplay,
+  compactExecutionBanner,
+  setCompactExecutionBanner,
   openAccounts,
   openStrategyStudio,
   load,
@@ -2837,6 +2981,8 @@ function SettingsContent({
   updatePolicy: (patch: PolicyPatch) => void;
   tickerLogoDisplay: TickerLogoDisplay;
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
+  compactExecutionBanner: boolean;
+  setCompactExecutionBanner: (next: boolean) => void;
   openAccounts: () => void;
   openStrategyStudio: () => void;
   load: () => Promise<void>;
@@ -2854,9 +3000,17 @@ function SettingsContent({
     if (section !== "data") return;
     let cancelled = false;
     void fetch("/api/consent")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error("Consent state unavailable.");
+        return r.json();
+      })
       .then((d) => { if (!cancelled) setPoolConsent(Boolean(d?.accepted)); })
-      .catch(() => { /* leave null — show toggle in indeterminate/off state */ });
+      .catch(() => {
+        if (!cancelled) {
+          setPoolConsent(null);
+          toast.error("Consent state could not be loaded. Sharing controls are locked until this is resolved.");
+        }
+      });
     return () => { cancelled = true; };
   }, [section]);
 
@@ -2864,14 +3018,15 @@ function SettingsContent({
     if (poolConsentLoading) return;
     setPoolConsentLoading(true);
     try {
-      await fetch("/api/consent", {
+      const response = await fetch("/api/consent", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accepted })
       });
+      if (!response.ok) throw new Error("Consent could not be saved.");
       setPoolConsent(accepted);
     } catch {
-      /* best-effort — keep local state unchanged on failure */
+      toast.error("Consent could not be saved. Sharing state was not changed.");
     } finally {
       setPoolConsentLoading(false);
     }
@@ -3161,6 +3316,19 @@ function SettingsContent({
 
         {section === "display" && (
           <div className="space-y-3">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium text-fg">Compact mode banner</span>
+                <span className="block text-xs text-faint">
+                  Keeps the Test, Paper, or Brokerage banner visible with less vertical space.
+                </span>
+              </span>
+              <Switch
+                checked={compactExecutionBanner}
+                onChange={setCompactExecutionBanner}
+                label="Compact mode banner"
+              />
+            </label>
             <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more. Option 1 uses a tile; Option 2 uses the transparent logo style.">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}

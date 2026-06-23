@@ -11,6 +11,7 @@ import {
   audit,
   dailyExecutionStats,
   findProposedIdByRunId,
+  getActiveConnectedAccount,
   getPolicy,
   insertProposal,
   notionalInLastMinutes
@@ -19,6 +20,7 @@ import { getBrokerGateway } from "@/lib/broker";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "@/lib/policy";
 import { emitDashboardEvent } from "@/lib/events";
 import { chatDraftToProposal } from "@/lib/chat/promote-draft";
+import { deriveExecutionState } from "@/lib/execution-mode";
 import type { ChatDraft } from "@/lib/chat/types";
 import type { ReviewedOrder } from "@/lib/types";
 
@@ -36,6 +38,9 @@ export async function POST(request: Request) {
   const proposal = mapped.proposal;
 
   const policy = getPolicy(userId);
+  const activeAccount = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccount);
+  const executionMode = executionState.mode;
   if (!policy.accountNumber) {
     return NextResponse.json({ error: "NO_ACCOUNT", reasons: ["No account is selected."] }, { status: 400 });
   }
@@ -77,8 +82,10 @@ export async function POST(request: Request) {
     positions,
     dailyNotionalUsed: daily.notional,
     hourlyNotionalUsed: hourly.notional,
-    dailyOrderCount: daily.orderCount,
+    dailyOrderCount: daily.openingOrderCount,
     estimatedNotional: review?.estimatedNotional,
+    accountCapabilities: activeAccount?.capabilities,
+    isLiveExecution: executionMode === "broker/live",
     now
   });
   const estimatedNotional = review?.estimatedNotional;
@@ -106,7 +113,8 @@ export async function POST(request: Request) {
     estimatedNotional,
     status: "proposed",
     tradeThesisTag: proposal.tradeThesisTag,
-    entryMarketRegime: proposal.entryMarketRegime
+    entryMarketRegime: proposal.entryMarketRegime,
+    executionMode
   });
   audit("proposal_from_chat", { userId, proposalId, draftId: body.draft.draft_id, symbol: proposal.symbol, side: proposal.side }, userId);
   emitDashboardEvent({ type: "proposal", userId, at: now.toISOString(), detail: { proposalId, status: "proposed", source: "chat" } });

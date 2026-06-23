@@ -55,7 +55,7 @@ export interface DashboardSnapshot {
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
-  dailyStats: { orderCount: number; notional: number };
+  dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };

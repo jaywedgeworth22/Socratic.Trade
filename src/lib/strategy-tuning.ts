@@ -7,7 +7,7 @@ import {
   listStrategyRuns
 } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { deriveExecutionState, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
@@ -155,7 +155,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   const macro = await fetchMacroData(userId);
   const accountNumber = policy.accountNumber;
   const performance = accountNumber ? getPerformanceSummary(accountNumber, {}, userId) : undefined;
-  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const fills = accountNumber ? listFillEvents(accountNumber, source, 30, userId) : [];
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, source, userId) : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;

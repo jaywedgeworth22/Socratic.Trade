@@ -17,9 +17,9 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "gitleaks": "gitleaks detect --source . --verbose",
-    "litestream:replicate": "node scripts/litestream.mjs replicate",
-    "litestream:restore": "node scripts/litestream.mjs restore",
-    "litestream:dry-run": "node scripts/litestream.mjs dry-run"
+    "litestream:replicate": "bash scripts/run-litestream.sh",
+    "litestream:restore": "bash scripts/litestream-restore.sh",
+    "litestream:dry-run": "litestream databases -config litestream.yml"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",

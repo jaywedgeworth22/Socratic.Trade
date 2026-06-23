@@ -58,6 +58,94 @@ const MIGRATIONS: Migration[] = [
       }
       database.exec("CREATE INDEX IF NOT EXISTS idx_llm_usage_key ON llm_usage (key_ref, created_at)");
     }
+  },
+  {
+    version: 3,
+    name: "execution_mode_columns",
+    up: (database) => {
+      const addColumnIfMissing = (table: string) => {
+        const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "execution_mode")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN execution_mode TEXT`);
+        }
+      };
+
+      addColumnIfMissing("trade_proposals");
+      addColumnIfMissing("portfolio_snapshots");
+      addColumnIfMissing("fill_events");
+
+      database.exec(`
+        UPDATE trade_proposals
+        SET execution_mode = COALESCE(
+          execution_mode,
+          (
+            SELECT CASE connected_accounts.environment
+              WHEN 'paper' THEN 'broker/paper'
+              WHEN 'live' THEN 'broker/live'
+              ELSE NULL
+            END
+            FROM connected_accounts
+            WHERE connected_accounts.user_id = trade_proposals.user_id
+              AND connected_accounts.account_number = trade_proposals.account_number
+            LIMIT 1
+          ),
+          CASE
+            WHEN status = 'paper' THEN 'test/local'
+            WHEN status IN ('placed', 'placing', 'placing_failed') THEN 'broker/live'
+            ELSE NULL
+          END
+        )
+        WHERE execution_mode IS NULL;
+
+        UPDATE portfolio_snapshots
+        SET execution_mode = COALESCE(
+          execution_mode,
+          (
+            SELECT CASE connected_accounts.environment
+              WHEN 'paper' THEN 'broker/paper'
+              WHEN 'live' THEN 'broker/live'
+              ELSE NULL
+            END
+            FROM connected_accounts
+            WHERE connected_accounts.user_id = portfolio_snapshots.user_id
+              AND connected_accounts.account_number = portfolio_snapshots.account_number
+            LIMIT 1
+          ),
+          CASE
+            WHEN source = 'paper' THEN 'test/local'
+            WHEN source = 'live' THEN 'broker/live'
+            ELSE NULL
+          END
+        )
+        WHERE execution_mode IS NULL;
+
+        UPDATE fill_events
+        SET execution_mode = COALESCE(
+          execution_mode,
+          (
+            SELECT CASE connected_accounts.environment
+              WHEN 'paper' THEN 'broker/paper'
+              WHEN 'live' THEN 'broker/live'
+              ELSE NULL
+            END
+            FROM connected_accounts
+            WHERE connected_accounts.user_id = fill_events.user_id
+              AND connected_accounts.account_number = fill_events.account_number
+            LIMIT 1
+          ),
+          CASE
+            WHEN source = 'paper' THEN 'test/local'
+            WHEN source = 'live' THEN 'broker/live'
+            ELSE NULL
+          END
+        )
+        WHERE execution_mode IS NULL;
+      `);
+
+      database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_execution_mode ON trade_proposals (user_id, account_number, execution_mode, created_at)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_execution_mode ON portfolio_snapshots (user_id, account_number, execution_mode, created_at)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_execution_mode ON fill_events (user_id, account_number, execution_mode, filled_at)");
+    }
   }
 ];
 
@@ -169,7 +257,8 @@ function migrate(database: Database.Database): void {
       order_id TEXT,
       status TEXT NOT NULL,
       trade_thesis_tag TEXT,
-      entry_market_regime TEXT
+      entry_market_regime TEXT,
+      execution_mode TEXT
     );
 
     CREATE TABLE IF NOT EXISTS strategy_profiles (
@@ -193,7 +282,8 @@ function migrate(database: Database.Database): void {
       buying_power REAL NOT NULL,
       positions_value REAL NOT NULL,
       positions TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      execution_mode TEXT
     );
 
     CREATE TABLE IF NOT EXISTS fill_events (
@@ -210,7 +300,8 @@ function migrate(database: Database.Database): void {
       status TEXT NOT NULL,
       broker_order_id TEXT,
       raw TEXT,
-      filled_at TEXT NOT NULL
+      filled_at TEXT NOT NULL,
+      execution_mode TEXT
     );
 
     CREATE TABLE IF NOT EXISTS notification_events (

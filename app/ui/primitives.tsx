@@ -18,8 +18,8 @@ const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-[13px]",
-  md: "h-10 px-4 text-sm"
+  sm: "h-8 max-sm:min-h-11 px-3 text-[13px]",
+  md: "h-10 max-sm:min-h-11 px-4 text-sm"
 };
 
 /** Button styling as a class string, for when you need button looks on a non-button

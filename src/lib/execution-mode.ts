@@ -1,6 +1,6 @@
-import type { ConnectedAccount, FillSource, TradingPolicy } from "./types";
+import type { ConnectedAccount, ExecutionMode, FillSource, TradingPolicy } from "./types";
 
-export type LlmExecutionMode = "test/local" | "broker/paper" | "broker/live";
+export type LlmExecutionMode = ExecutionMode;
 
 export type ExecutionAccount = Pick<ConnectedAccount, "id" | "broker" | "environment" | "accountNumber" | "label" | "capabilities">;
 
@@ -114,8 +114,14 @@ export function llmModeClarification(stateOrPaperMode: ExecutionState | boolean)
 }
 
 export function llmFillSource(source: FillSource, executionState?: ExecutionState): LlmExecutionMode {
+  if (executionState) return executionState.mode;
   if (source === "paper") return "test/local";
-  return executionState?.mode === "broker/paper" ? "broker/paper" : "broker/live";
+  return "broker/live";
+}
+
+export function fillSourceForExecutionMode(stateOrMode: ExecutionState | ExecutionMode): FillSource {
+  const mode = typeof stateOrMode === "string" ? stateOrMode : stateOrMode.mode;
+  return mode === "broker/live" ? "live" : "paper";
 }
 
 function brokerLabel(broker: ExecutionAccount["broker"]): string {

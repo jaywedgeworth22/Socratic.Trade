@@ -158,8 +158,18 @@ across panels, feeds, popovers, or status chips.
 - The dashboard must never show `Autonomy On` when required setup is missing.
   Render `Setup Needed`, block Run/Resume, and route the user to Accounts or
   Settings.
+- The Test/Paper/Brokerage execution banner is a safety control, not decoration.
+  It may be compacted for density but must remain visible, with `role="status"`
+  and reduced-motion-safe animation for Brokerage/live.
+- The cockpit should expose a compact readiness checklist for account, universe,
+  risk caps, and selected broker/account readiness so setup blockers are
+  actionable before the user clicks Run once or Start.
 - Switching from Mock/Local to Live requires explicit confirmation and a visible
   warning that live mode can submit real broker orders.
+- Approving a Brokerage/live proposal requires a typed server-validated
+  confirmation payload tied to proposal id, account number, execution mode, and
+  estimated notional. The current implementation uses a browser prompt; the next
+  UI iteration should replace it with an in-app modal that shows the same fields.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
   incomplete account list does not strand the user away from Settings.

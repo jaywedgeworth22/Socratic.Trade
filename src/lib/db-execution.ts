@@ -48,7 +48,7 @@ export function dailyExecutionStats(
   now = new Date(),
   userId: string = "local",
   timeZone: string = DAILY_RESET_TIME_ZONE
-): { orderCount: number; notional: number } {
+): { orderCount: number; openingOrderCount: number; notional: number } {
   const dayStart = startOfDayInTimeZone(now, timeZone);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
@@ -69,9 +69,13 @@ export function dailyExecutionStats(
             ? row.estimated_notional
             : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
-      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isBuy ? 1 : 0),
+        notional: acc.notional + notional
+      };
     },
-    { orderCount: 0, notional: 0 }
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
   );
 }
 
@@ -79,7 +83,7 @@ export function dailyExecutionStats(
  * Order notional executed within a rolling window of `minutes` (R1 hourly cap). Mirrors
  * dailyExecutionStats but on an arbitrary lookback rather than the calendar day.
  */
-export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
+export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; openingOrderCount: number; notional: number } {
   const cutoff = new Date(now.getTime() - minutes * 60_000);
   const rows = getDb()
     .prepare(
@@ -95,9 +99,13 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
       const notional = isBuy
         ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
-      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isBuy ? 1 : 0),
+        notional: acc.notional + notional
+      };
     },
-    { orderCount: 0, notional: 0 }
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
   );
 }
 

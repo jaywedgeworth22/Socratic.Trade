@@ -24,6 +24,23 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-23 (`agent/codex-robinhood-account-integration`): **Expert safety/UI execution-mode pass.**
+  Implemented the highest-risk Antigravity/expert-review plan slices in the
+  Codex lane: Alpaca bracket dollar orders now fail closed without a real price
+  anchor or at <1 whole share; close-only/liquidating scheduler ticks keep
+  protective stop/reconciliation maintenance alive without running the LLM loop;
+  execution mode is persisted separately from legacy `paper`/`live` source
+  buckets for proposals, snapshots, and fills; broker-paper reads now use the
+  paper bucket with `executionMode: "broker/paper"` instead of being mislabeled
+  live/Test; stale proposal approvals now fail on account/mode mismatch; live
+  approval POSTs require typed confirmation payloads; consent failures stay
+  blocked; the mode banner can only be compacted, not hidden; a readiness strip
+  is visible in the cockpit; `/api/ready` reports authenticated readiness; and
+  Litestream npm/env drift plus vector raw-user credential lookup were repaired.
+  Verification: `npx tsc --noEmit`, focused Vitest safety subset, full
+  `npm test` (98 files / 894 tests), `npm run build`, and
+  `PLAYWRIGHT_PORT=4217 npm run test:e2e -- --project=chromium` all passed.
+  See `docs/rollouts/2026-06-23-expert-safety-ui-execution-mode.md`.
 - 2026-06-23 (`HEAD` detached from `main`): **UI expert pass for strategy models, run-state clarity, Macro/Market Scan tooltips, and preview freshness.**
   Green/Red Team LLM controls now live in Strategy Studio, while Settings ->
   Connections shows the selected models as read-only context beside provider
