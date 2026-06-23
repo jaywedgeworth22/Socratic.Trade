@@ -7,6 +7,13 @@ filling the missing pieces.
 
 ## Current Status
 
+Hosting topology: production remains `trading.jays.services` on the
+`~/apps/trading-live` worktree / pm2 `trading` / port `4000`. The editable
+integration checkout uses the single pre-production beta hostname
+`trading-beta.jays.services` -> `~/Code/Agentic Trading` / pm2 `trading-main` /
+port `4001`. Do not add a second dev/beta hostname in code, docs, Tunnel
+ingress, DNS, or Access configuration.
+
 | # | Phase | Spec | Status |
 |---|-------|------|--------|
 | 1 | Autonomy loop | `docs/phase-1-autonomy-loop.md` | Mostly implemented; hardening/tests remain |
@@ -55,6 +62,11 @@ filling the missing pieces.
 - Webhook notifications are attempted only when configured and every attempt is audited.
 - Error/LLM observability stays opt-in and redacted by default for account, prompt, and credential data.
 - The local SQLite database has a documented Litestream replicate/restore path before production reliance.
+- Production and beta hosting stay separated: production on `trading.jays.services`
+  / port `4000`; integration beta on `trading-beta.jays.services` / port `4001`;
+  no duplicate dev/beta hostname.
+- Agent branch landing requires a clean worktree and refuses stale semantic overlap
+  when the branch and `origin/main` both changed the same files since divergence.
 - Root-level manual probe artifacts such as screenshots, one-off UI scripts, and
   accidental shell-output files stay ignored so the integration worktree remains
   reserved for review and merges.

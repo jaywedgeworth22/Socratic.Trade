@@ -11,6 +11,15 @@ export default defineConfig({
     }
   },
   test: {
-    exclude: ["node_modules/**", ".next/**", "test/e2e/**", "reference/**"]
+    exclude: [
+      "node_modules/**",
+      ".next/**",
+      ".claude/**",
+      ".agents/**",
+      ".cursor/**",
+      ".codex/**",
+      "test/e2e/**",
+      "reference/**"
+    ]
   }
 });

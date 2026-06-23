@@ -4,6 +4,15 @@ Production is the self-hosted PM2 site at **trading.jays.services**, served by
 `next start` (PM2 app `trading`) from the `~/apps/trading-live` worktree on the
 owner's Apple Silicon Mac.
 
+The pre-production beta route is **trading-beta.jays.services**, served by
+`next dev` (PM2 app `trading-main`) from the editable integration checkout
+`~/Code/Agentic Trading` on port `4001`. Production remains isolated on port
+`4000`; beta should never point at an agent worktree such as `trading-claude`.
+
+Cloudflare DNS, Tunnel ingress, Access apps, redirect-rule exclusions, and
+documentation should use `trading-beta.jays.services` for the 4001 beta lane.
+Do not create a second dev/beta hostname for this preview.
+
 ## How it deploys (automated)
 
 `.github/workflows/deploy.yml` deploys on **every push to `main`** (i.e. every
@@ -54,6 +63,8 @@ pm2 restart trading && pm2 save
 - Actions → Deploy → latest run is green.
 - `curl -I https://trading.jays.services/` returns a response (a `302` to the
   auth gate is expected for an unauthenticated request — it means the app is up).
+- `curl -I https://trading-beta.jays.services/` should reach the beta Access app
+  and then the `trading-main` tunnel service on `http://localhost:4001`.
 - Access requires the visitor's email to be on the allowlist
   (`PRIMARY_USER_EMAIL` / `ADMIN_USER_EMAILS`, or the Cloudflare Access policy);
   otherwise the app shows **Access denied** by design.

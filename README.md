@@ -68,15 +68,29 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`.
+For one-off local development, open `http://127.0.0.1:3000`.
 
-For Codex sessions, use the pinned launcher instead:
+On the host machine, prefer the PM2-managed previews:
+
+- Production deployed app: `https://trading.jays.services` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
+- Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Agentic Trading`, pm2 `trading-main`)
+- Codex live preview: `https://codex.jays.services` -> `http://localhost:4101` (`~/apps/trading-codex`, pm2 `trading-codex`)
+
+Do not create a second dev/beta hostname for this lane; use `trading-beta.jays.services`.
+
+Bootstrap or repair those PM2 previews with:
+
+```bash
+bash scripts/setup-agent-previews.sh
+```
+
+For older disposable Codex sessions, the legacy pinned launcher is still available:
 
 ```bash
 npm run dev:codex
 ```
 
-Open `http://127.0.0.1:3001`. The Codex launcher frees only port `3001` and
+Open `http://127.0.0.1:3001`. The legacy Codex launcher frees only port `3001` and
 retries there if Next initially falls back to another port.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
