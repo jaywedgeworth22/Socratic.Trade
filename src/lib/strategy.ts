@@ -69,6 +69,7 @@ import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, Ma
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+type RunnablePolicy = TradingPolicy & { accountNumber: string };
 
 export interface StrategyResult {
   runId: string;
@@ -79,7 +80,7 @@ export interface StrategyResult {
   accountNumber?: string | null;
 }
 
-export async function runStrategyOnce(userId: string = "local"): Promise<StrategyResult> {
+export async function runStrategyOnce(userId: string = "local", options: { manual?: boolean } = {}): Promise<StrategyResult> {
   // Run lock: prevent overlapping runs from double-counting daily limits.
   if (!acquireStrategyLock(userId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
@@ -88,13 +89,18 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   const runId = crypto.randomUUID();
   insertStrategyRun(runId, userId);
   let result: StrategyResult;
+  const manualRun = Boolean(options.manual);
 
   try {
-    const policy = getPolicy(userId);
+    const savedPolicy = getPolicy(userId);
+    const accountNumber = savedPolicy.accountNumber;
+    if (!accountNumber) throw new Error("No account selected.");
+    if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
+    const policy: RunnablePolicy = manualRun
+      ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
+      : { ...savedPolicy, accountNumber };
     const activeAccount = getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
-    if (!policy.accountNumber) throw new Error("No account selected.");
-    if (policy.systemState === "halted") throw new Error("System is halted.");
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -137,7 +143,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
     // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
     // and fire a kill-switch notification, putting a human back in the loop.
-    if (policy.systemState === "active") {
+    if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
         accountNumber: policy.accountNumber,
@@ -160,7 +166,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // Volatility panic auto-brake: independent of the drawdown breaker, a rare tail extreme on
     // VIX / VVIX / SKEW flips an active system to close_only so a market-wide panic stops opening
     // new risk even when this account hasn't drawn down yet. Risk-reducing exits still flow.
-    if (policy.systemState === "active") {
+    if (!manualRun && policy.systemState === "active") {
       const [brakeMacro, brakeSignals] = await Promise.all([
         fetchMacroData(userId).catch(() => undefined),
         getMarketSignals(userId).catch(() => undefined)
@@ -504,7 +510,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const tradeNoun = executionState.usesLocalSimulation ? "Test Trade" : "Trade";
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
-      `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
+      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
       paperCount > 0 ? `Test: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
@@ -1546,10 +1552,25 @@ async function proposeTrades(input: {
     bullAgentProposals: bullProposals
   };
 
+  const {
+    url: bearUrl,
+    key: bearKey,
+    model: bearModel,
+    provider: bearProvider,
+    keySource: bearKeySource,
+    keyRef: bearKeyRef,
+    transport: bearTransport
+  } = resolveLlmEndpoint(input.policy, input.userId, "https://api.openai.com/v1/responses", "red");
+  if (!bearKey) {
+    console.warn("Bear Agent skipped because the Red Team LLM key is not configured; falling back to Bull proposals");
+    return bullProposals;
+  }
+  const bearIsChatCompletions = bearTransport === "chat-completions";
+
   const bearBody = withLlmRequestBounds(
-    isChatCompletions
+    bearIsChatCompletions
       ? {
-        model,
+        model: bearModel,
         messages: [
           { role: "system", content: bearSystemPrompt },
           { role: "user", content: JSON.stringify(bearUserContent) }
@@ -1564,7 +1585,7 @@ async function proposeTrades(input: {
         }
       }
       : {
-        model,
+        model: bearModel,
         input: [
           { role: "system", content: bearSystemPrompt },
           { role: "user", content: JSON.stringify(bearUserContent) }
@@ -1577,19 +1598,19 @@ async function proposeTrades(input: {
           }
         }
       },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique, model, reasoningEffort: input.policy.llmReasoningEffort }
+    bearTransport,
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique, model: bearModel, reasoningEffort: input.policy.llmReasoningEffort }
   );
 
   const bearResult = await withLlmGeneration(
     {
       name: "trading.strategy.bear",
-      model,
+      model: bearModel,
       userId: input.userId,
       input: summarizeOpenAiRequest(bearBody),
       metadata: {
-        endpoint: url,
-        transport,
+        endpoint: bearUrl,
+        transport: bearTransport,
         reviewedProposalCount: bullProposals.length,
         executionMode,
         internalPaperMode: input.policy.paperMode,
@@ -1604,11 +1625,11 @@ async function proposeTrades(input: {
       })
     },
     async () => {
-      const bearResponse = await llmFetch(url, {
+      const bearResponse = await llmFetch(bearUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${openaiKey}`
+          authorization: `Bearer ${bearKey}`
         },
         body: JSON.stringify(bearBody)
       });
@@ -1619,6 +1640,7 @@ async function proposeTrades(input: {
       }
 
       const bearPayload = await bearResponse.json();
+      recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
       const bearText = extractOpenAiText(bearPayload);
 
       if (!bearText) {

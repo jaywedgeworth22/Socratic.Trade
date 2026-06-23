@@ -61,10 +61,10 @@ auth. A real login/identity layer is the last milestone.
 
 ## Milestones
 
-### M1 `[done]` API-keys Settings section (buildable now, single-user)
-A Settings → **"API Keys"** tab listing every required + optional/helpful key with a
-status badge (Set / Using env / Not set) and a masked input to save/clear it. Stored
-per-user via `upsertUserApiKey` under the default user.
+### M1 `[done]` Connections Settings section (buildable now, single-user)
+A Settings -> **"Connections"** tab listing every required + optional/helpful key
+with a status badge (Set / Using env / Not set) and a masked input to save/clear
+it. Stored per-user via `upsertUserApiKey` under the default user.
 - **Required for full function:** `OPENAI_API_KEY` (LLM proposals).
 - **Optional enrichment / signals:** `FINNHUB_API_KEY`, `FMP_API_KEY`,
   `ALPHAVANTAGE_API_KEY`, `MARKETSTACK_API_KEY`, `TRADIER_API_KEY`, `FRED_API_KEY`
@@ -76,13 +76,24 @@ per-user via `upsertUserApiKey` under the default user.
 - Each row shows what it unlocks and links to where to get it. Never display stored
   secrets (mask), and never log them.
 
-Current implementation: Settings → API Keys lists OpenAI, Finnhub, FMP, Alpha
-Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set /
-Using env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
-Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
-secret values. Settings → Accounts continues to own brokerage-account credentials.
-Settings → Accounts also shows a Robinhood MCP status card backed by
-`GET /api/broker/mcp/health`, with refresh and OAuth-connect actions. Mutable
+Current implementation: Settings -> Connections lists OpenAI, xAI/Grok,
+Finnhub, FMP, Alpha Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent,
+and Massive with Set / Using env / Not set badges, docs links, masked write-only
+inputs, Save, and Clear. Backend `GET/POST/DELETE /api/keys` serves the same
+catalog and never returns secret values. Strategy Studio lets each user choose a
+Green Team model for proposal generation and an optional separate Red Team model
+for Bear review; if no Red Team override is set, Red reuses Green. Connections
+shows a read-only model summary and a link back to Strategy Studio so provider
+keys and model behavior stay connected without making Connections the editing
+surface. The visible model list omits legacy `gpt-4.1-mini`, keeps
+`gpt-5.4-nano` as the cheapest listed OpenAI option, and labels Grok choices
+with the same cost/strength style as OpenAI. Settings -> Operate stays focused
+on universe, authority, horizon, and system Start/Stop controls. Settings ->
+Accounts continues to own brokerage-account credentials. Settings -> Accounts
+presents Robinhood through the same supported-account button
+row as Alpaca. The client still checks `GET /api/broker/mcp/health` silently so
+the Robinhood button can sync an authenticated MCP session or start OAuth, but it
+does not render a separate disconnected MCP status panel. Mutable
 account/key/order/policy route handlers touched by this flow are marked
 `dynamic = "force-dynamic"` so production builds do not attempt static page-data
 collection for request-bound operations.

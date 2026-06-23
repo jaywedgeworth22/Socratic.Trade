@@ -59,6 +59,9 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
+  if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
+    delete policy.redTeamLlmModel;
+  }
   const validationError = await validatePolicy(policy, userId);
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
@@ -72,6 +75,7 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
+  if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
   if (policy.llmReasoningEffort !== undefined && !["low", "medium", "high"].includes(policy.llmReasoningEffort)) return "llmReasoningEffort must be low, medium, or high.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";

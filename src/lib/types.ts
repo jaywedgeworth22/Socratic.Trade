@@ -298,8 +298,10 @@ export interface TradingPolicy {
   blocklist?: string[];
   strategyAuthority: StrategyAuthority;
   /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
-   *  fallback. Each user picks their own; resolved by resolveOpenAiModel(). */
+   *  fallback. This is the Green Team / Bull proposer model. */
   llmModel?: string;
+  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
+  redTeamLlmModel?: string;
   /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */

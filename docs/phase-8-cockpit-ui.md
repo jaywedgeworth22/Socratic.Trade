@@ -54,6 +54,7 @@ It includes:
 
 - editable strategy prompt with autosave
 - reset-to-default prompt action
+- Green Team proposal model, Red Team review model, and reasoning-effort controls
 - slider/field controls for high-impact strategy and risk options
 - scoring weight controls
 - LLM strategy review button
@@ -130,10 +131,26 @@ across panels, feeds, popovers, or status chips.
   symbols from the final universe. The backend runs a one-time migration for
   untouched empty default policies so existing local installs get the same S&P
   500 start state without repeatedly overriding later user edits.
-- Settings → Display includes a local ticker-logo preference: Normal tile,
-  Transparent, or Off. Logos are loaded through the app's cached proxy for
+- Settings → Display includes a local ticker-logo preference: `Option 1` (tile),
+  `Option 2` (transparent), or `Off`. The field hint explains the visual styles.
+  Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Connections owns provider/API keys and connection status context.
+  Editable Green/Red Team model behavior belongs in Strategy Studio; Connections
+  may show a read-only model summary and a link to Studio.
+- The command-bar `Mode:` selector is approval mode, not run state. `Propose
+  Mode` stages orders for approval; `Autonomous Mode` may execute while the
+  system is running. Start/Stop controls whether scheduled/autonomous runs can
+  place orders.
+- `Run once` is a manual proposal check. It must work while the system is
+  stopped and must force proposal-only behavior, so it never bypasses the
+  Start/Stop gate for scheduled/autonomous execution.
+- Workspace and feed tabs persist in local storage so a browser refresh returns
+  to the same tab/area instead of resetting the user to Decision/Activity.
+- Headings and card titles use Title Case. Abbreviated data labels can stay
+  compact, but every interactive control, column, and important data point
+  should carry a tooltip or adjacent hint with a plain-English meaning.
 - `Run during extended hours` means scheduled/event-triggered strategy runs may
   start during pre/post-market windows; it does not by itself permit
   extended-hours order placement, and dollar/fractional orders remain

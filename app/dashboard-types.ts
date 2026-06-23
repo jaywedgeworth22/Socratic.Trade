@@ -30,6 +30,7 @@ export interface AuditEvent {
 
 export interface StrategyDecision {
   runId: string;
+  createdAt?: string;
   status: "completed" | "failed";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;

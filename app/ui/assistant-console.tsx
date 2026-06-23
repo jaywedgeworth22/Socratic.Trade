@@ -64,6 +64,28 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+async function readPlainError(res: Response, fallback: string): Promise<Error> {
+  const raw = await res.text().catch(() => "");
+  let message = raw.trim();
+  try {
+    const parsed = JSON.parse(message) as { error?: unknown; summary?: unknown; message?: unknown };
+    if (typeof parsed.summary === "string") message = parsed.summary;
+    else if (typeof parsed.message === "string") message = parsed.message;
+    else if (typeof parsed.error === "string") message = parsed.error;
+    else if (parsed.error && typeof parsed.error === "object" && "error" in parsed.error && typeof (parsed.error as { error?: unknown }).error === "string") {
+      message = String((parsed.error as { error: string }).error);
+    }
+  } catch {
+    if (message.startsWith("<")) message = "";
+  }
+  if (/Incorrect API key provided/i.test(message) && /console\.x\.ai|x\.ai/i.test(message)) {
+    message = "The xAI API key was rejected. Open Settings -> Connections to update the xAI key, or choose an OpenAI model in Strategy Studio.";
+  } else if (/Incorrect API key provided/i.test(message) && /openai|platform\.openai/i.test(message)) {
+    message = "The OpenAI API key was rejected. Open Settings -> Connections to update the OpenAI key, or choose a model your key can access in Strategy Studio.";
+  }
+  return new Error(message || `${fallback} (${res.status}).`);
+}
+
 // Router-matched suggested prompts (co-versioned with classifyIntent so a chip never dead-ends).
 // NB: knowledge example says 8-K, not 10-K — only 8-K catalysts are indexed today.
 const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
@@ -143,7 +165,7 @@ export function AssistantView({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message, provider })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;
       const id = `a-${stamp}`;
       setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft }]);
@@ -154,7 +176,7 @@ export function AssistantView({
     } finally {
       setSending(false);
     }
-  }, [input, sending]);
+  }, [input, provider, sending]);
 
   async function checkPolicy(msgId: string, draft: ChatDraft) {
     patchDraft(msgId, { phase: "checking" });

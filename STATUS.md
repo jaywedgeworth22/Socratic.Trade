@@ -24,6 +24,44 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-23 (`HEAD` detached from `main`): **UI expert pass for strategy models, run-state clarity, Macro/Market Scan tooltips, and preview freshness.**
+  Green/Red Team LLM controls now live in Strategy Studio, while Settings ->
+  Connections shows the selected models as read-only context beside provider
+  API keys. Manual **Run once** now sends a manual proposal-check request that
+  can run while the system is stopped and forces proposal-only output; scheduled
+  and autonomous runs still require Start. Header cleanup removed the top
+  Refresh/Flow/Strategy shortcuts, preserved workspace/feed tabs across browser
+  refresh, clarified `Mode:` as Propose Mode vs Autonomous Mode, routed the
+  Settings Start/Stop button through the same confirmation modal, and translated
+  raw provider/API errors into plain English. Macro movers are now `Top Gainers`
+  / `Top Losers` with black clickable tickers, more macro data points have
+  explanatory tooltips, Market Scan sources render as `Sources:` without a
+  stray `- live`, and default visible scan columns follow the market/UI expert
+  order. `AGENTS.md` now documents that beta is the source of truth and agent
+  previews must sync/restart when clean or be explicitly marked stale.
+  Verification: `npx tsc --noEmit` clean, `npm test` 97 files / 888 tests
+  passed, `npm run build` clean, and an authenticated local production GET to
+  `/` returned 200 with a complete response. In-app browser local visual smoke
+  was blocked by the browser URL policy / local transport limits. See
+  `docs/rollouts/2026-06-23-ui-expert-strategy-macro-errors.md`.
+- 2026-06-23 (`HEAD` detached from `main`): **Green/Red LLM model routing.**
+  Recovered the split-model setup that was present in a dirty `agent/codex`
+  worktree without copying unrelated Alpaca/account edits. Strategy Studio now
+  exposes a Green Team model and optional Red Team model; Settings ->
+  Connections shows a read-only model summary beside provider key management.
+  Red/Bear review uses
+  `policy.redTeamLlmModel` when set and otherwise falls back to Green. The
+  visible list removes legacy `gpt-4.1-mini`, adds `gpt-5.4`, gives Grok choices
+  matching cost/strength labels, and records Grok pricing in the usage estimator.
+  See `docs/rollouts/2026-06-23-green-red-llm-routing.md` and
+  `docs/rollouts/2026-06-23-settings-connections-llm-setup.md`.
+- 2026-06-23 (`HEAD` detached from `main`): **Accounts modal broker connect buttons.**
+  Removed the separate top-level Robinhood MCP status card from Accounts so the
+  modal now presents Robinhood, Alpaca, and Alpaca MCP as peer connect actions.
+  The Robinhood MCP health check still runs silently to decide whether the
+  Robinhood button should sync an authenticated session or start OAuth, but a
+  configured-yet-unauthenticated endpoint no longer creates a disconnected
+  account-like panel. See `docs/rollouts/2026-06-23-accounts-connect-buttons.md`.
 - 2026-06-23 (`main`): **Beta hostname standardization.** Canonicalized the
   main integration preview hostname as `trading-beta.jays.services` for
   `~/Code/Agentic Trading` / pm2 `trading-main` / port `4001`; documented that

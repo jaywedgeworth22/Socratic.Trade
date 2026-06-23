@@ -13,7 +13,7 @@ process.env.DATABASE_URL = `file:${tmpDb}`;
 
 describe("resolveLlmEndpoint", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let resolveLlmEndpoint: (policy?: any, userId?: string) => any;
+  let resolveLlmEndpoint: (...args: any[]) => any;
 
   beforeAll(async () => {
     // Ensure DB is initialised before module import.
@@ -50,6 +50,29 @@ describe("resolveLlmEndpoint", () => {
     } finally {
       if (savedUrl !== undefined) process.env.OPENAI_API_URL = savedUrl;
     }
+  });
+
+  it("routes the Red Team through redTeamLlmModel when configured", () => {
+    const endpoint = resolveLlmEndpoint(
+      { llmModel: "gpt-5.4-mini", redTeamLlmModel: "grok-4.3" },
+      "local",
+      "https://api.openai.com/v1/responses",
+      "red"
+    );
+    expect(endpoint.provider).toBe("xai");
+    expect(endpoint.model).toBe("grok-4.3");
+    expect(endpoint.transport).toBe("chat-completions");
+  });
+
+  it("falls Red Team back to the Green model when no red override is set", () => {
+    const endpoint = resolveLlmEndpoint(
+      { llmModel: "gpt-5.4-mini" },
+      "local",
+      "https://api.openai.com/v1/responses",
+      "red"
+    );
+    expect(endpoint.provider).toBe("openai");
+    expect(endpoint.model).toBe("gpt-5.4-mini");
   });
 
   it("routes empty/no policy to OpenAI (default model unchanged)", () => {

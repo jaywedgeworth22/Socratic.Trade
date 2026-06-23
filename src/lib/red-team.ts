@@ -37,8 +37,7 @@ export async function debateProposal(
   const policy = getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
-  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
-  if (!openaiKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured." };
+  const { url, key: llmKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions", "red");
   
   const systemPrompt = `You are the Red Team Risk Agent. Your job is to rigorously critique the strategy's high-conviction trade proposals.
   
@@ -93,6 +92,7 @@ Respond with a JSON object containing:
       });
     }
   }
+  if (!llmKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured." };
 
   const isChatCompletions = transport === "chat-completions";
 
@@ -144,7 +144,7 @@ Respond with a JSON object containing:
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: `Bearer ${openaiKey}`
+            authorization: `Bearer ${llmKey}`
           },
           body: JSON.stringify(body),
           // A hung provider would otherwise hold the per-user run lock until the OS socket

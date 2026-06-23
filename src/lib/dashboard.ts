@@ -97,7 +97,10 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
   const notifications = listNotificationEvents(userId, 50);
-  const latestStrategyRun = latestAuditByKind("strategy_run", userId)?.payload as StrategyDecisionLike | undefined;
+  const latestRunAudit = latestAuditByKind("strategy_run", userId);
+  const latestStrategyRun = latestRunAudit
+    ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
+    : undefined;
   const audit = listAudit(100, userId);
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,
