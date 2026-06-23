@@ -11,8 +11,18 @@ export const metadata: Metadata = {
     template: "%s · Trading Dashboard"
   },
   description:
-    "AI-assisted dashboard for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
-  applicationName: "Trading Dashboard",
+    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+  applicationName: "Agentic Trading",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Agentic Trading",
+    statusBarStyle: "black-translucent"
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg"
+  },
   keywords: [
     "AI trading research",
     "automated trading software",
@@ -46,7 +56,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  viewportFit: "cover"
+  viewportFit: "cover",
+  themeColor: "#080b12"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
