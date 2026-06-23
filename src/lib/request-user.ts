@@ -14,12 +14,25 @@ export const AUTHENTICATED_EMAIL_HEADER = "x-authenticated-user-email";
 /** Back-compat: the dev/test fallback identity. */
 export const DEFAULT_REQUEST_USER_ID = DEV_USER_ID;
 
+export interface ResolvedRequestUser {
+  userId: string;
+  email?: string;
+}
+
+export function resolveRequestUserFromEmail(email: string | null): ResolvedRequestUser {
+  const normalized = email?.trim().toLowerCase();
+  if (normalized && normalized.includes("@")) return { userId: userIdForEmail(normalized), email: normalized };
+  return { userId: DEV_USER_ID };
+}
+
+export function resolveRequestUser(request: Request): ResolvedRequestUser {
+  return resolveRequestUserFromEmail(request.headers.get(AUTHENTICATED_EMAIL_HEADER));
+}
+
 /**
  * The trusted userId for this request. `_body` is accepted for call-site compatibility but ignored — body
  * `userId` is no longer an identity source.
  */
 export function resolveRequestUserId(request: Request, _body?: unknown): string {
-  const email = request.headers.get(AUTHENTICATED_EMAIL_HEADER);
-  if (email && email.includes("@")) return userIdForEmail(email);
-  return DEV_USER_ID;
+  return resolveRequestUser(request).userId;
 }

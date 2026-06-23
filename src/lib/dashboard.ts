@@ -33,7 +33,7 @@ import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan } from "./types";
 
-export async function getDashboardSnapshot(userId: string = "local") {
+export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
   ensureTestAccount(userId);
   const policy = getPolicy(userId);
   const gateway = getBrokerGateway(policy, userId);
@@ -152,6 +152,10 @@ export async function getDashboardSnapshot(userId: string = "local") {
   });
 
   return {
+    currentUser: {
+      userId,
+      ...(currentUserEmail ? { email: currentUserEmail } : {})
+    },
     policy,
     strategyPrompt: getStrategyPrompt(userId),
     accounts,

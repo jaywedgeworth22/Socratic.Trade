@@ -24,6 +24,27 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-23 (`codex/multi-user-auth-prod`): **Multi-user auth + account UI production pass.**
+  Integrated the Auth.js/Cloudflare Access identity work onto current `origin/main`
+  and fixed the account UI issues found during the expert/site pass. Middleware now
+  fails closed whenever Cloudflare Access trust or `AUTH_SECRET` is configured,
+  Auth.js cookies are decoded through `next-auth/jwt` instead of the broken
+  `jose/jwt/verify` subpath, `/login` and `/logout` are public auth surfaces, and
+  the server-rendered dashboard snapshot is request-scoped from the trusted
+  middleware email so it no longer renders the primary/local dataset before
+  hydration. The dashboard now shows signed-in email and Sign out, the top account
+  selector uses the derived execution account ID with error-handled activation,
+  Accounts has an explicit Use action, and the safety banner uses bold account
+  labels plus italic risk details for Test / Alpaca Paper / Brokerage modes. The
+  Alpaca account form now states the Paper and Brokerage default endpoints and only
+  asks for a custom endpoint when enabled. Also fixed Alpaca MCP fractional position
+  parsing (`quantity` as well as `qty`) so `0.5` AAPL shares do not collapse to
+  `0 sh`. Verification: `npx tsc --noEmit`; focused Vitest
+  (`test/alpaca-mcp.test.ts`, `test/middleware-auth.test.ts`,
+  `test/request-user.test.ts`, `test/dashboard-feed.test.ts`) passed 31 tests;
+  full `npm test` passed 99 files / 908 tests; `npm run build` passed with no
+  edge-runtime warnings; `git diff --check` clean.
+  See `docs/rollouts/2026-06-23-multi-user-auth-account-ui.md`.
 - 2026-06-23 (`agent/codex-robinhood-account-integration`): **Expert safety/UI execution-mode pass.**
   Implemented the highest-risk Antigravity/expert-review plan slices in the
   Codex lane: Alpaca bracket dollar orders now fail closed without a real price

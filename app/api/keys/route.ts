@@ -7,16 +7,15 @@ export const dynamic = "force-dynamic";
 /**
  * Multi-user API Key Management
  *
- * Scaffolding for per-user API key storage. Currently uses a simple
- * request user hint (x-user-id header, userId query/body, then local fallback).
- * This is not authentication; production identity should be gated separately.
+ * Per-user API key storage. Identity comes from middleware's verified
+ * `x-authenticated-user-email` header; request body/query user hints are ignored.
  *
  * Supported services are defined in API_KEY_CATALOG below.
  *
- * GET  /api/keys?userId=<id>              → list all keys for user
- * GET  /api/keys?userId=<id>&service=<s>  → resolve key (user → env fallback)
- * POST /api/keys  { userId?, service, apiKey, label? }  → upsert key
- * DELETE /api/keys?userId=<id>&service=<s>  → delete key
+ * GET  /api/keys             → list all keys for the current user
+ * GET  /api/keys?service=<s> → resolve key (user → env fallback)
+ * POST /api/keys  { service, apiKey, label? }  → upsert key
+ * DELETE /api/keys?service=<s>  → delete key
  */
 
 const API_KEY_CATALOG = [

@@ -215,24 +215,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
     return this.callMcp<any>("get_positions", {}, async () => {
       const positions = await this.alpaca.getPositions();
-      return positions.map((p: Record<string, unknown>) => ({
-        symbol: normalizeSymbol(String(p.symbol)),
-        quantity: number(p.qty),
-        averageCost: number(p.avg_entry_price),
-        marketValue: number(p.market_value),
-        sector: undefined,
-        industry: undefined
-      }));
+      return positions.map(parseAlpacaPosition);
     }).then((res: any) => {
       if (Array.isArray(res)) {
-        return res.map((p: any) => ({
-          symbol: normalizeSymbol(String(p.symbol)),
-          quantity: number(p.qty),
-          averageCost: number(p.avg_entry_price),
-          marketValue: number(p.market_value),
-          sector: undefined,
-          industry: undefined
-        }));
+        return res.map(parseAlpacaPosition);
       }
       return res;
     });
@@ -462,6 +448,17 @@ function optionalNumber(value: unknown): number | undefined {
 
 function number(value: unknown): number {
   return optionalNumber(value) ?? 0;
+}
+
+export function parseAlpacaPosition(p: Record<string, unknown>): EquityPosition {
+  return {
+    symbol: normalizeSymbol(String(p.symbol)),
+    quantity: number(p.qty ?? p.quantity),
+    averageCost: number(p.avg_entry_price ?? p.average_entry_price ?? p.averageCost),
+    marketValue: number(p.market_value ?? p.marketValue),
+    sector: undefined,
+    industry: undefined
+  };
 }
 
 function optionalIso(value: unknown): string | undefined {
