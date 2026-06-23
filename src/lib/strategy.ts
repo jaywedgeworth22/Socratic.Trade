@@ -25,7 +25,7 @@ import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
-import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
+import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, resolveOpenAiModel, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
@@ -156,6 +156,26 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       }
     }
 
+    // Volatility panic auto-brake: independent of the drawdown breaker, a rare tail extreme on
+    // VIX / VVIX / SKEW flips an active system to close_only so a market-wide panic stops opening
+    // new risk even when this account hasn't drawn down yet. Risk-reducing exits still flow.
+    if (policy.systemState === "active") {
+      const [brakeMacro, brakeSignals] = await Promise.all([
+        fetchMacroData(userId).catch(() => undefined),
+        getMarketSignals(userId).catch(() => undefined)
+      ]);
+      const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
+      if (volBrake.brake) {
+        policy.systemState = "close_only";
+        setPolicy(policy, userId);
+        audit("policy_violation_vol_panic", { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only" }, userId);
+        await sendNotification(
+          { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason } },
+          { policy, userId }
+        );
+      }
+    }
+
     // Supplemental tasks before generating new ideas — keep the approval queue honest so a
     // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
     //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
@@ -227,7 +247,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     });
 
     const sizedProposals = llmProposals.map((p) => {
-      const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions);
+      const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan);
       return enrichOpeningProposal(sized, policy, marketScan);
     });
 
@@ -656,7 +676,7 @@ export function deterministicBearFilter(
   return { kept, vetoed };
 }
 
-export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = []): TradeProposal {
+export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
     // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
@@ -731,7 +751,24 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     policy.maxOrderNotional ?? Infinity,
     policy.maxOrderPctOfNav ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue : Infinity
   );
-  const targetNotional = Math.floor(effectiveMaxOrderNotional * boundedMultiplier);
+  let targetNotional = Math.floor(effectiveMaxOrderNotional * boundedMultiplier);
+
+  // Market-impact (ADV) cap: keep the order from sizing into a name far past what the tape can
+  // absorb. ADV is approximated by the latest scan daily $-volume (price × volume) since the app
+  // ingests no historical bars. Skipped when the gauge is unavailable so it never false-shrinks.
+  let advCapNote = "";
+  if (policy.maxOrderPctOfAdv != null && policy.maxOrderPctOfAdv > 0 && marketScan) {
+    const nSym = normalizeSymbol(proposal.symbol);
+    const full = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === nSym);
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    if (dollarVol != null) {
+      const advCap = Math.floor((policy.maxOrderPctOfAdv / 100) * dollarVol);
+      if (advCap > 0 && advCap < targetNotional) {
+        advCapNote = `\n\n[Sizing] ADV cap: trimmed $${targetNotional} → $${advCap} (${policy.maxOrderPctOfAdv}% of ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume) to bound market impact.`;
+        targetNotional = advCap;
+      }
+    }
+  }
 
   // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI
   // conviction exceeded the cap), surface that the size could not ride confidence alone. Suppressed
@@ -746,7 +783,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + `\n\n[Sizing] Sized to $${targetNotional} (${Math.round(boundedMultiplier * 100)}% of max)` + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote
   };
 }
 
@@ -1946,6 +1983,47 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
     } else {
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(refPrice * (1 + stopPct / 100)) };
       if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(refPrice * (1 - takePct / 100)) };
+    }
+  } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
+    // Transparency for non-bracket brokers (e.g. Robinhood): the broker can't hold an OCO bracket at
+    // its matching engine, so this position's protective exit is the synthetic scheduler-tick monitor
+    // ONLY — a single point of failure if the app is down. Surface it so the operator knows. (The
+    // synthetic monitor still runs every tick; this is honesty, not a behavior change.)
+    next = {
+      ...next,
+      rationale: next.rationale + `\n\n[Risk] ${policy.activeBroker ?? "this broker"} does not support broker-held brackets — the stop is enforced by the app's synthetic monitor only (no protection while the app is offline).`
+    };
+  }
+
+  // Marketable-limit entries: convert a deterministic OPENING market order into a limit priced
+  // through the quote, so a fast tape can't fill it arbitrarily past the quote. Requires a notional
+  // (dollar-routed) market order and a whole-share quantity ≥ 1 (sub-share notional can't be cleanly
+  // expressed as a quantity-based limit); otherwise we leave it as a market order.
+  if (
+    policy.marketableLimitEntries === true &&
+    next.type === "market" &&
+    next.dollarAmount != null &&
+    next.dollarAmount > 0 &&
+    (policy.permittedOrderTypes?.includes("limit") ?? true)
+  ) {
+    const quote = marketScan.quotesBySymbol[sym];
+    const qty = Math.floor(next.dollarAmount / refPrice);
+    if (qty >= 1) {
+      const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
+      const buffer = bufferBps / 10_000;
+      const limitPrice = proposal.side === "buy"
+        ? round2((quote?.ask && quote.ask > 0 ? quote.ask : refPrice) * (1 + buffer))
+        : round2((quote?.bid && quote.bid > 0 ? quote.bid : refPrice) * (1 - buffer));
+      if (limitPrice > 0) {
+        next = {
+          ...next,
+          type: "limit",
+          limitPrice,
+          quantity: qty,
+          dollarAmount: undefined,
+          rationale: next.rationale + `\n\n[Execution] Marketable-limit entry: ${qty} sh @ limit $${limitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}) instead of a raw market order, to cap fast-tape slippage.`
+        };
+      }
     }
   }
   return next;

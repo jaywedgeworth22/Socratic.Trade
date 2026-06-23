@@ -162,6 +162,13 @@ export interface TuningSettings {
    * is unavailable.
    */
   bearVetoDebtToEquityCeiling?: number;
+  /**
+   * Buffer (basis points) used when policy.marketableLimitEntries converts a deterministic OPENING
+   * market order into a marketable limit: the limit is priced through the quote by this much (above
+   * the ask for buys, below the bid for shorts) so it still fills promptly but can't chase an
+   * arbitrarily bad print in a fast tape. Default 15 bps.
+   */
+  marketableLimitBufferBps?: number;
 }
 
 export interface RiskRules {
@@ -390,6 +397,31 @@ export interface TradingPolicy {
    * broker brackets are the exit-reliability mechanism.
    */
   marketableLimitEntries?: boolean;
+  /**
+   * Cap an opening order's notional at this percentage of the name's recent daily dollar-volume
+   * (ADV proxy = latest scan price × volume; the app ingests no historical bars). Bounds market
+   * impact so a high-edge thesis can't size a position into an illiquid name far past what the tape
+   * can absorb — the slippage the execution-cost model debits but never prevented. Applied both in
+   * deterministic sizing (right-sizes the order) and as an approval-time gate (rejects oversize
+   * proposals from any path). Undefined or <=0 disables. Rarely binds for small accounts / liquid
+   * names; matters at scale. Default 5.
+   */
+  maxOrderPctOfAdv?: number;
+  /**
+   * Volatility panic auto-brake: when ON, an extreme reading on any configured tail-risk gauge
+   * (VIX / Cboe VVIX / Cboe SKEW) at the top of a run flips an active system to "close_only"
+   * (risk-reducing exits still flow; no new entries) and fires a kill-switch notification — the
+   * automatic defensive state the crisis-regime entry cap never triggered on its own. Thresholds
+   * are deliberately set at rare tail extremes so this is a safeguard, not a frequent gate. Default
+   * enabled.
+   */
+  volPanicBrakeEnabled?: boolean;
+  /** VIX level at/above which the vol panic brake trips. Undefined falls back to the built-in default (40). */
+  volPanicVixThreshold?: number;
+  /** Cboe VVIX level at/above which the vol panic brake trips. Undefined falls back to the built-in default (150). */
+  volPanicVvixThreshold?: number;
+  /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
+  volPanicSkewThreshold?: number;
 }
 
 export interface TradeProposal {

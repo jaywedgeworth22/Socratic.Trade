@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
-import type { AccountCapabilities, EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import type { AccountCapabilities, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
 
 // Mock the tax module so the authoritative wash-sale gate tests don't need a DB.
@@ -62,6 +62,36 @@ describe("evaluateTradeProposal", () => {
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10
+    });
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks an opening order that exceeds the maxOrderPctOfAdv market-impact cap", () => {
+    const tslaQuote = { symbol: "TSLA", price: 10, volume: 100, intradayChangePct: 0, positionMarketValue: 0, score: 1 } as MarketQuote;
+    const marketScan = {
+      source: "test", generatedAt: "2026-06-22T00:00:00.000Z", scannedSymbols: 1, returnedQuotes: 1,
+      topCandidates: [tslaQuote], sectorBySymbol: {}, quotesBySymbol: {}, warnings: []
+    } as MarketScan;
+    // daily $-vol = 10 × 100 = $1,000; 5% ADV cap = $50; order $100 > $50 → reject.
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, maxOrderPctOfNav: undefined, maxOrderNotional: 10_000, maxOrderPctOfAdv: 5 },
+      portfolio, positions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 100,
+      washSaleLockedSymbols: new Set(), marketScan
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("daily $-volume"))).toBe(true);
+  });
+
+  it("allows the same order when the ADV cap is disabled", () => {
+    const tslaQuote = { symbol: "TSLA", price: 10, volume: 100, intradayChangePct: 0, positionMarketValue: 0, score: 1 } as MarketQuote;
+    const marketScan = {
+      source: "test", generatedAt: "2026-06-22T00:00:00.000Z", scannedSymbols: 1, returnedQuotes: 1,
+      topCandidates: [tslaQuote], sectorBySymbol: {}, quotesBySymbol: {}, warnings: []
+    } as MarketScan;
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, maxOrderPctOfNav: undefined, maxOrderNotional: 10_000, maxOrderPctOfAdv: undefined },
+      portfolio, positions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 100,
+      washSaleLockedSymbols: new Set(), marketScan
     });
     expect(decision.approved).toBe(true);
   });

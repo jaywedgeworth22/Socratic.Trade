@@ -161,6 +161,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
   }
+  // Market-impact (ADV) ceiling: reject an opening order whose notional exceeds maxOrderPctOfAdv % of
+  // the name's recent daily $-volume (price × volume from the scan; the app ingests no historical
+  // bars). Defense-in-depth alongside deterministic sizing — also catches manual/non-sized proposals.
+  // Skipped when the gauge is unavailable so it can never false-reject.
+  if (isOpening && context.policy.maxOrderPctOfAdv != null && context.policy.maxOrderPctOfAdv > 0) {
+    const full = context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    if (dollarVol != null) {
+      const advCap = (context.policy.maxOrderPctOfAdv / 100) * dollarVol;
+      if (estimatedNotional > advCap) {
+        reasons.push(
+          `Order of $${estimatedNotional.toFixed(2)} exceeds ${context.policy.maxOrderPctOfAdv}% of ${symbol}'s ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume (ADV cap $${advCap.toFixed(2)}) — would risk outsized market impact.`
+        );
+      }
+    }
+  }
   const effectiveMaxDailyNotional = Math.min(
     context.policy.maxDailyNotional ?? Infinity,
     context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
