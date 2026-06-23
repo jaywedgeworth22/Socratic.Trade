@@ -24,6 +24,20 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-23 (`main`): **Beta hostname standardization.** Canonicalized the
+  main integration preview hostname as `trading-beta.jays.services` for
+  `~/Code/Agentic Trading` / pm2 `trading-main` / port `4001`; documented that
+  no duplicate dev/beta hostname should be recreated in DNS, Tunnel ingress,
+  Access apps, redirect-rule exclusions, or docs. Cloudflare state currently has
+  DNS/Tunnel/Access only for `trading-beta.jays.services`, and unauthenticated
+  public requests now reach the Cloudflare Access app instead of the old redirect.
+  Also hardened `scripts/land.sh` with dirty-tree and stale-overlap guards so an
+  agent branch cannot silently auto-merge stale UI/text/behavior over newer
+  `origin/main` changes without deliberate review. Verification exposed Vitest
+  discovering nested local agent workspaces under `.claude/worktrees`; `vitest`
+  and `tsconfig` now exclude hidden tool-workspace directories so local
+  verification is stable regardless of Claude/Codex/Cursor artifacts. See
+  `docs/rollouts/2026-06-23-beta-domain-standardization.md`.
 - 2026-06-22 (`feat/antigravity-cheap-wins`): **5 cheap-win risk/execution gates from re-verifying Antigravity's critiques.** After confirming #94/#95/#96 landed, shipped the remaining low-cost items where data/plumbing already existed but wasn't gated: (1) **volatility panic auto-brake** — VIX/VVIX/SKEW tail extreme flips `active`→`close_only` + kill-switch (new `evaluateVolatilityBrake` in `macro.ts`, wired in `runStrategyOnce`; default ON at VIX 40/VVIX 150/SKEW 160, configurable); (2) **ADV market-impact cap** — opening orders capped at `maxOrderPctOfAdv`% of daily $-volume in both `applyDeterministicSizing` and the `policy.ts` gate (default 5%); (3) **marketable-limit entries** — wired the dormant `marketableLimitEntries` stub in `enrichOpeningProposal` (notional→qty+limit through the quote by `marketableLimitBufferBps`, default 15 bps; default OFF/opt-in); (4) **Robinhood synthetic-stop transparency** — `[Risk]` note on non-bracket-broker opens (RH can't hold OCO via MCP; true RH stop-leg deferred); (5) **optional cross-provider Bear LLM** — `RED_TEAM_LLM_PROVIDER=anthropic` routes Red Team to Claude (`redTeamProvider()`/`debateViaAnthropic()`, default openai). Deliberately did NOT fold tax into the tuner (4b) — would penalize a Roth IRA's cost-free turnover (owner priority: Roth ≥ taxable). tsc clean · 881 tests (+new) · build green. Isolated worktree off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-antigravity-cheap-wins.md`.
 - 2026-06-22 (`feat/grok-provider`): **xAI / Grok as an LLM provider option.** Provider is **derived from the
   model name** — a `grok-*` model routes to xAI (OpenAI-compatible, `api.x.ai/v1/chat/completions`) with the

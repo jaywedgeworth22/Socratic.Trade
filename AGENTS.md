@@ -73,15 +73,19 @@ live `next dev` preview on its OWN port.** Every worktree has its own `node_modu
 `.next`, `data/app.db`, and `.env.local` — never assume any are shared, and never point
 one worktree's process at another's files.
 
-| Worktree | Branch | Port | Process | Owner |
-|----------|--------|------|---------|-------|
-| `~/Code/Agentic Trading` | `main` | — (no dev server) | — | **integration / review / merges / hand-edits** (human via **Cursor**) |
-| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | Claude Code |
-| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | Codex |
-| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | Antigravity/Gemini |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | **production** (`trading.jays.services`) |
+| Worktree | Branch | Port | Process | Public route | Owner |
+|----------|--------|------|---------|--------------|-------|
+| `~/Code/Agentic Trading` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
+| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
+| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
+| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `trading.jays.services` | **production** |
 
-Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-previews.sh`.
+Bootstrap / repair the integration preview and agent previews idempotently with
+`scripts/setup-agent-previews.sh`.
+
+`trading-beta.jays.services` is the only public beta/integration hostname for
+the 4001 main preview. Do not add or document duplicate beta hostnames.
 
 ### How each agent works
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
@@ -94,10 +98,13 @@ Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-pre
   bash scripts/land.sh
   ```
   This script: (1) refuses to run from the main integration worktree or on branch `main`;
-  (2) fetches origin; (3) merges `origin/main` — aborts on conflict so you can resolve;
-  (4) runs `npx tsc --noEmit` → `npm test` → `npm run build` — aborts on any failure;
-  (5) refuses if your diff includes `.github/workflows/` (token lacks workflow scope — use
-  `ci-pending/` staging instead); (6) pushes your agent branch and opens a PR via `gh`.
+  (2) refuses dirty/uncommitted files; (3) fetches origin; (4) refuses to auto-merge when
+  your branch and `origin/main` both touched the same files since the branch forked (manual
+  review required to avoid stale UI/text/behavior landing without a Git conflict); (5) merges
+  `origin/main` — aborts on conflict so you can resolve; (6) runs `npx tsc --noEmit` →
+  `npm test` → `npm run build` — aborts on any failure; (7) refuses if your diff includes
+  `.github/workflows/` (token lacks workflow scope — use `ci-pending/` staging instead);
+  (8) pushes your agent branch and opens a PR via `gh`.
   After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
 - **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
   by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
@@ -136,7 +143,7 @@ PM2 preview.
 
 ### A running port is NOT a work lock
 A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
-infer "someone is working" from an open 4100/4101/4102/4000 (or a stray 3000/3001/3002).
+infer "someone is working" from an open 4001/4100/4101/4102/4000 (or a stray 3000/3001/3002).
 Coordinate ONLY via `git status` / `git log` / the branch list and `STATUS.md` — never by
 inspecting ports. The legacy per-agent ephemeral dev lanes (Claude 3000 / Codex 3001 via
 `npm run dev:codex` / Antigravity 3002) are superseded by the PM2 worktree previews above;

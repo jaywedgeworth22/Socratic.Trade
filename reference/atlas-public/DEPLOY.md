@@ -6,7 +6,7 @@ changes, free TLS at Cloudflare's edge). "Production-ready" here is about the ap
 properties, not about which machine runs it — see the checklist at the bottom.
 
 > **Naming convention:** `trading.jays.services` = production. Per-app dev/instances use their own
-> subdomain (e.g. `claude-dev`, `trading-dev`) → a different local port + tunnel ingress rule, and a
+> subdomain (e.g. `claude-dev`, `trading-beta`) → a different local port + tunnel ingress rule, and a
 > matching launchd label (`com.jays.<app>-dev`). The app hardcodes no hostname; set `CORS_ORIGIN`.
 
 ---
