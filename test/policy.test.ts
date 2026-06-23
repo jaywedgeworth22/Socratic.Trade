@@ -225,7 +225,7 @@ describe("evaluateTradeProposal", () => {
       dailyOrderCount: 10
     });
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("Daily order count");
+    expect(decision.reasons.join(" ")).toContain("Daily opening-order count");
   });
 
   it("blocks hourly notional overflow independently of the daily cap (R1)", () => {
@@ -299,7 +299,8 @@ describe("evaluateTradeProposal", () => {
       { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, limitPrice: 2000 },
       {
         ...context(2000),
-        dailyNotionalUsed: 2000
+        dailyNotionalUsed: 2000,
+        dailyOrderCount: 10
       }
     );
     expect(decision.approved).toBe(true);
@@ -417,13 +418,16 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain('Order side "short" rejected');
   });
 
-  it("rejects cover proposals", () => {
+  it("allows risk-reducing cover proposals even when opening shorting is disabled", () => {
     const decision = evaluateTradeProposal(
-      { ...proposal, side: "cover" },
-      context()
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined },
+      {
+        ...context(),
+        policy: { ...enabledPolicy, shortSellingEnabled: false, additionalSymbols: ["AAPL", "TSLA"] },
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 100, marketValue: -200, sector: "Auto" }]
+      }
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "cover" rejected');
+    expect(decision.approved).toBe(true);
   });
 
   // T1 — maxSymbolExposureNotional must be side-aware (regression for the side-blind cap
@@ -518,6 +522,21 @@ describe("evaluateTradeProposal", () => {
       }
     );
     expect(decision.approved).toBe(true);
+  });
+
+  it("does not charge risk-reducing covers against the daily opening-order cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, type: "market" },
+      {
+        ...context(1000),
+        dailyOrderCount: enabledPolicy.maxDailyOrders,
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.reasons.join(" ")).not.toContain("Daily opening-order count");
   });
 
   // T10 — whole-portfolio gross/net exposure gates (previously silent no-ops).

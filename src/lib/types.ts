@@ -12,6 +12,7 @@ export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
+export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
 export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
@@ -298,8 +299,10 @@ export interface TradingPolicy {
   blocklist?: string[];
   strategyAuthority: StrategyAuthority;
   /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
-   *  fallback. Each user picks their own; resolved by resolveOpenAiModel(). */
+   *  fallback. This is the Green Team / Bull proposer model. */
   llmModel?: string;
+  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
+  redTeamLlmModel?: string;
   /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
@@ -658,6 +661,8 @@ export interface EquityOrderInput {
   type: OrderType;
   quantity?: number;
   dollarAmount?: number;
+  /** Entry-price anchor captured when the proposal was generated/reviewed. */
+  referencePrice?: number;
   limitPrice?: number;
   stopPrice?: number;
   timeInForce: TimeInForce;
@@ -712,11 +717,13 @@ export interface PendingProposal {
   proposal: TradeProposal;
   decision: PolicyDecision;
   review?: ReviewedOrder;
+  estimatedNotional?: number;
   /** Last time a strategy run re-validated this still-pending proposal via the LLM. */
   lastRevalidatedAt?: string;
   /** The LLM's most recent re-validation note (why it still stands). */
   revalidationNote?: string;
   accountNumber?: string;
+  executionMode?: ExecutionMode;
 }
 
 export interface StrategyOutcome {
@@ -794,6 +801,7 @@ export interface PortfolioSnapshot {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   equity: number;
   cash: number;
   buyingPower: number;
@@ -808,6 +816,7 @@ export interface FillEvent {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   symbol: string;
   side: OrderSide;
   quantity: number;

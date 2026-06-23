@@ -11,7 +11,7 @@ import {
   getStrategyPrompt,
   insertProposal,
   insertStrategyRun,
-  listFillEvents,
+  listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
   notionalInLastMinutes,
   releaseStrategyLock,
@@ -27,7 +27,7 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
@@ -59,7 +59,7 @@ import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, TradingPolicy, TradeProposal } from "./types";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -69,6 +69,7 @@ import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, Ma
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+type RunnablePolicy = TradingPolicy & { accountNumber: string };
 
 export interface StrategyResult {
   runId: string;
@@ -79,7 +80,31 @@ export interface StrategyResult {
   accountNumber?: string | null;
 }
 
-export async function runStrategyOnce(userId: string = "local"): Promise<StrategyResult> {
+export interface LiveApprovalConfirmation {
+  proposalId?: string;
+  accountNumber?: string | null;
+  executionMode?: ExecutionMode | string;
+  estimatedNotional?: number | null;
+  typedText?: string | null;
+}
+
+export class LiveApprovalConfirmationError extends Error {
+  code = "LIVE_CONFIRMATION_REQUIRED";
+  reasons: string[];
+  expectedText: string;
+
+  constructor(reasons: string[], expectedText: string) {
+    super(reasons.join(" "));
+    this.reasons = reasons;
+    this.expectedText = expectedText;
+  }
+}
+
+export function liveApprovalText(symbol: string): string {
+  return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
+}
+
+export async function runStrategyOnce(userId: string = "local", options: { manual?: boolean } = {}): Promise<StrategyResult> {
   // Run lock: prevent overlapping runs from double-counting daily limits.
   if (!acquireStrategyLock(userId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
@@ -88,13 +113,18 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
   const runId = crypto.randomUUID();
   insertStrategyRun(runId, userId);
   let result: StrategyResult;
+  const manualRun = Boolean(options.manual);
 
   try {
-    const policy = getPolicy(userId);
+    const savedPolicy = getPolicy(userId);
+    const accountNumber = savedPolicy.accountNumber;
+    if (!accountNumber) throw new Error("No account selected.");
+    if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
+    const policy: RunnablePolicy = manualRun
+      ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
+      : { ...savedPolicy, accountNumber };
     const activeAccount = getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
-    if (!policy.accountNumber) throw new Error("No account selected.");
-    if (policy.systemState === "halted") throw new Error("System is halted.");
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -126,18 +156,19 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       : { portfolio, positions };
     const workingPortfolio = account.portfolio;
     const workingPositions = account.positions;
-    const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+    const executionMode = executionState.mode;
+    const learningSource = fillSourceForExecutionMode(executionMode);
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
     // post-mortem / reconciliation always has a pre-execution baseline even if the run
     // crashes mid-loop. The post-run snapshot (below) remains for the final state.
-    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, portfolio: workingPortfolio, positions: workingPositions });
+    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, executionMode, portfolio: workingPortfolio, positions: workingPositions });
 
     // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
     // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
     // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
     // and fire a kill-switch notification, putting a human back in the loop.
-    if (policy.systemState === "active") {
+    if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
         accountNumber: policy.accountNumber,
@@ -160,7 +191,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // Volatility panic auto-brake: independent of the drawdown breaker, a rare tail extreme on
     // VIX / VVIX / SKEW flips an active system to close_only so a market-wide panic stops opening
     // new risk even when this account hasn't drawn down yet. Risk-reducing exits still flow.
-    if (policy.systemState === "active") {
+    if (!manualRun && policy.systemState === "active") {
       const [brakeMacro, brakeSignals] = await Promise.all([
         fetchMacroData(userId).catch(() => undefined),
         getMarketSignals(userId).catch(() => undefined)
@@ -242,7 +273,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       recentOrders: compactRecentOrders(orders),
       marketScan,
       dailyNotionalUsed: daily.notional,
-      dailyOrderCount: daily.orderCount,
+      dailyOrderCount: daily.openingOrderCount,
       ragContext,
       learnedContext
     });
@@ -290,7 +321,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       if (!tradability[normalizedProposal.symbol]?.tradable) {
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -307,14 +338,14 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-      const isLiveExecution = learningSource === "live";
+      const isLiveExecution = executionMode === "broker/live";
       const decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
         positions: workingPositions,
         dailyNotionalUsed: dailyNow.notional,
         hourlyNotionalUsed: hourlyNow.notional,
-        dailyOrderCount: dailyNow.orderCount,
+        dailyOrderCount: dailyNow.openingOrderCount,
         estimatedNotional: review.estimatedNotional,
         marketScan,
         washSaleLockedSymbols,
@@ -328,7 +359,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
       if (!decision.approved) {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -344,7 +375,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
       if (policy.strategyAuthority === "propose") {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -355,13 +386,14 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
 
       if (executionState.usesLocalSimulation) {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
         const fill = recordFillFromProposal({
           userId,
           accountNumber: policy.accountNumber,
           proposalId,
           runId,
           source: "paper",
+          executionMode,
           proposal: normalizedProposal,
           review,
           marketScan,
@@ -383,7 +415,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -410,7 +442,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         review,
         estimatedNotional: review.estimatedNotional,
         refId,
-        status: "placing"
+        status: "placing",
+        executionMode
       });
 
       let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
@@ -436,7 +469,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         accountNumber: policy.accountNumber,
         proposalId,
         runId,
-        source: "live",
+        source: learningSource,
+        executionMode,
         proposal: normalizedProposal,
         review,
         execution,
@@ -504,7 +538,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     const tradeNoun = executionState.usesLocalSimulation ? "Test Trade" : "Trade";
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
-      `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
+      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
       paperCount > 0 ? `Test: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
@@ -517,9 +551,17 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       .join(" ");
 
     finishStrategyRun(runId, "completed", summary, userId);
-    // Always snapshot the real account; snapshot the local simulation too in Test mode.
-    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
-    if (executionState.usesLocalSimulation) {
+    if (!executionState.usesLocalSimulation) {
+      recordPortfolioSnapshot({
+        userId,
+        runId,
+        accountNumber: policy.accountNumber,
+        source: learningSource,
+        executionMode,
+        portfolio,
+        positions
+      });
+    } else {
       const paperProjection = getPaperPortfolioProjection({
         accountNumber: policy.accountNumber,
         startingCash: policy.paperStartingCash,
@@ -531,6 +573,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         runId,
         accountNumber: policy.accountNumber,
         source: "paper",
+        executionMode,
         portfolio: paperProjection.portfolio,
         positions: paperProjection.positions
       });
@@ -790,7 +833,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
 
 // R1 §1.4.3 — if an autonomous ("decide") run trips a notional/order cap, drop the account back to
 // "propose" so a human is back in the loop before any further orders. Returns true if it reverted.
-const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Daily order count limit"];
+const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Daily order count limit", "Daily opening-order count limit"];
 function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
@@ -799,7 +842,55 @@ function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPol
   return true;
 }
 
-export async function executeProposal(proposalId: string, userId: string = "local"): Promise<{
+function assertLiveApprovalConfirmation(input: {
+  executionMode: ExecutionMode;
+  confirmation?: LiveApprovalConfirmation;
+  proposalId: string;
+  accountNumber: string;
+  proposal: TradeProposal;
+  estimatedNotional?: number;
+}): void {
+  if (input.executionMode !== "broker/live") return;
+  const expectedText = liveApprovalText(input.proposal.symbol);
+  const confirmation = input.confirmation;
+  const reasons: string[] = [];
+  const typedText = String(confirmation?.typedText ?? "").trim().toUpperCase();
+  const expectedNotional = input.estimatedNotional;
+
+  if (!confirmation) reasons.push("Live Brokerage approvals require a typed confirmation payload.");
+  if (confirmation?.proposalId !== input.proposalId) reasons.push("Confirmation proposal id did not match.");
+  if (confirmation?.accountNumber !== input.accountNumber) reasons.push("Confirmation account did not match.");
+  if (confirmation?.executionMode !== "broker/live") reasons.push("Confirmation execution mode did not match Brokerage live.");
+  if (typedText !== expectedText) reasons.push(`Type ${expectedText} to approve this live order.`);
+  if (typeof expectedNotional === "number" && Number.isFinite(expectedNotional)) {
+    const confirmedNotional = Number(confirmation?.estimatedNotional);
+    if (!Number.isFinite(confirmedNotional) || Math.abs(confirmedNotional - expectedNotional) > 0.01) {
+      reasons.push("Confirmation estimated notional did not match the reviewed proposal.");
+    }
+  }
+
+  if (reasons.length > 0) throw new LiveApprovalConfirmationError(reasons, expectedText);
+}
+
+export async function executeProposal(proposalId: string, userId?: string): Promise<{
+  status: string;
+  orderId?: string;
+  reasons?: string[];
+}>;
+export async function executeProposal(
+  proposalId: string,
+  userId: string,
+  options: { liveConfirmation?: LiveApprovalConfirmation }
+): Promise<{
+  status: string;
+  orderId?: string;
+  reasons?: string[];
+}>;
+export async function executeProposal(
+  proposalId: string,
+  userId: string = "local",
+  options: { liveConfirmation?: LiveApprovalConfirmation } = {}
+): Promise<{
   status: string;
   orderId?: string;
   reasons?: string[];
@@ -807,14 +898,30 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
+  const executionMode = executionState.mode;
+  const executionSource = fillSourceForExecutionMode(executionMode);
   if (!policy.accountNumber) throw new Error("No account selected.");
   if (policy.systemState === "halted") throw new Error("System is halted.");
 
   const row = getProposal(proposalId, userId);
   if (!row) throw new Error("Proposal not found.");
   if (row.status !== "proposed") throw new Error(`Proposal is already ${row.status}.`);
+  if (row.accountNumber !== policy.accountNumber) {
+    throw new Error("Proposal account no longer matches the selected account. Re-run the strategy before approving.");
+  }
+  if (row.executionMode && row.executionMode !== executionMode) {
+    throw new Error("Proposal execution mode no longer matches the selected mode. Re-run the strategy before approving.");
+  }
 
   const proposal = row.proposal;
+  assertLiveApprovalConfirmation({
+    executionMode,
+    confirmation: options.liveConfirmation,
+    proposalId,
+    accountNumber: row.accountNumber,
+    proposal,
+    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional
+  });
 
   // TOCTOU guard on notional/order caps: the daily/hourly cap check reads the
   // trade_proposals table BEFORE inserting the new row. Without this lock, a
@@ -873,7 +980,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       positions: account.positions,
       dailyNotionalUsed: daily.notional,
       hourlyNotionalUsed: hourly.notional,
-      dailyOrderCount: daily.orderCount,
+      dailyOrderCount: daily.openingOrderCount,
       estimatedNotional: review.estimatedNotional,
       marketScan: approvalScan,
       washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
@@ -921,7 +1028,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       // Atomic claim: only the caller that flips this proposal proposed -> paper records the
       // fill, so two concurrent approvals can't double-book the same Test trade (defense in depth
       // alongside the per-user run-lock held for this critical section).
-      if (!claimProposalForExecution(proposalId, "paper", userId, { review, estimatedNotional: review.estimatedNotional })) {
+      if (!claimProposalForExecution(proposalId, "paper", userId, { review, estimatedNotional: review.estimatedNotional, executionMode })) {
         const current = getProposal(proposalId, userId)?.status ?? "removed";
         return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
       }
@@ -931,6 +1038,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
         proposalId,
         runId: row.runId,
         source: "paper",
+        executionMode,
         proposal,
         review,
         marketScan: approvalScan,
@@ -947,6 +1055,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
         runId: row.runId,
         accountNumber: row.accountNumber,
         source: "paper",
+        executionMode,
         portfolio: paperProjection.portfolio,
         positions: paperProjection.positions
       });
@@ -969,7 +1078,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId })) {
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
@@ -992,7 +1101,8 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       accountNumber: row.accountNumber,
       proposalId,
       runId: row.runId,
-      source: "live",
+      source: executionSource,
+      executionMode,
       proposal,
       review,
       execution,
@@ -1122,7 +1232,7 @@ async function proposeTrades(input: {
   const currentPrices = currentPricesFromScan(input.marketScan);
   const reflection = getUserSetting(input.userId, "reflection_summary", "");
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
-  const source: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=5 closed lots. Fewer than
@@ -1546,10 +1656,25 @@ async function proposeTrades(input: {
     bullAgentProposals: bullProposals
   };
 
+  const {
+    url: bearUrl,
+    key: bearKey,
+    model: bearModel,
+    provider: bearProvider,
+    keySource: bearKeySource,
+    keyRef: bearKeyRef,
+    transport: bearTransport
+  } = resolveLlmEndpoint(input.policy, input.userId, "https://api.openai.com/v1/responses", "red");
+  if (!bearKey) {
+    console.warn("Bear Agent skipped because the Red Team LLM key is not configured; falling back to Bull proposals");
+    return bullProposals;
+  }
+  const bearIsChatCompletions = bearTransport === "chat-completions";
+
   const bearBody = withLlmRequestBounds(
-    isChatCompletions
+    bearIsChatCompletions
       ? {
-        model,
+        model: bearModel,
         messages: [
           { role: "system", content: bearSystemPrompt },
           { role: "user", content: JSON.stringify(bearUserContent) }
@@ -1564,7 +1689,7 @@ async function proposeTrades(input: {
         }
       }
       : {
-        model,
+        model: bearModel,
         input: [
           { role: "system", content: bearSystemPrompt },
           { role: "user", content: JSON.stringify(bearUserContent) }
@@ -1577,19 +1702,19 @@ async function proposeTrades(input: {
           }
         }
       },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique, model, reasoningEffort: input.policy.llmReasoningEffort }
+    bearTransport,
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique, model: bearModel, reasoningEffort: input.policy.llmReasoningEffort }
   );
 
   const bearResult = await withLlmGeneration(
     {
       name: "trading.strategy.bear",
-      model,
+      model: bearModel,
       userId: input.userId,
       input: summarizeOpenAiRequest(bearBody),
       metadata: {
-        endpoint: url,
-        transport,
+        endpoint: bearUrl,
+        transport: bearTransport,
         reviewedProposalCount: bullProposals.length,
         executionMode,
         internalPaperMode: input.policy.paperMode,
@@ -1604,11 +1729,11 @@ async function proposeTrades(input: {
       })
     },
     async () => {
-      const bearResponse = await llmFetch(url, {
+      const bearResponse = await llmFetch(bearUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${openaiKey}`
+          authorization: `Bearer ${bearKey}`
         },
         body: JSON.stringify(bearBody)
       });
@@ -1619,6 +1744,7 @@ async function proposeTrades(input: {
       }
 
       const bearPayload = await bearResponse.json();
+      recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
       const bearText = extractOpenAiText(bearPayload);
 
       if (!bearText) {
@@ -1825,9 +1951,7 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
 }
 
 export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
-  const pending = listFillEvents(accountNumber, "live", 500, userId).filter(
-    (fill) => fill.status === "pending_reconciliation" && fill.brokerOrderId
-  );
+  const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
   if (pending.length === 0) return;
 
   try {
@@ -1931,11 +2055,14 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
     if (matched) {
       updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
       if (p) {
+        const recoveredExecutionMode = row.executionMode ?? "broker/live";
+        const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
         recordFillFromProposal({
           userId,
           accountNumber,
           proposalId: row.id,
-          source: "live",
+          source: recoveredSource,
+          executionMode: recoveredExecutionMode,
           proposal: p,
           execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
           status: matched.state === "filled" ? "filled" : "pending_reconciliation"

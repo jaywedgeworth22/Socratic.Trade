@@ -5,5 +5,7 @@ import { getDashboardSnapshot } from "@/lib/dashboard";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  return <DashboardClient initialSnapshot={(await getDashboardSnapshot()) as DashboardSnapshot} />;
+  const snapshot = await getDashboardSnapshot();
+  // Flight serialization is stricter than JSON and can choke on shared object refs.
+  return <DashboardClient initialSnapshot={JSON.parse(JSON.stringify(snapshot)) as DashboardSnapshot} />;
 }

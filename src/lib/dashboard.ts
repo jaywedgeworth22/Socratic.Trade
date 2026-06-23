@@ -22,6 +22,7 @@ import { normalizeSymbol } from "./money";
 import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
 import { fetchMacroData, determineMarketRegime } from "./macro";
@@ -58,7 +59,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
 
   const dailyStats = accountNumber
     ? dailyExecutionStats(accountNumber, new Date(), userId)
-    : { orderCount: 0, notional: 0 };
+    : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
   // Build a live current-price map (broker quotes for held + paper symbols) so the paper
   // account and all P&L are marked to the same prices Live uses.
@@ -87,17 +88,21 @@ export async function getDashboardSnapshot(userId: string = "local") {
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
-  const scorecardSource = policy.paperMode ? "paper" : "live";
+  const activeAccountForTax = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccountForTax);
+  const scorecardSource = fillSourceForExecutionMode(executionState);
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
-  const activeAccountForTax = getActiveConnectedAccount(userId);
   const tax = accountNumber
     ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccountForTax?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId)
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
   const notifications = listNotificationEvents(userId, 50);
-  const latestStrategyRun = latestAuditByKind("strategy_run", userId)?.payload as StrategyDecisionLike | undefined;
+  const latestRunAudit = latestAuditByKind("strategy_run", userId);
+  const latestStrategyRun = latestRunAudit
+    ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
+    : undefined;
   const audit = listAudit(100, userId);
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,

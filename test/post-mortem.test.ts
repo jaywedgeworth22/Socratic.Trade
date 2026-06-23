@@ -41,7 +41,8 @@ describe("generateReflectionSummary", () => {
     insertFillEvent({
       userId,
       accountNumber,
-      source: "live",
+      source: "paper",
+      executionMode: "broker/paper",
       symbol: "AAPL",
       side: "buy",
       quantity: 1,

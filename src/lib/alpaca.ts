@@ -322,13 +322,19 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const isBracket = !!(input.bracketTakeProfit || input.bracketStopLoss);
 
     // Alpaca does not support notional (dollar) bracket orders — only qty-based.
-    // When dollarAmount is set on a bracket order, convert it to qty using the
-    // reviewed price estimate (limitPrice || stopPrice || 1). Callers should prefer
-    // passing qty directly for bracket orders to avoid price-estimate drift.
+    // If a bracketed dollar order reaches this gateway, it must carry a real entry
+    // anchor from review/proposal enrichment. Never fall back to 1; that can turn a
+    // $500 market bracket into 500 shares.
     let bracketQty: number | undefined;
     if (isBracket && input.dollarAmount && !input.quantity) {
-      const estPrice = input.limitPrice ?? input.stopPrice ?? 1;
+      const estPrice = input.limitPrice ?? input.referencePrice;
+      if (estPrice == null || !(estPrice > 0)) {
+        throw new Error("Alpaca bracket dollar orders require a positive limitPrice or referencePrice.");
+      }
       bracketQty = Math.floor(input.dollarAmount / estPrice);
+      if (bracketQty < 1) {
+        throw new Error("Alpaca bracket dollar order is too small for a whole-share bracket at the reference price.");
+      }
     }
 
     const fallbackFn = async () => {

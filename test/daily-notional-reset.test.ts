@@ -46,7 +46,7 @@ describe("startOfDayInTimeZone — T13 explicit daily-reset boundary", () => {
 });
 
 describe("daily/hourly notional accounting — T6", () => {
-  it("counts opening (buy/short) notional only, but every order toward the count", () => {
+  it("counts opening (buy/short) notional and opening-order count separately from total orders", () => {
     const a = "T6_SIDES";
     proposal("t6-buy", a, "buy", 1000);
     proposal("t6-short", a, "short", 500);
@@ -55,11 +55,13 @@ describe("daily/hourly notional accounting — T6", () => {
 
     const daily = dailyExecutionStats(a);
     expect(daily.notional).toBeCloseTo(1500); // 1000 buy + 500 short; sell/cover do not add notional
-    expect(daily.orderCount).toBe(4); // every placed order counts toward the order cap
+    expect(daily.orderCount).toBe(4); // every placed order remains visible for audit/display
+    expect(daily.openingOrderCount).toBe(2); // only buy/short consume the opening-order cap
 
     const hourly = notionalInLastMinutes(a, 60);
     expect(hourly.notional).toBeCloseTo(1500); // same side-awareness on the rolling hourly window
     expect(hourly.orderCount).toBe(4);
+    expect(hourly.openingOrderCount).toBe(2);
   });
 
   it("scopes notional by user (tenant isolation)", () => {

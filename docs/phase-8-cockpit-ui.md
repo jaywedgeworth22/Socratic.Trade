@@ -54,6 +54,7 @@ It includes:
 
 - editable strategy prompt with autosave
 - reset-to-default prompt action
+- Green Team proposal model, Red Team review model, and reasoning-effort controls
 - slider/field controls for high-impact strategy and risk options
 - scoring weight controls
 - LLM strategy review button
@@ -130,10 +131,26 @@ across panels, feeds, popovers, or status chips.
   symbols from the final universe. The backend runs a one-time migration for
   untouched empty default policies so existing local installs get the same S&P
   500 start state without repeatedly overriding later user edits.
-- Settings → Display includes a local ticker-logo preference: Normal tile,
-  Transparent, or Off. Logos are loaded through the app's cached proxy for
+- Settings → Display includes a local ticker-logo preference: `Option 1` (tile),
+  `Option 2` (transparent), or `Off`. The field hint explains the visual styles.
+  Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Connections owns provider/API keys and connection status context.
+  Editable Green/Red Team model behavior belongs in Strategy Studio; Connections
+  may show a read-only model summary and a link to Studio.
+- The command-bar `Mode:` selector is approval mode, not run state. `Propose
+  Mode` stages orders for approval; `Autonomous Mode` may execute while the
+  system is running. Start/Stop controls whether scheduled/autonomous runs can
+  place orders.
+- `Run once` is a manual proposal check. It must work while the system is
+  stopped and must force proposal-only behavior, so it never bypasses the
+  Start/Stop gate for scheduled/autonomous execution.
+- Workspace and feed tabs persist in local storage so a browser refresh returns
+  to the same tab/area instead of resetting the user to Decision/Activity.
+- Headings and card titles use Title Case. Abbreviated data labels can stay
+  compact, but every interactive control, column, and important data point
+  should carry a tooltip or adjacent hint with a plain-English meaning.
 - `Run during extended hours` means scheduled/event-triggered strategy runs may
   start during pre/post-market windows; it does not by itself permit
   extended-hours order placement, and dollar/fractional orders remain
@@ -141,8 +158,18 @@ across panels, feeds, popovers, or status chips.
 - The dashboard must never show `Autonomy On` when required setup is missing.
   Render `Setup Needed`, block Run/Resume, and route the user to Accounts or
   Settings.
+- The Test/Paper/Brokerage execution banner is a safety control, not decoration.
+  It may be compacted for density but must remain visible, with `role="status"`
+  and reduced-motion-safe animation for Brokerage/live.
+- The cockpit should expose a compact readiness checklist for account, universe,
+  risk caps, and selected broker/account readiness so setup blockers are
+  actionable before the user clicks Run once or Start.
 - Switching from Mock/Local to Live requires explicit confirmation and a visible
   warning that live mode can submit real broker orders.
+- Approving a Brokerage/live proposal requires a typed server-validated
+  confirmation payload tied to proposal id, account number, execution mode, and
+  estimated notional. The current implementation uses a browser prompt; the next
+  UI iteration should replace it with an in-app modal that shows the same fields.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
   incomplete account list does not strand the user away from Settings.

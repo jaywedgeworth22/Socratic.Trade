@@ -4,7 +4,7 @@ import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from ".
 import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat } from "./performance";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { withLlmGeneration } from "./observability";
@@ -62,7 +62,7 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
-  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const executionMode = llmExecutionMode(executionState);
   const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);

@@ -101,6 +101,10 @@ type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
+const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
+const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
+const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
+const FEED_TAB_KEY = "dashboard-feed-tab";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
   ok: boolean;
@@ -123,6 +127,71 @@ function safeJson(value: string): unknown {
   }
 }
 
+function isWorkspaceTab(value: unknown): value is WorkspaceTab {
+  return value === "decision" || value === "assistant" || value === "market" || value === "macro" || value === "performance" || value === "tax" || value === "strategy";
+}
+
+function isFeedTab(value: unknown): value is FeedTab {
+  return value === "activity" || value === "runs" || value === "notifications" || value === "audit";
+}
+
+function readStoredWorkspaceTab(): WorkspaceTab {
+  if (typeof window === "undefined") return "decision";
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_TAB_KEY);
+    return isWorkspaceTab(saved) ? saved : "decision";
+  } catch {
+    return "decision";
+  }
+}
+
+function readStoredFeedTab(): FeedTab {
+  if (typeof window === "undefined") return "activity";
+  try {
+    const saved = window.localStorage.getItem(FEED_TAB_KEY);
+    return isFeedTab(saved) ? saved : "activity";
+  } catch {
+    return "activity";
+  }
+}
+
+function plainAppError(raw: string, fallback = "Something went wrong."): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  let message = trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as { error?: unknown; summary?: unknown; message?: unknown };
+    const nested = parsed.error;
+    if (typeof parsed.summary === "string") message = parsed.summary;
+    else if (typeof parsed.message === "string") message = parsed.message;
+    else if (typeof nested === "string") message = nested;
+    else if (nested && typeof nested === "object" && "error" in nested && typeof (nested as { error?: unknown }).error === "string") message = String((nested as { error: string }).error);
+  } catch {
+    if (trimmed.startsWith("<")) return fallback;
+  }
+  if (/Incorrect API key provided/i.test(message) && /console\.x\.ai|x\.ai/i.test(message)) {
+    return "The xAI API key was rejected. Open Settings -> Connections to update the xAI key, or choose an OpenAI model in Strategy Studio.";
+  }
+  if (/Incorrect API key provided/i.test(message) && /openai|platform\.openai/i.test(message)) {
+    return "The OpenAI API key was rejected. Open Settings -> Connections to update the OpenAI key, or choose a model your key can access in Strategy Studio.";
+  }
+  if (/System is halted/i.test(message)) {
+    return "The system is stopped. Press Start for scheduled/autonomous runs, or use Run once for a manual proposal check.";
+  }
+  if (/No account selected/i.test(message)) {
+    return "Select an account before running the strategy. Use the account menu or Accounts modal.";
+  }
+  if (/agentic_allowed/i.test(message)) {
+    return "The selected broker account is not approved for agentic execution. Choose an agentic-enabled account or use Test mode.";
+  }
+  return message.length > 280 ? `${message.slice(0, 277)}...` : message;
+}
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const raw = await response.text().catch(() => "");
+  return new Error(plainAppError(raw, `${fallback} (${response.status}).`));
+}
+
 function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
   return (
     snapshot.connectedAccounts?.find((account) => account.id === snapshot.policy.connectedAccountId) ??
@@ -140,20 +209,63 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
 function executionBanner(state: ExecutionState): { className: string; text: string } {
   if (state.mode === "broker/live") {
     return {
-      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 animate-pulse",
-      text: `BROKERAGE · LIVE CAPITAL — approved orders execute against ${state.accountLabel ?? "your broker"} with real money.`
+      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 motion-safe:animate-pulse",
+      text: `Brokerage live. Approved orders can reach real money in ${state.accountLabel ?? "your broker account"}.`
     };
   }
   if (state.mode === "broker/paper") {
     return {
       className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
-      text: `PAPER — broker sandbox (${state.accountLabel ?? "Alpaca Paper"}). Orders route to the broker's paper endpoint; no real capital at risk.`
+      text: `Paper. Orders route to ${state.accountLabel ?? "a broker sandbox"}; no real money is at risk.`
     };
   }
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
-    text: "TEST — local simulation with simulated fills. No broker orders; no real capital at risk. A connected paper account (e.g. Alpaca Paper Trading) is likely more realistic than this local simulation."
+    text: "Test. Local simulated fills only; no broker orders or real money. Broker paper is more realistic."
   };
+}
+
+type ReadinessItem = {
+  label: string;
+  detail: string;
+  ok: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
+function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface/70 px-3 py-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Readiness</span>
+          {items.map((item) => (
+            <span
+              key={item.label}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium",
+                item.ok ? "bg-up/10 text-up" : "bg-warn/10 text-warn"
+              )}
+              title={item.detail}
+            >
+              {item.ok ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+              {item.label}
+            </span>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {items
+            .filter((item) => !item.ok && item.onAction)
+            .slice(0, 2)
+            .map((item) => (
+              <Button key={item.label} size="sm" variant="ghost" onClick={item.onAction}>
+                {item.actionLabel ?? item.label}
+              </Button>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
@@ -214,15 +326,18 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await fetch("/api/consent", {
+      const response = await fetch("/api/consent", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accepted })
       });
+      if (!response.ok) throw new Error("Consent could not be saved.");
+      onResolved();
     } catch {
-      /* best-effort — proceed regardless of network error */
+      toast.error("Consent could not be saved. The dashboard will stay locked until this is resolved.");
+    } finally {
+      setSubmitting(false);
     }
-    onResolved();
   }
 
   return (
@@ -298,8 +413,8 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
 function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("decision");
-  const [feedTab, setFeedTab] = useState<FeedTab>("activity");
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(readStoredWorkspaceTab);
+  const [feedTab, setFeedTab] = useState<FeedTab>(readStoredFeedTab);
   const [feedOpen, setFeedOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -320,8 +435,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         setConsentGate(data?.needsConsent === true ? "needed" : "done");
       })
       .catch(() => {
-        // Network error: don't block the app — skip the gate
-        if (!cancelled) setConsentGate("done");
+        if (!cancelled) setConsentGate("needed");
       });
     return () => { cancelled = true; };
   }, []);
@@ -336,6 +450,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   // Market Scan tab uses) once on mount and keep it for drilldown lookups.
   const [tickerScan, setTickerScan] = useState<MarketScan | null>(null);
   const [tickerLogoDisplay, setTickerLogoDisplay] = useState<TickerLogoDisplay>(DEFAULT_TICKER_LOGO_DISPLAY);
+  const [compactExecutionBanner, setCompactExecutionBanner] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -355,6 +470,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const saved = localStorage.getItem(TICKER_LOGO_DISPLAY_KEY);
       if (isTickerLogoDisplay(saved)) setTickerLogoDisplay(saved);
+      setCompactExecutionBanner(
+        localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true" ||
+          localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true"
+      );
     } catch {
       /* ignore storage failures */
     }
@@ -369,11 +488,37 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
+  function updateCompactExecutionBanner(next: boolean) {
+    setCompactExecutionBanner(next);
+    try {
+      localStorage.setItem(EXECUTION_BANNER_COMPACT_KEY, String(next));
+      localStorage.removeItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY);
+    } catch {
+      /* ignore storage failures */
+    }
+  }
+
   const [newProfileName, setNewProfileName] = useState("");
   const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WORKSPACE_TAB_KEY, workspaceTab);
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [workspaceTab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FEED_TAB_KEY, feedTab);
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [feedTab]);
 
   // Fallback poll — now a safety net (2 min) behind the SSE live-push below, not the primary
   // refresh path. Covers missed events, SSE-unsupported browsers, and dropped streams.
@@ -440,7 +585,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     if (!options.quiet) setBusy(true);
     try {
       const response = await fetch("/api/dashboard", { cache: "no-store" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Dashboard refresh failed");
       setSnapshot((await response.json()) as DashboardSnapshot);
     } catch (loadError) {
       toast.error(loadError instanceof Error ? loadError.message : "Dashboard refresh failed.");
@@ -458,10 +603,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         body: JSON.stringify({ ...snapshot.policy, ...patch })
       });
       if (!response.ok) {
-        // Surface a concise message; never dump an HTML error page (e.g. a 500) into the toast.
-        const raw = (await response.text().catch(() => "")).trim();
-        const message = raw && !raw.startsWith("<") && raw.length <= 300 ? raw : `Policy update failed (${response.status}).`;
-        throw new Error(message);
+        throw await responseError(response, "Policy update failed");
       }
       // The server drops unsupported symbols (equity-only) from the watchlist / ignore list. Detect any
       // that were silently removed and warn explicitly, so nothing is ever thought to be watched when it
@@ -496,8 +638,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   async function runStrategy() {
     setBusy(true);
     try {
-      const response = await fetch("/api/strategy/run", { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      const response = await fetch("/api/strategy/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ manual: true })
+      });
+      if (!response.ok) throw await responseError(response, "Strategy run failed");
       const body = (await response.json()) as { summary?: string };
       toast.success(body.summary ?? "Strategy run completed.");
       await load({ quiet: true });
@@ -509,10 +655,41 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   async function approveProposal(proposalId: string) {
+    const pending = snapshot.pendingProposals.find((proposal) => proposal.id === proposalId);
+    let requestBody: Record<string, unknown> = {};
+    if (executionState.mode === "broker/live") {
+      if (!pending) {
+        toast.error("Live approval is unavailable because the proposal snapshot is stale. Refresh and try again.");
+        return;
+      }
+      const symbol = pending.proposal.symbol.trim().toUpperCase();
+      const expectedText = `APPROVE LIVE ${symbol}`;
+      const typedText = window.prompt(
+        `This can submit a live brokerage order for ${symbol}. Type ${expectedText} to continue.`
+      );
+      if (typedText === null) return;
+      if (typedText.trim().toUpperCase() !== expectedText) {
+        toast.warning("Live approval cancelled.", { description: `Required phrase: ${expectedText}` });
+        return;
+      }
+      requestBody = {
+        liveConfirmation: {
+          proposalId,
+          accountNumber: pending.accountNumber || snapshot.policy.accountNumber,
+          executionMode: executionState.mode,
+          estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
+          typedText
+        }
+      };
+    }
     setBusy(true);
     try {
-      const response = await fetch(`/api/proposals/${proposalId}/approve`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      const response = await fetch(`/api/proposals/${proposalId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(requestBody)
+      });
+      if (!response.ok) throw await responseError(response, "Proposal approval failed");
       const body = (await response.json()) as { status: string; orderId?: string; reasons?: string[] };
       if (body.status === "blocked") {
         const reasonsMsg = body.reasons?.map((r) => `• ${r}`).join("\n") ?? "No reasons provided.";
@@ -539,7 +716,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     setBusy(true);
     try {
       const response = await fetch(`/api/proposals/${proposalId}/reject`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Proposal rejection failed");
       toast.info("Proposal rejected.");
       await load({ quiet: true });
     } catch (rejectError) {
@@ -553,7 +730,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     setBusy(true);
     try {
       const response = await fetch(`/api/profiles/${profileId}/activate`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Profile activation failed");
       toast.success("Profile activated.");
       await load({ quiet: true });
     } catch (profileError) {
@@ -573,7 +750,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, policy: snapshot.policy, prompt: snapshot.strategyPrompt, active: true })
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Profile creation failed");
       toast.success("Profile created.");
       setNewProfileName("");
       await load({ quiet: true });
@@ -590,7 +767,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const response = await fetch("/api/strategy/tune", { method: "POST" });
       const body = await response.json();
-      if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "Strategy tuning review failed.");
+      if (!response.ok) throw new Error(plainAppError(typeof body?.error === "string" ? body.error : JSON.stringify(body), "Strategy tuning review failed."));
       setStrategyTuning(body as StrategyTuningProposal);
     } catch (tuneError) {
       setTuningError(tuneError instanceof Error ? tuneError.message : "Strategy tuning review failed.");
@@ -612,9 +789,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   const policy = snapshot.policy;
-  const dailyStats = snapshot.dailyStats ?? { orderCount: 0, notional: 0 };
+  const dailyStats = snapshot.dailyStats ?? { orderCount: 0, openingOrderCount: 0, notional: 0 };
   const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
-  const remainingOrders = Math.max(0, policy.maxDailyOrders - dailyStats.orderCount);
+  const remainingOrders = Math.max(0, policy.maxDailyOrders - (dailyStats.openingOrderCount ?? dailyStats.orderCount));
   const enableBlockedReason = !policy.accountNumber
     ? "Select an account before enabling autonomy."
     : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
@@ -644,10 +821,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const autonomyStatus = policy.systemState === "active"
     ? setupBlocked
       ? { tone: "warn" as const, label: "Setup Needed" }
-      : { tone: "up" as const, label: policy.strategyAuthority === "decide" ? "Running · Autonomous" : "Running · Propose" }
+      : { tone: "up" as const, label: policy.strategyAuthority === "decide" ? "Running · Autonomous Mode" : "Running · Propose Mode" }
     : policy.systemState === "halted"
       ? { tone: "down" as const, label: "Stopped" }
-      : { tone: "neutral" as const, label: `Autonomy ${policy.systemState}` };
+      : policy.systemState === "close_only"
+        ? { tone: "warn" as const, label: "Close-Only" }
+        : { tone: "down" as const, label: "Liquidating" };
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
   function routeSetupBlocker(reason: string) {
@@ -668,6 +847,45 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
+  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === policy.accountNumber);
+  const riskCapsReady =
+    (policy.maxDailyNotional ?? 0) > 0 &&
+    (policy.maxOrderNotional ?? 0) > 0 &&
+    (policy.maxDailyOrders ?? 0) > 0;
+  const readinessItems: ReadinessItem[] = [
+    {
+      label: "Account",
+      ok: Boolean(policy.accountNumber),
+      detail: policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected.",
+      actionLabel: "Accounts",
+      onAction: () => setAccountsOpen(true)
+    },
+    {
+      label: "Universe",
+      ok: allowedCount > 0,
+      detail: allowedCount > 0 ? `${allowedCount} symbols are allowed.` : "No base index or additional watchlist symbol is selected.",
+      actionLabel: "Settings",
+      onAction: () => setSettingsOpen(true)
+    },
+    {
+      label: "Risk Caps",
+      ok: riskCapsReady,
+      detail: riskCapsReady ? "Daily, order, and count caps are configured." : "Daily notional, order notional, and order-count caps must be positive.",
+      actionLabel: "Settings",
+      onAction: () => setSettingsOpen(true)
+    },
+    {
+      label: executionState.label,
+      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed === true,
+      detail: executionState.usesLocalSimulation
+        ? "Test mode uses local simulated fills."
+        : selectedBrokerAccount?.agenticAllowed === true
+          ? "Selected broker account is available for agentic execution."
+          : "Selected broker account is not currently available for agentic execution.",
+      actionLabel: "Accounts",
+      onAction: () => setAccountsOpen(true)
+    }
+  ];
 
   const safetyBanner = executionBanner(executionState);
 
@@ -685,7 +903,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
     { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
     { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
-    { id: "refresh", label: "Refresh dashboard", icon: <RefreshCw size={15} />, run: () => void load() },
   ];
 
   return (
@@ -696,9 +913,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
-      {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
-        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide", safetyBanner.className)}
+        role="status"
+        aria-live="polite"
+        className={cn(
+          "shrink-0 border-b text-center font-semibold tracking-wide",
+          compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
+          safetyBanner.className
+        )}
         title={executionState.clarification}
       >
         {safetyBanner.text}
@@ -740,7 +962,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
-              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
+              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode:</span>
               <select
                 aria-label="Approval mode"
                 className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
@@ -754,8 +976,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                   }
                 }}
               >
-                <option value="propose">Propose</option>
-                <option value="decide">Autonomous</option>
+                <option value="propose">Propose Mode</option>
+                <option value="decide">Autonomous Mode</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5 lg:gap-2">
@@ -779,9 +1001,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <option value="manage">Manage Accounts...</option>
               </select>
             </div>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Refresh" onClick={() => load()} disabled={busy}>
-              <RefreshCw size={15} className={cn(busy && "animate-spin")} />
-            </IconButton>
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => setSettingsOpen(true)}>
               <SettingsIcon size={15} />
             </IconButton>
@@ -810,23 +1029,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               onClick={() => setLearnedQueueOpen(true)}
             />
             <Button
-              variant="ghost"
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
-              onClick={() => setNodeEditorOpen(true)}
-            >
-              <Network size={15} /> <span className="hidden sm:inline">Flow</span>
-            </Button>
-            <Button
-              variant="ghost"
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
-              onClick={() => setStudioOpen(true)}
-            >
-              <BrainCircuit size={15} /> <span className="hidden sm:inline">Strategy</span>
-            </Button>
-            <Button
               variant={enableBlockedReason ? "ghost" : "primary"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
-              title={enableBlockedReason}
+              aria-label="Run strategy once"
+              title={enableBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
               onClick={() => {
                 if (enableBlockedReason) {
                   routeSetupBlocker(enableBlockedReason);
@@ -841,6 +1047,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              aria-label={policy.systemState === "halted" ? "Start system" : "Stop system"}
               title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
               onClick={() => {
                 if (policy.systemState === "halted" && enableBlockedReason) {
@@ -867,6 +1074,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <div className="lg:hidden">
             <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
+          <ReadinessStrip items={readinessItems} />
           <div className="flex min-w-0 items-center justify-between overflow-x-auto">
             <Tabs
               value={workspaceTab}
@@ -916,7 +1124,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
-            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
+            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "strategy" && (
@@ -925,6 +1133,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 policy={policy}
                 updatePolicy={updatePolicy}
                 onEdit={() => setStudioOpen(true)}
+                onOpenFlow={() => setNodeEditorOpen(true)}
                 activateProfile={activateProfile}
                 newProfileName={newProfileName}
                 setNewProfileName={setNewProfileName}
@@ -1003,7 +1212,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, Tax, & Notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Operate, Connections, Display & More" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -1014,9 +1223,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           updatePolicy={updatePolicy}
           tickerLogoDisplay={tickerLogoDisplay}
           setTickerLogoDisplay={updateTickerLogoDisplay}
+          compactExecutionBanner={compactExecutionBanner}
+          setCompactExecutionBanner={updateCompactExecutionBanner}
           openAccounts={() => setAccountsOpen(true)}
+          openStrategyStudio={() => {
+            setSettingsOpen(false);
+            setStudioOpen(true);
+          }}
           load={load}
           onRequestDecideConfirm={() => setDecideConfirm(true)}
+          onRequestSystemToggle={() => setKillConfirm(true)}
         />
       </Modal>
 
@@ -1175,11 +1391,11 @@ function PortfolioRail({
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
       </div>
       <div className="px-4 py-3">
-        {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No allocation yet" />}
+        {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No Allocation Yet" />}
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         {enriched.length === 0 ? (
-          <EmptyState icon={<Wallet size={18} />} title="No open positions" hint="Run the strategy to start building a position set." />
+          <EmptyState icon={<Wallet size={18} />} title="No Open Positions" hint="Run the strategy to start building a position set." />
         ) : (
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface/50 backdrop-blur-xl">
@@ -1324,23 +1540,24 @@ function DecisionView({
     <div className="space-y-3">
       {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
         <Card className="overflow-hidden">
-          <PanelHeader title="Pending approval" subtitle="No proposals awaiting review" icon={<CheckCircle size={16} />} />
-          <EmptyState icon={<CheckCircle size={18} />} title="All clear — no pending approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
+          <PanelHeader title="Pending Approval" subtitle="No Proposals Awaiting Review" icon={<CheckCircle size={16} />} />
+          <EmptyState icon={<CheckCircle size={18} />} title="All Clear — No Pending Approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
         </Card>
       )}
       {pending.length > 0 && (
         <Card className="overflow-hidden">
-          <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
+          <PanelHeader title="Pending Approval" subtitle="Review And Approve Or Reject" icon={<CheckCircle size={16} />} />
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
             {pending.map((p) => {
               const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              const age = proposalAgeTone(p.createdAt);
               return (
                 <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                  {accountLabel && (
-                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
-                      {accountLabel}
-                    </div>
-                  )}
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    {accountLabel && <span>{accountLabel}</span>}
+                    {p.createdAt && <span title="When this proposal was generated. Re-run before approving stale ideas.">Proposed {proposalTimeLabel(p.createdAt)}</span>}
+                    {age && <Chip tone={age.tone}>{age.label}</Chip>}
+                  </div>
                   <div className="flex items-center gap-2">
                     <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
                     <SymbolButton
@@ -1355,6 +1572,11 @@ function DecisionView({
                     <span className="ml-auto tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                   </div>
                   <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-fg/85" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                  {p.lastRevalidatedAt && (
+                    <p className="mt-1.5 text-[11px] text-faint" title={p.revalidationNote}>
+                      Revalidated {proposalTimeLabel(p.lastRevalidatedAt)}
+                    </p>
+                  )}
                   <div className="mt-3 flex gap-2">
                     <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
                       <Check size={14} /> Approve
@@ -1372,31 +1594,39 @@ function DecisionView({
 
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Latest decisions"
+          title="Latest Decisions"
           subtitle={decision?.marketScan ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}` : "Run the strategy to generate a decision"}
           icon={<Sparkles size={16} />}
         />
         {!decision ? (
-          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
+          <EmptyState icon={<BrainCircuit size={20} />} title="No Decision Yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
+            {(() => {
+              const decisionSummary = decision.status === "failed"
+                ? plainAppError(decision.summary, "Strategy run failed.")
+                : decision.summary;
+              return (
             <div className={cn("rounded-xl border px-3 py-2 text-[13px]",
               decision.status !== "failed"
                 ? "border-info/25 bg-info/10 text-fg"
-                : /no account|account selected|no symbols|universe is empty|empty universe/i.test(decision.summary || "")
+                : /no account|account selected|no symbols|universe is empty|empty universe/i.test(decisionSummary || "")
                   ? "border-warn/30 bg-warn/10 text-warn"
                   : "border-down/30 bg-down/10 text-down")}>
-              {decision.summary}
+              {decisionSummary}
             </div>
+              );
+            })()}
             {decision.proposals.map((item, i) => {
               const accountLabel = getProposalAccountLabel(decision.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              const age = proposalAgeTone(decision.createdAt);
               return (
                 <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                  {accountLabel && (
-                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
-                      {accountLabel}
-                    </div>
-                  )}
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    {accountLabel && <span>{accountLabel}</span>}
+                    {decision.createdAt && <span title="When this decision run completed. Re-run old decisions before acting on them.">Proposed {proposalTimeLabel(decision.createdAt)}</span>}
+                    {age && <Chip tone={age.tone}>{age.label}</Chip>}
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {item.status === "paper" ? (
                       <span className="text-xs font-bold text-muted uppercase tracking-wider">TEST</span>
@@ -1432,21 +1662,6 @@ function DecisionView({
 /* ───────────────────────── Market scan view ───────────────────────── */
 
 const DASH = <span className="text-faint">—</span>;
-
-// Sticky-right treatment for the Score "verdict" column (header + body cells). `right-0` pins it
-// to the right edge of the horizontally-scrolling table; the solid `--bg` base (theme-reactive in
-// light/dark) keeps it opaque so scrolled cells don't show through the table's translucent
-// `--surface` tints; the left border + shadow separate the pinned cell from the content sliding
-// under it. `z-[1]` keeps the pinned column above its scrolling row siblings without fighting the
-// header's own stacking.
-//
-// Hover: the row's translucent `hover:bg-surface-2/50` can't show through this cell's opaque base,
-// so we re-create the highlight as an OPAQUE composite — `--surface-2` layered over `--bg` via a
-// background-image gradient — applied on the row's `group` hover. This keeps the pinned cell in
-// sync with its row's highlight while never going see-through (so scrolled cells never bleed in).
-const SCAN_PINNED_RIGHT_CLASS =
-  "sticky right-0 z-[1] bg-[var(--bg)] border-l border-line shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.18)] " +
-  "group-hover:bg-[linear-gradient(var(--surface-2),var(--surface-2)),linear-gradient(var(--bg),var(--bg))]";
 
 type ScanColumn = {
   id: string;
@@ -1520,6 +1735,14 @@ function vwapTitle(q: MarketQuote): string | undefined {
   const delta = vwapDeltaPct(q);
   if (typeof delta !== "number") return undefined;
   return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${dataPointTitle("VWAP", q.sources?.vwap, q.asOf)}`;
+}
+
+function formatScanSources(sourceString: string): string {
+  const sources = formatSources(sourceString)
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part && !/^live$/i.test(part) && !/^(none|unknown|-)$/i.test(part));
+  return Array.from(new Set(sources)).join(", ");
 }
 
 const SCAN_COLUMNS: ScanColumn[] = [
@@ -1612,25 +1835,18 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
     render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH),
     cellTitle: (q) => dataPointTitle("Sector", q.sources?.sector, q.asOf) },
-  // Score is intentionally LAST so it renders at the far right — the "verdict" column the eye
-  // lands on after scanning a row. Default sort is by score desc.
   { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
     render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span>,
     // Composite of many scored factors; attribute to the underlying input fields' providers, never a single invented source.
     cellTitle: (q) => derivedTitle("[CALCULATED] Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors (weights on the Strategy tab).", "the scan's per-factor inputs", q, ["price", "volume", "intradayChangePct", "peRatio", "sentiment"]) }
 ];
 
-// Default-visible columns — chosen by a 4-expert trading-desk panel (2026-06-21) now that Alpaca
-// supplies REAL bid/ask/spread/VWAP. Reading left-to-right, the row answers one question — "is this
-// name moving, leading, in a tradeable spot, and can I get filled cheaply right now?": identity →
-// price → momentum (Chg) → intraday VWAP benchmark → sector relative strength → distance from the
-// 52-week high (entry timing) → dollar-volume liquidity → execution block (Spread flanked by the real
-// Bid/Ask) → Score (far-right "verdict", default sort). Everything else is one click away via
-// "Configure columns". This explicit list is the source of truth; the per-column `defaultHidden`
-// flags are legacy and no longer consulted for the default set.
-const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "vsVwap", "sectorRelStrength", "pctFromHigh", "dollarVolM", "spreadBps", "bid", "ask", "score"];
-// v3: bumped so the execution-aware default (real bid/ask/spread/VWAP) replaces a saved v2 column set.
-const SCAN_COLS_KEY = "scan-visible-cols-v3";
+// Default-visible columns — chosen by UI + market specialists for fast triage:
+// identity → verdict → price action → relative strength/execution cost → sector/value/growth/news.
+// The order in this list is rendered directly; hidden columns stay available in Configure columns.
+const DEFAULT_SCAN_COLS = ["symbol", "score", "price", "intradayChangePct", "sectorRelStrength", "vsVwap", "dollarVolM", "spreadBps", "sector", "peRatio", "epsGrowth", "fcfYield", "sentiment", "senateTrades"];
+// v4: investment/market UX review moved Score near identity and replaced raw bid/ask with Spread.
+const SCAN_COLS_KEY = "scan-visible-cols-v4";
 
 function MarketScanView({
   snapshot,
@@ -1678,7 +1894,7 @@ function MarketScanView({
     setScanError("");
     try {
       const res = await fetch("/api/scan");
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Market scan failed");
       const data = (await res.json()) as MarketScan;
       if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
     } catch (error) {
@@ -1687,7 +1903,7 @@ function MarketScanView({
       // plain sentence; pass through real server messages (a non-OK response with body text).
       const raw = error instanceof Error ? error.message : "";
       const isNetwork = /load failed|failed to fetch|networkerror|the network connection was lost|aborted/i.test(raw);
-      setScanError(isNetwork ? "Couldn't reach the scan service." : raw || "Market scan failed.");
+      setScanError(isNetwork ? "Couldn't reach the scan service." : plainAppError(raw, "Market scan failed."));
     } finally {
       setScanLoading(false);
     }
@@ -1702,7 +1918,7 @@ function MarketScanView({
     return (
       <Card>
         <PanelHeader
-          title="Market scan"
+          title="Market Scan"
           subtitle={scanError || undefined}
           icon={<LineChartIcon size={16} />}
           actions={
@@ -1713,7 +1929,7 @@ function MarketScanView({
         />
         <EmptyState
           icon={<LineChartIcon size={20} />}
-          title={scanLoading ? "Scanning the market…" : "No market scan yet"}
+          title={scanLoading ? "Scanning The Market…" : "No Market Scan Yet"}
           hint={scanError || (scanLoading ? "Fetching quotes and enrichment data…" : "Choose a base index or add symbols, then refresh the scan.")}
         />
         <div className="flex justify-center px-4 pb-4">
@@ -1722,7 +1938,9 @@ function MarketScanView({
       </Card>
     );
   }
-  const cols = SCAN_COLUMNS.filter((c) => visible.includes(c.id));
+  const cols = visible
+    .map((id) => SCAN_COLUMNS.find((c) => c.id === id))
+    .filter((column): column is ScanColumn => Boolean(column));
   // The quote `asOf` is a display string, not a timestamp; the scan's ISO generatedAt
   // is the real "received" time for every value in this table.
   const dataReceived = receivedLabel(scan.generatedAt);
@@ -1730,13 +1948,15 @@ function MarketScanView({
   const sorted = sortCol
     ? [...scan.topCandidates].sort((a, b) => compare(scanSortValue(sortCol, a), scanSortValue(sortCol, b), sort.dir))
     : [...scan.topCandidates];
+  const scanSources = formatScanSources(scan.source);
+  const freshness = liveScan ? "Live" : scan.cached ? "Cached" : "Latest";
   const subtitle = scan.returnedQuotes === 0
-    ? `No quotes returned · ${liveScan ? "live" : scan.cached ? "cached" : "latest"}`
-    : `${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`;
+    ? `No quotes returned · ${freshness}`
+    : `${scan.returnedQuotes} quotes · ${freshness}${scanSources ? ` · Sources: ${scanSources}` : ""}`;
   return (
     <Card>
       <PanelHeader
-        title="Market scan"
+        title="Market Scan"
         subtitle={subtitle}
         icon={<LineChartIcon size={16} />}
         actions={
@@ -1776,11 +1996,16 @@ function MarketScanView({
           {scanError} Showing the last scan from {new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
         </p>
       )}
+      {scan.warnings && scan.warnings.length > 0 && (
+        <p className="mx-4 mt-3 rounded-lg border border-warn/25 bg-warn/10 px-3 py-1.5 text-[12px] text-warn" title={scan.warnings.join("\n")}>
+          Some data sources did not respond, so this scan uses the best available quotes and enrichment.
+        </p>
+      )}
       {sorted.length === 0 ? (
         <div className="px-4 pb-4">
           <EmptyState
             icon={<LineChartIcon size={20} />}
-            title="No scan quotes"
+            title="No Scan Quotes"
             hint="The current universe is empty or no provider returned quotes. Choose a base index or add symbols, then refresh the scan."
           />
           <div className="flex justify-center">
@@ -1796,41 +2021,29 @@ function MarketScanView({
             components={{
               Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
-              // `group` lets the right-pinned Score cell mirror the row hover tint (it has its own
-              // opaque base bg, so it can't inherit the row's translucent hover directly).
               TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="group cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
             }}
             fixedHeaderContent={() => (
               <tr className="border-b border-line bg-surface/50 text-[11px] uppercase text-faint shadow-sm backdrop-blur-xl">
-                {cols.map((c) => {
-                  // Score is pinned to the right edge so the "verdict" column stays visible even
-                  // when many columns are toggled on and the table scrolls horizontally. The solid
-                  // --bg base (theme-reactive) keeps the pinned cell opaque so scrolled content
-                  // doesn't bleed through the translucent --surface tint; SCAN_PINNED_RIGHT_CLASS
-                  // adds the left divider + shadow that separates it from the scrolled body.
-                  const pinned = c.id === "score";
-                  return (
+                {cols.map((c) => (
                   <th
                     key={c.id}
                     title={c.title}
                     onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
                     className={cn(
                       "cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg",
-                      c.align === "right" ? "text-right" : "text-left",
-                      pinned && SCAN_PINNED_RIGHT_CLASS
+                      c.align === "right" ? "text-right" : "text-left"
                     )}
                   >
                     {c.label}
                     <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                   </th>
-                  );
-                })}
+                ))}
               </tr>
             )}
             itemContent={(index, q) => (
               <>
                 {cols.map((c) => {
-                  const pinned = c.id === "score";
                   const cellTip = c.cellTitle?.(q);
                   // Stamp the scan-level "Received …" only when the cell's own tooltip doesn't already
                   // carry a per-field "Received …" line (dataPointTitle/derivedTitle add one from q.asOf
@@ -1845,12 +2058,7 @@ function MarketScanView({
                     className={cn(
                       "px-2.5 py-1.5",
                       c.align === "right" && "text-right",
-                      c.cellClass?.(q),
-                      // Mirror the header: pin Score to the right edge with the same opaque base
-                      // (rows have no base bg of their own, only a hover tint). The row's hover
-                      // highlight is re-created as an opaque composite via group-hover inside
-                      // SCAN_PINNED_RIGHT_CLASS so the pinned cell tracks its row.
-                      pinned && SCAN_PINNED_RIGHT_CLASS
+                      c.cellClass?.(q)
                     )}
                   >
                     {c.id === "symbol" ? (
@@ -1896,12 +2104,12 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Congressional trades"
+          title="Congressional Trades"
           subtitle={ws?.congress ? `${ws.congress.recordCount} on file · ${ws.congress.sources.join("+") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
           icon={<Landmark size={16} />}
         />
         {congress.length === 0 ? (
-          <EmptyState icon={<Landmark size={20} />} title="No disclosures cached yet" hint="The connector refreshes daily in the background; check back after the next refresh." />
+          <EmptyState icon={<Landmark size={20} />} title="No Disclosures Cached Yet" hint="The connector refreshes daily in the background; check back after the next refresh." />
         ) : (
           <div className="max-h-72 overflow-auto p-2">
             {congress.map((t, i) => (
@@ -1918,12 +2126,12 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
 
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Insider (Form 4) activity"
+          title="Insider (Form 4) Activity"
           subtitle={ws?.insider ? `${ws.insider.recordCount} on file · SEC EDGAR · ${freshness(ws.insider.fetchedAt)}` : "SEC EDGAR — open-market buys/sells only"}
           icon={<Shield size={16} />}
         />
         {insider.length === 0 ? (
-          <EmptyState icon={<Shield size={20} />} title="No insider filings cached yet" hint="Open-market Form 4 buys/sells accumulate here as they're filed." />
+          <EmptyState icon={<Shield size={20} />} title="No Insider Filings Cached Yet" hint="Open-market Form 4 buys/sells accumulate here as they're filed." />
         ) : (
           <div className="max-h-72 overflow-auto p-2">
             {insider.map((f, i) => {
@@ -2006,14 +2214,14 @@ function PerformanceView({
       </Card>
 
       <Card>
-        <PanelHeader title="What's working — by thesis" subtitle="Realized P&L grouped by trade thesis (the learning loop)" icon={<BrainCircuit size={16} />} />
+        <PanelHeader title="What's Working — By Thesis" subtitle="Realized P&L grouped by trade thesis (the learning loop)" icon={<BrainCircuit size={16} />} />
         <div className="p-4 pt-3">
           <ScorecardBars data={thesis} />
         </div>
       </Card>
 
       <Card>
-        <PanelHeader title="By market regime" subtitle="Realized P&L grouped by entry regime" icon={<Gauge size={16} />} />
+        <PanelHeader title="By Market Regime" subtitle="Realized P&L grouped by entry regime" icon={<Gauge size={16} />} />
         <div className="p-4 pt-3">
           <ScorecardBars data={regime} />
         </div>
@@ -2042,7 +2250,7 @@ function TaxView({
     return (
       <Card>
         <PanelHeader title="Tax" icon={<Landmark size={16} />} />
-        <EmptyState icon={<Landmark size={20} />} title="No tax data yet" hint="Select an account and run the strategy; realized gains and lots appear here." />
+        <EmptyState icon={<Landmark size={20} />} title="No Tax Data Yet" hint="Select an account and run the strategy; realized gains and lots appear here." />
       </Card>
     );
   }
@@ -2064,7 +2272,7 @@ function TaxView({
       </Card>
 
       <Card>
-        <PanelHeader title="Wash-sale lockout" subtitle="Rebuying these is blocked 30 days after a loss sale" icon={<Shield size={16} />} />
+        <PanelHeader title="Wash-Sale Lockout" subtitle="Rebuying these is blocked 30 days after a loss sale" icon={<Shield size={16} />} />
         <div className="space-y-3 p-4 pt-3">
           {tax.lockedSymbols.length === 0 ? (
             <p className="text-[13px] text-faint">No symbols are currently locked out.</p>
@@ -2092,7 +2300,7 @@ function TaxView({
       </Card>
 
       <Card>
-        <PanelHeader title="Tax-loss harvest candidates" subtitle="Unrealized losers that could offset realized gains" icon={<Percent size={16} />} />
+        <PanelHeader title="Tax-Loss Harvest Candidates" subtitle="Unrealized losers that could offset realized gains" icon={<Percent size={16} />} />
         <div className="p-4 pt-3">
           {tax.harvestCandidates.length === 0 ? (
             <p className="text-[13px] text-faint">No harvestable losses right now.</p>
@@ -2113,10 +2321,10 @@ function TaxView({
       </Card>
 
       <Card className="lg:col-span-2">
-        <PanelHeader title="Holding period — days to long-term" subtitle="Crossing 1 year flips gains from ordinary to long-term rates" icon={<Hourglass size={16} />} />
+        <PanelHeader title="Holding Period — Days To Long-Term" subtitle="Crossing 1 year flips gains from ordinary to long-term rates" icon={<Hourglass size={16} />} />
         <div className="min-h-0 overflow-auto p-2">
           {tax.openLots.length === 0 ? (
-            <EmptyState icon={<Hourglass size={18} />} title="No open lots" />
+            <EmptyState icon={<Hourglass size={18} />} title="No Open Lots" />
           ) : (
             <table className="w-full text-[13px]">
               <thead>
@@ -2163,6 +2371,7 @@ function StrategyView({
   policy,
   updatePolicy,
   onEdit,
+  onOpenFlow,
   activateProfile,
   newProfileName,
   setNewProfileName,
@@ -2177,6 +2386,7 @@ function StrategyView({
   policy: TradingPolicy;
   updatePolicy: (patch: PolicyPatch) => void;
   onEdit: () => void;
+  onOpenFlow: () => void;
   activateProfile: (id: string) => void;
   newProfileName: string;
   setNewProfileName: (v: string) => void;
@@ -2191,10 +2401,19 @@ function StrategyView({
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
         <PanelHeader
-          title="Active strategy"
-          subtitle={policy.strategyAuthority === "decide" ? "Autonomous — auto-executes" : "Propose — you approve"}
+          title="Active Strategy"
+          subtitle={policy.strategyAuthority === "decide" ? "Autonomous Mode — auto-executes while running" : "Propose Mode — you approve each order"}
           icon={<BrainCircuit size={16} />}
-          actions={<Button size="sm" variant="ghost" onClick={onEdit}><SettingsIcon size={14} /> Edit in Studio</Button>}
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" onClick={onOpenFlow} title="Open the strategy pipeline visualizer.">
+                <Network size={14} /> Flow
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onEdit} title="Open Strategy Studio to edit the prompt, scoring weights, and Green/Red Team models.">
+                <SettingsIcon size={14} /> Edit in Studio
+              </Button>
+            </div>
+          }
         />
         <div className="grid gap-3 p-4 pt-3 sm:grid-cols-2">
           <div>
@@ -2234,7 +2453,7 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="Key parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
+        <PanelHeader title="Key Parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 text-sm">
           <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v })} onCommitRel={(v) => updatePolicy({ maxOrderPctOfNav: v })} defaultMode="rel" />
           <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v })} onCommitRel={(v) => updatePolicy({ maxDailyPctOfNav: v })} defaultMode="abs" />
@@ -2251,7 +2470,7 @@ function StrategyView({
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
              </div>
-             <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
+             <Field label="Sector Caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
              </Field>
              <div className="space-y-1 sm:col-span-2">
@@ -2291,7 +2510,7 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="LLM strategy review" subtitle="Advisory — review past performance & suggest tuning" icon={<Sparkles size={16} />} actions={<Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}</Button>} />
+        <PanelHeader title="LLM Strategy Review" subtitle="Advisory — review past performance & suggest tuning" icon={<Sparkles size={16} />} actions={<Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}</Button>} />
         <div className="p-4 pt-3">
           {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           {strategyTuning ? <TuningCard proposal={strategyTuning} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
@@ -2452,7 +2671,7 @@ function readableActivityTag(tag: string): string {
 function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
   const feed = snapshot.unifiedFeed ?? [];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No activity yet" />;
+  if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Activity Yet" />;
   return (
     <div className="space-y-2">
       {feed.slice(0, 50).map((group) => {
@@ -2539,7 +2758,7 @@ function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
         </div>
       )}
       {runs.length === 0 ? (
-        <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />
+        <EmptyState icon={<Zap size={18} />} title="No Strategy Runs Yet" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
@@ -2582,7 +2801,7 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
         <Chip tone={configured ? "up" : "warn"}>{configured ? "Webhook configured" : "Webhook not configured"}</Chip>
       </div>
       {items.length === 0 ? (
-        <EmptyState title="No notification attempts recorded" />
+        <EmptyState title="No Notification Attempts Recorded" />
       ) : (
         items.slice(0, 20).map((n) => {
           const display = formatNotificationDisplay(n, meta);
@@ -2601,7 +2820,7 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
   const items = snapshot.auditFeed ?? [];
-  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No audit events yet" hint="Policy changes, order decisions, and system events appear here." />;
+  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Audit Events Yet" hint="Policy changes, order decisions, and system events appear here." />;
   return (
     <div className="space-y-1.5">
       {items.slice(0, 100).map((item) => (
@@ -2648,7 +2867,7 @@ function StrategyStudio({
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-semibold text-fg">Strategy prompt</h4>
+          <h4 className="text-sm font-semibold text-fg">Strategy Prompt</h4>
           <Button size="sm" variant="ghost" onClick={resetPrompt}><RotateCcw size={13} /> Reset</Button>
         </div>
         <textarea
@@ -2661,7 +2880,48 @@ function StrategyStudio({
 
       <div className="space-y-4">
         <div>
-          <h4 className="mb-2 text-sm font-semibold text-fg">Scoring weights</h4>
+          <h4 className="mb-2 text-sm font-semibold text-fg" title="Choose which LLM proposes trades and which LLM critiques them before approval. API keys still live in Settings -> Connections.">Green/Red Team Models</h4>
+          <div className="grid gap-3">
+            <Field label="Green Team Model" hint="Primary proposal generator. OpenAI models use your OpenAI key; grok-* models use your xAI key from Settings -> Connections.">
+              <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
+                <optgroup label="OpenAI">
+                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
+                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
+                </optgroup>
+                <optgroup label="xAI (Grok) — requires xAI key in Connections">
+                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
+                  <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
+                </optgroup>
+              </select>
+            </Field>
+            <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
+              <select className={inputClass} value={policy.redTeamLlmModel ?? ""} onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}>
+                <option value="">Same as Green Team model</option>
+                <optgroup label="OpenAI">
+                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
+                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
+                </optgroup>
+                <optgroup label="xAI (Grok) — requires xAI key in Connections">
+                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
+                  <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
+                </optgroup>
+              </select>
+            </Field>
+            <Field label="Reasoning Effort" hint="For gpt-5 / o-series reasoning models: higher effort = deeper analysis, more tokens, higher cost & latency. Other model families use their provider defaults.">
+              <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
+                <option value="low">Low — fastest & cheapest</option>
+                <option value="medium">Medium — balanced (recommended)</option>
+                <option value="high">High — deepest analysis, priciest</option>
+              </select>
+            </Field>
+          </div>
+        </div>
+        <div>
+          <h4 className="mb-2 text-sm font-semibold text-fg">Scoring Weights</h4>
           <ScoringWeights weights={policy.scoringWeights} onCommit={(w) => updatePolicy({ scoringWeights: w })} />
         </div>
       </div>
@@ -2669,7 +2929,7 @@ function StrategyStudio({
       <div className="lg:col-span-2">
         <div className="mb-2 flex items-center justify-between">
           <div>
-            <h4 className="text-sm font-semibold text-fg">LLM strategy review</h4>
+            <h4 className="text-sm font-semibold text-fg">LLM Strategy Review</h4>
             <p className="text-xs text-faint">Reviews performance, scan context, macro & current prompt. Advisory — apply is manual.</p>
           </div>
           <Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}</Button>
@@ -2704,9 +2964,13 @@ function SettingsContent({
   updatePolicy,
   tickerLogoDisplay,
   setTickerLogoDisplay,
+  compactExecutionBanner,
+  setCompactExecutionBanner,
   openAccounts,
+  openStrategyStudio,
   load,
-  onRequestDecideConfirm
+  onRequestDecideConfirm,
+  onRequestSystemToggle
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -2717,11 +2981,15 @@ function SettingsContent({
   updatePolicy: (patch: PolicyPatch) => void;
   tickerLogoDisplay: TickerLogoDisplay;
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
+  compactExecutionBanner: boolean;
+  setCompactExecutionBanner: (next: boolean) => void;
   openAccounts: () => void;
+  openStrategyStudio: () => void;
   load: () => Promise<void>;
   onRequestDecideConfirm: () => void;
+  onRequestSystemToggle: () => void;
 }) {
-  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications" | "data";
+  type Section = "operate" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
   const [section, setSection] = useState<Section>("operate");
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
@@ -2732,9 +3000,17 @@ function SettingsContent({
     if (section !== "data") return;
     let cancelled = false;
     void fetch("/api/consent")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error("Consent state unavailable.");
+        return r.json();
+      })
       .then((d) => { if (!cancelled) setPoolConsent(Boolean(d?.accepted)); })
-      .catch(() => { /* leave null — show toggle in indeterminate/off state */ });
+      .catch(() => {
+        if (!cancelled) {
+          setPoolConsent(null);
+          toast.error("Consent state could not be loaded. Sharing controls are locked until this is resolved.");
+        }
+      });
     return () => { cancelled = true; };
   }, [section]);
 
@@ -2742,14 +3018,15 @@ function SettingsContent({
     if (poolConsentLoading) return;
     setPoolConsentLoading(true);
     try {
-      await fetch("/api/consent", {
+      const response = await fetch("/api/consent", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accepted })
       });
+      if (!response.ok) throw new Error("Consent could not be saved.");
       setPoolConsent(accepted);
     } catch {
-      /* best-effort — keep local state unchanged on failure */
+      toast.error("Consent could not be saved. Sharing state was not changed.");
     } finally {
       setPoolConsentLoading(false);
     }
@@ -2861,8 +3138,8 @@ function SettingsContent({
             onChange={(v) => setSection(v as Section)}
             tabs={[
               { id: "operate", label: "Operate" },
+              { id: "connections", label: "Connections" },
               { id: "display", label: "Display" },
-              { id: "keys", label: "API Keys" },
               { id: "tax", label: "Tax" },
               { id: "tuning", label: "Tuning" },
               { id: "notifications", label: "Notifications" },
@@ -2889,7 +3166,7 @@ function SettingsContent({
               {executionState.clarification}
             </p>
           </div>
-          <Field label="Base indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
+          <Field label="Base Indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
             <div className="grid gap-2 sm:grid-cols-3">
               {SUPPORTED_INDEX_UNIVERSES.map((index) => {
                 const selected = policy.includedIndices.includes(index);
@@ -2971,7 +3248,7 @@ function SettingsContent({
               </div>
             </Field>
           </div>
-          <Field label="Strategy authority" className="sm:col-span-2">
+          <Field label="Approval Mode" hint="Propose Mode stages orders for approval. Autonomous Mode can execute while the system is running." className="sm:col-span-2">
             <select
               className={inputClass}
               value={policy.strategyAuthority}
@@ -2984,32 +3261,11 @@ function SettingsContent({
                 }
               }}
             >
-              <option value="propose">Propose — you approve each order</option>
-              <option value="decide">Autonomous — auto-executes approved orders</option>
+              <option value="propose">Propose Mode — you approve each order</option>
+              <option value="decide">Autonomous Mode — auto-executes while running</option>
             </select>
           </Field>
-          <Field label="AI model" hint="Which model powers the agent. OpenAI models use your OpenAI key; grok-* models use your xAI (Grok) key from API Keys settings." className="sm:col-span-2">
-            <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
-              <optgroup label="OpenAI">
-                <option value="gpt-5.4-nano">gpt-5.4-nano — cheapest, lightest reasoning</option>
-                <option value="gpt-5.4-mini">gpt-5.4-mini — balanced (recommended)</option>
-                <option value="gpt-5.5">gpt-5.5 — strongest, most expensive</option>
-                <option value="gpt-4.1-mini">gpt-4.1-mini — legacy non-reasoning</option>
-              </optgroup>
-              <optgroup label="xAI (Grok) — requires xAI key in API Keys settings">
-                <option value="grok-4.3">grok-4.3 (xAI)</option>
-                <option value="grok-build-0.1">grok-build-0.1 (xAI)</option>
-              </optgroup>
-            </select>
-          </Field>
-          <Field label="Reasoning effort" hint="For gpt-5 / o-series reasoning models only: higher effort = deeper analysis, more tokens, higher cost & latency. Ignored by non-reasoning models like gpt-4.1-mini." className="sm:col-span-2">
-            <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
-              <option value="low">Low — fastest & cheapest</option>
-              <option value="medium">Medium — balanced (recommended)</option>
-              <option value="high">High — deepest analysis, priciest</option>
-            </select>
-          </Field>
-          <Field label="Holding horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
+          <Field label="Holding Horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
             <select className={inputClass} value={policy.holdingHorizon ?? "swing"} onChange={(e) => updatePolicy({ holdingHorizon: e.target.value as TradingPolicy["holdingHorizon"] })}>
               <option value="intraday">Intraday — day trades</option>
               <option value="swing">Days to weeks — swing trades</option>
@@ -3022,9 +3278,9 @@ function SettingsContent({
               variant={policy.systemState === "active" ? "ghost" : "primary"}
               disabled={policy.systemState !== "active" && Boolean(enableBlockedReason)}
               title={policy.systemState !== "active" ? enableBlockedReason : undefined}
-              onClick={() => updatePolicy({ systemState: policy.systemState === "active" ? "halted" : "active" })}
+              onClick={onRequestSystemToggle}
             >
-              {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
+              {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Stop System" : "Start System"}
             </Button>
             {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no separate paperMode toggle. */}
           </div>
@@ -3034,15 +3290,52 @@ function SettingsContent({
           </div>
         )}
 
+        {section === "connections" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-fg">Strategy Models</div>
+                  <p className="mt-1 text-[13px] text-muted">
+                    Green: <span className="font-medium text-fg">{policy.llmModel ?? "gpt-5.4-mini"}</span>
+                    {" · "}
+                    Red: <span className="font-medium text-fg">{policy.redTeamLlmModel || "Same as Green Team"}</span>
+                    {" · "}
+                    Effort: <span className="font-medium text-fg">{policy.llmReasoningEffort ?? "medium"}</span>
+                  </p>
+                  <p className="mt-1 text-xs text-faint">Edit Green/Red Team behavior in Strategy Studio. Provider keys are saved below.</p>
+                </div>
+                <Button size="sm" variant="ghost" onClick={openStrategyStudio}>
+                  <BrainCircuit size={13} /> Open Strategy Studio
+                </Button>
+              </div>
+            </div>
+            <ApiKeysSection />
+          </div>
+        )}
+
         {section === "display" && (
           <div className="space-y-3">
-            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium text-fg">Compact mode banner</span>
+                <span className="block text-xs text-faint">
+                  Keeps the Test, Paper, or Brokerage banner visible with less vertical space.
+                </span>
+              </span>
+              <Switch
+                checked={compactExecutionBanner}
+                onChange={setCompactExecutionBanner}
+                label="Compact mode banner"
+              />
+            </label>
+            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more. Option 1 uses a tile; Option 2 uses the transparent logo style.">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}
                 onChange={setTickerLogoDisplay}
                 options={[
-                  { value: "tile", label: "Small Tile" },
-                  { value: "transparent", label: "Medium" },
+                  { value: "tile", label: "Option 1" },
+                  { value: "transparent", label: "Option 2" },
                   { value: "off", label: "Off" }
                 ]}
               />
@@ -3059,10 +3352,6 @@ function SettingsContent({
             )}
           </div>
         )}
-
-        {section === "keys" && <ApiKeysSection />}
-
-
 
       {section === "tax" && (
         <div className="space-y-3">
@@ -3252,7 +3541,7 @@ function SettingsContent({
 
       {section === "notifications" && (
         <div className="space-y-3">
-          <Field label="Notifications webhook">
+            <Field label="Notifications Webhook">
             <input className={inputClass} value={policy.notificationSettings.webhookUrl ?? ""} onChange={(e) => updatePolicy({ notificationSettings: { ...policy.notificationSettings, webhookUrl: e.target.value } })} placeholder="https://…" />
           </Field>
           <div>
@@ -3448,6 +3737,34 @@ function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price
   return "—";
 }
 
+function relativeAge(iso?: string): string {
+  if (!iso) return "";
+  const ageMs = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ageMs)) return "";
+  const mins = Math.max(0, Math.round(ageMs / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m old`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h old`;
+  return `${Math.round(hours / 24)}d old`;
+}
+
+function proposalAgeTone(iso?: string): { label: string; tone: "neutral" | "warn" | "down" } | null {
+  if (!iso) return null;
+  const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
+  if (!Number.isFinite(hours)) return null;
+  if (hours >= 24) return { label: "Stale", tone: "down" };
+  if (hours >= 1) return { label: "Aging", tone: "warn" };
+  return { label: "Fresh", tone: "neutral" };
+}
+
+function proposalTimeLabel(iso?: string): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+  return `${date.toLocaleString()} · ${relativeAge(iso)}`;
+}
+
 function compare(left: unknown, right: unknown, dir: SortDir): number {
   const order = dir === "asc" ? 1 : -1;
   if (typeof left === "string" || typeof right === "string") return String(left ?? "").localeCompare(String(right ?? "")) * order;
@@ -3568,7 +3885,7 @@ function ApiKeysSection() {
     setLoading(true);
     try {
       const res = await fetch("/api/keys", { cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to load API key status");
       const body = (await res.json()) as { keys?: ApiKeyStatus[] };
       setKeys(body.keys ?? []);
     } catch (error) {
@@ -3592,7 +3909,7 @@ function ApiKeysSection() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ userId: "local", service: row.service, apiKey: value, label: row.label })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, `Failed to save ${row.label} key`);
       setDrafts((current) => ({ ...current, [row.service]: "" }));
       toast.success(`${row.label} key saved.`);
       await loadKeys();
@@ -3607,7 +3924,7 @@ function ApiKeysSection() {
     setBusyService(row.service);
     try {
       const res = await fetch(`/api/keys?service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, `Failed to clear ${row.label} key`);
       toast.success(`${row.label} saved key cleared.`);
       await loadKeys();
     } catch (error) {
@@ -3620,7 +3937,7 @@ function ApiKeysSection() {
   const requiredUnset = keys.some((row) => row.required && row.source === "none");
 
   if (loading) {
-    return <EmptyState title="Loading API key status" icon={<RefreshCw size={18} className="animate-spin" />} />;
+    return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={18} className="animate-spin" />} />;
   }
 
   return (
@@ -3700,7 +4017,6 @@ function IntegrationsSection({
   const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
-  const [mcpBusy, setMcpBusy] = useState(false);
 
   const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
     if (acc.broker === "test") {
@@ -3729,7 +4045,6 @@ function IntegrationsSection({
   };
 
   const refreshMcpHealth = useCallback(async () => {
-    setMcpBusy(true);
     try {
       const res = await fetch("/api/broker/mcp/health", { cache: "no-store" });
       const health = (await res.json()) as RobinhoodMcpHealth;
@@ -3745,9 +4060,6 @@ function IntegrationsSection({
         checkedAt: new Date().toISOString(),
         error: message
       });
-      toast.error(message);
-    } finally {
-      setMcpBusy(false);
     }
   }, []);
 
@@ -3776,7 +4088,7 @@ function IntegrationsSection({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ broker: "robinhood" })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to sync Robinhood account");
       toast.success("Robinhood agentic account synced.");
       await onSaved();
     } catch (e) {
@@ -3806,7 +4118,7 @@ function IntegrationsSection({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(editing)
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to save account");
       toast.success("Account saved.");
       setEditing(null);
       await onSaved();
@@ -3822,7 +4134,7 @@ function IntegrationsSection({
     setBusy(true);
     try {
       const res = await fetch(`/api/connected-accounts/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to remove account");
       toast.success("Account removed.");
       await onSaved();
     } catch (e) {
@@ -3919,16 +4231,8 @@ function IntegrationsSection({
   // The app's active account: prefer the explicitly-selected one, else the flagged-active row (mirrors
   // activeConnectedAccountFor). Used to mark which row is ACTIVE vs merely Connected.
   const activeId = policy.connectedAccountId ?? accounts?.find((a) => a.isActive)?.id;
-  // Only surface the Robinhood MCP status card when Robinhood is actually in play — configured in env,
-  // authenticated, or already connected as an account. Otherwise it's noise (a disconnected card by default).
-  const showRobinhoodCard = Boolean(
-    mcpHealth?.configured || mcpHealth?.authenticated || accounts?.some((a) => a.broker === "robinhood")
-  );
-
   return (
     <div className="space-y-3">
-      {showRobinhoodCard && <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />}
-
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted">
           Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
@@ -4015,73 +4319,6 @@ function IntegrationsSection({
               </div>
             );
           })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RobinhoodMcpStatusCard({
-  health,
-  busy,
-  onRefresh
-}: {
-  health: RobinhoodMcpHealth | null;
-  busy: boolean;
-  onRefresh: () => void;
-}) {
-  const tone: "up" | "down" | "warn" | "neutral" = !health
-    ? "neutral"
-    : health.ok && health.authenticated
-      ? "up"
-      : "down";
-  const label = !health
-    ? "Checking"
-    : health.ok && health.authenticated
-      ? "Connected"
-      : health.authenticated
-        ? "Tool check failed"
-        : "Not connected";
-  const detail = health?.error ?? health?.warning;
-  const visibleTools = health?.tools?.slice(0, 8) ?? [];
-
-  return (
-    <div className="rounded-lg border border-line bg-surface-2/45 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Wallet size={14} className="text-muted" />
-            <span className="font-semibold text-fg">Robinhood MCP</span>
-            <Chip tone={tone}>{label}</Chip>
-            {health?.transport && <Chip tone="info">{health.transport}</Chip>}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
-            {health?.url && <span className="max-w-full truncate font-mono">{health.url}</span>}
-            {health?.protocolVersion && <span className="font-mono">MCP {health.protocolVersion}</span>}
-            {health?.checkedAt && <span>Checked {new Date(health.checkedAt).toLocaleTimeString()}</span>}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
-            <RefreshCw size={13} className={cn(busy && "animate-spin")} /> Refresh
-          </Button>
-          {health && !health.authenticated && (
-            <Button size="sm" variant="accentSoft" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
-              <ExternalLink size={13} /> Connect OAuth
-            </Button>
-          )}
-        </div>
-      </div>
-      {detail && (
-        <p className={cn("mt-2 text-[13px]", tone === "down" ? "text-down" : "text-muted")}>{detail}</p>
-      )}
-      {visibleTools.length > 0 && (
-        <div className="mt-3 rounded-md border border-line/70 bg-bg/35 px-3 py-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">Available tools</div>
-          <div className="mt-1 text-[12px] text-muted">
-            {visibleTools.join(", ")}
-            {(health?.tools.length ?? 0) > visibleTools.length && `, +${(health?.tools.length ?? 0) - visibleTools.length} more`}
-          </div>
         </div>
       )}
     </div>

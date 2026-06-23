@@ -30,6 +30,7 @@ export interface AuditEvent {
 
 export interface StrategyDecision {
   runId: string;
+  createdAt?: string;
   status: "completed" | "failed";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
@@ -54,7 +55,7 @@ export interface DashboardSnapshot {
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
-  dailyStats: { orderCount: number; notional: number };
+  dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };

@@ -87,6 +87,27 @@ Bootstrap / repair the integration preview and agent previews idempotently with
 `trading-beta.jays.services` is the only public beta/integration hostname for
 the 4001 main preview. Do not add or document duplicate beta hostnames.
 
+### Preview freshness policy
+
+`trading-beta.jays.services` is the integration source of truth. Agent preview
+sites (`codex.jays.services`, `claude.jays.services`, and
+`antigravity.jays.services`) are useful for in-progress branch review, but they
+must not silently drift behind beta after work lands.
+
+- After a branch lands or beta is updated, the owning agent should pull/sync its
+  own worktree from `origin/main` and restart only its own PM2 preview when the
+  worktree is clean.
+- If the worktree is dirty, has unmerged local work, or cannot safely sync, leave
+  the preview as-is and record the stale state plus the reason in `STATUS.md` or
+  the relevant rollout note. Do not overwrite another agent's local changes to
+  make a preview look current.
+- When demonstrating app behavior to the user, say which hostname/worktree is
+  being edited or viewed. Use beta for integrated behavior, and an agent preview
+  only for that agent's active branch.
+- A stale agent preview is a coordination issue, not a deployment target. Fix it
+  by landing/syncing/restarting the correct worktree, not by hand-copying build
+  output between worktrees.
+
 ### How each agent works
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
   `~/apps/trading-codex`, Antigravity → `~/apps/trading-antigravity`). Edit only there, on
