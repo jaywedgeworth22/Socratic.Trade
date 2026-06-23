@@ -208,18 +208,18 @@ function executionBanner(state: ExecutionState): { className: string; text: stri
   if (state.mode === "broker/live") {
     return {
       className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 animate-pulse",
-      text: `BROKERAGE · LIVE CAPITAL — approved orders execute against ${state.accountLabel ?? "your broker"} with real money.`
+      text: `Brokerage live. Approved orders can reach real money in ${state.accountLabel ?? "your broker account"}.`
     };
   }
   if (state.mode === "broker/paper") {
     return {
       className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
-      text: `PAPER — broker sandbox (${state.accountLabel ?? "Alpaca Paper"}). Orders route to the broker's paper endpoint; no real capital at risk.`
+      text: `Paper. Orders route to ${state.accountLabel ?? "a broker sandbox"}; no real money is at risk.`
     };
   }
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
-    text: "TEST — local simulation with simulated fills. No broker orders; no real capital at risk. A connected paper account (e.g. Alpaca Paper Trading) is likely more realistic than this local simulation."
+    text: "Test. Local simulated fills only; no broker orders or real money. Broker paper is more realistic."
   };
 }
 
