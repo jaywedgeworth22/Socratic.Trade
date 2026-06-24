@@ -66,16 +66,18 @@ export function getCongressAnalyticsOverlay(symbols: string[]): Record<string, C
 }
 
 /**
- * Build a member → 0–100 quality score from the leaderboard, rank-normalized over whatever numeric
- * performance field App A exposes. The exact field name isn't fixed on App A yet, so this is tolerant:
- * it picks the first finite numeric performance-ish field and rank-normalizes. Empty (no member boost)
- * until App A's member-leaderboard carries a performance metric.
+ * Build a member → 0–100 weight from the leaderboard, rank-normalized over the chosen activity metric.
+ * App A's member-leaderboard exposes ACTIVITY numerics (estVolumeUsd / tradeCount / netSentiment), not a
+ * realized-performance/skill metric — so this is a prominence/conviction proxy (big dollar traders rank
+ * high), NOT a track record. Upgrade to true skill-weighting when App A exposes per-member performance
+ * (or App B aggregates /api/analytics/performance/:txId). Returns empty until filer_id resolves on App A
+ * (member-leaderboard is empty while members are unresolved).
  */
 export function buildMemberScores(members: AppAMemberRow[]): Map<string, number> {
-  const PERF_FIELDS = ["medianReturnPct", "avgReturnPct", "returnPct", "winRate", "performance", "score", "return"];
+  const PERF_FIELDS = ["estVolumeUsd", "tradeCount"]; // App A's real per-member magnitude fields
   const scored: Array<{ name: string; perf: number }> = [];
   for (const m of members) {
-    const name = String(m.memberName || m.name || "").trim().toLowerCase();
+    const name = String(m.fullName || m.memberName || m.name || "").trim().toLowerCase();
     if (!name) continue;
     let perf: number | undefined;
     for (const f of PERF_FIELDS) {
@@ -148,7 +150,7 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     const topMembers = Array.isArray(c.topMembers) ? c.topMembers : [];
     let best = 0;
     for (const m of topMembers) {
-      const name = String((m?.memberName || m?.name) ?? "").trim().toLowerCase();
+      const name = String((m?.fullName || m?.memberName || m?.name) ?? "").trim().toLowerCase();
       const s = name ? memberScores.get(name) : undefined;
       if (typeof s === "number" && s > best) best = s;
     }

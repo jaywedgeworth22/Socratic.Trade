@@ -65,6 +65,17 @@ sourced from its cached web-sources and built by `buildInsiderImport()` / `build
 These ride in the first POST of the nightly batch (with `spx`). Read back via App A's
 `GET /api/market/insider/{T}` and `GET /api/market/short-volume/{T}`.
 
+**Round-3 additions (2026-06-24):** the **after-scan hook** (`shareScanRefs`) now also forwards
+`fundamentals[]` + `analyst[]` for the scanned candidates — built by `marketQuoteToFundamentals` /
+`marketQuoteToAnalyst` from the `MarketQuote` data the scan already fetched (no extra FMP calls), so App A
+can skip its own FMP fundamentals/analyst pulls. Shapes match App A's PR #46 import slots
+(`fundamentals: {ticker,date,peRatio,eps,beta,dividendYield,week52High,week52Low,fcfYield,debtToEquity,epsGrowth}`;
+`analyst: {ticker,date,rating,strongBuy,buy,hold,sell,strongSell}` — App B has no price targets, so those
+are omitted). Sent in the same throttled scan-hook POST as `refs`, but **gated behind
+`CONGRESS_SHARE_FUNDAMENTALS_ENABLED` (default off)** and **held until App A confirms its #46 migration is
+applied** — App A's tables don't exist until then, and pushing those rows early *errors them* on App A
+(the rest of the import is unaffected). `refs` keep flowing regardless; flip the flag on after App A pings.
+
 ## Safety / gating
 
 - **Default OFF.** Automatic forwarding (both hooks) runs only when
