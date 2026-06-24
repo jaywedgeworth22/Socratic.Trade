@@ -12,6 +12,9 @@
     "build:secrets": "node scripts/infisical-run.mjs -- npm run build",
     "start": "next start",
     "start:secrets": "node scripts/infisical-run.mjs -- npm run start",
+    "dev:gcp": "node scripts/gcp-secrets-run.mjs -- npm run dev",
+    "build:gcp": "node scripts/gcp-secrets-run.mjs -- npm run build",
+    "start:gcp": "node scripts/gcp-secrets-run.mjs -- npm run start",
     "lint": "next lint",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -22,6 +25,7 @@
     "litestream:dry-run": "litestream databases -config litestream.yml"
   },
   "dependencies": {
+    "@google-cloud/secret-manager": "^6.2.0",
     "@alpacahq/alpaca-trade-api": "^3.1.3",
     "@langfuse/otel": "^5.6.0",
     "@langfuse/tracing": "^5.6.0",

@@ -110,7 +110,10 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
   apify: "APIFY_API_TOKEN",
   fintechstudios: "FINTECH_STUDIOS_API_KEY",
-  powerintell: "FINTECH_STUDIOS_API_KEY"
+  powerintell: "FINTECH_STUDIOS_API_KEY",
+  tiingo: "TIINGO_API_KEY",
+  intrinio: "INTRINIO_API_KEY",
+  twelvedata: "TWELVEDATA_API_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -139,7 +142,12 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   voyage_api_key: "voyage",
   alpaca_paper_api_key: "alpaca_paper_api_key",
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
-  apify_api_token: "apify"
+  apify_api_token: "apify",
+  tiingo_api_key: "tiingo",
+  intrinio_api_key: "intrinio",
+  twelve_data: "twelvedata",
+  twelve_data_api_key: "twelvedata",
+  twelvedata_api_key: "twelvedata"
 };
 
 function keyRowToApiKey(row: {
@@ -266,7 +274,10 @@ const API_KEY_TIER: Record<string, CredTier> = {
   apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
   pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
   voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
-  sec_edgar_user_agent: "shared-operator-infra" // a UA string SEC requires, not a secret; one per app
+  sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
+  tiingo: "shared-operator-infra",
+  intrinio: "shared-operator-infra",
+  twelvedata: "shared-operator-infra"
 };
 
 export function credTierForService(service: string): CredTier {
