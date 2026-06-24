@@ -37,6 +37,30 @@ pm2 save
   by the integration worktree. See
   `docs/rollouts/2026-06-22-deploy-workflow-activated.md` for the why.
 
+## Preview lane sync
+
+`.github/workflows/sync-previews.yml` runs on the same self-hosted Mac after
+every push to `main` and calls `scripts/sync-preview-lanes.sh`.
+
+The sync updates only local preview lanes:
+
+- `trading-beta.jays.services` / PM2 `trading-main` / port `4001`
+- `claude.jays.services` / PM2 `trading-claude` / port `4100`
+- `codex.jays.services` / PM2 `trading-codex` / port `4101`
+- `antigravity.jays.services` / PM2 `trading-antigravity` / port `4102`
+
+Production remains owned by the Deploy workflow. Preview sync skips dirty
+worktrees, unexpected branches, and merge conflicts. If a lane advances but
+fails local `/api/health` or root-page checks, the script rolls that lane back
+to its previous commit and restarts the PM2 app.
+
+Optional PM2 polling fallback:
+
+```bash
+pm2 start ~/Code/Agentic\ Trading/scripts/sync-watchdog.sh --name trading-sync-watchdog
+pm2 save
+```
+
 ## Runner
 
 A GitHub Actions self-hosted runner registered on the Mac:
