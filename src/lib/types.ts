@@ -178,6 +178,18 @@ export interface TuningSettings {
    * arbitrarily bad print in a fast tape. Default 15 bps.
    */
   marketableLimitBufferBps?: number;
+  /**
+   * OPTIONAL negative-expectancy skip gate (default OFF). When true, a deterministic opening
+   * proposal is SKIPPED entirely (not opened) if its thesis is PROVEN (≥ minClosedLotsForWeightShift
+   * closed lots) AND its shrunk realized avg edge — already net of the paper cost model — is at or
+   * below `skipNegativeExpectancyEdgePct`. Off by default on purpose: the normal sizer DOWNSIZES
+   * such theses to the exploratory floor rather than skipping, which keeps gathering data; this gate
+   * is the more conservative "don't open a proven money-loser" stance for operators who want it.
+   * UNPROVEN theses are never skipped by this gate (their floor sizing is intentional exploration).
+   */
+  skipNegativeExpectancy?: boolean;
+  /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
+  skipNegativeExpectancyEdgePct?: number;
 }
 
 export interface RiskRules {
