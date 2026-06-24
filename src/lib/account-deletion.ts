@@ -26,6 +26,7 @@ const DELETE_TABLES_BY_USER_ID = [
   "user_memory",
   "learned_context_pending",
   "synthetic_trailing_stops",
+  "broker_protective_stops",
   "audit_events"
 ] as const;
 

@@ -2547,6 +2547,7 @@ function PerformanceView({
   const unrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
   const winRate = mode === "paper" ? perf?.paperWinRate ?? 0 : perf?.liveWinRate ?? 0;
   const avgReturn = mode === "paper" ? perf?.paperAverageReturnPct ?? 0 : perf?.liveAverageReturnPct ?? 0;
+  const benchmark = perf?.benchmark;
   const thesis = (snapshot.thesisScorecard ?? []).map((t) => ({ label: t.thesisTag, pnl: t.totalPnl, winRate: t.winRate, trades: t.trades }));
   const regime = (snapshot.regimeScorecard ?? []).map((r) => ({ label: r.regime, pnl: r.totalPnl, winRate: r.winRate, trades: r.trades }));
 
@@ -2563,6 +2564,17 @@ function PerformanceView({
         <div className="h-64 p-4">
           <EquityCurve data={curve} />
         </div>
+        {benchmark ? (
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-4 text-xs">
+            <span className={`font-medium ${benchmark.excessReturnPct >= 0 ? "text-up" : "text-down"}`}>
+              {benchmark.excessReturnPct >= 0 ? "+" : ""}{benchmark.excessReturnPct.toFixed(1)}% vs {benchmark.benchmarkSymbol}
+            </span>
+            <span className="text-faint">
+              (you {benchmark.accountReturnPct >= 0 ? "+" : ""}{benchmark.accountReturnPct.toFixed(1)}% · {benchmark.benchmarkSymbol} {benchmark.benchmarkReturnPct >= 0 ? "+" : ""}{benchmark.benchmarkReturnPct.toFixed(1)}%, {benchmark.startDate}→{benchmark.endDate})
+            </span>
+            <span className="text-faint/70" title="Compares equity growth from the first snapshot date. Not adjusted for deposits/withdrawals.">ⓘ</span>
+          </div>
+        ) : null}
       </Card>
 
       <Card>
