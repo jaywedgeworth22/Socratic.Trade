@@ -4,6 +4,11 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-24 — Intrinio / Tiingo / TwelveData + GCP Secret Manager wired
+Three new data enrichment providers integrated into the cascade (Intrinio, Tiingo, TwelveData).
+GCP Secret Manager runner script added. API keys loaded into .env.local.
+Branch: claude/magical-faraday-uce1uy
+
 ## Current State
 
 - App: local-only Next.js agentic trading dashboard with honest
@@ -24,6 +29,8 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-24 (`claude/magical-faraday-uce1uy`): **Intrinio, Tiingo, TwelveData enrichment providers + GCP Secret Manager runner.**
+  Wired three new providers into the cascading enrichment cascade: `IntrinioEnrichmentProvider` (7 parallel calls per symbol: realtime price, company profile, PE/EPS/dividend_yield/52-week range), `TiingoEnrichmentProvider` (IEX quotes + company name + news/sentiment), `TwelveDataEnrichmentProvider` (batch `/quote` call for all symbols with price/volume/sector/industry/PE/EPS/beta/52-week). All three registered in `API_KEY_ENV_MAP`/`API_KEY_SERVICE_ALIASES`/`API_KEY_TIER` as `shared-operator-infra`. Added `scripts/gcp-secrets-run.mjs` mirroring the Infisical runner; `package.json` gains `dev:gcp`/`build:gcp`/`start:gcp` scripts and `@google-cloud/secret-manager ^5.6.0`. Real API keys stored in `.env.local` (git-ignored). Verification: `npx tsc --noEmit` clean, `npm test` 935/936 pass (1 pre-existing `cache-provenance` failure), `npm run build` green. See `docs/rollouts/2026-06-24-intrinio-tiingo-twelvedata-gcp-secrets.md`.
 - 2026-06-24 (`codex/market-data-mcp-evaluation`): **Market-data MCP/provider evaluation.**
   Documented whether MCP should change the app's provider strategy for FMP,
   Alpha Vantage, Twelve Data, Tiingo, Intrinio, EODHD, FinancialData.net,
