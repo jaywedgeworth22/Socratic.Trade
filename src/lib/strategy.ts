@@ -51,6 +51,7 @@ import { allowedSymbolsForPolicy, betaScaledStopPct, evaluateTradeProposal } fro
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { avgReturnCorrelation } from "./correlation";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
@@ -313,10 +314,12 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       debatedProposals.push(proposal);
     }
 
-    const proposals = [
-      ...proactiveProposals,
-      ...debatedProposals
-    ];
+    const proposals = await applyCorrelationClusterGate(
+      [...proactiveProposals, ...debatedProposals],
+      policy,
+      workingPositions,
+      userId
+    );
 
     const results: StrategyResult["proposals"] = [];
     for (const proposal of proposals) {
@@ -722,6 +725,41 @@ export function deterministicBearFilter(
   }
 
   return { kept, vetoed };
+}
+
+/**
+ * OPTIONAL correlation cluster gate (policy.maxAvgCorrelation, default off). Returns the proposals to
+ * proceed with, DROPPING any OPENING buy/short whose average daily-return correlation to the current
+ * holdings exceeds the cap — the precise version of what maxPortfolioBeta approximates. Exits and
+ * reductions (sell/cover) always pass; a candidate with too little overlapping bar data is never
+ * rejected (avgReturnCorrelation returns undefined). Async because correlation needs historical bars,
+ * which the synchronous policy gate (evaluateTradeProposal) cannot fetch. Skips are logged + audited.
+ */
+export async function applyCorrelationClusterGate(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  positions: EquityPosition[],
+  userId: string = "local"
+): Promise<TradeProposal[]> {
+  const cap = policy.maxAvgCorrelation;
+  if (cap == null || !(cap > 0) || positions.length === 0) return proposals;
+  const holdings = positions.map((p) => p.symbol);
+  const kept: TradeProposal[] = [];
+  for (const p of proposals) {
+    const isOpening = p.side === "buy" || p.side === "short";
+    if (!isOpening) {
+      kept.push(p);
+      continue;
+    }
+    const corr = await avgReturnCorrelation(p.symbol, holdings, userId);
+    if (corr != null && corr > cap) {
+      console.log(`[Corr] Skipped ${p.symbol} ${p.side}: avg correlation ${corr.toFixed(2)} > cap ${cap}`);
+      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId);
+      continue;
+    }
+    kept.push(p);
+  }
+  return kept;
 }
 
 export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan): TradeProposal {

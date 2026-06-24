@@ -24,6 +24,7 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`feat/correlation-cluster-gate`): **Optional correlation cluster gate (default off).** `policy.maxAvgCorrelation` (0–1) — the precise version of `maxPortfolioBeta`: an OPENING buy/short is SKIPPED before execution when the candidate's avg daily-return correlation (Pearson, ~90 common trading days, via `fetchDailyOHLC` bars) to current holdings exceeds the cap. New `src/lib/correlation.ts` (pure `closesByDate`/`alignedReturns`/`pearson` + async `avgReturnCorrelation`, injectable fetcher) + `applyCorrelationClusterGate` wired into `runStrategyOnce` (async; the sync policy gate can't fetch bars). Exits/reductions always pass; skips when bar data is insufficient (never false-rejects). Policy-route validated + "Max avg correlation" Settings field by the beta cap. Surfaced from the closed PR #89 review; off by default → no behavior change unless enabled. tsc clean, **1006 tests** (+8), build green. Built in `~/apps/trading-corr` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-correlation-cluster-gate.md`.
 - 2026-06-24 (`claude/strategy-flow-live`): **Strategy Flow popup is now live/data-driven.**
   Rewrote `app/ui/strategy-flow.tsx` from a hardcoded decorative React Flow
   diagram into a snapshot-driven pipeline status view — node colors/details

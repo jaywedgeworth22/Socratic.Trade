@@ -388,6 +388,14 @@ export interface TradingPolicy {
    */
   maxPortfolioBeta?: number;
   /**
+   * OPTIONAL correlation cluster cap (0–1; undefined disables). The precise version of the beta cap:
+   * an OPENING buy/short is SKIPPED when the candidate's average daily-return correlation (over ~90
+   * trading days) to the current holdings exceeds this value — i.e. it would pile onto an
+   * already-correlated cluster the per-symbol/sector/beta caps don't see. Exits/reductions are never
+   * blocked; the gate is skipped (never false-rejects) when there is too little overlapping bar data.
+   */
+  maxAvgCorrelation?: number;
+  /**
    * Max allowed % drift between a proposal's recorded entry anchor (referencePrice) and the current
    * market price, enforced at the approval/execution moment for OPENING market/dollar orders only
    * (limit orders are already protected by the broker's limit). Rejects a stale proposal whose
