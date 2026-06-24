@@ -36,11 +36,13 @@ describe("generateReflectionSummary", () => {
       isActive: true
     });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, paperMode: false, activeBroker: "alpaca" }, userId);
+    // Classic model so this asserts temperature + exact caps (reasoning bounds: test/llm-request.test.ts).
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, paperMode: false, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
     insertFillEvent({
       userId,
       accountNumber,
-      source: "live",
+      source: "paper",
+      executionMode: "broker/paper",
       symbol: "AAPL",
       side: "buy",
       quantity: 1,

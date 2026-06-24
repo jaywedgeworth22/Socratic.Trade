@@ -64,6 +64,210 @@ steps materially change.
   `npm test` 884 pass (95 files, +25 new) · build green. See `docs/congress-trade-share.md` and
   `docs/rollouts/2026-06-22-congress-trade-share.md`. **Next:** owner sets the token + flag in the target
   worktree's `.env.local`, then optionally test via the admin route before enabling the auto hooks.
+- 2026-06-24 (`codex/market-data-mcp-evaluation`): **Market-data MCP/provider evaluation.**
+  Documented whether MCP should change the app's provider strategy for FMP,
+  Alpha Vantage, Twelve Data, Tiingo, Intrinio, EODHD, FinancialData.net,
+  Nasdaq Data Link, Tastytrade, Pyth, Databento, Unusual Whales, Trading
+  Volatility, and a generic Yahoo-backed MCP server. Recommendation: keep
+  direct REST/WebSocket adapters for scheduled scans, scoring, history, cache
+  writes, and execution-adjacent data; use MCP for provider research,
+  field-coverage exploration, trial benchmarking, and optional Strategy
+  Studio-style deep dives only after normalizing outputs through the same
+  source-attributed cache path. Intrinio should be benchmarked during the trial
+  before paying $150/month; Tiingo is the best low-cost direct-adapter next
+  step if the key is active; FinancialData.net/EODHD/Twelve Data are cheaper
+  broad alternatives; Trading Volatility/Unusual Whales are differentiated
+  options-flow overlays, not core price/fundamental replacements. No API keys
+  were recorded. See `docs/data-provider-mcp-evaluation.md` and
+  `docs/rollouts/2026-06-24-market-data-mcp-evaluation.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Current Codex bundle prepared for integration.**
+  Bundled the current Codex preview changes for landing: custom Additional
+  Watchlist ticker validation and error surfacing; expanded index universes and
+  dynamic broad-scan narrowing; user-configurable Market Scan cap/outlier
+  reserve; app-local account deletion lifecycle and account-row visual polish;
+  stopped-system proposal action gating; and related docs/tests. Local
+  verification passed before commit: `npx tsc --noEmit`, `npm test` (107 files /
+  936 tests), `npm run build`, and `git diff --check`. Integration path is
+  `scripts/land.sh` into `main`; beta follows the main integration worktree, and
+  production follows the existing `main` deploy workflow. See
+  `docs/rollouts/2026-06-23-codex-bundle-integration.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Visual QA + multi-step app account deletion.**
+  Added a signed-in-user account deletion lifecycle with `GET/POST/DELETE
+  /api/account/deletion`: preview counts, prepare-by-halting the user's system
+  and clearing the run lock, typed-email/phrase confirmations, extra local
+  operator phrase, in-flight placement/reconciliation blockers, transactional
+  purge of private app data, per-user Robinhood MCP OAuth cleanup, and a minimal
+  hashed deletion audit. Settings -> Data now has a danger-zone procedure that
+  explains Google/Apple/broker limitations and requires multiple acknowledgements
+  before deletion. Accounts rows now stack better on mobile, make inactive
+  `Use` primary, and visually anchor the active account. Visual QA ran through
+  desktop/tablet/mobile Playwright screenshots with the trusted Cloudflare
+  Access email header: no horizontal overflow at 1440, 1024, or 390 px; the
+  deletion modal opened on desktop/mobile. Verification: `npx tsc --noEmit`,
+  focused `npx vitest run test/account-deletion.test.ts`, full `npm test` (107
+  files / 936 tests), `npm run build`, `git diff --check`, local `/api/health`,
+  and local deletion-preview API smoke all passed. Restarted `trading-codex`
+  after build. See
+  `docs/rollouts/2026-06-23-ui-account-deletion-visual-pass.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **User-controlled Market Scan cap + stronger outlier reserve.**
+  The Market Scan cap is no longer env-only. Per-user policy now carries
+  `marketScanCandidateLimit` (default 30, bounded 10-100) and
+  `marketScanOutlierReserve` (default 8, bounded 0-25 and never above the cap).
+  `/api/scan`, scheduled strategy runs, and approval re-scans pass those values
+  into `scanMarket`; the scan response reports the active cap, reserve, and
+  outlier count. Settings -> Data exposes both controls, and the Market Scan tab
+  now has a gauge shortcut that opens directly to those settings. The previous
+  hidden prompt-side `score >= 40` filter was removed so scan outliers can
+  actually reach the LLM when they are included in `topCandidates`. Below-cutoff
+  outliers are now ordered by signal strength across congressional buying,
+  insider buying, short pressure, and bullish technical signals before filling
+  the reserve. Expert consensus documented in the UI/docs: 10-12 is the lowest
+  reasonable cost-sensitive range, 25-40 is balanced, 60-80 is broad research,
+  and 100 is the practical upper bound before attention dilution usually hurts
+  proposal quality. Verification passed: `npx tsc --noEmit`, full `npm test`
+  (106 files / 934 tests), and `npm run build`. See
+  `docs/rollouts/2026-06-23-market-scan-cap-settings.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Expanded base index universes + broad-scan narrowing.**
+  Added S&P 100, Nasdaq Composite, Russell 2000, NYSE Composite, and FT
+  Wilshire 5000 universe options while keeping S&P 100 mutually exclusive with
+  S&P 500 and Nasdaq 100 mutually exclusive with Nasdaq Composite in both the UI
+  and policy API. Broad/dynamic universes now flow into Market Scan: Nasdaq/NYSE
+  exchange universes use the existing Nasdaq screener filters, S&P 100 and
+  Russell 2000 use BlackRock iShares holdings downloads (OEF/IWM), and FT
+  Wilshire 5000 uses the app's free all-screener U.S.-listed proxy. The scan
+  still ranks the broad universe down to the configured candidate cap before
+  expensive enrichment and LLM prompting, so large selections broaden
+  discovery without sending thousands of rows to the model. Dynamic-universe
+  trade approval only passes when the symbol was present in the latest ranked
+  scan, while manual chat drafts explain that broad indexes are scan-ranked and
+  require either a scanned candidate or an explicit Additional Watchlist symbol.
+  Verification: focused Vitest passed 55 tests; `npx tsc --noEmit`, full
+  `npm test` (105 files / 927 tests), and `npm run build` passed; live-source
+  smoke returned 101 S&P 100/OEF holdings, 1901 Russell 2000/IWM holdings, and
+  2714 NYSE screener quotes; restarted `trading-codex`; local `/api/health`
+  returned OK and public `codex.jays.services` returned the expected Cloudflare
+  Access 302. See `docs/rollouts/2026-06-23-expanded-index-universes.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Custom Additional Watchlist tickers + visible error surfaces.**
+  Additional Watchlist now accepts quote-resolvable custom U.S. equity/ETF
+  tickers such as `SPCX` instead of limiting entries to the embedded S&P 500 /
+  Nasdaq 100 / Dow 30 snapshots. Newly added custom symbols are quote-checked
+  through the shared Yahoo Finance chart fetcher; if no quote is available, the
+  policy save fails with a plain-English ticker-specific explanation. Market
+  Scan now carries quote-only custom symbols forward when Nasdaq's screener
+  omits them, and scan warning banners show the concrete warning text instead
+  of a generic data-source message. App-level route/global error screens now
+  show the real error message when available, and uncaught browser-side runtime
+  errors surface as bottom-right toasts. Applied into `/Users/jay/apps/trading-codex`
+  on top of the in-progress account-deletion work and restarted `trading-codex`
+  for `codex.jays.services` / port `4101`. Verification: focused Vitest
+  (`test/policy-custom-symbol.test.ts`, `test/market-custom-symbol.test.ts`,
+  `test/alternative-data.test.ts`, `test/watchlist-alerts.test.ts`) passed 16
+  tests; `npx tsc --noEmit`, full `npm test` (102 files / 915 tests), and
+  `npm run build` passed; local `/api/health` returned OK. See
+  `docs/rollouts/2026-06-23-custom-watchlist-errors.md`.
+- 2026-06-23 (`codex/multi-user-auth-prod`): **Multi-user auth + account UI production pass.**
+  Integrated the Auth.js/Cloudflare Access identity work onto current `origin/main`
+  and fixed the account UI issues found during the expert/site pass. Middleware now
+  fails closed whenever Cloudflare Access trust or `AUTH_SECRET` is configured,
+  Auth.js cookies are decoded through `next-auth/jwt` instead of the broken
+  `jose/jwt/verify` subpath, `/login` and `/logout` are public auth surfaces, and
+  the server-rendered dashboard snapshot is request-scoped from the trusted
+  middleware email so it no longer renders the primary/local dataset before
+  hydration. The dashboard now shows signed-in email and Sign out, the top account
+  selector uses the derived execution account ID with error-handled activation,
+  Accounts has an explicit Use action, and the safety banner uses bold account
+  labels plus italic risk details for Test / Alpaca Paper / Brokerage modes. The
+  Alpaca account form now states the Paper and Brokerage default endpoints and only
+  asks for a custom endpoint when enabled. Also fixed Alpaca MCP fractional position
+  parsing (`quantity` as well as `qty`) so `0.5` AAPL shares do not collapse to
+  `0 sh`. Verification: `npx tsc --noEmit`; focused Vitest
+  (`test/alpaca-mcp.test.ts`, `test/middleware-auth.test.ts`,
+  `test/request-user.test.ts`, `test/dashboard-feed.test.ts`) passed 31 tests;
+  full `npm test` passed 99 files / 908 tests; `npm run build` passed with no
+  edge-runtime warnings; `git diff --check` clean.
+  See `docs/rollouts/2026-06-23-multi-user-auth-account-ui.md`.
+- 2026-06-23 (`agent/codex-robinhood-account-integration`): **Expert safety/UI execution-mode pass.**
+  Implemented the highest-risk Antigravity/expert-review plan slices in the
+  Codex lane: Alpaca bracket dollar orders now fail closed without a real price
+  anchor or at <1 whole share; close-only/liquidating scheduler ticks keep
+  protective stop/reconciliation maintenance alive without running the LLM loop;
+  execution mode is persisted separately from legacy `paper`/`live` source
+  buckets for proposals, snapshots, and fills; broker-paper reads now use the
+  paper bucket with `executionMode: "broker/paper"` instead of being mislabeled
+  live/Test; stale proposal approvals now fail on account/mode mismatch; live
+  approval POSTs require typed confirmation payloads; consent failures stay
+  blocked; the mode banner can only be compacted, not hidden; a readiness strip
+  is visible in the cockpit; `/api/ready` reports authenticated readiness; and
+  Litestream npm/env drift plus vector raw-user credential lookup were repaired.
+  Verification: `npx tsc --noEmit`, focused Vitest safety subset, full
+  `npm test` (98 files / 894 tests), `npm run build`, and
+  `PLAYWRIGHT_PORT=4217 npm run test:e2e -- --project=chromium` all passed.
+  See `docs/rollouts/2026-06-23-expert-safety-ui-execution-mode.md`.
+- 2026-06-23 (`HEAD` detached from `main`): **UI expert pass for strategy models, run-state clarity, Macro/Market Scan tooltips, and preview freshness.**
+  Green/Red Team LLM controls now live in Strategy Studio, while Settings ->
+  Connections shows the selected models as read-only context beside provider
+  API keys. Manual **Run once** now sends a manual proposal-check request that
+  can run while the system is stopped and forces proposal-only output; scheduled
+  and autonomous runs still require Start. Header cleanup removed the top
+  Refresh/Flow/Strategy shortcuts, preserved workspace/feed tabs across browser
+  refresh, clarified `Mode:` as Propose Mode vs Autonomous Mode, routed the
+  Settings Start/Stop button through the same confirmation modal, and translated
+  raw provider/API errors into plain English. Macro movers are now `Top Gainers`
+  / `Top Losers` with black clickable tickers, more macro data points have
+  explanatory tooltips, Market Scan sources render as `Sources:` without a
+  stray `- live`, and default visible scan columns follow the market/UI expert
+  order. `AGENTS.md` now documents that beta is the source of truth and agent
+  previews must sync/restart when clean or be explicitly marked stale.
+  Verification: `npx tsc --noEmit` clean, `npm test` 97 files / 888 tests
+  passed, `npm run build` clean, and an authenticated local production GET to
+  `/` returned 200 with a complete response. In-app browser local visual smoke
+  was blocked by the browser URL policy / local transport limits. See
+  `docs/rollouts/2026-06-23-ui-expert-strategy-macro-errors.md`.
+- 2026-06-23 (`HEAD` detached from `main`): **Green/Red LLM model routing.**
+  Recovered the split-model setup that was present in a dirty `agent/codex`
+  worktree without copying unrelated Alpaca/account edits. Strategy Studio now
+  exposes a Green Team model and optional Red Team model; Settings ->
+  Connections shows a read-only model summary beside provider key management.
+  Red/Bear review uses
+  `policy.redTeamLlmModel` when set and otherwise falls back to Green. The
+  visible list removes legacy `gpt-4.1-mini`, adds `gpt-5.4`, gives Grok choices
+  matching cost/strength labels, and records Grok pricing in the usage estimator.
+  See `docs/rollouts/2026-06-23-green-red-llm-routing.md` and
+  `docs/rollouts/2026-06-23-settings-connections-llm-setup.md`.
+- 2026-06-23 (`HEAD` detached from `main`): **Accounts modal broker connect buttons.**
+  Removed the separate top-level Robinhood MCP status card from Accounts so the
+  modal now presents Robinhood, Alpaca, and Alpaca MCP as peer connect actions.
+  The Robinhood MCP health check still runs silently to decide whether the
+  Robinhood button should sync an authenticated session or start OAuth, but a
+  configured-yet-unauthenticated endpoint no longer creates a disconnected
+  account-like panel. See `docs/rollouts/2026-06-23-accounts-connect-buttons.md`.
+- 2026-06-23 (`main`): **Beta hostname standardization.** Canonicalized the
+  main integration preview hostname as `trading-beta.jays.services` for
+  `~/Code/Agentic Trading` / pm2 `trading-main` / port `4001`; documented that
+  no duplicate dev/beta hostname should be recreated in DNS, Tunnel ingress,
+  Access apps, redirect-rule exclusions, or docs. Cloudflare state currently has
+  DNS/Tunnel/Access only for `trading-beta.jays.services`, and unauthenticated
+  public requests now reach the Cloudflare Access app instead of the old redirect.
+  Also hardened `scripts/land.sh` with dirty-tree and stale-overlap guards so an
+  agent branch cannot silently auto-merge stale UI/text/behavior over newer
+  `origin/main` changes without deliberate review. Verification exposed Vitest
+  discovering nested local agent workspaces under `.claude/worktrees`; `vitest`
+  and `tsconfig` now exclude hidden tool-workspace directories so local
+  verification is stable regardless of Claude/Codex/Cursor artifacts. See
+  `docs/rollouts/2026-06-23-beta-domain-standardization.md`.
+- 2026-06-22 (`feat/antigravity-cheap-wins`): **5 cheap-win risk/execution gates from re-verifying Antigravity's critiques.** After confirming #94/#95/#96 landed, shipped the remaining low-cost items where data/plumbing already existed but wasn't gated: (1) **volatility panic auto-brake** — VIX/VVIX/SKEW tail extreme flips `active`→`close_only` + kill-switch (new `evaluateVolatilityBrake` in `macro.ts`, wired in `runStrategyOnce`; default ON at VIX 40/VVIX 150/SKEW 160, configurable); (2) **ADV market-impact cap** — opening orders capped at `maxOrderPctOfAdv`% of daily $-volume in both `applyDeterministicSizing` and the `policy.ts` gate (default 5%); (3) **marketable-limit entries** — wired the dormant `marketableLimitEntries` stub in `enrichOpeningProposal` (notional→qty+limit through the quote by `marketableLimitBufferBps`, default 15 bps; default OFF/opt-in); (4) **Robinhood synthetic-stop transparency** — `[Risk]` note on non-bracket-broker opens (RH can't hold OCO via MCP; true RH stop-leg deferred); (5) **optional cross-provider Bear LLM** — `RED_TEAM_LLM_PROVIDER=anthropic` routes Red Team to Claude (`redTeamProvider()`/`debateViaAnthropic()`, default openai). Deliberately did NOT fold tax into the tuner (4b) — would penalize a Roth IRA's cost-free turnover (owner priority: Roth ≥ taxable). tsc clean · 881 tests (+new) · build green. Isolated worktree off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-antigravity-cheap-wins.md`.
+- 2026-06-22 (`feat/grok-provider`): **xAI / Grok as an LLM provider option.** Provider is **derived from the
+  model name** — a `grok-*` model routes to xAI (OpenAI-compatible, `api.x.ai/v1/chat/completions`) with the
+  xAI key; any other model keeps the OpenAI path. New `src/lib/llm-provider.ts` `resolveLlmEndpoint(policy,
+  userId)`; `db-api-keys` gains `xai` (`XAI_API_KEY` env map + aliases + `resolveLlmCredential("xai")` with
+  operator failover + boot migration); `app/api/keys` catalog adds an "xAI (Grok)" row (data-driven keys UI);
+  the 6 agentic LLM call sites (strategy Bull+Bear, red-team, tuning, revalidation, post-mortem) use the
+  resolver + attribute the resolved `provider` in the usage ledger; model dropdown gains grok-4.3 /
+  grok-build-0.1. **Default unchanged** (still OpenAI); making a cheap Grok the keyless default is deferred
+  (set default model to `grok-build-0.1`). `.env.example` + `test/llm-provider.test.ts`. Code by a Sonnet
+  subagent (I fixed a TDZ in post-mortem.ts). tsc clean, full suite green, build green. See
+  `docs/rollouts/2026-06-22-grok-provider.md`.
+- 2026-06-22 (`feat/per-user-llm-model-effort`): **Per-user LLM model + reasoning effort (gpt-5 support).** Model and reasoning effort are now per-user policy settings (`llmModel`, `llmReasoningEffort`; defaults `gpt-5.4-mini`/`medium`) with dropdowns in Settings — each user picks their own. `llm-request.ts` gained `isReasoningModel`/`resolveOpenAiModel`; `withLlmRequestBounds` now **omits `temperature` for gpt-5/o-series** (they 400 on it), sends `reasoning_effort`, and raises the output-token cap (low 2k/med 4k/high 8k) so reasoning tokens don't starve the answer. All 5 call sites resolve the per-user model + pass effort (`model` now required in bounds). Fixes the "project has no access to gpt-4.1-mini" error: the per-user default (gpt-5.4-mini) overrides the box `OPENAI_MODEL` via `mergePolicy`. Added policy validation, usage pricing for gpt-5.x, `.env.example` note, and `test/llm-request.test.ts`; pinned 4 bounds tests to gpt-4.1-mini. tsc clean · `npm test` 863 pass / 1 pre-existing unrelated fail · build green. See `docs/rollouts/2026-06-22-per-user-llm-model-and-effort.md`.
 - 2026-06-22 (`claude/cloud-env-setup`): **Cloud/remote sandbox setup is now codified.** A Claude Code cloud agent hung for hours on "Setting up a cloud container" for this repo; investigation found the repo had **no** `.devcontainer`, no `setup`/`postinstall` in `package.json`, and an empty `.claude/settings.json`, so the cloud/remote "Run setup script" step was undefined. Added `.nvmrc` (`24`, matches local `v24.16.0`), `scripts/cloud-setup.sh` (idempotent `npm ci` + non-destructive `.env.local` seed; app boots keyless in Test mode/SQLite, secrets optional), and `.devcontainer/devcontainer.json` (Node 24 image → `postCreateCommand: bash scripts/cloud-setup.sh`, forwards :3000). Config/shell/docs only — no source touched (`bash -n` clean; `verify` CI runs the full tsc/test/build trio on the PR). **Owner action:** set the Cloud env setup-script field to `bash scripts/cloud-setup.sh` (files reach a cloud clone only after this merges, since cloud clones from GitHub). Per-environment launcher settings are app/account-UI only — not Claude-editable. See `docs/rollouts/2026-06-22-cloud-env-setup.md`.
 - 2026-06-22 (`fix/autonomy-status-chip-label`): **Autonomy status chip clarity.** Header chip showed "Inactive" right after choosing Autonomous (it reflects run-state `systemState`, not the approval mode) — confusing. Relabeled: halted → **"Stopped"** (matches Start/Stop), active+decide → **"Running · Autonomous"**, active+propose → **"Running · Propose"**, setup → "Setup Needed", liquidating/close_only fallback kept. Behavior unchanged (choosing a mode never starts the system — Start is the gate). UI-only; tsc + build green. Deploy run #17 (PR #100) verified green; site 302. See `docs/rollouts/2026-06-22-autonomy-status-chip-label.md`.
 - 2026-06-22 (`fix/accounts-active-badge-robinhood-card`): **Accounts tab — hide phantom Robinhood card + ACTIVE badge.** (1) The Robinhood MCP status card no longer renders unconditionally — only when `mcpHealth.configured`/`authenticated` or a connected `robinhood` account exists (default setup hid a non-functional "Not connected" card); the Connect buttons stay. (2) The account the app is set on now shows a green **ACTIVE** badge (active derived as `policy.connectedAccountId` else the `isActive` row), other connected accounts a muted **Connected** badge — was previously a single misleading "CONNECTED" on the active one only. AUTONOMOUS badge still rides the active account in decide mode. UI-only; tsc clean · build green. Also: verified prior batch deployed (Deploy run #16 green; site 302). See `docs/rollouts/2026-06-22-accounts-active-badge-robinhood-card.md`.
@@ -799,7 +1003,7 @@ steps materially change.
   repair with `scripts/setup-agent-previews.sh`; see the rewritten "Hosting & dev servers"
   section in `AGENTS.md`. Key rule: a running port is NOT a work lock — coordinate via git +
   STATUS.md only. (Supersedes the earlier single committed `trading-preview` :4100 idea.)
-- **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
+- **Data Optimization**: Market Scan ranks the broad universe down to the configured candidate cap, then can reserve below-cutoff outliers with notable congress, insider, short-pressure, or technical signals. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
 - **Regime Detection**: The current market regime is deterministically evaluated using VIX and Fed rates, shifting the responsibility entirely from the LLM.
 - **UI UX Polish**: The cockpit features interactive charting (Recharts Brush for panning/zooming), Sonner toasts for real-time action feedback, and dynamic lazy-loading for heavy bundle dependencies.
 

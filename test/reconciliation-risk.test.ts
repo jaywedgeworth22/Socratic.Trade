@@ -151,6 +151,65 @@ describe("reconcilePendingFills", () => {
     expect(matched!.quantity).toBe(2);
     expect(matched!.notional).toBeCloseTo(802); // 2 * 401
   });
+
+  it("reconciles broker-paper pending fills even after many older paper fills", async () => {
+    const accountNumber = `APCA-PAPER-${randomUUID()}`;
+    for (let i = 0; i < 510; i++) {
+      insertFillEvent({
+        accountNumber,
+        source: "paper",
+        executionMode: "test/local",
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+        price: 100,
+        notional: 100,
+        status: "filled",
+        filledAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString()
+      });
+    }
+    const fillId = randomUUID();
+    const brokerOrderId = "paper-broker-order-1";
+    insertFillEvent({
+      id: fillId,
+      accountNumber,
+      source: "paper",
+      executionMode: "broker/paper",
+      symbol: "TSLA",
+      side: "buy",
+      quantity: 2,
+      price: 200,
+      notional: 400,
+      status: "pending_reconciliation",
+      brokerOrderId,
+      filledAt: "2026-06-15T12:00:00.000Z"
+    });
+
+    const mockGateway = createMockGateway({
+      getEquityOrders: async () => [
+        {
+          id: brokerOrderId,
+          symbol: "TSLA",
+          side: "buy",
+          type: "market",
+          state: "filled",
+          filledQuantity: 2,
+          averagePrice: 201,
+          createdAt: new Date().toISOString(),
+          updatedAt: "2026-06-15T12:05:00.000Z"
+        } as EquityOrder
+      ]
+    });
+
+    await reconcilePendingFills(mockGateway, accountNumber);
+
+    const matched = listFillEvents(accountNumber, "paper", 600).find((f) => f.id === fillId);
+    expect(matched).toBeDefined();
+    expect(matched!.status).toBe("filled");
+    expect(matched!.price).toBe(201);
+    expect(matched!.notional).toBe(402);
+    expect(matched!.executionMode).toBe("broker/paper");
+  });
 });
 
 describe("generateProactiveRiskProposals", () => {

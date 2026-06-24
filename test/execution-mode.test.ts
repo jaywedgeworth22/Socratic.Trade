@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification, getThemeClasses, type ExecutionAccount } from "../src/lib/execution-mode";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, getThemeClasses, type ExecutionAccount } from "../src/lib/execution-mode";
 import type { ConnectedAccount } from "../src/lib/types";
 
 const alpacaPaperAccount: ExecutionAccount = {
@@ -54,6 +54,8 @@ describe("deriveExecutionState", () => {
     expect(state.submitsBrokerOrders).toBe(true);
     expect(state.clarification).toContain("Alpaca Paper");
     expect(state.clarification).toContain("real capital is not at risk");
+    expect(fillSourceForExecutionMode(state)).toBe("paper");
+    expect(llmFillSource("paper", state)).toBe("broker/paper");
   });
 
   it("derives Brokerage from broker-routed policy plus a live account", () => {
@@ -65,6 +67,8 @@ describe("deriveExecutionState", () => {
     expect(state.usesLocalSimulation).toBe(false);
     expect(state.submitsBrokerOrders).toBe(true);
     expect(state.clarification).toContain("real capital");
+    expect(fillSourceForExecutionMode(state)).toBe("live");
+    expect(llmFillSource("live", state)).toBe("broker/live");
   });
 
   it("falls back to Test when broker-routed policy has no active account", () => {

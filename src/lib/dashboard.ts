@@ -8,6 +8,7 @@ import {
   listAudit,
   listNotificationEvents,
   listPendingProposals,
+  listRecentProposals,
   listStrategyProfiles,
   listStrategyRuns,
   listFillEvents,
@@ -22,6 +23,7 @@ import { normalizeSymbol } from "./money";
 import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
 import { fetchMacroData, determineMarketRegime } from "./macro";
@@ -32,7 +34,7 @@ import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan } from "./types";
 
-export async function getDashboardSnapshot(userId: string = "local") {
+export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
   ensureTestAccount(userId);
   const policy = getPolicy(userId);
   const gateway = getBrokerGateway(policy, userId);
@@ -58,7 +60,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
 
   const dailyStats = accountNumber
     ? dailyExecutionStats(accountNumber, new Date(), userId)
-    : { orderCount: 0, notional: 0 };
+    : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
   // Build a live current-price map (broker quotes for held + paper symbols) so the paper
   // account and all P&L are marked to the same prices Live uses.
@@ -86,18 +88,23 @@ export async function getDashboardSnapshot(userId: string = "local") {
   const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
+  const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
-  const scorecardSource = policy.paperMode ? "paper" : "live";
+  const activeAccountForTax = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccountForTax);
+  const scorecardSource = fillSourceForExecutionMode(executionState);
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
-  const activeAccountForTax = getActiveConnectedAccount(userId);
   const tax = accountNumber
     ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccountForTax?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId)
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
   const notifications = listNotificationEvents(userId, 50);
-  const latestStrategyRun = latestAuditByKind("strategy_run", userId)?.payload as StrategyDecisionLike | undefined;
+  const latestRunAudit = latestAuditByKind("strategy_run", userId);
+  const latestStrategyRun = latestRunAudit
+    ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
+    : undefined;
   const audit = listAudit(100, userId);
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,
@@ -145,8 +152,18 @@ export async function getDashboardSnapshot(userId: string = "local") {
       return proposal ? { proposal: proposal.proposal } : undefined;
     }
   });
+  const clientAudit = audit.map((event) => ({
+    id: event.id,
+    createdAt: event.createdAt,
+    kind: event.kind,
+    payload: null
+  }));
 
   return {
+    currentUser: {
+      userId,
+      ...(currentUserEmail ? { email: currentUserEmail } : {})
+    },
     policy,
     strategyPrompt: getStrategyPrompt(userId),
     accounts,
@@ -158,7 +175,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
     paperPortfolio: paperProjection?.portfolio,
     paperPositions: paperProjection?.positions,
     orders,
-    audit,
+    audit: clientAudit,
     auditFeed,
     unifiedFeed,
     connectedAccounts: listConnectedAccounts(userId),
@@ -166,6 +183,7 @@ export async function getDashboardSnapshot(userId: string = "local") {
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId),
     pendingProposals,
+    recentProposals,
     performance,
     thesisScorecard,
     regimeScorecard,

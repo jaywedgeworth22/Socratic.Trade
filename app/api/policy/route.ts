@@ -1,9 +1,23 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
-import { isIndexUniverse, isValidAppSymbol } from "@/lib/index-universes";
-import { normalizeSymbol } from "@/lib/money";
+import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
 import { resolveRequestUserId } from "@/lib/request-user";
+import {
+  invalidSymbolMessage,
+  newlyAddedInvalidSymbols,
+  normalizePolicySymbolList,
+  sanitizePolicySymbolList,
+  validateNewCustomPolicySymbols
+} from "@/lib/policy-symbol-validation";
+import {
+  MAX_MARKET_SCAN_CANDIDATE_LIMIT,
+  MAX_MARKET_SCAN_OUTLIER_RESERVE,
+  MIN_MARKET_SCAN_CANDIDATE_LIMIT,
+  MIN_MARKET_SCAN_OUTLIER_RESERVE,
+  normalizeMarketScanCandidateLimit,
+  normalizeMarketScanOutlierReserve
+} from "@/lib/scan-settings";
 import type { NotificationEventType, TradingPolicy, IndexUniverse } from "@/lib/types";
 import { NextResponse } from "next/server";
 
@@ -18,15 +32,26 @@ export async function PUT(request: Request) {
   const userId = resolveRequestUserId(request, body);
   if (typeof body.strategyPrompt === "string") setStrategyPrompt(body.strategyPrompt, userId);
   const current = getPolicy(userId);
+  const additionalSymbols = normalizePolicySymbolList(body.additionalSymbols, current.additionalSymbols ?? []);
+  const blocklist = normalizePolicySymbolList(body.blocklist, current.blocklist ?? []);
+  const invalidNewSymbols = newlyAddedInvalidSymbols([...additionalSymbols, ...blocklist], [
+    ...(current.additionalSymbols ?? []),
+    ...(current.blocklist ?? [])
+  ]);
+  if (invalidNewSymbols.length > 0) {
+    return new NextResponse(invalidSymbolMessage(invalidNewSymbols), { status: 400 });
+  }
+  const customSymbolError = await validateNewCustomPolicySymbols(additionalSymbols, current.additionalSymbols ?? []);
+  if (customSymbolError) return new NextResponse(customSymbolError, { status: 400 });
   const policy: TradingPolicy = {
     ...DEFAULT_POLICY,
     ...current,
     ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strategyPrompt" && key !== "userId")),
     includedIndices: Array.isArray(body.includedIndices)
-      ? Array.from(new Set(body.includedIndices.map(String).filter(isIndexUniverse))) as IndexUniverse[]
+      ? normalizeIncludedIndices(Array.from(new Set(body.includedIndices.map(String).filter(isIndexUniverse))) as IndexUniverse[])
       : current.includedIndices,
-    additionalSymbols: sanitizeSymbolList(body.additionalSymbols, current.additionalSymbols ?? []),
-    blocklist: sanitizeSymbolList(body.blocklist, current.blocklist ?? []),
+    additionalSymbols: sanitizePolicySymbolList(additionalSymbols),
+    blocklist: sanitizePolicySymbolList(blocklist),
     scoringWeights: {
       ...DEFAULT_POLICY.scoringWeights,
       ...current.scoringWeights,
@@ -59,6 +84,9 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
+  if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
+    delete policy.redTeamLlmModel;
+  }
   const validationError = await validatePolicy(policy, userId);
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
@@ -66,11 +94,14 @@ export async function PUT(request: Request) {
 }
 
 async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
-  // Unsupported watchlist / ignore-list symbols are sanitized out in the PUT handler above (the app is
-  // equity-only: S&P 500 / Nasdaq 100 / Dow 30). They can no longer reach here, so a stale unsupported
-  // symbol can never block an unrelated policy update. The Settings UI also rejects them at add time.
+  // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
+  // bad data cannot block unrelated policy updates. Newly added custom Additional Watchlist symbols are
+  // quote-checked before save so the user gets an explicit reason when a ticker cannot be tracked.
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
+  if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
+  if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
+  if (policy.llmReasoningEffort !== undefined && !["low", "medium", "high"].includes(policy.llmReasoningEffort)) return "llmReasoningEffort must be low, medium, or high.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";
@@ -79,6 +110,20 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.maxPortfolioBeta !== undefined && (!Number.isFinite(policy.maxPortfolioBeta) || policy.maxPortfolioBeta <= 0 || policy.maxPortfolioBeta > 10)) return "maxPortfolioBeta must be a positive number (≤ 10).";
   if (policy.maxEntryDriftPct !== undefined && (!Number.isFinite(policy.maxEntryDriftPct) || policy.maxEntryDriftPct < 0 || policy.maxEntryDriftPct > 100)) return "maxEntryDriftPct must be between 0 (off) and 100.";
   if (policy.maxDailyOrders <= 0) return "maxDailyOrders must be positive.";
+  if (policy.marketScanCandidateLimit !== undefined) {
+    if (normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit) !== policy.marketScanCandidateLimit) {
+      return `marketScanCandidateLimit must be an integer between ${MIN_MARKET_SCAN_CANDIDATE_LIMIT} and ${MAX_MARKET_SCAN_CANDIDATE_LIMIT}.`;
+    }
+  }
+  if (policy.marketScanOutlierReserve !== undefined) {
+    const candidateLimit = normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit);
+    if (
+      normalizeMarketScanOutlierReserve(policy.marketScanOutlierReserve, candidateLimit) !== policy.marketScanOutlierReserve ||
+      policy.marketScanOutlierReserve > candidateLimit
+    ) {
+      return `marketScanOutlierReserve must be an integer between ${MIN_MARKET_SCAN_OUTLIER_RESERVE} and ${Math.min(MAX_MARKET_SCAN_OUTLIER_RESERVE, candidateLimit)}.`;
+    }
+  }
   if (policy.runCadenceMinutes < 1) return "runCadenceMinutes must be at least 1 minute.";
   if (policy.proposalExpiryMinutes !== undefined && (!Number.isFinite(policy.proposalExpiryMinutes) || policy.proposalExpiryMinutes < 0)) return "proposalExpiryMinutes must be 0 (off) or a positive number of minutes.";
   if (policy.proposalRevalidateCadenceHours !== undefined && (!Number.isFinite(policy.proposalRevalidateCadenceHours) || policy.proposalRevalidateCadenceHours < 0)) return "proposalRevalidateCadenceHours must be 0 (off) or a positive number of hours.";
@@ -123,18 +168,6 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
       return "Could not verify the selected account right now. Please try again in a moment.";
     }
   }
-}
-
-/**
- * Normalize + drop unsupported symbols (equity-only: S&P 500 / Nasdaq 100 / Dow 30). When `raw` isn't an
- * array, fall back to the existing list — but still re-filter it so a legacy unsupported symbol can't
- * persist and brick later policy updates. The Settings UI rejects unsupported symbols at add time too.
- */
-function sanitizeSymbolList(raw: unknown, fallback: string[]): string[] {
-  const source = Array.isArray(raw)
-    ? Array.from(new Set(raw.map(String).map(normalizeSymbol).filter(Boolean)))
-    : fallback;
-  return source.filter((symbol): symbol is string => typeof symbol === "string" && isValidAppSymbol(symbol));
 }
 
 function normalizeSectorCaps(value: unknown): Record<string, number> {

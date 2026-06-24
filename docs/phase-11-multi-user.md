@@ -4,9 +4,11 @@ Goal: let multiple users use the app — logging in at the same or different tim
 each getting analysis and trade proposals tailored to **their own preferences and
 their own API keys**. Test mode stays the default; no live-trading behavior change.
 
-**For now (testing):** no login portal. A single default user (`local`) is active;
-everything is scoped to that user so the multi-user plumbing is exercised without
-auth. A real login/identity layer is the last milestone.
+**Current identity model:** middleware derives the request user from a verified
+Cloudflare Access email header or an Auth.js v5 session. The primary operator and
+configured aliases still map to the legacy `local` dataset; other allowed users
+map to isolated hashed user IDs. When auth is not configured locally, development
+falls back to `local`.
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/
@@ -36,11 +38,11 @@ auth. A real login/identity layer is the last milestone.
   `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
-- Request-level user resolution now has a central helper,
-  `resolveRequestUserId(request, body?)`, that reads the `x-user-id` header, then
-  `userId` query/body hints, and falls back to `local`. This is scaffolding only:
-  it preserves current no-auth behavior and does not represent completed
-  authentication or authorization.
+- Request-level user resolution now has central helpers,
+  `resolveRequestUser(request)` and `resolveRequestUserId(request, body?)`, that
+  read only middleware's trusted `x-authenticated-user-email` header. Body/query
+  `userId` hints are ignored; local development falls back to `local` only when
+  auth is not armed.
 - Ops foundation is now scaffolded for hosted/multi-user readiness: Infisical CLI
   wrappers for secret injection, local Gitleaks scanning, Sentry runtime error
   capture, Langfuse LLM traces with redacted summary capture by default, npm
@@ -61,10 +63,10 @@ auth. A real login/identity layer is the last milestone.
 
 ## Milestones
 
-### M1 `[done]` API-keys Settings section (buildable now, single-user)
-A Settings → **"API Keys"** tab listing every required + optional/helpful key with a
-status badge (Set / Using env / Not set) and a masked input to save/clear it. Stored
-per-user via `upsertUserApiKey` under the default user.
+### M1 `[done]` Connections Settings section (buildable now, single-user)
+A Settings -> **"Connections"** tab listing every required + optional/helpful key
+with a status badge (Set / Using env / Not set) and a masked input to save/clear
+it. Stored per-user via `upsertUserApiKey` under the default user.
 - **Required for full function:** `OPENAI_API_KEY` (LLM proposals).
 - **Optional enrichment / signals:** `FINNHUB_API_KEY`, `FMP_API_KEY`,
   `ALPHAVANTAGE_API_KEY`, `MARKETSTACK_API_KEY`, `TRADIER_API_KEY`, `FRED_API_KEY`
@@ -76,16 +78,29 @@ per-user via `upsertUserApiKey` under the default user.
 - Each row shows what it unlocks and links to where to get it. Never display stored
   secrets (mask), and never log them.
 
-Current implementation: Settings → API Keys lists OpenAI, Finnhub, FMP, Alpha
-Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set /
-Using env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
-Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
-secret values. Settings → Accounts continues to own brokerage-account credentials.
-Settings → Accounts also shows a Robinhood MCP status card backed by
-`GET /api/broker/mcp/health`, with refresh and OAuth-connect actions. Mutable
+Current implementation: Settings -> Connections lists OpenAI, xAI/Grok,
+Finnhub, FMP, Alpha Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent,
+and Massive with Set / Using env / Not set badges, docs links, masked write-only
+inputs, Save, and Clear. Backend `GET/POST/DELETE /api/keys` serves the same
+catalog and never returns secret values. Strategy Studio lets each user choose a
+Green Team model for proposal generation and an optional separate Red Team model
+for Bear review; if no Red Team override is set, Red reuses Green. Connections
+shows a read-only model summary and a link back to Strategy Studio so provider
+keys and model behavior stay connected without making Connections the editing
+surface. The visible model list omits legacy `gpt-4.1-mini`, keeps
+`gpt-5.4-nano` as the cheapest listed OpenAI option, and labels Grok choices
+with the same cost/strength style as OpenAI. Settings -> Operate stays focused
+on universe, authority, horizon, and system Start/Stop controls. Settings ->
+Accounts continues to own brokerage-account credentials. Settings -> Accounts
+presents Robinhood through the same supported-account button
+row as Alpaca. The client still checks `GET /api/broker/mcp/health` silently so
+the Robinhood button can sync an authenticated MCP session or start OAuth, but it
+does not render a separate disconnected MCP status panel. Mutable
 account/key/order/policy route handlers touched by this flow are marked
 `dynamic = "force-dynamic"` so production builds do not attempt static page-data
 collection for request-bound operations.
+API-key badges now distinguish "Your key" from "Operator env" so users can see
+whether usage is attached to their stored credential or an operator fallback.
 
 ### M2 `[partial]` Route providers through `resolveApiKey(service, userId)`
 Replace direct `process.env.X` reads in `data-providers.ts`, `macro.ts`, the LLM
@@ -97,6 +112,9 @@ Current partial implementation: account settings are broker-aware rather than
 Alpaca-only. Alpaca uses the active connected account first; Robinhood syncs the
 agentic brokerage account through MCP after OAuth; and the account UI presents
 supported account buttons instead of requiring a Paper account.
+The Alpaca account form states the two direct REST defaults
+(`https://paper-api.alpaca.markets/v2` and `https://api.alpaca.markets/v2`) and
+only asks for a custom endpoint when the user explicitly enables that override.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
@@ -158,9 +176,79 @@ Current market-data rule:
 ### M5 `[done]` Concurrent per-user execution
 The background scheduler `src/lib/scheduler.ts` iterates over all active users and triggers `runStrategyOnce(userId)`. It runs concurrently with a bounded limit (e.g. `MAX_CONCURRENCY = 3`) to balance API rate limits with overall throughput, collecting due users and racing promises.
 
-### M6 `[todo]` Identity / auth (last)
-A minimal login (or per-user API token) and a user switcher; until then the default
-`local` user is implicit. Per-user Robinhood account linking lives here.
+### M6 `[done]` Identity / auth (last)
+
+Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
+
+- **Fail-closed arming signal fixed**: the previous `NODE_ENV === "production"` gate was
+  unreliable in the edge runtime (Next.js inlines NODE_ENV at build time — at runtime in
+  the live deployment `isProd` was always `false`, causing every request to fail open).
+  Replaced with: `authConfigured = (CF_ACCESS_TRUST_EMAIL_HEADER === "1") || !!AUTH_SECRET`.
+  This is evaluated at request time. The moment either is set, auth is armed.
+
+- **Identity sources** (first match wins):
+  1. CF Access `cf-access-authenticated-user-email` header (when `CF_ACCESS_TRUST_EMAIL_HEADER=1`).
+  2. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
+  3. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
+
+- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, Google provider, JWT strategy),
+  `src/lib/auth/session-token.ts` (shared HS256 session encode/decode helper),
+  `src/lib/auth/session-edge.ts` (edge-safe session cookie verifier),
+  `app/api/auth/[...nextauth]/route.ts` (route handlers), `app/login/page.tsx`
+  (Sign in with Google), and `app/logout/route.ts`.
+
+- **Visible session controls**: the dashboard shows the signed-in email when available,
+  exposes a Sign out command, and `/logout` clears Auth.js cookies before routing through
+  Cloudflare Access logout when CF Access is trusted.
+
+- **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
+  unchanged (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior,
+  Auth.js cookies, CF Access, public Auth.js routes, and protected Robinhood OAuth routes.
+
+Per-user Robinhood account linking (originally noted in M6 scope) is deferred as a follow-up.
+
+### M7 `[done]` App account deletion and re-onboarding
+
+Signed-in users can start a deletion flow from Settings -> Data -> Delete this
+app account. The server exposes one request-scoped endpoint:
+
+- `GET /api/account/deletion` returns a preview for the verified user: current
+  email, userId, whether the identity maps to the shared `local` operator
+  dataset, connected accounts, private row counts, and blockers.
+- `POST /api/account/deletion` prepares deletion. It halts that user's system,
+  clears `strategy_run_lock:<userId>`, cancels any older prepared request, and
+  records a fresh prepared deletion request. It does not delete data.
+- `DELETE /api/account/deletion` performs the final deletion only after the
+  user has prepared the request, typed the verified email, typed
+  `DELETE MY ACCOUNT`, acknowledged app-data deletion, broker/API connection
+  deletion, provider-revocation limitations, broker-position limitations, and
+  fresh sign-in behavior. If `userId === "local"`, it also requires the
+  `DELETE LOCAL OPERATOR ACCOUNT` phrase and an explicit local-operator checkbox.
+
+Final deletion blocks with `409` while any strategy run is `running`, any
+proposal is `placing`, or any broker-routed fill is still
+`pending_reconciliation`. The app does not auto-cancel broker orders or close
+broker positions during account deletion.
+
+Deletion removes the user's private app rows from user API keys, connected
+accounts, strategy profiles/runs/settings, proposals, snapshots, fills,
+synthetic stops, notifications, watchlists, alerts, chat, user memory,
+learned-context pending rows, learned-context rows where they are either owner
+or contributor, LLM usage, market-data demands, and normal audit events. It also
+clears per-user Robinhood MCP OAuth tokens and pending OAuth states while
+preserving the global MCP client registration. The only retained deletion record
+is `account_deletion_audit`, which stores a non-reversible subject hash, schema
+version, timestamps, and row counts; it does not store raw email, raw userId,
+symbols, broker account numbers, chat text, proposal JSON, or credentials.
+
+Provider identity deletion is intentionally separate. This app cannot delete a
+Google account, Apple ID, or broker account. After app-data deletion, signing in
+again with Google or Apple can create a fresh empty app account; users who also
+want to remove the OAuth grant should revoke Agentic Trading from their Google
+Account third-party access page or Apple ID Sign in with Apple settings. Before
+Apple private-relay identities become a first-class login path, add a
+`user_identities` table keyed by provider + provider account id so identity is
+not derived from relay email alone.
 
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real

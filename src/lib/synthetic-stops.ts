@@ -2,7 +2,9 @@ import crypto from "crypto";
 import {
   audit,
   claimSyntheticStop,
+  dailyExecutionStats,
   deleteSyntheticStop,
+  getActiveConnectedAccount,
   insertFillEvent,
   listSyntheticStops,
   revertSyntheticStopClaim,
@@ -10,8 +12,10 @@ import {
   type SyntheticTrailingStop
 } from "./db";
 import { getBrokerGateway } from "./broker";
+import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
-import type { EquityPosition, FillSource, TradingPolicy } from "./types";
+import { evaluateTradeProposal } from "./policy";
+import type { EquityPosition, ExecutionMode, FillSource, TradeProposal, TradingPolicy } from "./types";
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
@@ -61,10 +65,10 @@ export interface MonitorResult {
 /**
  * Synthetic trailing-stop monitor (works for any broker, incl. Robinhood MCP). Detection — extreme
  * tracking, trigger computation, bad-tick filtering — is always safe. Placing the market EXIT only
- * happens when `running` is true (the system was deliberately Started); the scheduler only calls
- * this for `systemState === "active"` users, so exits are gated behind Start. Purges stops for
- * positions that have closed, and auto-registers a stop for each LONG position when
- * `policy.riskRules.trailingStopPct` is configured and none exists yet.
+ * happens when `running` is true (the system was deliberately Started or is in a protective state
+ * such as close_only/liquidating). Purges stops for positions that have closed, and auto-registers
+ * a stop for each open position when `policy.riskRules.trailingStopPct` is configured and none
+ * exists yet.
  */
 export async function runSyntheticStopMonitor(userId: string, policy: TradingPolicy, running: boolean): Promise<MonitorResult> {
   const result: MonitorResult = { evaluated: 0, triggered: 0, exited: 0, purged: 0 };
@@ -72,7 +76,13 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   if (!accountNumber) return result;
 
   const gateway = getBrokerGateway(policy, userId);
-  const source: FillSource = policy.paperMode ? "paper" : "live";
+  const activeAccount = getActiveConnectedAccount(userId);
+  const executionMode: ExecutionMode = activeAccount
+    ? deriveExecutionState(policy, activeAccount).mode
+    : policy.paperMode
+      ? "test/local"
+      : "broker/live";
+  const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
 
   let positions: EquityPosition[];
   try {
@@ -156,6 +166,47 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       continue;
     }
     const exitSide = stop.side === "long" ? "sell" : "cover";
+    const exitProposal: TradeProposal = {
+      symbol: normalizeSymbol(stop.symbol),
+      side: exitSide,
+      type: "market",
+      quantity: qty,
+      timeInForce: "gfd",
+      marketHours,
+      rationale: "Synthetic trailing stop fired from the protective scheduler.",
+      tradeThesisTag: "Synthetic Stop",
+      entryMarketRegime: "Risk Exit"
+    };
+    const tradability = await gateway.getEquityTradability(accountNumber, [exitProposal.symbol]).catch((err) => {
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "tradability_check_failed", error: err instanceof Error ? err.message : String(err) }, userId);
+      return undefined;
+    });
+    if (!tradability?.[exitProposal.symbol]?.tradable) {
+      audit("synthetic_stop_blocked", {
+        symbol: stop.symbol,
+        reason: tradability?.[exitProposal.symbol]?.reason ?? "Symbol is not tradable for the protective exit."
+      }, userId);
+      continue;
+    }
+    const portfolio = await gateway.getPortfolio(accountNumber).catch((err) => {
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "portfolio_check_failed", error: err instanceof Error ? err.message : String(err) }, userId);
+      return undefined;
+    });
+    if (!portfolio) continue;
+    const daily = dailyExecutionStats(accountNumber, new Date(), userId);
+    const policyDecision = evaluateTradeProposal(exitProposal, {
+      policy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: daily.notional,
+      dailyOrderCount: daily.openingOrderCount,
+      estimatedNotional: qty * price,
+      isLiveExecution: executionMode === "broker/live"
+    });
+    if (!policyDecision.approved) {
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reasons: policyDecision.reasons }, userId);
+      continue;
+    }
     // Atomically claim this stop (active -> triggered) BEFORE placing. If a previous tick's
     // monitor is still mid-placement (slow broker call spanning the next 60s tick), it already
     // claimed the stop and this run skips it — so the same protective exit can't fire twice.
@@ -181,6 +232,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         userId,
         accountNumber,
         source,
+        executionMode,
         symbol: normalizeSymbol(stop.symbol),
         side: exitSide,
         quantity: qty,

@@ -1,20 +1,20 @@
-import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveLlmCredential, upsertFillExcursionsByKey } from "./db";
+import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, upsertFillExcursionsByKey } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
 import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat } from "./performance";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
   const db = getDb();
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
+  const policy = getPolicy(userId);
+  const { url, key: openaiKey, model: resolvedModel, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
   if (!openaiKey) return;
-  const keySource = cred.source === "operator" ? "operator" : "user";
   
   // Fetch latest 50 fill events with their corresponding proposals
   const rows = db.prepare(`
@@ -61,9 +61,8 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // timing stats, so the reflection is grounded in what actually made or lost money
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
-  const policy = getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
-  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const executionMode = llmExecutionMode(executionState);
   const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);
@@ -86,10 +85,8 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     timingByThesis
   });
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const model = resolvedModel;
+  const isChatCompletions = transport === "chat-completions";
 
   const body = withLlmRequestBounds(
     isChatCompletions
@@ -108,7 +105,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         ]
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   try {
@@ -144,7 +141,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "post-mortem", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, ...extractLlmUsage(payload) });
         const text = payload.choices?.[0]?.message?.content ??
                      payload.output_text ??
                      payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;

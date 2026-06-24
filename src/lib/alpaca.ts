@@ -215,24 +215,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
     return this.callMcp<any>("get_positions", {}, async () => {
       const positions = await this.alpaca.getPositions();
-      return positions.map((p: Record<string, unknown>) => ({
-        symbol: normalizeSymbol(String(p.symbol)),
-        quantity: number(p.qty),
-        averageCost: number(p.avg_entry_price),
-        marketValue: number(p.market_value),
-        sector: undefined,
-        industry: undefined
-      }));
+      return positions.map(parseAlpacaPosition);
     }).then((res: any) => {
       if (Array.isArray(res)) {
-        return res.map((p: any) => ({
-          symbol: normalizeSymbol(String(p.symbol)),
-          quantity: number(p.qty),
-          averageCost: number(p.avg_entry_price),
-          marketValue: number(p.market_value),
-          sector: undefined,
-          industry: undefined
-        }));
+        return res.map(parseAlpacaPosition);
       }
       return res;
     });
@@ -322,13 +308,19 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const isBracket = !!(input.bracketTakeProfit || input.bracketStopLoss);
 
     // Alpaca does not support notional (dollar) bracket orders — only qty-based.
-    // When dollarAmount is set on a bracket order, convert it to qty using the
-    // reviewed price estimate (limitPrice || stopPrice || 1). Callers should prefer
-    // passing qty directly for bracket orders to avoid price-estimate drift.
+    // If a bracketed dollar order reaches this gateway, it must carry a real entry
+    // anchor from review/proposal enrichment. Never fall back to 1; that can turn a
+    // $500 market bracket into 500 shares.
     let bracketQty: number | undefined;
     if (isBracket && input.dollarAmount && !input.quantity) {
-      const estPrice = input.limitPrice ?? input.stopPrice ?? 1;
+      const estPrice = input.limitPrice ?? input.referencePrice;
+      if (estPrice == null || !(estPrice > 0)) {
+        throw new Error("Alpaca bracket dollar orders require a positive limitPrice or referencePrice.");
+      }
       bracketQty = Math.floor(input.dollarAmount / estPrice);
+      if (bracketQty < 1) {
+        throw new Error("Alpaca bracket dollar order is too small for a whole-share bracket at the reference price.");
+      }
     }
 
     const fallbackFn = async () => {
@@ -456,6 +448,17 @@ function optionalNumber(value: unknown): number | undefined {
 
 function number(value: unknown): number {
   return optionalNumber(value) ?? 0;
+}
+
+export function parseAlpacaPosition(p: Record<string, unknown>): EquityPosition {
+  return {
+    symbol: normalizeSymbol(String(p.symbol)),
+    quantity: number(p.qty ?? p.quantity),
+    averageCost: number(p.avg_entry_price ?? p.average_entry_price ?? p.averageCost),
+    marketValue: number(p.market_value ?? p.marketValue),
+    sector: undefined,
+    industry: undefined
+  };
 }
 
 function optionalIso(value: unknown): string | undefined {

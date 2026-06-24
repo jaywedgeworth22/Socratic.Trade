@@ -11,14 +11,17 @@ import {
   audit,
   dailyExecutionStats,
   findProposedIdByRunId,
+  getActiveConnectedAccount,
   getPolicy,
   insertProposal,
   notionalInLastMinutes
 } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
+import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "@/lib/policy";
 import { emitDashboardEvent } from "@/lib/events";
 import { chatDraftToProposal } from "@/lib/chat/promote-draft";
+import { deriveExecutionState } from "@/lib/execution-mode";
 import type { ChatDraft } from "@/lib/chat/types";
 import type { ReviewedOrder } from "@/lib/types";
 
@@ -36,6 +39,9 @@ export async function POST(request: Request) {
   const proposal = mapped.proposal;
 
   const policy = getPolicy(userId);
+  const activeAccount = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccount);
+  const executionMode = executionState.mode;
   if (!policy.accountNumber) {
     return NextResponse.json({ error: "NO_ACCOUNT", reasons: ["No account is selected."] }, { status: 400 });
   }
@@ -44,7 +50,11 @@ export async function POST(request: Request) {
   }
   // Never trust the LLM draft: the symbol must be in the user's allowed universe.
   if (!allowedSymbolsForPolicy(policy).includes(proposal.symbol)) {
-    return NextResponse.json({ error: "SYMBOL_NOT_ALLOWED", reasons: [`${proposal.symbol} is not in the allowed universe.`] }, { status: 400 });
+    const hasDynamicUniverse = dynamicIndexUniversesForPolicy(policy).length > 0;
+    const reason = hasDynamicUniverse
+      ? `${proposal.symbol} is not in the explicit watchlist. Broad indexes are scan-ranked first; run Market Scan and use a scanned candidate, or add ${proposal.symbol} to Additional Watchlist.`
+      : `${proposal.symbol} is not in the allowed universe.`;
+    return NextResponse.json({ error: "SYMBOL_NOT_ALLOWED", reasons: [reason] }, { status: 400 });
   }
 
   const gateway = getBrokerGateway(policy, userId);
@@ -77,8 +87,10 @@ export async function POST(request: Request) {
     positions,
     dailyNotionalUsed: daily.notional,
     hourlyNotionalUsed: hourly.notional,
-    dailyOrderCount: daily.orderCount,
+    dailyOrderCount: daily.openingOrderCount,
     estimatedNotional: review?.estimatedNotional,
+    accountCapabilities: activeAccount?.capabilities,
+    isLiveExecution: executionMode === "broker/live",
     now
   });
   const estimatedNotional = review?.estimatedNotional;
@@ -106,7 +118,8 @@ export async function POST(request: Request) {
     estimatedNotional,
     status: "proposed",
     tradeThesisTag: proposal.tradeThesisTag,
-    entryMarketRegime: proposal.entryMarketRegime
+    entryMarketRegime: proposal.entryMarketRegime,
+    executionMode
   });
   audit("proposal_from_chat", { userId, proposalId, draftId: body.draft.draft_id, symbol: proposal.symbol, side: proposal.side }, userId);
   emitDashboardEvent({ type: "proposal", userId, at: now.toISOString(), detail: { proposalId, status: "proposed", source: "chat" } });

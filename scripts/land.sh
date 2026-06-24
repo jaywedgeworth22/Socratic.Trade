@@ -18,6 +18,9 @@
 # Emergency escape hatch (HUMANS ONLY):
 #   LAND_SKIP_VERIFY=1 bash scripts/land.sh   # skips tsc/test/build
 #   LAND_FORCE_PUSH=1  bash scripts/land.sh   # skips worktree guard (rare)
+#   LAND_ALLOW_DIRTY=1 bash scripts/land.sh    # bypasses dirty-tree guard after review
+#   LAND_ALLOW_STALE_OVERLAP=1 bash scripts/land.sh
+#                                             # bypasses stale-overlap guard after review
 
 set -euo pipefail
 
@@ -62,6 +65,14 @@ fi
 
 info "Landing branch '${CURRENT_BRANCH}' from worktree '${CURRENT_WORKTREE}'"
 
+if [[ -z "${LAND_ALLOW_DIRTY:-}" ]]; then
+  if [[ -n "$(git status --porcelain)" ]]; then
+    die "Working tree has uncommitted changes. Commit, stash, or clean them before landing.
+  This script only pushes committed branch history, so dirty files would otherwise be easy to miss.
+  To override in a genuine emergency: LAND_ALLOW_DIRTY=1 bash scripts/land.sh"
+  fi
+fi
+
 # ── 1b. self-heal the pre-push hook ────────────────────────────────────────
 # core.hooksPath is per-worktree and NOT inherited, so a worktree created outside
 # setup-agent-previews.sh would silently have NO hooks — the direct-push-to-main
@@ -82,6 +93,27 @@ fi
 # ── 2. fetch origin ────────────────────────────────────────────────────────
 info "Fetching origin..."
 git fetch origin
+
+# ── 2b. stale-overlap guard ────────────────────────────────────────────────
+# A branch can auto-merge cleanly while still reintroducing stale UI text or
+# behavior if both it and main edited the same files since the branch forked.
+# Stop before the automatic merge and require a deliberate review of overlaps.
+if [[ -z "${LAND_ALLOW_STALE_OVERLAP:-}" ]]; then
+  MERGE_BASE="$(git merge-base HEAD origin/main)"
+  BRANCH_FILES="$(git diff --name-only "${MERGE_BASE}..HEAD" | sort -u)"
+  MAIN_FILES="$(git diff --name-only "${MERGE_BASE}..origin/main" | sort -u)"
+  OVERLAP_FILES="$(comm -12 <(printf '%s\n' "$BRANCH_FILES") <(printf '%s\n' "$MAIN_FILES") | sed '/^$/d')"
+
+  if [[ -n "$OVERLAP_FILES" ]]; then
+    die "Your branch and origin/main both changed these files since the branch forked:
+$(echo "$OVERLAP_FILES" | sed 's/^/  /')
+
+Auto-merging this can silently land stale text or behavior even without a Git conflict.
+Manually merge/rebase origin/main, review each overlapping file, commit the result, then re-run.
+After that deliberate review, bypass only if needed:
+  LAND_ALLOW_STALE_OVERLAP=1 bash scripts/land.sh"
+  fi
+fi
 
 # ── 3. merge origin/main into current branch ──────────────────────────────
 info "Merging origin/main..."

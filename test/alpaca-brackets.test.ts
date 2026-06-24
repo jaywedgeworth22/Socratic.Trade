@@ -143,6 +143,67 @@ describe("Alpaca bracket order support", () => {
     expect(lastCreateOrderOpts.order_class).toBe("bracket");
   });
 
+  it("uses referencePrice for a bracketed dollar market order and never falls back to 1", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+
+    await gateway.placeEquityOrder({
+      accountNumber: "MOCK_ACC",
+      symbol: "MSFT",
+      side: "buy",
+      type: "market",
+      dollarAmount: 500,
+      referencePrice: 100,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      bracketTakeProfit: 115,
+      bracketStopLoss: 92,
+      refId: "bracket-ref-reference-price"
+    });
+
+    expect(lastCreateOrderOpts.notional).toBeUndefined();
+    expect(lastCreateOrderOpts.qty).toBe(5);
+    expect(lastCreateOrderOpts.qty).not.toBe(500);
+    expect(lastCreateOrderOpts.order_class).toBe("bracket");
+  });
+
+  it("fails closed for a bracketed dollar market order without a real price anchor", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+
+    await expect(gateway.placeEquityOrder({
+      accountNumber: "MOCK_ACC",
+      symbol: "MSFT",
+      side: "buy",
+      type: "market",
+      dollarAmount: 500,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      bracketTakeProfit: 115,
+      bracketStopLoss: 92,
+      refId: "bracket-ref-missing-anchor"
+    })).rejects.toThrow(/positive limitPrice or referencePrice/);
+  });
+
+  it("fails closed when a bracketed dollar order cannot buy one whole share", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+
+    await expect(gateway.placeEquityOrder({
+      accountNumber: "MOCK_ACC",
+      symbol: "MSFT",
+      side: "buy",
+      type: "market",
+      dollarAmount: 50,
+      referencePrice: 100,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      bracketTakeProfit: 115,
+      bracketStopLoss: 92,
+      refId: "bracket-ref-too-small"
+    })).rejects.toThrow(/too small/);
+  });
+
   it("does not set order_class when no bracket legs are provided", async () => {
     const { getAlpacaGateway } = await import("../src/lib/alpaca");
     const gateway = getAlpacaGateway("local");

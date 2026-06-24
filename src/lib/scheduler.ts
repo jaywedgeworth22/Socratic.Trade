@@ -155,17 +155,20 @@ async function tick(): Promise<void> {
           .catch((err) => console.error("[scheduler] proposal-expiry error:", err));
       }
 
-      if (policy.systemState !== "active" || !policy.accountNumber) {
+      if (!policy.accountNumber) {
         schedule.nextRunAt = null;
         continue;
       }
 
-      // R2: synthetic trailing-stop monitor — runs every tick for active (Started) users, regardless
-      // of the strategy-run cadence (a trail needs frequent checking). We only reach here when
-      // systemState === "active", so the protective market exit is gated behind Start. The in-flight
-      // guard prevents a slow run (broker latency near the tick interval) from overlapping the next
-      // tick's monitor and double-firing an exit.
-      if (!stopMonitorInFlight.has(userId)) {
+      const protectiveState =
+        policy.systemState === "active" ||
+        policy.systemState === "close_only" ||
+        policy.systemState === "liquidating";
+
+      // R2: synthetic trailing-stop monitor — runs every tick in states where risk-reducing exits
+      // are allowed. `close_only` and `liquidating` must not disable the very protection that can
+      // reduce exposure after a breaker trips. `halted` remains the only no-order state.
+      if (protectiveState && !stopMonitorInFlight.has(userId)) {
         stopMonitorInFlight.add(userId);
         void runSyntheticStopMonitor(userId, policy, true)
           .catch((err) => console.error("[scheduler] synthetic-stop monitor error:", err))
@@ -176,9 +179,14 @@ async function tick(): Promise<void> {
       // order that returned non-filled — common on Robinhood, which has no realtime fill stream —
       // doesn't sit pending_reconciliation (invisible to P&L/exposure) until the next, up-to-60-min,
       // strategy run. No-op for Test/paper (no live fills) and gated to broker-backed accounts.
-      if (!policy.paperMode && policy.accountNumber) {
+      if (!policy.paperMode) {
         void reconcilePendingFills(getBrokerGateway(policy, userId), policy.accountNumber, userId)
           .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
+      }
+
+      if (policy.systemState !== "active") {
+        schedule.nextRunAt = null;
+        continue;
       }
 
       // Event-only mode: the trigger engine drives runs; skip the fixed-interval cadence.

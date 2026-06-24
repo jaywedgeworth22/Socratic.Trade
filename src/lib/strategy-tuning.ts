@@ -4,13 +4,13 @@ import {
   getActiveConnectedAccount,
   latestAuditByKind,
   listFillEvents,
-  listStrategyRuns,
-  resolveLlmCredential
+  listStrategyRuns
 } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { deriveExecutionState, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
-import { symbolsForPolicyUniverse } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
+import { policyUniverseSymbolCount } from "./index-universes";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
@@ -155,7 +155,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   const macro = await fetchMacroData(userId);
   const accountNumber = policy.accountNumber;
   const performance = accountNumber ? getPerformanceSummary(accountNumber, {}, userId) : undefined;
-  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const fills = accountNumber ? listFillEvents(accountNumber, source, 30, userId) : [];
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, source, userId) : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
@@ -225,14 +225,13 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     macro
   };
 
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
-  if (!openaiKey) {
+  const { key: llmKey } = resolveLlmEndpoint(policy, userId);
+  if (!llmKey) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard });
     return applyOosGate(localProposal, userId);
   }
 
-  const payload = await requestLlmTuning(context, openaiKey, userId, cred.source === "operator" ? "operator" : "user", cred.keyRef);
+  const payload = await requestLlmTuning(context, userId);
   const proposedPatch = toPatch(payload, prompt, policy.scoringWeights);
   const cautions = [...payload.cautions];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
@@ -310,7 +309,9 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
     includedIndices: policy.includedIndices,
     additionalWatchlistCount: policy.additionalSymbols.length,
     ignoredSymbolCount: policy.blocklist?.length ?? 0,
-    allowedCount: symbolsForPolicyUniverse(policy).length,
+    allowedCount: policyUniverseSymbolCount(policy).count,
+    marketScanCandidateLimit: policy.marketScanCandidateLimit,
+    marketScanOutlierReserve: policy.marketScanOutlierReserve,
     strategyAuthority: policy.strategyAuthority,
     maxOrderNotional: policy.maxOrderNotional,
     maxDailyNotional: policy.maxDailyNotional,
@@ -375,11 +376,10 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown, openaiKey: string, userId: string, keySource: "user" | "operator", keyRef?: string): Promise<LlmTuningPayload> {
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTuningPayload> {
+  const policy = getPolicy(userId);
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
+  const isChatCompletions = transport === "chat-completions";
   const schema = tuningSchema();
   const systemPrompt = [
     "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
@@ -424,7 +424,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
         }
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   const traced = await withLlmGeneration(
@@ -462,7 +462,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
       }
 
       const payload = await response.json();
-      recordLlmUsage({ userId, provider: "openai", model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
       const text = extractResponseText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       return { text, payload: JSON.parse(text) as LlmTuningPayload };

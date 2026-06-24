@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
-import type { AccountCapabilities, EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import type { AccountCapabilities, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
 
 // Mock the tax module so the authoritative wash-sale gate tests don't need a DB.
@@ -62,6 +62,36 @@ describe("evaluateTradeProposal", () => {
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10
+    });
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks an opening order that exceeds the maxOrderPctOfAdv market-impact cap", () => {
+    const tslaQuote = { symbol: "TSLA", price: 10, volume: 100, intradayChangePct: 0, positionMarketValue: 0, score: 1 } as MarketQuote;
+    const marketScan = {
+      source: "test", generatedAt: "2026-06-22T00:00:00.000Z", scannedSymbols: 1, returnedQuotes: 1,
+      topCandidates: [tslaQuote], sectorBySymbol: {}, quotesBySymbol: {}, warnings: []
+    } as MarketScan;
+    // daily $-vol = 10 × 100 = $1,000; 5% ADV cap = $50; order $100 > $50 → reject.
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, maxOrderPctOfNav: undefined, maxOrderNotional: 10_000, maxOrderPctOfAdv: 5 },
+      portfolio, positions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 100,
+      washSaleLockedSymbols: new Set(), marketScan
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("daily $-volume"))).toBe(true);
+  });
+
+  it("allows the same order when the ADV cap is disabled", () => {
+    const tslaQuote = { symbol: "TSLA", price: 10, volume: 100, intradayChangePct: 0, positionMarketValue: 0, score: 1 } as MarketQuote;
+    const marketScan = {
+      source: "test", generatedAt: "2026-06-22T00:00:00.000Z", scannedSymbols: 1, returnedQuotes: 1,
+      topCandidates: [tslaQuote], sectorBySymbol: {}, quotesBySymbol: {}, warnings: []
+    } as MarketScan;
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, maxOrderPctOfNav: undefined, maxOrderNotional: 10_000, maxOrderPctOfAdv: undefined },
+      portfolio, positions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 100,
+      washSaleLockedSymbols: new Set(), marketScan
     });
     expect(decision.approved).toBe(true);
   });
@@ -137,6 +167,38 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
   });
 
+  it("allows a dynamic-universe symbol when it is present in the latest market scan", () => {
+    const marketScan = {
+      source: "test",
+      generatedAt: "2026-06-23T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [],
+      sectorBySymbol: {},
+      quotesBySymbol: { XYZ: { symbol: "XYZ", price: 25, score: 62 } },
+      warnings: []
+    } as MarketScan;
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "XYZ" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["russell2000"], additionalSymbols: [] },
+      estimatedNotional: 10,
+      marketScan
+    });
+
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks a dynamic-universe symbol when no scan proves membership", () => {
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "XYZ" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["russell2000"], additionalSymbols: [] },
+      estimatedNotional: 10
+    });
+
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
+  });
+
   it("allows S&P 500 symbols when the S&P universe is selected", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, {
       ...context(),
@@ -195,7 +257,7 @@ describe("evaluateTradeProposal", () => {
       dailyOrderCount: 10
     });
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("Daily order count");
+    expect(decision.reasons.join(" ")).toContain("Daily opening-order count");
   });
 
   it("blocks hourly notional overflow independently of the daily cap (R1)", () => {
@@ -269,7 +331,8 @@ describe("evaluateTradeProposal", () => {
       { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, limitPrice: 2000 },
       {
         ...context(2000),
-        dailyNotionalUsed: 2000
+        dailyNotionalUsed: 2000,
+        dailyOrderCount: 10
       }
     );
     expect(decision.approved).toBe(true);
@@ -387,13 +450,16 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain('Order side "short" rejected');
   });
 
-  it("rejects cover proposals", () => {
+  it("allows risk-reducing cover proposals even when opening shorting is disabled", () => {
     const decision = evaluateTradeProposal(
-      { ...proposal, side: "cover" },
-      context()
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined },
+      {
+        ...context(),
+        policy: { ...enabledPolicy, shortSellingEnabled: false, additionalSymbols: ["AAPL", "TSLA"] },
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 100, marketValue: -200, sector: "Auto" }]
+      }
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "cover" rejected');
+    expect(decision.approved).toBe(true);
   });
 
   // T1 — maxSymbolExposureNotional must be side-aware (regression for the side-blind cap
@@ -488,6 +554,21 @@ describe("evaluateTradeProposal", () => {
       }
     );
     expect(decision.approved).toBe(true);
+  });
+
+  it("does not charge risk-reducing covers against the daily opening-order cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, type: "market" },
+      {
+        ...context(1000),
+        dailyOrderCount: enabledPolicy.maxDailyOrders,
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.reasons.join(" ")).not.toContain("Daily opening-order count");
   });
 
   // T10 — whole-portfolio gross/net exposure gates (previously silent no-ops).

@@ -101,9 +101,9 @@ export function sanitizeUserId(userId?: string): string {
  * Ensures we have valid clients for Pinecone and Voyage.
  */
 function getClients(userId: string = "local") {
-  const sanitizedUserId = sanitizeUserId(userId);
-  const pineconeKey = resolveApiKey("pinecone", sanitizedUserId);
-  const voyageKey = resolveApiKey("voyage", sanitizedUserId);
+  const lookupUserId = userId || "local";
+  const pineconeKey = resolveApiKey("pinecone", lookupUserId);
+  const voyageKey = resolveApiKey("voyage", lookupUserId);
 
   if (!pineconeKey || !voyageKey) {
     return { pc: null, voyage: null, initCacheKey: "" };
@@ -164,6 +164,10 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
   return out as RecordMetadata;
+}
+
+function vectorUserIdFor(userId: string | undefined): string {
+  return sanitizeUserId(userId);
 }
 
 function contextId(document: ContextDocument, fallbackIndex: number): string {
@@ -256,7 +260,7 @@ export async function storeContext(
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
 export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<StoreContextsResult> {
-  const sanitizedUserId = sanitizeUserId(userId);
+  const vectorUserId = vectorUserIdFor(userId);
   const validDocuments = documents
     .map((doc) => {
       let text = doc.text;
@@ -291,10 +295,10 @@ export async function storeContexts(documents: ContextDocument[], userId: string
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
 
-  const { pc, voyage, initCacheKey } = getClients(sanitizedUserId);
+  const { pc, voyage, initCacheKey } = getClients(userId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, sanitizedUserId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true };
   }
 
@@ -318,7 +322,7 @@ export async function storeContexts(documents: ContextDocument[], userId: string
         records.push({
           id: contextId(document, indexInBatch),
           values: embedding,
-          metadata: cleanMetadata(document.metadata, document.text, sanitizedUserId)
+          metadata: cleanMetadata(document.metadata, document.text, vectorUserId)
         });
       });
 
@@ -333,13 +337,13 @@ export async function storeContexts(documents: ContextDocument[], userId: string
     // Persist the outcome so RAG ingestion health is visible in the audit log / dashboard
     // instead of being swallowed to console (the original cause of the silent empty index).
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed });
-    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, sanitizedUserId);
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, userId);
     return { attempted: validDocuments.length, indexed };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, sanitizedUserId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, userId);
     return { attempted: validDocuments.length, indexed, error };
   }
 }
@@ -367,7 +371,8 @@ export async function storeDocument(
       section: c.section,
       doc_type: c.doc_type,
       is_table: c.is_table,
-      ticker: c.ticker
+      ticker: c.ticker,
+      ...(doc.url ? { url: doc.url } : {})
     }
   }));
   return storeContexts(documents, userId);
@@ -445,7 +450,7 @@ export function matchToChunk(match: any): RetrievedChunk {
     as_of: asOf != null ? String(asOf) : undefined,
     doc_type: typeof md.doc_type === "string" ? md.doc_type : undefined,
     section: typeof md.section === "string" ? md.section : undefined,
-    url: typeof md.url === "string" ? md.url : undefined,
+    url: typeof md.url === "string" ? md.url : typeof md.filingUrl === "string" ? md.filingUrl : undefined,
     scope
   };
 }
@@ -461,8 +466,8 @@ export async function retrieveContextDetailed(
   userId: string = "local",
   options?: { asOf?: string }
 ): Promise<RetrievedChunk[]> {
-  const sanitizedUserId = sanitizeUserId(userId);
-  const { pc, voyage } = getClients(sanitizedUserId);
+  const vectorUserId = vectorUserIdFor(userId);
+  const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
   // When an as-of date is set, over-fetch then drop look-ahead chunks (post-query filter, since
   // Pinecone can't range-filter ISO datetime strings reliably).
@@ -491,7 +496,7 @@ export async function retrieveContextDetailed(
       ]
     };
 
-    if (sanitizedUserId === "local") {
+    if (vectorUserId === "local") {
       const results = await index.query({
         vector: embedding,
         topK: fetchK,
@@ -506,7 +511,7 @@ export async function retrieveContextDetailed(
           topK: fetchK,
           filter: {
             symbol: { $eq: symbol },
-            userId: { $eq: sanitizedUserId }
+            userId: { $eq: vectorUserId }
           },
           includeMetadata: true,
         }),

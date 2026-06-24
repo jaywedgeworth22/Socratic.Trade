@@ -229,6 +229,9 @@ describe("persistence and notifications", () => {
         ...DEFAULT_POLICY,
         systemState: "active",
         paperMode: true,
+        // Classic model so request-body assertions check temperature + exact caps
+        // (reasoning-model bounds are covered by test/llm-request.test.ts).
+        llmModel: "gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
@@ -297,6 +300,9 @@ describe("persistence and notifications", () => {
         ...DEFAULT_POLICY,
         systemState: "active",
         paperMode: true,
+        // Classic model so request-body assertions check temperature + exact caps
+        // (reasoning-model bounds are covered by test/llm-request.test.ts).
+        llmModel: "gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
@@ -375,6 +381,9 @@ describe("persistence and notifications", () => {
         ...DEFAULT_POLICY,
         systemState: "active",
         paperMode: true,
+        // Classic model so request-body assertions check temperature + exact caps
+        // (reasoning-model bounds are covered by test/llm-request.test.ts).
+        llmModel: "gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"

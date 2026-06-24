@@ -16,6 +16,7 @@ import {
   Landmark,
   LayoutDashboard,
   LineChartIcon,
+  LogOut,
   Network,
   Pause,
   Percent,
@@ -41,6 +42,11 @@ import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { deriveMetrics } from "@/lib/derived-metrics";
 import { deriveExecutionState, type ExecutionState } from "@/lib/execution-mode";
 import {
+  STOPPED_PROPOSAL_ACTION_DESCRIPTION,
+  STOPPED_PROPOSAL_ACTION_TITLE,
+  isProposalActionStopped
+} from "@/lib/proposal-actions";
+import {
   companyTitle,
   enrichPositionsForDisplay,
   formatNotificationDisplay,
@@ -52,11 +58,29 @@ import {
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
-import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse, isValidAppSymbol } from "@/lib/index-universes";
+import {
+  INDEX_UNIVERSES,
+  SUPPORTED_INDEX_UNIVERSES,
+  indexUniverseSymbolCount,
+  isValidAppSymbol,
+  policyUniverseSymbolCount,
+  toggleIncludedIndex
+} from "@/lib/index-universes";
 import { DEFAULT_TICKER_LOGO_DISPLAY, isTickerLogoDisplay } from "@/lib/ticker-logos";
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
+import {
+  DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
+  DEFAULT_MARKET_SCAN_OUTLIER_RESERVE,
+  MAX_MARKET_SCAN_CANDIDATE_LIMIT,
+  MAX_MARKET_SCAN_OUTLIER_RESERVE,
+  MIN_MARKET_SCAN_CANDIDATE_LIMIT,
+  MIN_MARKET_SCAN_OUTLIER_RESERVE,
+  normalizeMarketScanCandidateLimit,
+  normalizeMarketScanOutlierReserve
+} from "@/lib/scan-settings";
 import type {
   EquityPosition,
+  ExecutionMode,
   IndexUniverse,
   MarketQuote,
   MarketScan,
@@ -100,7 +124,26 @@ type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
+type SettingsSection = "operate" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
+type AccountDeletionPreview = {
+  userId: string;
+  email?: string;
+  isLocalOperatorAccount: boolean;
+  prepared: boolean;
+  requestedAt?: string;
+  connectedAccounts: Array<{ id: string; label: string; broker: string; environment: string; accountNumber?: string; isActive: boolean }>;
+  blockers: { runningStrategyRuns: number; placingProposals: number; pendingReconciliationFills: number };
+  counts: Record<string, number>;
+};
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
+const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
+const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
+const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
+const FEED_TAB_KEY = "dashboard-feed-tab";
+const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
+const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets/v2";
+const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
+const LOCAL_OPERATOR_DELETE_PHRASE = "DELETE LOCAL OPERATOR ACCOUNT";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
   ok: boolean;
@@ -115,12 +158,96 @@ type RobinhoodMcpHealth = {
   warning?: string;
 };
 
+function alpacaDefaultEndpointFor(environment: ConnectedAccount["environment"] | undefined): string {
+  return environment === "live" ? ALPACA_BROKERAGE_ENDPOINT : ALPACA_PAPER_ENDPOINT;
+}
+
+function normalizeEndpoint(value?: string): string {
+  return (value ?? "").trim().replace(/\/+$/, "");
+}
+
+function hasCustomAlpacaEndpoint(account: Partial<ConnectedAccount>): boolean {
+  if (account.broker !== "alpaca") return Boolean(account.baseUrl?.trim());
+  const endpoint = normalizeEndpoint(account.baseUrl);
+  if (!endpoint) return false;
+  return endpoint !== normalizeEndpoint(alpacaDefaultEndpointFor(account.environment));
+}
+
 function safeJson(value: string): unknown {
   try {
     return JSON.parse(value) as unknown;
   } catch {
     return {};
   }
+}
+
+function isWorkspaceTab(value: unknown): value is WorkspaceTab {
+  return value === "decision" || value === "assistant" || value === "market" || value === "macro" || value === "performance" || value === "tax" || value === "strategy";
+}
+
+function isFeedTab(value: unknown): value is FeedTab {
+  return value === "activity" || value === "runs" || value === "notifications" || value === "audit";
+}
+
+function readStoredWorkspaceTab(): WorkspaceTab {
+  if (typeof window === "undefined") return "decision";
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_TAB_KEY);
+    return isWorkspaceTab(saved) ? saved : "decision";
+  } catch {
+    return "decision";
+  }
+}
+
+function readStoredFeedTab(): FeedTab {
+  if (typeof window === "undefined") return "activity";
+  try {
+    const saved = window.localStorage.getItem(FEED_TAB_KEY);
+    return isFeedTab(saved) ? saved : "activity";
+  } catch {
+    return "activity";
+  }
+}
+
+function plainAppError(raw: string, fallback = "Something went wrong."): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  let message = trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as { error?: unknown; summary?: unknown; message?: unknown };
+    const nested = parsed.error;
+    if (typeof parsed.summary === "string") message = parsed.summary;
+    else if (typeof parsed.message === "string") message = parsed.message;
+    else if (typeof nested === "string") message = nested;
+    else if (nested && typeof nested === "object" && "error" in nested && typeof (nested as { error?: unknown }).error === "string") message = String((nested as { error: string }).error);
+  } catch {
+    if (trimmed.startsWith("<")) return fallback;
+  }
+  if (/Incorrect API key provided/i.test(message) && /console\.x\.ai|x\.ai/i.test(message)) {
+    return "The xAI API key was rejected. Open Settings -> Connections to update the xAI key, or choose an OpenAI model in Strategy Studio.";
+  }
+  if (/Incorrect API key provided/i.test(message) && /openai|platform\.openai/i.test(message)) {
+    return "The OpenAI API key was rejected. Open Settings -> Connections to update the OpenAI key, or choose a model your key can access in Strategy Studio.";
+  }
+  if (/System is halted/i.test(message)) {
+    return "The system is stopped. Press Start for scheduled/autonomous runs, or use Run once for a manual proposal check.";
+  }
+  if (/No account selected/i.test(message)) {
+    return "Select an account before running the strategy. Use the account menu or Accounts modal.";
+  }
+  if (/agentic_allowed/i.test(message)) {
+    return "The selected broker account is not approved for agentic execution. Choose an agentic-enabled account or use Test mode.";
+  }
+  return message.length > 280 ? `${message.slice(0, 277)}...` : message;
+}
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const raw = await response.text().catch(() => "");
+  return new Error(plainAppError(raw, `${fallback} (${response.status}).`));
+}
+
+function showStoppedProposalActionToast() {
+  toast.warning(STOPPED_PROPOSAL_ACTION_TITLE, { description: STOPPED_PROPOSAL_ACTION_DESCRIPTION });
 }
 
 function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
@@ -137,36 +264,139 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
 // decides the color + message so a live (Brokerage) session can never be mistaken for a
 // Test sandbox. Display-only — it does not place or gate orders.
-function executionBanner(state: ExecutionState): { className: string; text: string } {
+function brokerNameForBanner(state: ExecutionState): string {
+  if (state.broker === "alpaca" || state.broker === "alpaca-mcp") return "Alpaca";
+  if (state.broker === "robinhood") return "Robinhood";
+  return state.accountLabel ?? "Broker";
+}
+
+function executionBanner(state: ExecutionState): { className: string; title: string; content: React.ReactNode } {
   if (state.mode === "broker/live") {
+    const brokerName = brokerNameForBanner(state);
+    const title = `${brokerName} Brokerage Account`;
+    const detail = `orders route to ${state.accountLabel ?? `${brokerName} Brokerage`} • real money may be at risk`;
     return {
-      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 animate-pulse",
-      text: `BROKERAGE · LIVE CAPITAL — approved orders execute against ${state.accountLabel ?? "your broker"} with real money.`
+      className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 motion-safe:animate-pulse",
+      title: `${title} • ${detail}`,
+      content: (
+        <>
+          <strong className="font-semibold not-italic">{title}</strong>
+          <span className="font-normal italic"> • {detail}</span>
+        </>
+      )
     };
   }
   if (state.mode === "broker/paper") {
+    const brokerName = brokerNameForBanner(state);
+    const title = `${brokerName} Paper Account`;
+    const routeLabel = state.broker === "alpaca" || state.broker === "alpaca-mcp" ? "Alpaca Paper" : `${brokerName} Paper`;
+    const detail = `orders route to ${routeLabel} • no real money is at risk`;
     return {
       className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
-      text: `PAPER — broker sandbox (${state.accountLabel ?? "Alpaca Paper"}). Orders route to the broker's paper endpoint; no real capital at risk.`
+      title: `${title} • ${detail}`,
+      content: (
+        <>
+          <strong className="font-semibold not-italic">{title}</strong>
+          <span className="font-normal italic"> • {detail}</span>
+        </>
+      )
     };
   }
+  const title = "Test Account";
+  const detail = "local simulated fills only • no broker orders or real money at risk • broker paper account (e.g. Alpaca Paper Account) is more realistic";
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
-    text: "TEST — local simulation with simulated fills. No broker orders; no real capital at risk. A connected paper account (e.g. Alpaca Paper Trading) is likely more realistic than this local simulation."
+    title: `${title} • ${detail}`,
+    content: (
+      <>
+        <strong className="font-semibold not-italic">{title}</strong>
+        <span className="font-normal italic"> • {detail}</span>
+      </>
+    )
   };
 }
 
-export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
+type ReadinessItem = {
+  label: string;
+  detail: string;
+  ok: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
+function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface/70 px-3 py-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Readiness</span>
+          {items.map((item) => (
+            <span
+              key={item.label}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium",
+                item.ok ? "bg-up/10 text-up" : "bg-warn/10 text-warn"
+              )}
+              title={item.detail}
+            >
+              {item.ok ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+              {item.label}
+            </span>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {items
+            .filter((item) => !item.ok && item.onAction)
+            .slice(0, 2)
+            .map((item) => (
+              <Button key={item.label} size="sm" variant="ghost" onClick={item.onAction}>
+                {item.actionLabel ?? item.label}
+              </Button>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot | null }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  if (!initialSnapshot) return mounted ? <DashboardBootstrap /> : <DashboardSsrShell />;
   if (!mounted) return <DashboardSsrShell snapshot={initialSnapshot} />;
   return <DashboardApp initialSnapshot={initialSnapshot} />;
 }
 
-function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const executionState = executionStateFor(snapshot);
-  const mode = `${executionState.label} Mode`;
-  const state = snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed";
+function DashboardBootstrap() {
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function loadInitialSnapshot() {
+      try {
+        const response = await fetch("/api/dashboard", { cache: "no-store" });
+        if (!response.ok) throw await responseError(response, "Dashboard load failed");
+        const body = (await response.json()) as DashboardSnapshot;
+        if (active) setSnapshot(body);
+      } catch (error) {
+        if (active) setLoadError(error instanceof Error ? error.message : "Dashboard load failed.");
+      }
+    }
+    void loadInitialSnapshot();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (snapshot) return <DashboardApp initialSnapshot={snapshot} />;
+  return <DashboardSsrShell message={loadError ?? "Loading cockpit..."} detail={loadError ? "Refresh the page after checking the preview server." : undefined} />;
+}
+
+function DashboardSsrShell({ snapshot, message = "Loading cockpit...", detail = "Preparing the local dashboard view." }: { snapshot?: DashboardSnapshot | null; message?: string; detail?: string }) {
+  const executionState = snapshot ? executionStateFor(snapshot) : undefined;
+  const mode = executionState ? `${executionState.label} Mode` : "Loading";
+  const state = snapshot ? (snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed") : "starting";
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
       <header className="flex min-h-14 items-center justify-between border-b border-line bg-surface/70 px-4">
@@ -182,20 +412,20 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
             </div>
           </div>
         </div>
-        <span className="text-xs text-faint">Loading cockpit...</span>
+        <span className="text-xs text-faint">{message}</span>
       </header>
       <main className="flex flex-1 items-center justify-center p-6">
         <div className="rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted">
-          Preparing the local dashboard view.
+          {detail}
         </div>
       </main>
     </div>
   );
 }
 
-// Symbols the user SENT (watchlist + ignore list) that the server dropped as unsupported (equity-only),
-// so we can warn explicitly instead of silently losing them. The server uses the same validity rule for
-// both lists, so a dropped symbol is absent from both saved lists.
+// Symbols the user SENT (watchlist + ignore list) that the server dropped as malformed legacy entries,
+// so we can warn explicitly instead of silently losing them. Newly added unsupported custom symbols now
+// fail the save with a specific server message before reaching this diff.
 function droppedUnsupportedSymbols(sent: TradingPolicy, saved: TradingPolicy): string[] {
   const up = (list: string[] | undefined): string[] => (list ?? []).map((s) => s.trim().toUpperCase()).filter(Boolean);
   const savedSet = new Set([...up(saved.additionalSymbols), ...up(saved.blocklist)]);
@@ -214,15 +444,18 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await fetch("/api/consent", {
+      const response = await fetch("/api/consent", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accepted })
       });
+      if (!response.ok) throw new Error("Consent could not be saved.");
+      onResolved();
     } catch {
-      /* best-effort — proceed regardless of network error */
+      toast.error("Consent could not be saved. The dashboard will stay locked until this is resolved.");
+    } finally {
+      setSubmitting(false);
     }
-    onResolved();
   }
 
   return (
@@ -259,8 +492,8 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
           </p>
           <p>
             <strong className="font-semibold text-fg">Your personal account data is never shared.</strong>{" "}
-            Positions, orders, balances, P&amp;L, and credentials remain strictly private and never
-            leave your device.
+            Positions, orders, balances, P&amp;L, and credentials remain private to your account;
+            credentials stay encrypted and server-only.
           </p>
         </div>
 
@@ -298,10 +531,11 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
 function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
   const [busy, setBusy] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("decision");
-  const [feedTab, setFeedTab] = useState<FeedTab>("activity");
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(readStoredWorkspaceTab);
+  const [feedTab, setFeedTab] = useState<FeedTab>(readStoredFeedTab);
   const [feedOpen, setFeedOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("operate");
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
@@ -320,8 +554,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         setConsentGate(data?.needsConsent === true ? "needed" : "done");
       })
       .catch(() => {
-        // Network error: don't block the app — skip the gate
-        if (!cancelled) setConsentGate("done");
+        if (!cancelled) setConsentGate("needed");
       });
     return () => { cancelled = true; };
   }, []);
@@ -336,6 +569,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   // Market Scan tab uses) once on mount and keep it for drilldown lookups.
   const [tickerScan, setTickerScan] = useState<MarketScan | null>(null);
   const [tickerLogoDisplay, setTickerLogoDisplay] = useState<TickerLogoDisplay>(DEFAULT_TICKER_LOGO_DISPLAY);
+  const [compactExecutionBanner, setCompactExecutionBanner] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -355,6 +589,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const saved = localStorage.getItem(TICKER_LOGO_DISPLAY_KEY);
       if (isTickerLogoDisplay(saved)) setTickerLogoDisplay(saved);
+      setCompactExecutionBanner(
+        localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true" ||
+          localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true"
+      );
     } catch {
       /* ignore storage failures */
     }
@@ -369,11 +607,37 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
+  function updateCompactExecutionBanner(next: boolean) {
+    setCompactExecutionBanner(next);
+    try {
+      localStorage.setItem(EXECUTION_BANNER_COMPACT_KEY, String(next));
+      localStorage.removeItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY);
+    } catch {
+      /* ignore storage failures */
+    }
+  }
+
   const [newProfileName, setNewProfileName] = useState("");
   const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WORKSPACE_TAB_KEY, workspaceTab);
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [workspaceTab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FEED_TAB_KEY, feedTab);
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [feedTab]);
 
   // Fallback poll — now a safety net (2 min) behind the SSE live-push below, not the primary
   // refresh path. Covers missed events, SSE-unsupported browsers, and dropped streams.
@@ -440,13 +704,18 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     if (!options.quiet) setBusy(true);
     try {
       const response = await fetch("/api/dashboard", { cache: "no-store" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Dashboard refresh failed");
       setSnapshot((await response.json()) as DashboardSnapshot);
     } catch (loadError) {
       toast.error(loadError instanceof Error ? loadError.message : "Dashboard refresh failed.");
     } finally {
       if (!options.quiet) setBusy(false);
     }
+  }
+
+  function openSettings(section: SettingsSection = "operate") {
+    setSettingsInitialSection(section);
+    setSettingsOpen(true);
   }
 
   async function updatePolicy(patch: PolicyPatch) {
@@ -458,19 +727,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         body: JSON.stringify({ ...snapshot.policy, ...patch })
       });
       if (!response.ok) {
-        // Surface a concise message; never dump an HTML error page (e.g. a 500) into the toast.
-        const raw = (await response.text().catch(() => "")).trim();
-        const message = raw && !raw.startsWith("<") && raw.length <= 300 ? raw : `Policy update failed (${response.status}).`;
-        throw new Error(message);
+        throw await responseError(response, "Policy update failed");
       }
-      // The server drops unsupported symbols (equity-only) from the watchlist / ignore list. Detect any
-      // that were silently removed and warn explicitly, so nothing is ever thought to be watched when it
-      // isn't. (Add-time validation already blocks these at the input; this also catches legacy entries.)
+      // The server drops malformed legacy symbols from the watchlist / ignore list. Detect any that were
+      // removed and warn explicitly, so nothing is ever thought to be watched when it isn't.
       const saved = (await response.json().catch(() => null)) as TradingPolicy | null;
       const dropped = saved ? droppedUnsupportedSymbols({ ...snapshot.policy, ...patch }, saved) : [];
       if (dropped.length > 0) {
         toast.warning(`Removed unsupported symbol${dropped.length > 1 ? "s" : ""}: ${dropped.join(", ")}`, {
-          description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported, so these were not kept on the list."
+          description: "These entries are not valid ticker formats, so they were not kept on the list."
         });
       } else {
         toast.success("Policy updated.");
@@ -496,8 +761,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   async function runStrategy() {
     setBusy(true);
     try {
-      const response = await fetch("/api/strategy/run", { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      const response = await fetch("/api/strategy/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ manual: true })
+      });
+      if (!response.ok) throw await responseError(response, "Strategy run failed");
       const body = (await response.json()) as { summary?: string };
       toast.success(body.summary ?? "Strategy run completed.");
       await load({ quiet: true });
@@ -509,22 +778,67 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   async function approveProposal(proposalId: string) {
+    if (isProposalActionStopped(snapshot.policy)) {
+      showStoppedProposalActionToast();
+      return;
+    }
+    const pending = snapshot.pendingProposals.find((proposal) => proposal.id === proposalId);
+    let requestBody: Record<string, unknown> = {};
+    if (executionState.mode === "broker/live") {
+      if (!pending) {
+        toast.error("Live approval is unavailable because the proposal snapshot is stale. Refresh and try again.");
+        return;
+      }
+      const symbol = pending.proposal.symbol.trim().toUpperCase();
+      const expectedText = `APPROVE LIVE ${symbol}`;
+      const typedText = window.prompt(
+        `This can submit a live brokerage order for ${symbol}. Type ${expectedText} to continue.`
+      );
+      if (typedText === null) return;
+      if (typedText.trim().toUpperCase() !== expectedText) {
+        toast.warning("Live approval cancelled.", { description: `Required phrase: ${expectedText}` });
+        return;
+      }
+      requestBody = {
+        liveConfirmation: {
+          proposalId,
+          accountNumber: pending.accountNumber || snapshot.policy.accountNumber,
+          executionMode: executionState.mode,
+          estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
+          typedText
+        }
+      };
+    }
     setBusy(true);
     try {
-      const response = await fetch(`/api/proposals/${proposalId}/approve`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
-      const body = (await response.json()) as { status: string; orderId?: string; reasons?: string[] };
+      const response = await fetch(`/api/proposals/${proposalId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(requestBody)
+      });
+      if (!response.ok) throw await responseError(response, "Proposal approval failed");
+      const body = (await response.json()) as { status: string; orderId?: string; brokerState?: string; fillStatus?: string; reasons?: string[] };
       if (body.status === "blocked") {
         const reasonsMsg = body.reasons?.map((r) => `• ${r}`).join("\n") ?? "No reasons provided.";
         toast.warning("Proposal blocked by policy", { description: reasonsMsg });
       } else {
-        toast.success(
-          body.status === "placed"
-            ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
-            : body.status === "paper"
-              ? "Proposal executed in Test mode."
-              : `Result: ${body.status}`
-        );
+        if (body.status === "placed" && body.fillStatus === "pending_reconciliation") {
+          toast.info("Order accepted by broker and pending execution.", {
+            description: [
+              body.brokerState ? `Broker state: ${readableOrderState(body.brokerState)}.` : undefined,
+              body.orderId ? `Order ${body.orderId}.` : undefined,
+              "The Activity feed will update when the broker reports filled, rejected, canceled, or expired."
+            ].filter(Boolean).join(" ")
+          });
+        } else {
+          toast.success(
+            body.status === "placed"
+              ? `Order filled or placed${body.orderId ? `: ${body.orderId}` : ""}.`
+              : body.status === "paper"
+                ? "Proposal executed in Test mode."
+                : `Result: ${body.status}`
+          );
+        }
       }
       if (body.status === "placed" || body.status === "paper") await load({ quiet: true });
     } catch (approvalError) {
@@ -536,10 +850,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   async function rejectProposal(proposalId: string) {
+    if (isProposalActionStopped(snapshot.policy)) {
+      showStoppedProposalActionToast();
+      return;
+    }
     setBusy(true);
     try {
       const response = await fetch(`/api/proposals/${proposalId}/reject`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Proposal rejection failed");
       toast.info("Proposal rejected.");
       await load({ quiet: true });
     } catch (rejectError) {
@@ -553,7 +871,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     setBusy(true);
     try {
       const response = await fetch(`/api/profiles/${profileId}/activate`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Profile activation failed");
       toast.success("Profile activated.");
       await load({ quiet: true });
     } catch (profileError) {
@@ -573,7 +891,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, policy: snapshot.policy, prompt: snapshot.strategyPrompt, active: true })
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw await responseError(response, "Profile creation failed");
       toast.success("Profile created.");
       setNewProfileName("");
       await load({ quiet: true });
@@ -590,7 +908,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const response = await fetch("/api/strategy/tune", { method: "POST" });
       const body = await response.json();
-      if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "Strategy tuning review failed.");
+      if (!response.ok) throw new Error(plainAppError(typeof body?.error === "string" ? body.error : JSON.stringify(body), "Strategy tuning review failed."));
       setStrategyTuning(body as StrategyTuningProposal);
     } catch (tuneError) {
       setTuningError(tuneError instanceof Error ? tuneError.message : "Strategy tuning review failed.");
@@ -612,15 +930,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   const policy = snapshot.policy;
-  const dailyStats = snapshot.dailyStats ?? { orderCount: 0, notional: 0 };
+  const dailyStats = snapshot.dailyStats ?? { orderCount: 0, openingOrderCount: 0, notional: 0 };
   const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
-  const remainingOrders = Math.max(0, policy.maxDailyOrders - dailyStats.orderCount);
+  const remainingOrders = Math.max(0, policy.maxDailyOrders - (dailyStats.openingOrderCount ?? dailyStats.orderCount));
   const enableBlockedReason = !policy.accountNumber
     ? "Select an account before enabling autonomy."
     : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
       : undefined;
-  const allowedCount = symbolsForPolicyUniverse(policy).length;
+  const allowedUniverse = policyUniverseSymbolCount(policy);
+  const allowedCount = allowedUniverse.count;
   
   const isDefault = policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0;
   const selectedIndexLabels = policy.includedIndices
@@ -629,8 +948,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const isOnlyOneIndex = selectedIndexLabels.length === 1 && policy.additionalSymbols.length === 0 && (policy.blocklist || []).length === 0;
   const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
   const executionState = executionStateFor(snapshot);
+  const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
+  const signedInEmail = snapshot.currentUser?.email;
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
   // fetched live scan, falling back to the captured run's scan if it's still loading.
@@ -644,10 +965,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const autonomyStatus = policy.systemState === "active"
     ? setupBlocked
       ? { tone: "warn" as const, label: "Setup Needed" }
-      : { tone: "up" as const, label: policy.strategyAuthority === "decide" ? "Running · Autonomous" : "Running · Propose" }
+      : { tone: "up" as const, label: policy.strategyAuthority === "decide" ? "Running · Autonomous Mode" : "Running · Propose Mode" }
     : policy.systemState === "halted"
       ? { tone: "down" as const, label: "Stopped" }
-      : { tone: "neutral" as const, label: `Autonomy ${policy.systemState}` };
+      : policy.systemState === "close_only"
+        ? { tone: "warn" as const, label: "Close-Only" }
+        : { tone: "down" as const, label: "Liquidating" };
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
   function routeSetupBlocker(reason: string) {
@@ -657,7 +980,20 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         : "Open Settings to choose a tradable universe."
     });
     if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
-    else setSettingsOpen(true);
+    else openSettings("operate");
+  }
+
+  async function activateAccount(id: string) {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" });
+      if (!response.ok) throw await responseError(response, "Account switch failed");
+      await load({ quiet: true });
+    } catch (switchError) {
+      toast.error(switchError instanceof Error ? switchError.message : "Account switch failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function requestAutonomy(nextActive: boolean) {
@@ -668,6 +1004,45 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
+  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === executionState.accountNumber);
+  const riskCapsReady =
+    (policy.maxDailyNotional ?? 0) > 0 &&
+    (policy.maxOrderNotional ?? 0) > 0 &&
+    (policy.maxDailyOrders ?? 0) > 0;
+  const readinessItems: ReadinessItem[] = [
+    {
+      label: "Account",
+      ok: Boolean(policy.accountNumber),
+      detail: policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected.",
+      actionLabel: "Accounts",
+      onAction: () => setAccountsOpen(true)
+    },
+    {
+      label: "Universe",
+      ok: allowedCount > 0,
+      detail: allowedCount > 0 ? `${allowedUniverse.approximate ? "About " : ""}${allowedCount} symbols are allowed.` : "No base index or additional watchlist symbol is selected.",
+      actionLabel: "Settings",
+      onAction: () => openSettings("operate")
+    },
+    {
+      label: "Risk Caps",
+      ok: riskCapsReady,
+      detail: riskCapsReady ? "Daily, order, and count caps are configured." : "Daily notional, order notional, and order-count caps must be positive.",
+      actionLabel: "Settings",
+      onAction: () => openSettings("operate")
+    },
+    {
+      label: executionState.label,
+      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed === true,
+      detail: executionState.usesLocalSimulation
+        ? "Test mode uses local simulated fills."
+        : selectedBrokerAccount?.agenticAllowed === true
+          ? "Selected broker account is available for agentic execution."
+          : "Selected broker account is not currently available for agentic execution.",
+      actionLabel: "Accounts",
+      onAction: () => setAccountsOpen(true)
+    }
+  ];
 
   const safetyBanner = executionBanner(executionState);
 
@@ -679,13 +1054,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
     { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={15} />, run: () => setWorkspaceTab("strategy") },
     { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
-    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
+    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => openSettings("operate") },
     { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
     { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
     { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
     { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
     { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
-    { id: "refresh", label: "Refresh dashboard", icon: <RefreshCw size={15} />, run: () => void load() },
+    { id: "sign-out", label: "Sign out", hint: signedInEmail ?? "Current session", icon: <LogOut size={15} />, run: () => { window.location.href = "/logout"; } },
   ];
 
   return (
@@ -696,12 +1071,17 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
-      {/* ── Tri-state execution safety banner (Test / Paper / Brokerage) ── */}
       <div
-        className={cn("shrink-0 border-b px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide", safetyBanner.className)}
-        title={executionState.clarification}
+        role="status"
+        aria-live="polite"
+        className={cn(
+          "shrink-0 border-b text-center font-semibold tracking-wide",
+          compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
+          safetyBanner.className
+        )}
+        title={safetyBanner.title}
       >
-        {safetyBanner.text}
+        {safetyBanner.content}
       </div>
       {/* ── Command bar ─────────────────────────────────────────── */}
       <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:py-0 xl:px-4">
@@ -740,7 +1120,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
-              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode</span>
+              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode:</span>
               <select
                 aria-label="Approval mode"
                 className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
@@ -754,22 +1134,22 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                   }
                 }}
               >
-                <option value="propose">Propose</option>
-                <option value="decide">Autonomous</option>
+                <option value="propose">Propose Mode</option>
+                <option value="decide">Autonomous Mode</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
                 className="h-8 max-sm:h-11 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
-                value={policy.connectedAccountId ?? ""}
-                onChange={(e) => {
+                value={activeAccountId}
+                onChange={async (e) => {
                   const id = e.target.value;
                   if (id === "manage") {
                     setAccountsOpen(true);
                     return;
                   }
-                  void fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" }).then(() => load());
+                  await activateAccount(id);
                 }}
               >
                 <option value="" disabled>Select Account...</option>
@@ -779,16 +1159,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <option value="manage">Manage Accounts...</option>
               </select>
             </div>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Refresh" onClick={() => load()} disabled={busy}>
-              <RefreshCw size={15} className={cn(busy && "animate-spin")} />
-            </IconButton>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => setSettingsOpen(true)}>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
               <SettingsIcon size={15} />
             </IconButton>
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Help" onClick={() => setHelpOpen(true)}>
               <HelpCircle size={15} />
             </IconButton>
             <ThemeToggle />
+            {signedInEmail && (
+              <span className="hidden max-w-[12rem] truncate text-[11px] text-faint md:inline" title={`Signed in as ${signedInEmail}`}>
+                {signedInEmail}
+              </span>
+            )}
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Log out" onClick={() => { window.location.href = "/logout"; }}>
+              <LogOut size={15} />
+            </IconButton>
           </div>
 
           {/* Sub-container 2: Action buttons */}
@@ -810,23 +1195,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               onClick={() => setLearnedQueueOpen(true)}
             />
             <Button
-              variant="ghost"
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
-              onClick={() => setNodeEditorOpen(true)}
-            >
-              <Network size={15} /> <span className="hidden sm:inline">Flow</span>
-            </Button>
-            <Button
-              variant="ghost"
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
-              onClick={() => setStudioOpen(true)}
-            >
-              <BrainCircuit size={15} /> <span className="hidden sm:inline">Strategy</span>
-            </Button>
-            <Button
               variant={enableBlockedReason ? "ghost" : "primary"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
-              title={enableBlockedReason}
+              aria-label="Run strategy once"
+              title={enableBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
               onClick={() => {
                 if (enableBlockedReason) {
                   routeSetupBlocker(enableBlockedReason);
@@ -841,6 +1213,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              aria-label={policy.systemState === "halted" ? "Start system" : "Stop system"}
               title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
               onClick={() => {
                 if (policy.systemState === "halted" && enableBlockedReason) {
@@ -867,6 +1240,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           <div className="lg:hidden">
             <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
+          <ReadinessStrip items={readinessItems} />
           <div className="flex min-w-0 items-center justify-between overflow-x-auto">
             <Tabs
               value={workspaceTab}
@@ -912,11 +1286,17 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
-                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} tickerLogoDisplay={tickerLogoDisplay} />
+                <MarketScanView
+                  snapshot={snapshot}
+                  onDrilldown={setDrilldownSymbol}
+                  onConfigureUniverse={() => openSettings("operate")}
+                  onConfigureScanSettings={() => openSettings("data")}
+                  tickerLogoDisplay={tickerLogoDisplay}
+                />
                 <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
-            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} />}
+            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "strategy" && (
@@ -925,6 +1305,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 policy={policy}
                 updatePolicy={updatePolicy}
                 onEdit={() => setStudioOpen(true)}
+                onOpenFlow={() => setNodeEditorOpen(true)}
                 activateProfile={activateProfile}
                 newProfileName={newProfileName}
                 setNewProfileName={setNewProfileName}
@@ -1003,10 +1384,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Risk, Tax, & Notifications" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Operate, Connections, Display & More" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
+          initialSection={settingsInitialSection}
           allowedCount={allowedCount}
           enableBlockedReason={enableBlockedReason}
           remainingNotional={remainingNotional}
@@ -1014,9 +1396,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           updatePolicy={updatePolicy}
           tickerLogoDisplay={tickerLogoDisplay}
           setTickerLogoDisplay={updateTickerLogoDisplay}
+          compactExecutionBanner={compactExecutionBanner}
+          setCompactExecutionBanner={updateCompactExecutionBanner}
           openAccounts={() => setAccountsOpen(true)}
+          openStrategyStudio={() => {
+            setSettingsOpen(false);
+            setStudioOpen(true);
+          }}
           load={load}
           onRequestDecideConfirm={() => setDecideConfirm(true)}
+          onRequestSystemToggle={() => setKillConfirm(true)}
         />
       </Modal>
 
@@ -1175,11 +1564,11 @@ function PortfolioRail({
         <StatTile label="P&L" value={signedMoney(dayPnl)} tone={pnlTone(dayPnl)} />
       </div>
       <div className="px-4 py-3">
-        {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No allocation yet" />}
+        {segments.length > 0 ? <AllocationDonut segments={segments} /> : <EmptyState title="No Allocation Yet" />}
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         {enriched.length === 0 ? (
-          <EmptyState icon={<Wallet size={18} />} title="No open positions" hint="Run the strategy to start building a position set." />
+          <EmptyState icon={<Wallet size={18} />} title="No Open Positions" hint="Run the strategy to start building a position set." />
         ) : (
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface/50 backdrop-blur-xl">
@@ -1320,27 +1709,45 @@ function DecisionView({
 }) {
   const decision = snapshot.latestStrategyRun;
   const pending = snapshot.pendingProposals;
+  const executionState = executionStateFor(snapshot);
+  const recentDecisionItems = decisionLedgerItems(snapshot);
   return (
     <div className="space-y-3">
       {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
         <Card className="overflow-hidden">
-          <PanelHeader title="Pending approval" subtitle="No proposals awaiting review" icon={<CheckCircle size={16} />} />
-          <EmptyState icon={<CheckCircle size={18} />} title="All clear — no pending approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
+          <PanelHeader title="Pending Approval" subtitle="No Proposals Awaiting Review" icon={<CheckCircle size={16} />} />
+          <EmptyState icon={<CheckCircle size={18} />} title="All Clear — No Pending Approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
         </Card>
       )}
       {pending.length > 0 && (
         <Card className="overflow-hidden">
-          <PanelHeader title="Pending approval" subtitle="Review and approve or reject" icon={<CheckCircle size={16} />} />
+          <PanelHeader title="Pending Approval" subtitle="Review And Approve Or Reject" icon={<CheckCircle size={16} />} />
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
             {pending.map((p) => {
               const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              const age = proposalAgeTone(p.createdAt);
+              const modeMismatch = Boolean(p.executionMode && p.executionMode !== executionState.mode);
+              const stoppedActionReason =
+                isProposalActionStopped(snapshot.policy) ? STOPPED_PROPOSAL_ACTION_DESCRIPTION : undefined;
+              const approvalBlockReason =
+                stoppedActionReason ??
+                (modeMismatch
+                    ? `Generated in ${executionModeLabel(p.executionMode)}. Current mode is ${executionModeLabel(executionState.mode)}; re-run before approving.`
+                    : undefined);
               return (
-                <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                  {accountLabel && (
-                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
-                      {accountLabel}
-                    </div>
+                <div
+                  key={p.id}
+                  className={cn(
+                    "rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3",
+                    stoppedActionReason && "border-warn/60 bg-warn/10 ring-1 ring-warn/20"
                   )}
+                >
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    {accountLabel && <span>{accountLabel}</span>}
+                    {p.executionMode && <Chip tone={modeMismatch ? "warn" : "neutral"}>{executionModeLabel(p.executionMode)}</Chip>}
+                    {p.createdAt && <ProposalTimeMeta iso={p.createdAt} label="Proposed" />}
+                    {age && <Chip tone={age.tone}>{age.label}</Chip>}
+                  </div>
                   <div className="flex items-center gap-2">
                     <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
                     <SymbolButton
@@ -1355,12 +1762,62 @@ function DecisionView({
                     <span className="ml-auto tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                   </div>
                   <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-fg/85" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                  {p.lastRevalidatedAt && (
+                    <p className="mt-1.5 text-[11px] text-faint" title={p.revalidationNote}>
+                      Revalidated {proposalTimeLabel(p.lastRevalidatedAt)}
+                    </p>
+                  )}
+                  {stoppedActionReason && (
+                    <div className="mt-3 flex gap-2 rounded-lg border border-warn/40 bg-warn/10 p-2 text-[12px] leading-snug text-warn">
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                      <div>
+                        <div className="font-semibold">System stopped</div>
+                        <p className="text-fg/80">{stoppedActionReason}</p>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-3 flex gap-2">
-                    <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
-                      <Check size={14} /> Approve
-                    </Button>
-                    <Button variant="ghost" size="sm" className="flex-1" disabled={busy} onClick={() => reject(p.id)}>
-                      <XCircle size={14} /> Reject
+                    <span className="flex-1" title={approvalBlockReason}>
+                      <Button
+                        variant={approvalBlockReason ? "ghost" : "primary"}
+                        size="sm"
+                        className={cn(
+                          "w-full",
+                          approvalBlockReason && "border-warn/60 bg-warn/10 text-warn hover:bg-warn/15"
+                        )}
+                        disabled={busy}
+                        onClick={() => {
+                          if (approvalBlockReason) {
+                            toast.warning(stoppedActionReason ? STOPPED_PROPOSAL_ACTION_TITLE : "Approval unavailable.", {
+                              description: approvalBlockReason
+                            });
+                            return;
+                          }
+                          approve(p.id);
+                        }}
+                      >
+                        {approvalBlockReason ? <AlertTriangle size={14} /> : <Check size={14} />}
+                        {stoppedActionReason ? "Start to Accept" : "Accept"}
+                      </Button>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "flex-1",
+                        stoppedActionReason && "border-warn/60 bg-warn/10 text-warn hover:bg-warn/15"
+                      )}
+                      disabled={busy}
+                      onClick={() => {
+                        if (stoppedActionReason) {
+                          showStoppedProposalActionToast();
+                          return;
+                        }
+                        reject(p.id);
+                      }}
+                    >
+                      {stoppedActionReason ? <AlertTriangle size={14} /> : <XCircle size={14} />}
+                      {stoppedActionReason ? "Start to Reject" : "Reject"}
                     </Button>
                   </div>
                 </div>
@@ -1372,37 +1829,55 @@ function DecisionView({
 
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Latest decisions"
-          subtitle={decision?.marketScan ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}` : "Run the strategy to generate a decision"}
+          title="Latest Decisions"
+          subtitle={
+            recentDecisionItems.length > 0
+              ? `${Math.min(recentDecisionItems.length, 100)} recent proposal decisions`
+              : decision?.marketScan
+                ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}`
+                : "Run the strategy to generate a decision"
+          }
           icon={<Sparkles size={16} />}
         />
-        {!decision ? (
-          <EmptyState icon={<BrainCircuit size={20} />} title="No decision yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
+        {!decision && recentDecisionItems.length === 0 ? (
+          <EmptyState icon={<BrainCircuit size={20} />} title="No Decision Yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
+            {decision && (() => {
+              const decisionSummary = decision.status === "failed"
+                ? plainAppError(decision.summary, "Strategy run failed.")
+                : decision.summary;
+              return (
             <div className={cn("rounded-xl border px-3 py-2 text-[13px]",
               decision.status !== "failed"
                 ? "border-info/25 bg-info/10 text-fg"
-                : /no account|account selected|no symbols|universe is empty|empty universe/i.test(decision.summary || "")
+                : /no account|account selected|no symbols|universe is empty|empty universe/i.test(decisionSummary || "")
                   ? "border-warn/30 bg-warn/10 text-warn"
                   : "border-down/30 bg-down/10 text-down")}>
-              {decision.summary}
+              {decisionSummary}
             </div>
-            {decision.proposals.map((item, i) => {
-              const accountLabel = getProposalAccountLabel(decision.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              );
+            })()}
+            <div className="max-h-[760px] space-y-2 overflow-y-auto pr-1">
+            {recentDecisionItems.slice(0, 100).map((item) => {
+              const accountLabel = getProposalAccountLabel(item.accountNumber || decision?.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              const age = proposalAgeTone(item.createdAt);
+              const quote = scan?.quotesBySymbol[item.proposal.symbol] ?? decision?.marketScan?.quotesBySymbol[item.proposal.symbol];
+              const reasons = decisionLedgerReasons(item);
+              const hypothetical = decisionHypotheticalNote(item, quote);
               return (
-                <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                  {accountLabel && (
-                    <div className="mb-2 text-[10px] font-bold text-muted uppercase tracking-wider">
-                      {accountLabel}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap items-center gap-2">
-                    {item.status === "paper" ? (
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">TEST</span>
-                    ) : (
-                      <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
-                    )}
+                <div key={item.id} className={cn("rounded-lg border bg-surface-2/50 p-3", decisionCardTone(item.status))}>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    {accountLabel && <span>{accountLabel}</span>}
+                      {item.executionMode && <Chip tone="neutral">{executionModeLabel(item.executionMode)}</Chip>}
+                      {item.createdAt && <ProposalTimeMeta iso={item.createdAt} label="Decided" />}
+                    {age && <Chip tone={age.tone}>{age.label}</Chip>}
+                  </div>
+                    <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="flex flex-wrap items-center gap-2">
                     <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
                     <SymbolButton
                       symbol={item.proposal.symbol}
@@ -1413,14 +1888,26 @@ function DecisionView({
                       logoDisplay={tickerLogoDisplay}
                       showLogo
                     />
-                    <span className="tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
                     {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
+                    </div>
+                    <div className="rounded-md border border-line/70 bg-bg/35 px-2 py-1 text-right">
+                      <div className="tnum text-xs font-semibold text-fg" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price and exact shares can differ.">
+                        {proposalSize(item.proposal, item.estimatedNotional ?? item.review?.estimatedNotional, quote?.price)}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-wide text-faint">{labelize(item.proposal.type)}</div>
+                    </div>
                   </div>
                   <p className="mt-2 text-[13px] leading-snug text-fg/85">{item.proposal.rationale}</p>
-                  {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
+                  {(reasons.length > 0 || hypothetical) && (
+                    <div className="mt-2 grid gap-1.5 text-[11px] text-faint sm:grid-cols-2">
+                      {reasons.length > 0 && <p className="rounded-md bg-surface-3/50 px-2 py-1">{reasons.join("; ")}</p>}
+                      {hypothetical && <p className="rounded-md border border-info/20 bg-info/10 px-2 py-1 text-muted">{hypothetical}</p>}
+                    </div>
+                  )}
                 </div>
               );
             })}
+            </div>
             <p className="text-[11px] text-faint">Automated, for this single owner account — not investment advice. Past performance is not indicative of future results.</p>
           </div>
         )}
@@ -1429,24 +1916,86 @@ function DecisionView({
   );
 }
 
+type DecisionLedgerItem = {
+  id: string;
+  createdAt?: string;
+  accountNumber?: string;
+  executionMode?: ExecutionMode;
+  proposal: TradeProposal;
+  status: string;
+  reasons: string[];
+  estimatedNotional?: number;
+  review?: { estimatedNotional?: number };
+};
+
+function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
+  const recent = snapshot.recentProposals ?? [];
+  if (recent.length > 0) {
+    return recent.map((item) => ({
+      id: item.id,
+      createdAt: item.createdAt,
+      accountNumber: item.accountNumber,
+      executionMode: item.executionMode,
+      proposal: item.proposal,
+      status: item.status,
+      reasons: item.decision?.reasons ?? [],
+      estimatedNotional: item.estimatedNotional,
+      review: item.review
+    }));
+  }
+  const decision = snapshot.latestStrategyRun;
+  if (!decision) return [];
+  return decision.proposals.map((item, index) => ({
+    id: `${decision.runId}-${index}`,
+    createdAt: decision.createdAt,
+    accountNumber: decision.accountNumber,
+    proposal: item.proposal,
+    status: item.status,
+    reasons: item.reasons ?? []
+  }));
+}
+
+function decisionLedgerReasons(item: DecisionLedgerItem): string[] {
+  if (item.reasons.length > 0) return item.reasons;
+  if (item.status === "rejected") return ["Rejected manually."];
+  if (item.status === "expired") return ["Expired before approval."];
+  if (item.status === "withdrawn") return ["Withdrawn after revalidation."];
+  return [];
+}
+
+function decisionCardTone(status: string): string {
+  if (status === "rejected" || status === "blocked" || status === "failed" || status === "expired") return "border-down/35";
+  if (status === "proposed" || status === "placing" || status === "pending_order" || status === "pending_reconciliation") return "border-warn/35";
+  if (status === "placed" || status === "paper" || status === "filled") return "border-up/30";
+  return "border-line";
+}
+
+function decisionHypotheticalNote(item: DecisionLedgerItem, quote?: { price: number }): string | undefined {
+  if (!["rejected", "blocked", "expired", "withdrawn"].includes(item.status)) return undefined;
+  const referencePrice = item.proposal.referencePrice ?? item.proposal.limitPrice ?? item.proposal.stopPrice;
+  if (!quote || typeof referencePrice !== "number" || referencePrice <= 0) {
+    return "Counterfactual pending future quote.";
+  }
+  const sideMultiplier = item.proposal.side === "sell" || item.proposal.side === "short" ? -1 : 1;
+  const hypotheticalPct = ((quote.price - referencePrice) / referencePrice) * 100 * sideMultiplier;
+  return `Counterfactual so far: ${formatPct(hypotheticalPct)} if accepted.`;
+}
+
+function ProposalTimeMeta({ iso, label }: { iso?: string; label: string }) {
+  const display = proposalTimeParts(iso);
+  if (!display) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 normal-case tracking-normal" title={display.full}>
+      <span className="font-semibold uppercase tracking-wider text-muted">{label}</span>
+      <span className="rounded-md bg-surface-3/55 px-1.5 py-0.5 text-[10px] font-semibold text-fg">{display.absolute}</span>
+      <span className="text-[10px] font-medium text-faint">{display.relative}</span>
+    </span>
+  );
+}
+
 /* ───────────────────────── Market scan view ───────────────────────── */
 
 const DASH = <span className="text-faint">—</span>;
-
-// Sticky-right treatment for the Score "verdict" column (header + body cells). `right-0` pins it
-// to the right edge of the horizontally-scrolling table; the solid `--bg` base (theme-reactive in
-// light/dark) keeps it opaque so scrolled cells don't show through the table's translucent
-// `--surface` tints; the left border + shadow separate the pinned cell from the content sliding
-// under it. `z-[1]` keeps the pinned column above its scrolling row siblings without fighting the
-// header's own stacking.
-//
-// Hover: the row's translucent `hover:bg-surface-2/50` can't show through this cell's opaque base,
-// so we re-create the highlight as an OPAQUE composite — `--surface-2` layered over `--bg` via a
-// background-image gradient — applied on the row's `group` hover. This keeps the pinned cell in
-// sync with its row's highlight while never going see-through (so scrolled cells never bleed in).
-const SCAN_PINNED_RIGHT_CLASS =
-  "sticky right-0 z-[1] bg-[var(--bg)] border-l border-line shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.18)] " +
-  "group-hover:bg-[linear-gradient(var(--surface-2),var(--surface-2)),linear-gradient(var(--bg),var(--bg))]";
 
 type ScanColumn = {
   id: string;
@@ -1520,6 +2069,14 @@ function vwapTitle(q: MarketQuote): string | undefined {
   const delta = vwapDeltaPct(q);
   if (typeof delta !== "number") return undefined;
   return `Price ${money(q.price)} vs VWAP ${money(q.vwap)} (${formatPct(delta)}). ${dataPointTitle("VWAP", q.sources?.vwap, q.asOf)}`;
+}
+
+function formatScanSources(sourceString: string): string {
+  const sources = formatSources(sourceString)
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part && !/^live$/i.test(part) && !/^(none|unknown|-)$/i.test(part));
+  return Array.from(new Set(sources)).join(", ");
 }
 
 const SCAN_COLUMNS: ScanColumn[] = [
@@ -1612,35 +2169,30 @@ const SCAN_COLUMNS: ScanColumn[] = [
   { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
     render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH),
     cellTitle: (q) => dataPointTitle("Sector", q.sources?.sector, q.asOf) },
-  // Score is intentionally LAST so it renders at the far right — the "verdict" column the eye
-  // lands on after scanning a row. Default sort is by score desc.
   { id: "score", label: "Score", title: "Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors. Adjust the weights on the Strategy tab.", align: "right", sortKey: "score",
     render: (q) => <span className="tnum font-semibold text-fg">{q.score.toFixed(1)}</span>,
     // Composite of many scored factors; attribute to the underlying input fields' providers, never a single invented source.
     cellTitle: (q) => derivedTitle("[CALCULATED] Composite 0–100 score = weighted blend of liquidity, momentum, value, quality, volatility, sentiment & diversification factors (weights on the Strategy tab).", "the scan's per-factor inputs", q, ["price", "volume", "intradayChangePct", "peRatio", "sentiment"]) }
 ];
 
-// Default-visible columns — chosen by a 4-expert trading-desk panel (2026-06-21) now that Alpaca
-// supplies REAL bid/ask/spread/VWAP. Reading left-to-right, the row answers one question — "is this
-// name moving, leading, in a tradeable spot, and can I get filled cheaply right now?": identity →
-// price → momentum (Chg) → intraday VWAP benchmark → sector relative strength → distance from the
-// 52-week high (entry timing) → dollar-volume liquidity → execution block (Spread flanked by the real
-// Bid/Ask) → Score (far-right "verdict", default sort). Everything else is one click away via
-// "Configure columns". This explicit list is the source of truth; the per-column `defaultHidden`
-// flags are legacy and no longer consulted for the default set.
-const DEFAULT_SCAN_COLS = ["symbol", "price", "intradayChangePct", "vsVwap", "sectorRelStrength", "pctFromHigh", "dollarVolM", "spreadBps", "bid", "ask", "score"];
-// v3: bumped so the execution-aware default (real bid/ask/spread/VWAP) replaces a saved v2 column set.
-const SCAN_COLS_KEY = "scan-visible-cols-v3";
+// Default-visible columns — chosen by UI + market specialists for fast triage:
+// identity → verdict → price action → relative strength/execution cost → sector/value/growth/news.
+// The order in this list is rendered directly; hidden columns stay available in Configure columns.
+const DEFAULT_SCAN_COLS = ["symbol", "score", "price", "intradayChangePct", "sectorRelStrength", "vsVwap", "dollarVolM", "spreadBps", "sector", "peRatio", "epsGrowth", "fcfYield", "sentiment", "senateTrades"];
+// v4: investment/market UX review moved Score near identity and replaced raw bid/ask with Spread.
+const SCAN_COLS_KEY = "scan-visible-cols-v4";
 
 function MarketScanView({
   snapshot,
   onDrilldown,
   onConfigureUniverse,
+  onConfigureScanSettings,
   tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   onDrilldown: (q: MarketQuote) => void;
   onConfigureUniverse: () => void;
+  onConfigureScanSettings: () => void;
   tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
@@ -1678,7 +2230,7 @@ function MarketScanView({
     setScanError("");
     try {
       const res = await fetch("/api/scan");
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Market scan failed");
       const data = (await res.json()) as MarketScan;
       if (data && Array.isArray(data.topCandidates)) setLiveScan(data);
     } catch (error) {
@@ -1687,7 +2239,7 @@ function MarketScanView({
       // plain sentence; pass through real server messages (a non-OK response with body text).
       const raw = error instanceof Error ? error.message : "";
       const isNetwork = /load failed|failed to fetch|networkerror|the network connection was lost|aborted/i.test(raw);
-      setScanError(isNetwork ? "Couldn't reach the scan service." : raw || "Market scan failed.");
+      setScanError(isNetwork ? "Couldn't reach the scan service." : plainAppError(raw, "Market scan failed."));
     } finally {
       setScanLoading(false);
     }
@@ -1702,18 +2254,23 @@ function MarketScanView({
     return (
       <Card>
         <PanelHeader
-          title="Market scan"
+          title="Market Scan"
           subtitle={scanError || undefined}
           icon={<LineChartIcon size={16} />}
           actions={
-            <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
-              <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
-            </IconButton>
+            <div className="flex items-center gap-1.5">
+              <IconButton label="Scan settings" onClick={onConfigureScanSettings}>
+                <Gauge size={14} />
+              </IconButton>
+              <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
+                <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
+              </IconButton>
+            </div>
           }
         />
         <EmptyState
           icon={<LineChartIcon size={20} />}
-          title={scanLoading ? "Scanning the market…" : "No market scan yet"}
+          title={scanLoading ? "Scanning The Market…" : "No Market Scan Yet"}
           hint={scanError || (scanLoading ? "Fetching quotes and enrichment data…" : "Choose a base index or add symbols, then refresh the scan.")}
         />
         <div className="flex justify-center px-4 pb-4">
@@ -1722,7 +2279,9 @@ function MarketScanView({
       </Card>
     );
   }
-  const cols = SCAN_COLUMNS.filter((c) => visible.includes(c.id));
+  const cols = visible
+    .map((id) => SCAN_COLUMNS.find((c) => c.id === id))
+    .filter((column): column is ScanColumn => Boolean(column));
   // The quote `asOf` is a display string, not a timestamp; the scan's ISO generatedAt
   // is the real "received" time for every value in this table.
   const dataReceived = receivedLabel(scan.generatedAt);
@@ -1730,17 +2289,30 @@ function MarketScanView({
   const sorted = sortCol
     ? [...scan.topCandidates].sort((a, b) => compare(scanSortValue(sortCol, a), scanSortValue(sortCol, b), sort.dir))
     : [...scan.topCandidates];
+  const scanSources = formatScanSources(scan.source);
+  const freshness = liveScan ? "Live" : scan.cached ? "Cached" : "Latest";
+  const candidateLimit = scan.candidateLimit ?? snapshot.policy.marketScanCandidateLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT;
+  const outlierCount = scan.outlierCandidateCount ?? 0;
+  const candidateSummary = `${scan.topCandidates.length}/${candidateLimit} candidates${outlierCount > 0 ? ` · ${outlierCount} outlier${outlierCount === 1 ? "" : "s"}` : ""}`;
   const subtitle = scan.returnedQuotes === 0
-    ? `No quotes returned · ${liveScan ? "live" : scan.cached ? "cached" : "latest"}`
-    : `${scan.returnedQuotes} quotes · ${formatSources(scan.source)}${liveScan ? " · live" : scan.cached ? " · cached" : ""}`;
+    ? `No quotes returned · ${freshness}`
+    : `${scan.returnedQuotes} quotes · ${candidateSummary} · ${freshness}${scanSources ? ` · Sources: ${scanSources}` : ""}`;
+  const scanWarningText = scan.warnings && scan.warnings.length > 0
+    ? scan.warnings.length === 1
+      ? scan.warnings[0]
+      : `${scan.warnings[0]} (${scan.warnings.length - 1} more warning${scan.warnings.length === 2 ? "" : "s"})`
+    : "";
   return (
     <Card>
       <PanelHeader
-        title="Market scan"
+        title="Market Scan"
         subtitle={subtitle}
         icon={<LineChartIcon size={16} />}
         actions={
           <div className="flex items-center gap-1.5">
+            <IconButton label={`Scan settings: ${scan.candidateLimit ?? snapshot.policy.marketScanCandidateLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT} candidates, ${scan.outlierReserve ?? snapshot.policy.marketScanOutlierReserve ?? DEFAULT_MARKET_SCAN_OUTLIER_RESERVE} outlier reserve`} onClick={onConfigureScanSettings}>
+              <Gauge size={14} />
+            </IconButton>
             <Chip tone="neutral">{new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Chip>
             <IconButton label="Refresh scan" onClick={() => void refreshScan()} disabled={scanLoading}>
               <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
@@ -1776,11 +2348,16 @@ function MarketScanView({
           {scanError} Showing the last scan from {new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
         </p>
       )}
+      {scan.warnings && scan.warnings.length > 0 && (
+        <p className="mx-4 mt-3 rounded-lg border border-warn/25 bg-warn/10 px-3 py-1.5 text-[12px] text-warn" title={scan.warnings.join("\n")}>
+          {scanWarningText}
+        </p>
+      )}
       {sorted.length === 0 ? (
         <div className="px-4 pb-4">
           <EmptyState
             icon={<LineChartIcon size={20} />}
-            title="No scan quotes"
+            title="No Scan Quotes"
             hint="The current universe is empty or no provider returned quotes. Choose a base index or add symbols, then refresh the scan."
           />
           <div className="flex justify-center">
@@ -1796,41 +2373,29 @@ function MarketScanView({
             components={{
               Table: (props) => <table {...props} className="w-full min-w-max text-[13px]" />,
               TableHead: React.forwardRef((props, ref) => <thead {...props} ref={ref} className="bg-surface/50 backdrop-blur-xl" />),
-              // `group` lets the right-pinned Score cell mirror the row hover tint (it has its own
-              // opaque base bg, so it can't inherit the row's translucent hover directly).
               TableRow: (props) => <tr {...props} onClick={() => onDrilldown(props.item)} className="group cursor-pointer border-b border-line/50 transition-colors hover:bg-surface-2/50" />,
             }}
             fixedHeaderContent={() => (
               <tr className="border-b border-line bg-surface/50 text-[11px] uppercase text-faint shadow-sm backdrop-blur-xl">
-                {cols.map((c) => {
-                  // Score is pinned to the right edge so the "verdict" column stays visible even
-                  // when many columns are toggled on and the table scrolls horizontally. The solid
-                  // --bg base (theme-reactive) keeps the pinned cell opaque so scrolled content
-                  // doesn't bleed through the translucent --surface tint; SCAN_PINNED_RIGHT_CLASS
-                  // adds the left divider + shadow that separates it from the scrolled body.
-                  const pinned = c.id === "score";
-                  return (
+                {cols.map((c) => (
                   <th
                     key={c.id}
                     title={c.title}
                     onClick={() => setSort((s) => ({ col: c.id, dir: s.col === c.id && s.dir === "desc" ? "asc" : "desc" }))}
                     className={cn(
                       "cursor-pointer select-none whitespace-nowrap px-2.5 py-2 font-semibold hover:text-fg",
-                      c.align === "right" ? "text-right" : "text-left",
-                      pinned && SCAN_PINNED_RIGHT_CLASS
+                      c.align === "right" ? "text-right" : "text-left"
                     )}
                   >
                     {c.label}
                     <span className="ml-0.5 text-faint">{sort.col === c.id ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
                   </th>
-                  );
-                })}
+                ))}
               </tr>
             )}
             itemContent={(index, q) => (
               <>
                 {cols.map((c) => {
-                  const pinned = c.id === "score";
                   const cellTip = c.cellTitle?.(q);
                   // Stamp the scan-level "Received …" only when the cell's own tooltip doesn't already
                   // carry a per-field "Received …" line (dataPointTitle/derivedTitle add one from q.asOf
@@ -1845,12 +2410,7 @@ function MarketScanView({
                     className={cn(
                       "px-2.5 py-1.5",
                       c.align === "right" && "text-right",
-                      c.cellClass?.(q),
-                      // Mirror the header: pin Score to the right edge with the same opaque base
-                      // (rows have no base bg of their own, only a hover tint). The row's hover
-                      // highlight is re-created as an opaque composite via group-hover inside
-                      // SCAN_PINNED_RIGHT_CLASS so the pinned cell tracks its row.
-                      pinned && SCAN_PINNED_RIGHT_CLASS
+                      c.cellClass?.(q)
                     )}
                   >
                     {c.id === "symbol" ? (
@@ -1896,12 +2456,12 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Congressional trades"
+          title="Congressional Trades"
           subtitle={ws?.congress ? `${ws.congress.recordCount} on file · ${ws.congress.sources.join("+") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
           icon={<Landmark size={16} />}
         />
         {congress.length === 0 ? (
-          <EmptyState icon={<Landmark size={20} />} title="No disclosures cached yet" hint="The connector refreshes daily in the background; check back after the next refresh." />
+          <EmptyState icon={<Landmark size={20} />} title="No Disclosures Cached Yet" hint="The connector refreshes daily in the background; check back after the next refresh." />
         ) : (
           <div className="max-h-72 overflow-auto p-2">
             {congress.map((t, i) => (
@@ -1918,12 +2478,12 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
 
       <Card className="overflow-hidden">
         <PanelHeader
-          title="Insider (Form 4) activity"
+          title="Insider (Form 4) Activity"
           subtitle={ws?.insider ? `${ws.insider.recordCount} on file · SEC EDGAR · ${freshness(ws.insider.fetchedAt)}` : "SEC EDGAR — open-market buys/sells only"}
           icon={<Shield size={16} />}
         />
         {insider.length === 0 ? (
-          <EmptyState icon={<Shield size={20} />} title="No insider filings cached yet" hint="Open-market Form 4 buys/sells accumulate here as they're filed." />
+          <EmptyState icon={<Shield size={20} />} title="No Insider Filings Cached Yet" hint="Open-market Form 4 buys/sells accumulate here as they're filed." />
         ) : (
           <div className="max-h-72 overflow-auto p-2">
             {insider.map((f, i) => {
@@ -2006,14 +2566,14 @@ function PerformanceView({
       </Card>
 
       <Card>
-        <PanelHeader title="What's working — by thesis" subtitle="Realized P&L grouped by trade thesis (the learning loop)" icon={<BrainCircuit size={16} />} />
+        <PanelHeader title="What's Working — By Thesis" subtitle="Realized P&L grouped by trade thesis (the learning loop)" icon={<BrainCircuit size={16} />} />
         <div className="p-4 pt-3">
           <ScorecardBars data={thesis} />
         </div>
       </Card>
 
       <Card>
-        <PanelHeader title="By market regime" subtitle="Realized P&L grouped by entry regime" icon={<Gauge size={16} />} />
+        <PanelHeader title="By Market Regime" subtitle="Realized P&L grouped by entry regime" icon={<Gauge size={16} />} />
         <div className="p-4 pt-3">
           <ScorecardBars data={regime} />
         </div>
@@ -2042,7 +2602,7 @@ function TaxView({
     return (
       <Card>
         <PanelHeader title="Tax" icon={<Landmark size={16} />} />
-        <EmptyState icon={<Landmark size={20} />} title="No tax data yet" hint="Select an account and run the strategy; realized gains and lots appear here." />
+        <EmptyState icon={<Landmark size={20} />} title="No Tax Data Yet" hint="Select an account and run the strategy; realized gains and lots appear here." />
       </Card>
     );
   }
@@ -2064,7 +2624,7 @@ function TaxView({
       </Card>
 
       <Card>
-        <PanelHeader title="Wash-sale lockout" subtitle="Rebuying these is blocked 30 days after a loss sale" icon={<Shield size={16} />} />
+        <PanelHeader title="Wash-Sale Lockout" subtitle="Rebuying these is blocked 30 days after a loss sale" icon={<Shield size={16} />} />
         <div className="space-y-3 p-4 pt-3">
           {tax.lockedSymbols.length === 0 ? (
             <p className="text-[13px] text-faint">No symbols are currently locked out.</p>
@@ -2092,7 +2652,7 @@ function TaxView({
       </Card>
 
       <Card>
-        <PanelHeader title="Tax-loss harvest candidates" subtitle="Unrealized losers that could offset realized gains" icon={<Percent size={16} />} />
+        <PanelHeader title="Tax-Loss Harvest Candidates" subtitle="Unrealized losers that could offset realized gains" icon={<Percent size={16} />} />
         <div className="p-4 pt-3">
           {tax.harvestCandidates.length === 0 ? (
             <p className="text-[13px] text-faint">No harvestable losses right now.</p>
@@ -2113,10 +2673,10 @@ function TaxView({
       </Card>
 
       <Card className="lg:col-span-2">
-        <PanelHeader title="Holding period — days to long-term" subtitle="Crossing 1 year flips gains from ordinary to long-term rates" icon={<Hourglass size={16} />} />
+        <PanelHeader title="Holding Period — Days To Long-Term" subtitle="Crossing 1 year flips gains from ordinary to long-term rates" icon={<Hourglass size={16} />} />
         <div className="min-h-0 overflow-auto p-2">
           {tax.openLots.length === 0 ? (
-            <EmptyState icon={<Hourglass size={18} />} title="No open lots" />
+            <EmptyState icon={<Hourglass size={18} />} title="No Open Lots" />
           ) : (
             <table className="w-full text-[13px]">
               <thead>
@@ -2163,6 +2723,7 @@ function StrategyView({
   policy,
   updatePolicy,
   onEdit,
+  onOpenFlow,
   activateProfile,
   newProfileName,
   setNewProfileName,
@@ -2177,6 +2738,7 @@ function StrategyView({
   policy: TradingPolicy;
   updatePolicy: (patch: PolicyPatch) => void;
   onEdit: () => void;
+  onOpenFlow: () => void;
   activateProfile: (id: string) => void;
   newProfileName: string;
   setNewProfileName: (v: string) => void;
@@ -2191,10 +2753,19 @@ function StrategyView({
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
         <PanelHeader
-          title="Active strategy"
-          subtitle={policy.strategyAuthority === "decide" ? "Autonomous — auto-executes" : "Propose — you approve"}
+          title="Active Strategy"
+          subtitle={policy.strategyAuthority === "decide" ? "Autonomous Mode — auto-executes while running" : "Propose Mode — you approve each order"}
           icon={<BrainCircuit size={16} />}
-          actions={<Button size="sm" variant="ghost" onClick={onEdit}><SettingsIcon size={14} /> Edit in Studio</Button>}
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" onClick={onOpenFlow} title="Open the strategy pipeline visualizer.">
+                <Network size={14} /> Flow
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onEdit} title="Open Strategy Studio to edit the prompt, scoring weights, and Green/Red Team models.">
+                <SettingsIcon size={14} /> Edit in Studio
+              </Button>
+            </div>
+          }
         />
         <div className="grid gap-3 p-4 pt-3 sm:grid-cols-2">
           <div>
@@ -2234,7 +2805,7 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="Key parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
+        <PanelHeader title="Key Parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 text-sm">
           <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v })} onCommitRel={(v) => updatePolicy({ maxOrderPctOfNav: v })} defaultMode="rel" />
           <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v })} onCommitRel={(v) => updatePolicy({ maxDailyPctOfNav: v })} defaultMode="abs" />
@@ -2251,7 +2822,7 @@ function StrategyView({
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
              </div>
-             <Field label="Sector caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
+             <Field label="Sector Caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />
              </Field>
              <div className="space-y-1 sm:col-span-2">
@@ -2291,7 +2862,7 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="LLM strategy review" subtitle="Advisory — review past performance & suggest tuning" icon={<Sparkles size={16} />} actions={<Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}</Button>} />
+        <PanelHeader title="LLM Strategy Review" subtitle="Advisory — review past performance & suggest tuning" icon={<Sparkles size={16} />} actions={<Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}</Button>} />
         <div className="p-4 pt-3">
           {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           {strategyTuning ? <TuningCard proposal={strategyTuning} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
@@ -2452,7 +3023,7 @@ function readableActivityTag(tag: string): string {
 function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
   const feed = snapshot.unifiedFeed ?? [];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No activity yet" />;
+  if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Activity Yet" />;
   return (
     <div className="space-y-2">
       {feed.slice(0, 50).map((group) => {
@@ -2539,7 +3110,7 @@ function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
         </div>
       )}
       {runs.length === 0 ? (
-        <EmptyState icon={<Zap size={18} />} title="No strategy runs yet" />
+        <EmptyState icon={<Zap size={18} />} title="No Strategy Runs Yet" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
@@ -2582,7 +3153,7 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
         <Chip tone={configured ? "up" : "warn"}>{configured ? "Webhook configured" : "Webhook not configured"}</Chip>
       </div>
       {items.length === 0 ? (
-        <EmptyState title="No notification attempts recorded" />
+        <EmptyState title="No Notification Attempts Recorded" />
       ) : (
         items.slice(0, 20).map((n) => {
           const display = formatNotificationDisplay(n, meta);
@@ -2601,7 +3172,7 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
   const items = snapshot.auditFeed ?? [];
-  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No audit events yet" hint="Policy changes, order decisions, and system events appear here." />;
+  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Audit Events Yet" hint="Policy changes, order decisions, and system events appear here." />;
   return (
     <div className="space-y-1.5">
       {items.slice(0, 100).map((item) => (
@@ -2648,7 +3219,7 @@ function StrategyStudio({
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-semibold text-fg">Strategy prompt</h4>
+          <h4 className="text-sm font-semibold text-fg">Strategy Prompt</h4>
           <Button size="sm" variant="ghost" onClick={resetPrompt}><RotateCcw size={13} /> Reset</Button>
         </div>
         <textarea
@@ -2661,7 +3232,48 @@ function StrategyStudio({
 
       <div className="space-y-4">
         <div>
-          <h4 className="mb-2 text-sm font-semibold text-fg">Scoring weights</h4>
+          <h4 className="mb-2 text-sm font-semibold text-fg" title="Choose which LLM proposes trades and which LLM critiques them before approval. API keys still live in Settings -> Connections.">Green/Red Team Models</h4>
+          <div className="grid gap-3">
+            <Field label="Green Team Model" hint="Primary proposal generator. OpenAI models use your OpenAI key; grok-* models use your xAI key from Settings -> Connections.">
+              <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
+                <optgroup label="OpenAI">
+                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
+                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
+                </optgroup>
+                <optgroup label="xAI (Grok) — requires xAI key in Connections">
+                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
+                  <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
+                </optgroup>
+              </select>
+            </Field>
+            <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
+              <select className={inputClass} value={policy.redTeamLlmModel ?? ""} onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}>
+                <option value="">Same as Green Team model</option>
+                <optgroup label="OpenAI">
+                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
+                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
+                </optgroup>
+                <optgroup label="xAI (Grok) — requires xAI key in Connections">
+                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
+                  <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
+                </optgroup>
+              </select>
+            </Field>
+            <Field label="Reasoning Effort" hint="For gpt-5 / o-series reasoning models: higher effort = deeper analysis, more tokens, higher cost & latency. Other model families use their provider defaults.">
+              <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
+                <option value="low">Low — fastest & cheapest</option>
+                <option value="medium">Medium — balanced (recommended)</option>
+                <option value="high">High — deepest analysis, priciest</option>
+              </select>
+            </Field>
+          </div>
+        </div>
+        <div>
+          <h4 className="mb-2 text-sm font-semibold text-fg">Scoring Weights</h4>
           <ScoringWeights weights={policy.scoringWeights} onCommit={(w) => updatePolicy({ scoringWeights: w })} />
         </div>
       </div>
@@ -2669,7 +3281,7 @@ function StrategyStudio({
       <div className="lg:col-span-2">
         <div className="mb-2 flex items-center justify-between">
           <div>
-            <h4 className="text-sm font-semibold text-fg">LLM strategy review</h4>
+            <h4 className="text-sm font-semibold text-fg">LLM Strategy Review</h4>
             <p className="text-xs text-faint">Reviews performance, scan context, macro & current prompt. Advisory — apply is manual.</p>
           </div>
           <Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}</Button>
@@ -2697,6 +3309,7 @@ function ScoringWeights({ weights, onCommit }: { weights: ScoringWeights; onComm
 function SettingsContent({
   snapshot,
   policy,
+  initialSection,
   allowedCount,
   enableBlockedReason,
   remainingNotional,
@@ -2704,12 +3317,17 @@ function SettingsContent({
   updatePolicy,
   tickerLogoDisplay,
   setTickerLogoDisplay,
+  compactExecutionBanner,
+  setCompactExecutionBanner,
   openAccounts,
+  openStrategyStudio,
   load,
-  onRequestDecideConfirm
+  onRequestDecideConfirm,
+  onRequestSystemToggle
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
+  initialSection: SettingsSection;
   allowedCount: number;
   enableBlockedReason?: string;
   remainingNotional: number;
@@ -2717,14 +3335,19 @@ function SettingsContent({
   updatePolicy: (patch: PolicyPatch) => void;
   tickerLogoDisplay: TickerLogoDisplay;
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
+  compactExecutionBanner: boolean;
+  setCompactExecutionBanner: (next: boolean) => void;
   openAccounts: () => void;
+  openStrategyStudio: () => void;
   load: () => Promise<void>;
   onRequestDecideConfirm: () => void;
+  onRequestSystemToggle: () => void;
 }) {
-  type Section = "operate" | "display" | "keys" | "tax" | "tuning" | "notifications" | "data";
-  const [section, setSection] = useState<Section>("operate");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
+  useEffect(() => setSection(initialSection), [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
   const [poolConsent, setPoolConsent] = useState<boolean | null>(null);
   const [poolConsentLoading, setPoolConsentLoading] = useState(false);
@@ -2732,9 +3355,17 @@ function SettingsContent({
     if (section !== "data") return;
     let cancelled = false;
     void fetch("/api/consent")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error("Consent state unavailable.");
+        return r.json();
+      })
       .then((d) => { if (!cancelled) setPoolConsent(Boolean(d?.accepted)); })
-      .catch(() => { /* leave null — show toggle in indeterminate/off state */ });
+      .catch(() => {
+        if (!cancelled) {
+          setPoolConsent(null);
+          toast.error("Consent state could not be loaded. Sharing controls are locked until this is resolved.");
+        }
+      });
     return () => { cancelled = true; };
   }, [section]);
 
@@ -2742,14 +3373,15 @@ function SettingsContent({
     if (poolConsentLoading) return;
     setPoolConsentLoading(true);
     try {
-      await fetch("/api/consent", {
+      const response = await fetch("/api/consent", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accepted })
       });
+      if (!response.ok) throw new Error("Consent could not be saved.");
       setPoolConsent(accepted);
     } catch {
-      /* best-effort — keep local state unchanged on failure */
+      toast.error("Consent could not be saved. Sharing state was not changed.");
     } finally {
       setPoolConsentLoading(false);
     }
@@ -2801,14 +3433,18 @@ function SettingsContent({
   const liveBlockedReason = !activeAccount
     ? "Connect or select a supported account before switching out of Test mode."
     : undefined;
+  const settingsAllowedUniverse = policyUniverseSymbolCount(policy);
+  const scanCandidateLimit = normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit);
+  const scanOutlierReserve = normalizeMarketScanOutlierReserve(policy.marketScanOutlierReserve, scanCandidateLimit);
+  const scanOutlierMax = Math.min(MAX_MARKET_SCAN_OUTLIER_RESERVE, scanCandidateLimit);
 
   function addAllowlist() {
     if (draft.trim() === "") return;
     const inputs = draft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
     const invalid = inputs.filter(s => !isValidAppSymbol(s));
     if (invalid.length > 0) {
-      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
-        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      toast.error(`Invalid ticker format${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Use 1-10 letters, numbers, or dots, starting with a letter."
       });
       return;
     }
@@ -2822,8 +3458,8 @@ function SettingsContent({
     const inputs = blockDraft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
     const invalid = inputs.filter(s => !isValidAppSymbol(s));
     if (invalid.length > 0) {
-      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
-        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      toast.error(`Invalid ticker format${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Use 1-10 letters, numbers, or dots, starting with a letter."
       });
       return;
     }
@@ -2833,10 +3469,7 @@ function SettingsContent({
   }
 
   function toggleIndex(index: IndexUniverse, checked: boolean) {
-    const selected = new Set(policy.includedIndices);
-    if (checked) selected.add(index);
-    else selected.delete(index);
-    updatePolicy({ includedIndices: SUPPORTED_INDEX_UNIVERSES.filter((item) => selected.has(item)) });
+    updatePolicy({ includedIndices: toggleIncludedIndex(policy.includedIndices, index, checked) });
   }
 
   function requestModeSwitch() {
@@ -2858,11 +3491,11 @@ function SettingsContent({
         <div className="overflow-x-auto">
           <Tabs
             value={section}
-            onChange={(v) => setSection(v as Section)}
+            onChange={(v) => setSection(v as SettingsSection)}
             tabs={[
               { id: "operate", label: "Operate" },
+              { id: "connections", label: "Connections" },
               { id: "display", label: "Display" },
-              { id: "keys", label: "API Keys" },
               { id: "tax", label: "Tax" },
               { id: "tuning", label: "Tuning" },
               { id: "notifications", label: "Notifications" },
@@ -2889,7 +3522,7 @@ function SettingsContent({
               {executionState.clarification}
             </p>
           </div>
-          <Field label="Base indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
+          <Field label="Base Indexes" hint={`${settingsAllowedUniverse.approximate ? "About " : ""}${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
             <div className="grid gap-2 sm:grid-cols-3">
               {SUPPORTED_INDEX_UNIVERSES.map((index) => {
                 const selected = policy.includedIndices.includes(index);
@@ -2908,7 +3541,9 @@ function SettingsContent({
                   >
                     <span>
                       <span className="block font-semibold">{INDEX_UNIVERSES[index].label}</span>
-                      <span className={cn("block text-xs", selected ? "text-muted" : "text-faint")}>{INDEX_UNIVERSES[index].symbols.length} symbols</span>
+                      <span className={cn("block text-xs", selected ? "text-muted" : "text-faint")}>
+                        {INDEX_UNIVERSES[index].dynamicSource ? "about " : ""}{indexUniverseSymbolCount(index)} symbols
+                      </span>
                     </span>
                     <span className={cn(
                       "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
@@ -2971,7 +3606,7 @@ function SettingsContent({
               </div>
             </Field>
           </div>
-          <Field label="Strategy authority" className="sm:col-span-2">
+          <Field label="Approval Mode" hint="Propose Mode stages orders for approval. Autonomous Mode can execute while the system is running." className="sm:col-span-2">
             <select
               className={inputClass}
               value={policy.strategyAuthority}
@@ -2984,11 +3619,11 @@ function SettingsContent({
                 }
               }}
             >
-              <option value="propose">Propose — you approve each order</option>
-              <option value="decide">Autonomous — auto-executes approved orders</option>
+              <option value="propose">Propose Mode — you approve each order</option>
+              <option value="decide">Autonomous Mode — auto-executes while running</option>
             </select>
           </Field>
-          <Field label="Holding horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
+          <Field label="Holding Horizon" hint="Prompt guidance for the LLM: shapes setup, exit, and tax framing; hard risk limits still come from Risk settings" className="sm:col-span-2">
             <select className={inputClass} value={policy.holdingHorizon ?? "swing"} onChange={(e) => updatePolicy({ holdingHorizon: e.target.value as TradingPolicy["holdingHorizon"] })}>
               <option value="intraday">Intraday — day trades</option>
               <option value="swing">Days to weeks — swing trades</option>
@@ -3001,9 +3636,9 @@ function SettingsContent({
               variant={policy.systemState === "active" ? "ghost" : "primary"}
               disabled={policy.systemState !== "active" && Boolean(enableBlockedReason)}
               title={policy.systemState !== "active" ? enableBlockedReason : undefined}
-              onClick={() => updatePolicy({ systemState: policy.systemState === "active" ? "halted" : "active" })}
+              onClick={onRequestSystemToggle}
             >
-              {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Pause autonomy" : "Enable autonomy"}
+              {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Stop System" : "Start System"}
             </Button>
             {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no separate paperMode toggle. */}
           </div>
@@ -3013,15 +3648,52 @@ function SettingsContent({
           </div>
         )}
 
+        {section === "connections" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-fg">Strategy Models</div>
+                  <p className="mt-1 text-[13px] text-muted">
+                    Green: <span className="font-medium text-fg">{policy.llmModel ?? "gpt-5.4-mini"}</span>
+                    {" · "}
+                    Red: <span className="font-medium text-fg">{policy.redTeamLlmModel || "Same as Green Team"}</span>
+                    {" · "}
+                    Effort: <span className="font-medium text-fg">{policy.llmReasoningEffort ?? "medium"}</span>
+                  </p>
+                  <p className="mt-1 text-xs text-faint">Edit Green/Red Team behavior in Strategy Studio. Provider keys are saved below.</p>
+                </div>
+                <Button size="sm" variant="ghost" onClick={openStrategyStudio}>
+                  <BrainCircuit size={13} /> Open Strategy Studio
+                </Button>
+              </div>
+            </div>
+            <ApiKeysSection />
+          </div>
+        )}
+
         {section === "display" && (
           <div className="space-y-3">
-            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium text-fg">Compact mode banner</span>
+                <span className="block text-xs text-faint">
+                  Keeps the Test, Paper, or Brokerage banner visible with less vertical space.
+                </span>
+              </span>
+              <Switch
+                checked={compactExecutionBanner}
+                onChange={setCompactExecutionBanner}
+                label="Compact mode banner"
+              />
+            </label>
+            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more. Option 1 uses a tile; Option 2 uses the transparent logo style.">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}
                 onChange={setTickerLogoDisplay}
                 options={[
-                  { value: "tile", label: "Small Tile" },
-                  { value: "transparent", label: "Medium" },
+                  { value: "tile", label: "Option 1" },
+                  { value: "transparent", label: "Option 2" },
                   { value: "off", label: "Off" }
                 ]}
               />
@@ -3038,10 +3710,6 @@ function SettingsContent({
             )}
           </div>
         )}
-
-        {section === "keys" && <ApiKeysSection />}
-
-
 
       {section === "tax" && (
         <div className="space-y-3">
@@ -3155,6 +3823,50 @@ function SettingsContent({
       {section === "data" && (
         <div className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-info/15 text-info">
+              <Gauge size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">Market Scan candidate set</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Controls how many ranked scan rows receive expensive enrichment and are sent to the LLM as the allowed opportunity set.
+                Default is {DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT}; expert guardrails allow {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-{MAX_MARKET_SCAN_CANDIDATE_LIMIT}.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumberField
+              label="Candidate cap"
+              value={scanCandidateLimit}
+              min={MIN_MARKET_SCAN_CANDIDATE_LIMIT}
+              max={MAX_MARKET_SCAN_CANDIDATE_LIMIT}
+              step={1}
+              onCommit={(v) => {
+                const nextLimit = normalizeMarketScanCandidateLimit(v);
+                updatePolicy({
+                  marketScanCandidateLimit: nextLimit,
+                  marketScanOutlierReserve: normalizeMarketScanOutlierReserve(scanOutlierReserve, nextLimit)
+                });
+              }}
+            />
+            <NumberField
+              label="Outlier reserve"
+              value={scanOutlierReserve}
+              min={MIN_MARKET_SCAN_OUTLIER_RESERVE}
+              max={scanOutlierMax}
+              step={1}
+              onCommit={(v) => updatePolicy({ marketScanOutlierReserve: normalizeMarketScanOutlierReserve(v, scanCandidateLimit) })}
+            />
+          </div>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">Candidate cap</span> is the maximum `marketScan.topCandidates` count the LLM may choose from.{" "}
+            <span className="font-medium text-muted">Outlier reserve</span> is included inside that cap and lets below-cutoff names with notable congressional, insider, short-pressure, or technical signals replace lower-ranked plain candidates.
+          </p>
+          <p className="text-xs text-faint">
+            Expert consensus: {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-12 is the lowest reasonable range for very cost-sensitive runs, 25-40 is balanced, 60-80 is broad research, and {MAX_MARKET_SCAN_CANDIDATE_LIMIT} is the practical upper bound before attention dilution usually outweighs extra breadth.
+          </p>
+
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
               <Network size={16} />
             </span>
@@ -3164,7 +3876,8 @@ function SettingsContent({
                 Opting in shares the general market data you pull with your own provider keys / broker MCP —
                 quotes, fundamentals, price history, and news — with other opted-in users, and gives you
                 access to the data they&apos;ve pulled (the shared pool). Your personal account data —
-                positions, orders, balances, P&amp;L, and credentials — is never shared.
+                positions, orders, balances, P&amp;L, and credentials — is never shared with other users.
+                Credentials remain encrypted and server-only.
               </p>
             </div>
           </div>
@@ -3226,12 +3939,16 @@ function SettingsContent({
             Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
             directives go through a human approval queue and are never shared automatically.
           </p>
+          <AccountDeletionPanel
+            signedInEmail={snapshot.currentUser?.email}
+            onOpen={() => setAccountDeletionOpen(true)}
+          />
         </div>
       )}
 
       {section === "notifications" && (
         <div className="space-y-3">
-          <Field label="Notifications webhook">
+            <Field label="Notifications Webhook">
             <input className={inputClass} value={policy.notificationSettings.webhookUrl ?? ""} onChange={(e) => updatePolicy({ notificationSettings: { ...policy.notificationSettings, webhookUrl: e.target.value } })} placeholder="https://…" />
           </Field>
           <div>
@@ -3274,23 +3991,319 @@ function SettingsContent({
         confirmLabel={`Switch to ${brokerTargetLabel}`}
         tone={activeAccount?.environment === "paper" ? "primary" : "danger"}
       />
+      <AccountDeletionModal
+        open={accountDeletionOpen}
+        onClose={() => setAccountDeletionOpen(false)}
+        signedInEmail={snapshot.currentUser?.email}
+      />
     </>
+  );
+}
+
+function AccountDeletionPanel({ signedInEmail, onOpen }: { signedInEmail?: string; onOpen: () => void }) {
+  return (
+    <div className="mt-5 rounded-lg border border-down/35 bg-down/10 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-down/15 text-down">
+            <Trash2 size={16} />
+          </span>
+          <div>
+            <div className="text-sm font-semibold text-fg">Delete this app account</div>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+              Deletes app data and stored broker/API connections for {signedInEmail ?? "the signed-in user"}.
+              Broker positions, open broker orders, and your Google or Apple account are not deleted.
+            </p>
+          </div>
+        </div>
+        <Button variant="danger" size="sm" onClick={onOpen} className="sm:shrink-0">
+          <Trash2 size={14} /> Start deletion
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function accountDeletionRecordTotal(preview: AccountDeletionPreview | null): number {
+  if (!preview) return 0;
+  return Object.values(preview.counts ?? {}).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+function accountDeletionBlockerTotal(preview: AccountDeletionPreview | null): number {
+  if (!preview) return 0;
+  return Object.values(preview.blockers ?? {}).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+function AccountDeletionModal({
+  open,
+  onClose,
+  signedInEmail
+}: {
+  open: boolean;
+  onClose: () => void;
+  signedInEmail?: string;
+}) {
+  const [preview, setPreview] = useState<AccountDeletionPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [typedEmail, setTypedEmail] = useState("");
+  const [typedPhrase, setTypedPhrase] = useState("");
+  const [localOperatorPhrase, setLocalOperatorPhrase] = useState("");
+  const [ack, setAck] = useState({
+    deleteAppData: false,
+    deleteBrokerConnections: false,
+    understandBrokerPositionsRemain: false,
+    understandProviderRevocation: false,
+    understandCanSignInAgain: false,
+    confirmLocalOperator: false
+  });
+
+  const email = preview?.email ?? signedInEmail ?? "";
+  const blockers = accountDeletionBlockerTotal(preview);
+  const canSubmit =
+    Boolean(preview?.prepared) &&
+    blockers === 0 &&
+    typedEmail.trim().toLowerCase() === email.trim().toLowerCase() &&
+    typedPhrase.trim() === ACCOUNT_DELETE_PHRASE &&
+    ack.deleteAppData &&
+    ack.deleteBrokerConnections &&
+    ack.understandBrokerPositionsRemain &&
+    ack.understandProviderRevocation &&
+    ack.understandCanSignInAgain &&
+    (!preview?.isLocalOperatorAccount || (ack.confirmLocalOperator && localOperatorPhrase.trim() === LOCAL_OPERATOR_DELETE_PHRASE));
+
+  const loadPreview = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/account/deletion", { cache: "no-store" });
+      if (!response.ok) throw await responseError(response, "Deletion preview failed");
+      const next = (await response.json()) as AccountDeletionPreview;
+      setPreview(next);
+      setStep(next.prepared ? 1 : 0);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Deletion preview failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setStep(0);
+    setTypedEmail("");
+    setTypedPhrase("");
+    setLocalOperatorPhrase("");
+    setAck({
+      deleteAppData: false,
+      deleteBrokerConnections: false,
+      understandBrokerPositionsRemain: false,
+      understandProviderRevocation: false,
+      understandCanSignInAgain: false,
+      confirmLocalOperator: false
+    });
+    void loadPreview();
+  }, [open, loadPreview]);
+
+  async function prepareDeletion() {
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/account/deletion", { method: "POST" });
+      if (!response.ok) throw await responseError(response, "Deletion preparation failed");
+      setPreview((await response.json()) as AccountDeletionPreview);
+      setStep(1);
+      toast.success("Account deletion prepared.", { description: "The system was halted for this user. Review the final confirmations before deleting." });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Deletion preparation failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function deleteAccount() {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/account/deletion", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ typedEmail, typedPhrase, localOperatorPhrase, ...ack })
+      });
+      const body = await response.json().catch(() => ({})) as { logoutUrl?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "Account deletion failed.");
+      toast.success("Account deleted.", { description: "Signing out now." });
+      window.location.href = body.logoutUrl || "/logout";
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Account deletion failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function check(key: keyof typeof ack, label: React.ReactNode) {
+    return (
+      <label className="flex items-start gap-2 rounded-lg border border-line bg-bg/55 px-3 py-2 text-sm text-muted">
+        <input
+          type="checkbox"
+          className="mt-1 accent-down"
+          checked={ack[key]}
+          onChange={(e) => setAck((current) => ({ ...current, [key]: e.target.checked }))}
+        />
+        <span>{label}</span>
+      </label>
+    );
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Delete app account"
+      subtitle={email ? `Signed in as ${email}` : "Verified sign-in required"}
+      icon={<Trash2 size={18} />}
+      size="lg"
+      footer={
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+          {step < 2 ? (
+            <Button
+              variant={step === 0 ? "primary" : "danger"}
+              onClick={() => {
+                if (step === 0) void prepareDeletion();
+                else setStep(2);
+              }}
+              disabled={loading || submitting || (step === 1 && blockers > 0)}
+            >
+              {step === 0 ? <Shield size={15} /> : <Trash2 size={15} />}
+              {step === 0 ? "Prepare deletion" : "Continue to final confirmation"}
+            </Button>
+          ) : (
+            <Button variant="danger" onClick={deleteAccount} disabled={!canSubmit || submitting}>
+              <Trash2 size={15} /> Permanently delete account
+            </Button>
+          )}
+        </div>
+      }
+    >
+      <div className="space-y-4 p-5 text-sm text-muted">
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[
+            { label: "1. Review", active: step === 0, done: step > 0 },
+            { label: "2. Prepare", active: step === 1, done: step > 1 },
+            { label: "3. Confirm", active: step === 2, done: false }
+          ].map((item) => (
+            <div
+              key={item.label}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-xs font-semibold",
+                item.active ? "border-down/40 bg-down/10 text-down" : item.done ? "border-up/30 bg-up/10 text-up" : "border-line bg-surface-2/55 text-muted"
+              )}
+            >
+              {item.done ? <CheckCircle size={13} className="mr-1 inline" /> : null}{item.label}
+            </div>
+          ))}
+        </div>
+
+        {loading && <p className="rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-xs text-faint">Loading deletion preview...</p>}
+
+        {preview && (
+          <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="mb-2 text-sm font-semibold text-fg">What will be deleted from this app</div>
+              <ul className="space-y-1.5 text-xs leading-relaxed">
+                <li><CheckCircle size={13} className="mr-1 inline text-up" />Stored API keys, broker links, and Robinhood MCP OAuth tokens for this user.</li>
+                <li><CheckCircle size={13} className="mr-1 inline text-up" />Settings, strategy profiles, watchlists, alerts, chat history, memories, proposals, fills, snapshots, notifications, and private learned context.</li>
+                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, Google accounts, and Apple IDs are not deleted by this app.</li>
+              </ul>
+              <div className="mt-3 rounded-lg border border-line bg-bg/55 px-3 py-2 text-xs text-faint">
+                {preview.connectedAccounts.length} connection{preview.connectedAccounts.length === 1 ? "" : "s"} and about {accountDeletionRecordTotal(preview)} private app row{accountDeletionRecordTotal(preview) === 1 ? "" : "s"} are in scope.
+              </div>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="mb-2 text-sm font-semibold text-fg">Sign-in and provider access</div>
+              <p className="text-xs leading-relaxed">
+                Signing in later with Google or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke Agentic Trading in your Google Account third-party access page or Apple ID Sign in with Apple settings.
+              </p>
+              {preview.isLocalOperatorAccount && (
+                <p className="mt-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  This is the local operator dataset shared by the primary email aliases. It includes legacy app data and requires one extra typed phrase.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {preview && blockers > 0 && (
+          <div className="rounded-lg border border-warn/35 bg-warn/10 px-3 py-2 text-xs text-warn">
+            <AlertTriangle size={14} className="mr-1 inline" />
+            Deletion is blocked until trading activity settles:
+            {" "}
+            {preview.blockers.runningStrategyRuns} running strategy run(s), {preview.blockers.placingProposals} placing proposal(s), and {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation.
+          </div>
+        )}
+
+        {step === 0 && (
+          <div className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-xs leading-relaxed text-muted">
+            Preparing deletion halts this user's system and clears its run lock. It does not delete anything yet.
+          </div>
+        )}
+
+        {step >= 1 && (
+          <div className="space-y-2 rounded-lg border border-line bg-surface-2/45 p-3">
+            <div className="text-sm font-semibold text-fg">Required acknowledgements</div>
+            {check("deleteAppData", "Delete my app data for this signed-in user.")}
+            {check("deleteBrokerConnections", "Delete stored broker/API connections from this app.")}
+            {check("understandBrokerPositionsRemain", "I understand broker positions and open broker orders are not closed or cancelled.")}
+            {check("understandProviderRevocation", "I understand I may need to revoke Google, Apple, or broker access in those provider settings too.")}
+            {check("understandCanSignInAgain", "I understand signing in again later can create a fresh empty app account.")}
+            {preview?.isLocalOperatorAccount && check("confirmLocalOperator", "I understand this deletes the local operator dataset shared by primary aliases.")}
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Type signed-in email">
+              <input className={inputClass} value={typedEmail} onChange={(e) => setTypedEmail(e.target.value)} placeholder={email || "email@example.com"} />
+            </Field>
+            <Field label={`Type ${ACCOUNT_DELETE_PHRASE}`}>
+              <input className={inputClass} value={typedPhrase} onChange={(e) => setTypedPhrase(e.target.value)} placeholder={ACCOUNT_DELETE_PHRASE} />
+            </Field>
+            {preview?.isLocalOperatorAccount && (
+              <Field label={`Type ${LOCAL_OPERATOR_DELETE_PHRASE}`} className="sm:col-span-2">
+                <input className={inputClass} value={localOperatorPhrase} onChange={(e) => setLocalOperatorPhrase(e.target.value)} placeholder={LOCAL_OPERATOR_DELETE_PHRASE} />
+              </Field>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
 /* ───────────────────────── Form controls ───────────────────────── */
 
-function NumberField({ label, value, onCommit }: { label: string; value?: number; onCommit: (v: number) => void }) {
+function NumberField({ label, value, min = 0, max, step = 1, onCommit }: { label: string; value?: number; min?: number; max?: number; step?: number; onCommit: (v: number) => void }) {
   const [draft, setDraft] = useState(String(value ?? 0));
   useEffect(() => setDraft(String(value ?? 0)), [value]);
+  function commit() {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value ?? 0));
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max ?? parsed, parsed));
+    onCommit(clamped);
+  }
   return (
     <Field label={label}>
       <input
         type="number"
-        min="0"
+        min={min}
+        max={max}
+        step={step}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => onCommit(Number(draft))}
+        onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
@@ -3386,6 +4399,13 @@ function getProposalAccountLabel(accountNumber: string | undefined, connectedAcc
   return `Brokerage ${suffix}`;
 }
 
+function executionModeLabel(mode: ExecutionMode | undefined): string {
+  if (mode === "test/local") return "Test";
+  if (mode === "broker/paper") return "Paper";
+  if (mode === "broker/live") return "Brokerage";
+  return "Unknown Mode";
+}
+
 function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
   const activeAcc = activeConnectedAccountFor(snapshot);
   if (!activeAcc || activeAcc.broker === "test") {
@@ -3402,14 +4422,37 @@ function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
 
 function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
   if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
-  if (status === "blocked" || status === "rejected" || status === "failed") return "down";
-  if (status === "pending_approval" || status === "pending" || status === "proposed") return "warn";
+  if (status === "blocked" || status === "rejected" || status === "failed" || status === "canceled" || status === "cancelled" || status === "expired" || status === "withdrawn") return "down";
+  if (status === "pending_approval" || status === "pending" || status === "proposed" || status === "pending_order" || status === "pending_reconciliation" || status === "partially_filled" || status === "placing" || status === "placing_failed") return "warn";
   return "neutral";
 }
 
 function displayStatus(status: string): string {
   if (status === "paper") return "TEST";
-  return status.toUpperCase();
+  const labels: Record<string, string> = {
+    pending_approval: "Pending approval",
+    pending_order: "Pending order",
+    pending_reconciliation: "Pending order",
+    partially_filled: "Partially filled",
+    placing_failed: "Placement uncertain",
+    placed: "Placed",
+    proposed: "Proposed",
+    rejected: "Rejected",
+    blocked: "Blocked",
+    expired: "Expired",
+    withdrawn: "Withdrawn",
+    filled: "Filled",
+    failed: "Failed",
+    completed: "Completed",
+    approved: "Approved",
+    canceled: "Canceled",
+    cancelled: "Canceled"
+  };
+  return labels[status] ?? labelize(status);
+}
+
+function readableOrderState(state: string): string {
+  return state.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price?: number): string {
@@ -3425,6 +4468,44 @@ function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price
   if (typeof cost === "number" && cost > 0) return `~${money(cost)}`;
   if (typeof shares === "number" && shares > 0) return `~${formatShareQuantity(shares, proposal.symbol)} shares`;
   return "—";
+}
+
+function relativeAge(iso?: string): string {
+  if (!iso) return "";
+  const ageMs = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ageMs)) return "";
+  const mins = Math.max(0, Math.round(ageMs / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min old`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} hr old`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} old`;
+}
+
+function proposalAgeTone(iso?: string): { label: string; tone: "neutral" | "warn" | "down" } | null {
+  if (!iso) return null;
+  const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
+  if (!Number.isFinite(hours)) return null;
+  if (hours >= 24) return { label: "Stale", tone: "down" };
+  if (hours >= 1) return { label: "Aging", tone: "warn" };
+  return { label: "Fresh", tone: "neutral" };
+}
+
+function proposalTimeLabel(iso?: string): string {
+  const parts = proposalTimeParts(iso);
+  return parts ? `${parts.full} · ${parts.relative}` : "";
+}
+
+function proposalTimeParts(iso?: string): { absolute: string; full: string; relative: string } | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return null;
+  return {
+    absolute: date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    full: date.toLocaleString(),
+    relative: relativeAge(iso)
+  };
 }
 
 function compare(left: unknown, right: unknown, dir: SortDir): number {
@@ -3547,7 +4628,7 @@ function ApiKeysSection() {
     setLoading(true);
     try {
       const res = await fetch("/api/keys", { cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to load API key status");
       const body = (await res.json()) as { keys?: ApiKeyStatus[] };
       setKeys(body.keys ?? []);
     } catch (error) {
@@ -3569,9 +4650,9 @@ function ApiKeysSection() {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userId: "local", service: row.service, apiKey: value, label: row.label })
+        body: JSON.stringify({ service: row.service, apiKey: value, label: row.label })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, `Failed to save ${row.label} key`);
       setDrafts((current) => ({ ...current, [row.service]: "" }));
       toast.success(`${row.label} key saved.`);
       await loadKeys();
@@ -3586,7 +4667,7 @@ function ApiKeysSection() {
     setBusyService(row.service);
     try {
       const res = await fetch(`/api/keys?service=${encodeURIComponent(row.service)}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, `Failed to clear ${row.label} key`);
       toast.success(`${row.label} saved key cleared.`);
       await loadKeys();
     } catch (error) {
@@ -3599,7 +4680,7 @@ function ApiKeysSection() {
   const requiredUnset = keys.some((row) => row.required && row.source === "none");
 
   if (loading) {
-    return <EmptyState title="Loading API key status" icon={<RefreshCw size={18} className="animate-spin" />} />;
+    return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={18} className="animate-spin" />} />;
   }
 
   return (
@@ -3612,7 +4693,7 @@ function ApiKeysSection() {
       <div className="grid gap-2">
         {keys.map((row) => {
           const busy = busyService === row.service;
-          const sourceLabel = row.source === "user" ? "Set" : row.source === "env" ? "Using env" : "Not set";
+          const sourceLabel = row.source === "user" ? "Your key" : row.source === "env" ? "Operator env" : "Not set";
           const sourceTone = row.source === "user" ? "up" : row.source === "env" ? "info" : row.required ? "warn" : "neutral";
           const inputType = row.service === "sec_edgar_user_agent" ? "text" : "password";
           return (
@@ -3676,10 +4757,11 @@ function IntegrationsSection({
   policy: TradingPolicy;
   onSaved: () => Promise<void>;
 }) {
-  const [editing, setEditing] = useState<Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]> | null>(null);
+  type AccountDraft = Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]>;
+  const [editing, setEditing] = useState<AccountDraft | null>(null);
+  const [showCustomEndpoint, setShowCustomEndpoint] = useState(false);
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
-  const [mcpBusy, setMcpBusy] = useState(false);
 
   const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
     if (acc.broker === "test") {
@@ -3707,8 +4789,12 @@ function IntegrationsSection({
     };
   };
 
+  function openAccountEditor(account: AccountDraft) {
+    setShowCustomEndpoint(hasCustomAlpacaEndpoint(account));
+    setEditing(account);
+  }
+
   const refreshMcpHealth = useCallback(async () => {
-    setMcpBusy(true);
     try {
       const res = await fetch("/api/broker/mcp/health", { cache: "no-store" });
       const health = (await res.json()) as RobinhoodMcpHealth;
@@ -3724,9 +4810,6 @@ function IntegrationsSection({
         checkedAt: new Date().toISOString(),
         error: message
       });
-      toast.error(message);
-    } finally {
-      setMcpBusy(false);
     }
   }, []);
 
@@ -3755,7 +4838,7 @@ function IntegrationsSection({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ broker: "robinhood" })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to sync Robinhood account");
       toast.success("Robinhood agentic account synced.");
       await onSaved();
     } catch (e) {
@@ -3767,27 +4850,34 @@ function IntegrationsSection({
 
   async function save() {
     if (!editing?.broker) return;
-    const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
+    const draft = { ...editing };
+    const isAlpaca = draft.broker === "alpaca" || draft.broker === "alpaca-mcp";
     if (isAlpaca) {
-      if (!editing.accountNumber?.trim()) {
+      if (!draft.accountNumber?.trim()) {
         toast.error("Account Number is required for Alpaca.");
         return;
       }
-      const isPaper = editing.accountNumber.trim().toUpperCase().startsWith("PA");
-      editing.environment = isPaper ? "paper" : "live";
+      const isPaper = draft.accountNumber.trim().toUpperCase().startsWith("PA");
+      draft.environment = isPaper ? "paper" : "live";
     } else {
-      editing.environment = editing.environment || "live";
+      draft.environment = draft.environment || "live";
+    }
+    if (draft.broker === "alpaca") {
+      draft.baseUrl = showCustomEndpoint && draft.baseUrl?.trim()
+        ? draft.baseUrl.trim()
+        : alpacaDefaultEndpointFor(draft.environment);
     }
     setBusy(true);
     try {
       const res = await fetch("/api/connected-accounts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(editing)
+        body: JSON.stringify(draft)
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to save account");
       toast.success("Account saved.");
       setEditing(null);
+      setShowCustomEndpoint(false);
       await onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save account.");
@@ -3801,7 +4891,7 @@ function IntegrationsSection({
     setBusy(true);
     try {
       const res = await fetch(`/api/connected-accounts/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res, "Failed to remove account");
       toast.success("Account removed.");
       await onSaved();
     } catch (e) {
@@ -3811,8 +4901,30 @@ function IntegrationsSection({
     }
   }
 
+  async function activateAccount(id: string) {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/connected-accounts/${id}/activate`, { method: "POST" });
+      if (!res.ok) throw await responseError(res, "Failed to activate account");
+      toast.success("Account selected.");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to activate account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (editing) {
     const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
+    const isAlpacaRest = editing.broker === "alpaca";
+    const isAlpacaMcp = editing.broker === "alpaca-mcp";
+    const inferredEnvironment = editing.accountNumber?.trim().toUpperCase().startsWith("PA")
+      ? "paper"
+      : editing.environment === "live"
+        ? "live"
+        : "paper";
+    const defaultAlpacaEndpoint = alpacaDefaultEndpointFor(inferredEnvironment);
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
         <h4 className="text-sm font-semibold text-fg">
@@ -3825,9 +4937,14 @@ function IntegrationsSection({
                 : "Add Alpaca Account"}
         </h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          {isAlpaca ? (
+          {isAlpacaRest ? (
             <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
-              For Alpaca, environment (Paper vs Brokerage) is derived automatically from the account number (Paper accounts start with &quot;PA&quot;).
+              Alpaca Paper uses <span className="font-mono text-fg">{ALPACA_PAPER_ENDPOINT}</span>; Alpaca Brokerage uses{" "}
+              <span className="font-mono text-fg">{ALPACA_BROKERAGE_ENDPOINT}</span>. The app picks Paper when the account number starts with &quot;PA&quot;.
+            </div>
+          ) : isAlpacaMcp ? (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
+              Alpaca MCP uses your MCP server URL, such as a local SSE endpoint. For direct Alpaca keys, use the regular Alpaca account option.
             </div>
           ) : (
             <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
@@ -3866,29 +4983,61 @@ function IntegrationsSection({
           </Field>
           {isAlpaca && (
             <>
-              <Field label="API Key">
+              <Field label="Alpaca API Key">
                 <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
               </Field>
-              <Field label="API Secret">
+              <Field label="Alpaca API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
               </Field>
-              <Field label="API Endpoint URL (Optional)">
-                <input
-                  className={inputClass}
-                  value={editing.baseUrl || ""}
-                  onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
-                  placeholder={
-                    editing.broker === "alpaca-mcp"
-                      ? "e.g. http://localhost:8000/sse"
-                      : "e.g. https://paper-api.alpaca.markets/v2"
-                  }
-                />
-              </Field>
+              {isAlpacaRest ? (
+                <>
+                  <label className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5 sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-accent"
+                      checked={showCustomEndpoint}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setShowCustomEndpoint(checked);
+                        setEditing({
+                          ...editing,
+                          baseUrl: checked ? (editing.baseUrl || "") : defaultAlpacaEndpoint
+                        });
+                      }}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-fg">Use a custom Alpaca endpoint</span>
+                      <span className="block text-xs text-faint">
+                        Leave off unless your endpoint is different from the Paper/Brokerage defaults. Current default: <span className="font-mono">{defaultAlpacaEndpoint}</span>.
+                      </span>
+                    </span>
+                  </label>
+                  {showCustomEndpoint && (
+                    <Field label="Custom API Endpoint URL">
+                      <input
+                        className={inputClass}
+                        value={editing.baseUrl || ""}
+                        onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                        placeholder={`Default: ${defaultAlpacaEndpoint}`}
+                      />
+                    </Field>
+                  )}
+                </>
+              ) : (
+                <Field label="MCP Endpoint URL">
+                  <input
+                    className={inputClass}
+                    value={editing.baseUrl || ""}
+                    onChange={e => setEditing({ ...editing, baseUrl: e.target.value })}
+                    placeholder="e.g. http://localhost:8000/sse"
+                  />
+                </Field>
+              )}
             </>
           )}
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => { setEditing(null); setShowCustomEndpoint(false); }}>Cancel</Button>
           <Button variant="primary" onClick={save} disabled={busy || !editing.broker}>Save Account</Button>
         </div>
       </div>
@@ -3898,16 +5047,8 @@ function IntegrationsSection({
   // The app's active account: prefer the explicitly-selected one, else the flagged-active row (mirrors
   // activeConnectedAccountFor). Used to mark which row is ACTIVE vs merely Connected.
   const activeId = policy.connectedAccountId ?? accounts?.find((a) => a.isActive)?.id;
-  // Only surface the Robinhood MCP status card when Robinhood is actually in play — configured in env,
-  // authenticated, or already connected as an account. Otherwise it's noise (a disconnected card by default).
-  const showRobinhoodCard = Boolean(
-    mcpHealth?.configured || mcpHealth?.authenticated || accounts?.some((a) => a.broker === "robinhood")
-  );
-
   return (
     <div className="space-y-3">
-      {showRobinhoodCard && <RobinhoodMcpStatusCard health={mcpHealth} busy={mcpBusy} onRefresh={refreshMcpHealth} />}
-
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted">
           Connect one or more supported accounts when you want broker-backed execution. Paper accounts are optional and user-selected.
@@ -3919,10 +5060,10 @@ function IntegrationsSection({
           }}>
             <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca", environment: "paper" })}>
+          <Button variant="ghost" size="sm" onClick={() => openAccountEditor({ broker: "alpaca", environment: "paper", baseUrl: ALPACA_PAPER_ENDPOINT })}>
             <Plus size={14} className="mr-1" /> Connect Alpaca Account
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setEditing({ broker: "alpaca-mcp", environment: "paper" })}>
+          <Button variant="ghost" size="sm" onClick={() => openAccountEditor({ broker: "alpaca-mcp", environment: "paper" })}>
             <Plus size={14} className="mr-1" /> Connect Alpaca MCP Account
           </Button>
         </div>
@@ -3938,22 +5079,28 @@ function IntegrationsSection({
             const info = formatAccountInfo(acc);
             const isActive = acc.id === activeId;
             return (
-              <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
-                <div>
+              <div
+                key={acc.id}
+                className={cn(
+                  "flex flex-col gap-3 rounded-lg border bg-surface/50 p-3 sm:flex-row sm:items-center sm:justify-between",
+                  isActive ? "border-accent/45 bg-accent/5 shadow-[inset_3px_0_0_rgba(20,184,166,0.55)]" : "border-line"
+                )}
+              >
+                <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-fg">{info.title}</span>
                     {info.showBadges && (isActive ? (
-                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                        ACTIVE
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                        Active
                       </span>
                     ) : (
-                      <span className="rounded-full bg-surface-3/60 border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      <span className="rounded-full bg-surface-3/60 border border-line px-2 py-0.5 text-[10px] font-semibold text-muted">
                         Connected
                       </span>
                     ))}
                     {info.showBadges && isActive && policy?.strategyAuthority === "decide" && (
-                      <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-400">
-                        AUTONOMOUS
+                      <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
+                        Autonomous
                       </span>
                     )}
                   </div>
@@ -3962,105 +5109,39 @@ function IntegrationsSection({
                     {acc.capabilities && (
                       <span className="ml-2">
                         {acc.capabilities.accountType !== "brokerage" && (
-                          <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400 uppercase">
+                          <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400">
                             {acc.capabilities.accountType === "roth_ira" ? "Roth IRA" : "Trad IRA"}
                           </span>
                         )}
                         {acc.capabilities.marginEnabled && (
-                          <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400 uppercase">Margin</span>
+                          <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400">Margin</span>
                         )}
                         {acc.capabilities.shortSelling && (
-                          <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400 uppercase">Short</span>
+                          <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400">Short</span>
                         )}
                         {acc.capabilities.optionsTrading && (
-                          <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400 uppercase">
+                          <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400">
                             Options{acc.capabilities.optionsLevel !== undefined ? ` L${acc.capabilities.optionsLevel}` : ""}
                           </span>
                         )}
                         {acc.capabilities.cryptoTrading && (
-                          <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400 uppercase">Crypto</span>
+                          <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400">Crypto</span>
                         )}
                         {acc.capabilities.futuresTrading && (
-                          <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400 uppercase">Futures</span>
+                          <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400">Futures</span>
                         )}
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(acc)} disabled={busy}>Edit</Button>
+                <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+                  {!isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
+                  <Button variant="ghost" size="sm" onClick={() => openAccountEditor(acc)} disabled={busy}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>
               </div>
             );
           })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RobinhoodMcpStatusCard({
-  health,
-  busy,
-  onRefresh
-}: {
-  health: RobinhoodMcpHealth | null;
-  busy: boolean;
-  onRefresh: () => void;
-}) {
-  const tone: "up" | "down" | "warn" | "neutral" = !health
-    ? "neutral"
-    : health.ok && health.authenticated
-      ? "up"
-      : "down";
-  const label = !health
-    ? "Checking"
-    : health.ok && health.authenticated
-      ? "Connected"
-      : health.authenticated
-        ? "Tool check failed"
-        : "Not connected";
-  const detail = health?.error ?? health?.warning;
-  const visibleTools = health?.tools?.slice(0, 8) ?? [];
-
-  return (
-    <div className="rounded-lg border border-line bg-surface-2/45 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Wallet size={14} className="text-muted" />
-            <span className="font-semibold text-fg">Robinhood MCP</span>
-            <Chip tone={tone}>{label}</Chip>
-            {health?.transport && <Chip tone="info">{health.transport}</Chip>}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
-            {health?.url && <span className="max-w-full truncate font-mono">{health.url}</span>}
-            {health?.protocolVersion && <span className="font-mono">MCP {health.protocolVersion}</span>}
-            {health?.checkedAt && <span>Checked {new Date(health.checkedAt).toLocaleTimeString()}</span>}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
-            <RefreshCw size={13} className={cn(busy && "animate-spin")} /> Refresh
-          </Button>
-          {health && !health.authenticated && (
-            <Button size="sm" variant="accentSoft" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }}>
-              <ExternalLink size={13} /> Connect OAuth
-            </Button>
-          )}
-        </div>
-      </div>
-      {detail && (
-        <p className={cn("mt-2 text-[13px]", tone === "down" ? "text-down" : "text-muted")}>{detail}</p>
-      )}
-      {visibleTools.length > 0 && (
-        <div className="mt-3 rounded-md border border-line/70 bg-bg/35 px-3 py-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">Available tools</div>
-          <div className="mt-1 text-[12px] text-muted">
-            {visibleTools.join(", ")}
-            {(health?.tools.length ?? 0) > visibleTools.length && `, +${(health?.tools.length ?? 0) - visibleTools.length} more`}
-          </div>
         </div>
       )}
     </div>

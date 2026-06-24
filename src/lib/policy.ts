@@ -1,6 +1,6 @@
 import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
-import { symbolsForPolicyUniverse } from "./index-universes";
+import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./index-universes";
 import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
@@ -10,6 +10,7 @@ export interface PolicyContext {
   dailyNotionalUsed: number;
   /** Order notional already executed within the trailing 60 minutes (R1 hourly cap). */
   hourlyNotionalUsed?: number;
+  /** Opening orders already placed today. Risk-reducing exits must not consume this cap. */
   dailyOrderCount: number;
   estimatedNotional?: number;
   marketScan?: MarketScan;
@@ -38,11 +39,11 @@ export interface PolicyContext {
 }
 
 /**
- * Minimum equity a LIVE MARGIN account must hold to trade on margin. SEC/FINRA RETIRED the
- * Pattern-Day-Trader rule (FINRA Notice 26-10, 2026): the old $25,000 minimum and the
- * 4-day-trades-in-5-business-days limit no longer exist. The replacement framework is broker-side
- * real-time intraday-margin monitoring plus this $2,000 minimum for margin accounts. We enforce only
- * the static minimum here and defer intraday margin to the broker — we no longer count day-trades.
+ * Minimum equity a LIVE MARGIN account must hold before this app will submit opening margin trades.
+ * FINRA Notice 26-10 replaces the old PDT count/$25k framework with intraday margin standards
+ * effective 2026-06-04, but member firms may phase in implementation through 2027-10-20. This app
+ * enforces the static margin minimum and defers broker-specific intraday margin restrictions to the
+ * broker.
  */
 export const MARGIN_MINIMUM_EQUITY = 2_000;
 
@@ -61,8 +62,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   const isOpening = proposal.side === "buy" || proposal.side === "short";
   if (isOpening) {
     const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+    const hasDynamicUniverse = dynamicIndexUniversesForPolicy(context.policy).length > 0;
+    if (allowedSymbols.length === 0 && !hasDynamicUniverse) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol) && !isDynamicScanSymbol(symbol, context)) reasons.push(`${symbol} is not in the allowed universe.`);
   }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
@@ -107,13 +109,10 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  // SHORT_SELLING: Two-layer gate.
-  // Layer 1 — policy flag: shortSellingEnabled must be true.
-  // Layer 2 — account capability: the connected broker/account must report shortSelling=true.
-  //   Robinhood MCP always reports false (MCP docs: "no short sells").
-  //   Alpaca: parsed from account.shorting_enabled.
-  //   When accountCapabilities is absent (legacy row), we treat shortSelling as false.
-  if (proposal.side !== "buy" && proposal.side !== "sell") {
+  // SHORT_SELLING: opening shorts require both the policy flag and account capability.
+  // Risk-reducing covers are allowed based on the existing short position even if shorting is now
+  // disabled or capabilities are unavailable; blocking a cover would trap exposure.
+  if (proposal.side === "short") {
     const brokerSupportsShort = context.accountCapabilities?.shortSelling === true;
     if (!context.policy.shortSellingEnabled || !brokerSupportsShort) {
       const why = !context.policy.shortSellingEnabled
@@ -121,25 +120,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      if (proposal.side === "short") {
-        if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
-          reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
-        }
-        if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
-          reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
-        }
+      if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
       }
-      if (proposal.side === "cover" && coverQuantityExceedsShorts(proposal, context.positions)) {
-        reasons.push(`Cover quantity exceeds current ${symbol} short holdings.`);
+      if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
+        reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
       }
     }
   }
+  if (proposal.side === "cover" && coverQuantityExceedsShorts(proposal, context.positions)) {
+    reasons.push(`Cover quantity exceeds current ${symbol} short holdings.`);
+  }
   
-  // MARGIN-ACCOUNT MINIMUM (replaces the retired Pattern-Day-Trader gate). SEC/FINRA RETIRED the PDT
-  // rule (FINRA Notice 26-10, 2026): there is no longer a $25,000 minimum or a 4-day-trades-in-5-days
-  // limit. The new framework is broker-side real-time intraday-margin monitoring plus a $2,000 minimum
-  // equity for MARGIN accounts. So we no longer count day-trades; we enforce ONLY the static $2,000
-  // margin minimum on a LIVE/real-capital MARGIN account and defer intraday margin to the broker.
+  // MARGIN-ACCOUNT MINIMUM. FINRA Notice 26-10 replaces the old PDT count/$25k framework with
+  // intraday margin standards effective 2026-06-04, with broker phase-in permitted through
+  // 2027-10-20. We do not try to model broker-specific intraday margin; we enforce the static
+  // $2,000 margin minimum on a LIVE/real-capital MARGIN account and defer the rest to the broker.
   // Scope: LIVE execution only (Test/local sim and broker-Paper are never gated); opening legs only;
   // cash (non-margin) accounts are never gated here (they aren't subject to the margin minimum).
   if (
@@ -150,7 +146,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   ) {
     reasons.push(
       `margin_minimum: this LIVE margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
-        `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} minimum required to trade on margin (the PDT rule was retired — FINRA Notice 26-10).`
+        `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} margin minimum. FINRA Notice 26-10 replaces the old PDT count/$25k framework, but broker phase-in and broker-specific intraday margin restrictions can still apply.`
     );
   }
 
@@ -160,6 +156,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   );
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
+  }
+  // Market-impact (ADV) ceiling: reject an opening order whose notional exceeds maxOrderPctOfAdv % of
+  // the name's recent daily $-volume (price × volume from the scan; the app ingests no historical
+  // bars). Defense-in-depth alongside deterministic sizing — also catches manual/non-sized proposals.
+  // Skipped when the gauge is unavailable so it can never false-reject.
+  if (isOpening && context.policy.maxOrderPctOfAdv != null && context.policy.maxOrderPctOfAdv > 0) {
+    const full = context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    if (dollarVol != null) {
+      const advCap = (context.policy.maxOrderPctOfAdv / 100) * dollarVol;
+      if (estimatedNotional > advCap) {
+        reasons.push(
+          `Order of $${estimatedNotional.toFixed(2)} exceeds ${context.policy.maxOrderPctOfAdv}% of ${symbol}'s ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume (ADV cap $${advCap.toFixed(2)}) — would risk outsized market impact.`
+        );
+      }
+    }
   }
   const effectiveMaxDailyNotional = Math.min(
     context.policy.maxDailyNotional ?? Infinity,
@@ -175,8 +187,8 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   ) {
     reasons.push("Hourly notional limit would be exceeded.");
   }
-  if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
-    reasons.push("Daily order count limit would be exceeded.");
+  if (isOpening && context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
+    reasons.push("Daily opening-order count limit would be exceeded.");
   }
   // Affordability: block an opening order the account can't fund rather than outsourcing the
   // check to the broker's margin rejection. buyingPower is broker-accurate for live/paper
@@ -335,6 +347,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
 export function allowedSymbolsForPolicy(policy: TradingPolicy): string[] {
   return symbolsForPolicyUniverse(policy);
+}
+
+function isDynamicScanSymbol(symbol: string, context: PolicyContext): boolean {
+  if (dynamicIndexUniversesForPolicy(context.policy).length === 0) return false;
+  const quote = context.marketScan?.quotesBySymbol[symbol];
+  return typeof quote?.score === "number" && quote.score > 0;
 }
 
 export function estimateNotional(proposal: TradeProposal): number {
@@ -502,4 +520,3 @@ export function betaScaledStopPct(baseStopPct: number, beta: number | undefined,
   const clamped = Math.max(0.5, Math.min(2.0, beta));
   return baseStopPct * clamped;
 }
-

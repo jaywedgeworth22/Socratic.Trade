@@ -4,12 +4,23 @@ export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
-export type IndexUniverse = "sp500" | "nasdaq100" | "dow30";
+export type IndexUniverse =
+  | "sp100"
+  | "sp500"
+  | "nasdaq100"
+  | "nasdaqComposite"
+  | "dow30"
+  | "russell2000"
+  | "nyseComposite"
+  | "ftWilshire5000";
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
+
+export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
+export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
 export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
@@ -160,6 +171,13 @@ export interface TuningSettings {
    * is unavailable.
    */
   bearVetoDebtToEquityCeiling?: number;
+  /**
+   * Buffer (basis points) used when policy.marketableLimitEntries converts a deterministic OPENING
+   * market order into a marketable limit: the limit is priced through the quote by this much (above
+   * the ask for buys, below the bid for shorts) so it still fills promptly but can't chase an
+   * arbitrarily bad print in a fast tape. Default 15 bps.
+   */
+  marketableLimitBufferBps?: number;
 }
 
 export interface RiskRules {
@@ -288,6 +306,13 @@ export interface TradingPolicy {
   additionalSymbols: string[];
   blocklist?: string[];
   strategyAuthority: StrategyAuthority;
+  /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
+   *  fallback. This is the Green Team / Bull proposer model. */
+  llmModel?: string;
+  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
+  redTeamLlmModel?: string;
+  /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
+  llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
   maxOrderNotional?: number;
@@ -304,6 +329,17 @@ export interface TradingPolicy {
   maxNetExposurePct?: number;
   maxDailyOrders: number;
   maxProposalsPerRun: number;
+  /**
+   * Number of ranked Market Scan candidates that receive expensive enrichment and are exposed to the
+   * LLM as `marketScan.topCandidates`. Lower values reduce cost/noise; higher values broaden choice.
+   */
+  marketScanCandidateLimit?: number;
+  /**
+   * Maximum number of below-cutoff candidates with notable cached web signals (congressional buying,
+   * insider buying, short pressure, or strong technicals) that may replace lower-ranked plain top
+   * candidates inside the candidate limit.
+   */
+  marketScanOutlierReserve?: number;
   /**
    * Hard time-to-live for a still-pending (unapproved/unrejected) proposal, in minutes.
    * A proposal older than this is auto-expired (status → "expired") so the approval queue
@@ -383,6 +419,31 @@ export interface TradingPolicy {
    * broker brackets are the exit-reliability mechanism.
    */
   marketableLimitEntries?: boolean;
+  /**
+   * Cap an opening order's notional at this percentage of the name's recent daily dollar-volume
+   * (ADV proxy = latest scan price × volume; the app ingests no historical bars). Bounds market
+   * impact so a high-edge thesis can't size a position into an illiquid name far past what the tape
+   * can absorb — the slippage the execution-cost model debits but never prevented. Applied both in
+   * deterministic sizing (right-sizes the order) and as an approval-time gate (rejects oversize
+   * proposals from any path). Undefined or <=0 disables. Rarely binds for small accounts / liquid
+   * names; matters at scale. Default 5.
+   */
+  maxOrderPctOfAdv?: number;
+  /**
+   * Volatility panic auto-brake: when ON, an extreme reading on any configured tail-risk gauge
+   * (VIX / Cboe VVIX / Cboe SKEW) at the top of a run flips an active system to "close_only"
+   * (risk-reducing exits still flow; no new entries) and fires a kill-switch notification — the
+   * automatic defensive state the crisis-regime entry cap never triggered on its own. Thresholds
+   * are deliberately set at rare tail extremes so this is a safeguard, not a frequent gate. Default
+   * enabled.
+   */
+  volPanicBrakeEnabled?: boolean;
+  /** VIX level at/above which the vol panic brake trips. Undefined falls back to the built-in default (40). */
+  volPanicVixThreshold?: number;
+  /** Cboe VVIX level at/above which the vol panic brake trips. Undefined falls back to the built-in default (150). */
+  volPanicVvixThreshold?: number;
+  /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
+  volPanicSkewThreshold?: number;
 }
 
 export interface TradeProposal {
@@ -490,6 +551,12 @@ export interface MarketScan {
   generatedAt: string;
   scannedSymbols: number;
   returnedQuotes: number;
+  /** Configured cap for enriched/prompted candidates in this scan. */
+  candidateLimit?: number;
+  /** Configured reserve for below-cutoff notable outliers inside `candidateLimit`. */
+  outlierReserve?: number;
+  /** Number of notable below-cutoff candidates included in `topCandidates`. */
+  outlierCandidateCount?: number;
   /** Market breadth: % of the full screener advancing today (risk-on/off gauge). */
   breadthPct?: number;
   topCandidates: MarketQuote[];
@@ -583,6 +650,9 @@ export interface MarketDataProviderOptions {
   scoringWeights?: ScoringWeights;
   ttlMs?: number;
   userId?: string;
+  dynamicUniverses?: IndexUniverse[];
+  candidateLimit?: number;
+  outlierReserve?: number;
 }
 
 export interface MarketDataProvider {
@@ -619,6 +689,8 @@ export interface EquityOrderInput {
   type: OrderType;
   quantity?: number;
   dollarAmount?: number;
+  /** Entry-price anchor captured when the proposal was generated/reviewed. */
+  referencePrice?: number;
   limitPrice?: number;
   stopPrice?: number;
   timeInForce: TimeInForce;
@@ -673,11 +745,26 @@ export interface PendingProposal {
   proposal: TradeProposal;
   decision: PolicyDecision;
   review?: ReviewedOrder;
+  estimatedNotional?: number;
   /** Last time a strategy run re-validated this still-pending proposal via the LLM. */
   lastRevalidatedAt?: string;
   /** The LLM's most recent re-validation note (why it still stands). */
   revalidationNote?: string;
   accountNumber?: string;
+  executionMode?: ExecutionMode;
+}
+
+export interface RecentProposal {
+  id: string;
+  runId: string;
+  accountNumber: string;
+  createdAt: string;
+  proposal: TradeProposal;
+  decision: PolicyDecision;
+  review?: ReviewedOrder;
+  estimatedNotional?: number;
+  status: string;
+  executionMode?: ExecutionMode;
 }
 
 export interface StrategyOutcome {
@@ -755,6 +842,7 @@ export interface PortfolioSnapshot {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   equity: number;
   cash: number;
   buyingPower: number;
@@ -769,6 +857,7 @@ export interface FillEvent {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   symbol: string;
   side: OrderSide;
   quantity: number;

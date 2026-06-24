@@ -15,8 +15,19 @@ const broker = vi.hoisted(() => ({
 
 vi.mock("../src/lib/broker", () => ({
   getBrokerGateway: () => ({
+    getPortfolio: async () => ({
+      accountNumber: "TEST",
+      totalMarketValue: 10000,
+      buyingPower: 5000,
+      equityMarketValue: 10000,
+      optionMarketValue: 0,
+      cash: 5000
+    }),
     getEquityPositions: async () => broker.positions,
     getEquityQuotes: async () => broker.quotes,
+    getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
+      symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
+    ),
     placeEquityOrder: async (order: { side: string; quantity: number; symbol: string }) => {
       broker.placed.push(order);
       return { orderId: "ord-1" };
@@ -70,8 +81,10 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     return {
       ...DEFAULT_POLICY,
       accountNumber: account,
+      systemState: "active",
       paperMode: true,
       shortSellingEnabled: true,
+      additionalSymbols: ["AAPL", "TSLA", "NVDA"],
       riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 }
     };
   }

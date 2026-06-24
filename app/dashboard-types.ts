@@ -15,6 +15,7 @@ import type {
     PendingProposal,
     PerformanceSummary,
     Portfolio,
+    RecentProposal,
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
@@ -30,6 +31,7 @@ export interface AuditEvent {
 
 export interface StrategyDecision {
   runId: string;
+  createdAt?: string;
   status: "completed" | "failed";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
@@ -38,6 +40,10 @@ export interface StrategyDecision {
 }
 
 export interface DashboardSnapshot {
+  currentUser?: {
+    userId: string;
+    email?: string;
+  };
   policy: TradingPolicy;
   strategyPrompt: string;
   accounts: BrokerageAccount[];
@@ -54,9 +60,10 @@ export interface DashboardSnapshot {
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
-  dailyStats: { orderCount: number; notional: number };
+  dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
+  recentProposals?: RecentProposal[];
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };
   webSources?: {
     congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };

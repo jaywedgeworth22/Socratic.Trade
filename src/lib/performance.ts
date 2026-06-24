@@ -4,6 +4,7 @@ import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
   ExecutedOrder,
+  ExecutionMode,
   FillEvent,
   FillSource,
   MarketFactor,
@@ -88,6 +89,7 @@ export function recordPortfolioSnapshot(input: {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   portfolio: Portfolio;
   positions: EquityPosition[];
 }) {
@@ -96,6 +98,7 @@ export function recordPortfolioSnapshot(input: {
     runId: input.runId,
     accountNumber: input.accountNumber,
     source: input.source,
+    executionMode: input.executionMode,
     equity: input.portfolio.totalMarketValue,
     cash: input.portfolio.cash,
     buyingPower: input.portfolio.buyingPower,
@@ -110,6 +113,7 @@ export function recordFillFromProposal(input: {
   proposalId?: string;
   runId?: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   proposal: TradeProposal;
   review?: ReviewedOrder;
   execution?: ExecutedOrder;
@@ -173,6 +177,7 @@ export function recordFillFromProposal(input: {
     runId: input.runId,
     accountNumber: input.accountNumber,
     source: input.source,
+    executionMode: input.executionMode,
     symbol,
     side: input.proposal.side,
     quantity,

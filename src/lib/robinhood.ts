@@ -19,6 +19,7 @@ import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
+import { fetchYahooFinanceQuote } from "./yahoo-finance";
 
 const TEST_SIM_STARTING_CASH = (() => {
   const n = Number(process.env.TEST_SIM_STARTING_CASH);
@@ -792,34 +793,4 @@ function optionalString(value: unknown): string | undefined {
   return text ? text : undefined;
 }
 
-export async function fetchYahooFinanceQuote(symbol: string): Promise<{ price: number; bid: number; ask: number; prevClose: number; volume: number } | undefined> {
-  const clean = encodeURIComponent(symbol.toUpperCase());
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${clean}?interval=1d&range=1d`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-  try {
-    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
-    clearTimeout(timeout);
-    if (!response.ok) return undefined;
-    const payload = await response.json() as { chart?: { result?: Array<{ meta?: Record<string, unknown>, indicators?: { quote?: Array<{ volume?: unknown[] }> } }> } };
-    const meta = payload?.chart?.result?.[0]?.meta;
-    if (!meta) return undefined;
-    const price = Number(meta.regularMarketPrice);
-    if (!Number.isFinite(price) || price <= 0) return undefined;
-    const prevClose = meta.chartPreviousClose ? Number(meta.chartPreviousClose) : price;
-    // Prefer regularMarketVolume (always present, includes full day even after close).
-    // Fall back to the candle array volume if the meta field is absent.
-    const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
-    const volume = Number(meta.regularMarketVolume ?? quote?.volume?.[0] ?? 0);
-    return {
-      price,
-      bid: price * 0.999,
-      ask: price * 1.001,
-      prevClose,
-      volume
-    };
-  } catch {
-    clearTimeout(timeout);
-    return undefined;
-  }
-}
+export { fetchYahooFinanceQuote } from "./yahoo-finance";

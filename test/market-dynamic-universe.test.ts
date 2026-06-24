@@ -1,0 +1,84 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.resetModules();
+  delete process.env.FINNHUB_API_KEY;
+  delete process.env.FMP_API_KEY;
+  delete process.env.ALPHAVANTAGE_API_KEY;
+  delete process.env.ALPACA_DATA_API_KEY;
+  delete process.env.ALPACA_DATA_SECRET_KEY;
+});
+
+describe("market scan dynamic universes", () => {
+  it("adds Nasdaq exchange-filtered rows for the NYSE Composite universe", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.nasdaq.com") && url.includes("exchange=nyse")) {
+        return nasdaqRows([
+          { symbol: "IBM", name: "International Business Machines", lastsale: "$255.10", netchange: "1.20", pctchange: "0.472%", marketCap: "235000000000" }
+        ]);
+      }
+      if (url.includes("api.nasdaq.com")) return nasdaqRows([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const scan = await scanMarket([], [], undefined, undefined, ["nyseComposite"]);
+
+    expect(scan.returnedQuotes).toBe(1);
+    expect(scan.quotesBySymbol.IBM?.price).toBe(255.1);
+    expect(scan.source).toContain("nyseComposite-universe");
+  });
+
+  it("filters BlackRock holdings through the screener without quote-fetching every missing holding", async () => {
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetchedUrls.push(url);
+      if (url.includes("api.nasdaq.com")) {
+        return nasdaqRows([
+          { symbol: "AAPL", name: "Apple Inc.", lastsale: "$297.01", netchange: "2.01", pctchange: "0.681%", marketCap: "4400000000000" }
+        ]);
+      }
+      if (url.includes("blackrock.com")) return new Response(holdingsWorkbook(["AAPL", "MISSING"]), { status: 200, headers: { "content-type": "application/vnd.ms-excel" } });
+      return new Response("not found", { status: 404 });
+    });
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const scan = await scanMarket([], [], undefined, undefined, ["sp100"]);
+
+    expect(scan.returnedQuotes).toBe(1);
+    expect(scan.quotesBySymbol.AAPL?.price).toBe(297.01);
+    expect(scan.source).toContain("blackrock-oef-holdings");
+    expect(fetchedUrls.some((url) => url.includes("finance/chart/MISSING"))).toBe(false);
+  });
+});
+
+function nasdaqRows(rows: unknown[]): Response {
+  return new Response(
+    JSON.stringify({
+      data: {
+        asof: "2026-06-23",
+        table: { rows }
+      }
+    }),
+    { status: 200, headers: { "content-type": "application/json" } }
+  );
+}
+
+function holdingsWorkbook(symbols: string[]): string {
+  const rows = [
+    ["Ticker", "Name", "Sector", "Asset Class", "Currency"],
+    ...symbols.map((symbol) => [symbol, `${symbol} CORP`, "Technology", "Equity", "USD"])
+  ];
+  return [
+    '<?xml version="1.0"?>',
+    '<ss:Workbook xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">',
+    "<ss:Worksheet><ss:Table>",
+    ...rows.map((row) => `<ss:Row>${row.map((cell) => `<ss:Cell><ss:Data ss:Type="String">${cell}</ss:Data></ss:Cell>`).join("")}</ss:Row>`),
+    "</ss:Table></ss:Worksheet></ss:Workbook>"
+  ].join("");
+}
