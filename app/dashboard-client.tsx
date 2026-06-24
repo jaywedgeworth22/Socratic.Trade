@@ -1360,9 +1360,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         onCountChange={setLearnedQueueCount}
       />
 
-      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
+      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Live pipeline status" icon={<Network size={18} />} size="full">
         <div className="h-full w-full">
-          <StrategyFlow />
+          <StrategyFlow snapshot={snapshot} />
         </div>
       </Modal>
 
