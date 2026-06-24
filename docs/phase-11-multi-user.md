@@ -112,9 +112,14 @@ Current partial implementation: account settings are broker-aware rather than
 Alpaca-only. Alpaca uses the active connected account first; Robinhood syncs the
 agentic brokerage account through MCP after OAuth; and the account UI presents
 supported account buttons instead of requiring a Paper account.
-The Alpaca account form states the two direct REST defaults
-(`https://paper-api.alpaca.markets/v2` and `https://api.alpaca.markets/v2`) and
-only asks for a custom endpoint when the user explicitly enables that override.
+The direct Alpaca account form keeps endpoint details out of the top helper text,
+infers Paper from either account number `PA...` or API key `PK...`, defaults Paper
+to `https://paper-api.alpaca.markets/v2`, defaults live Brokerage to
+`https://api.alpaca.markets`, and only asks for a custom endpoint when the user
+explicitly enables that override. Alpaca IRA subtype detection is best-effort:
+when broker payloads expose `account_type`/`account_sub_type`, the gateway maps
+Roth/Traditional into account capabilities; otherwise manual tax treatment remains
+the reliable source.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR
