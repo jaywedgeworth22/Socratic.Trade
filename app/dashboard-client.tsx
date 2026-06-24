@@ -98,6 +98,7 @@ import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
+import { SymbolButton } from "./ui/symbol-button";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
@@ -141,7 +142,7 @@ const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
 const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
 const FEED_TAB_KEY = "dashboard-feed-tab";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
-const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets/v2";
+const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets";
 const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
 const LOCAL_OPERATOR_DELETE_PHRASE = "DELETE LOCAL OPERATOR ACCOUNT";
 type RobinhoodMcpHealth = {
@@ -160,6 +161,13 @@ type RobinhoodMcpHealth = {
 
 function alpacaDefaultEndpointFor(environment: ConnectedAccount["environment"] | undefined): string {
   return environment === "live" ? ALPACA_BROKERAGE_ENDPOINT : ALPACA_PAPER_ENDPOINT;
+}
+
+function inferAlpacaEnvironment(input: { accountNumber?: string; apiKey?: string; environment?: ConnectedAccount["environment"] }): ConnectedAccount["environment"] {
+  const accountNumber = input.accountNumber?.trim().toUpperCase() ?? "";
+  const apiKey = input.apiKey?.trim().toUpperCase() ?? "";
+  if (accountNumber.startsWith("PA") || apiKey.startsWith("PK")) return "paper";
+  return input.environment === "paper" ? "paper" : "live";
 }
 
 function normalizeEndpoint(value?: string): string {
@@ -1296,7 +1304,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
-            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} />}
+            {workspaceTab === "macro" && <MacroBoardView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "performance" && <PerformanceView snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} symbolMetaBySymbol={symbolMetaBySymbol} />}
             {workspaceTab === "tax" && <TaxView snapshot={snapshot} symbolMetaBySymbol={symbolMetaBySymbol} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />}
             {workspaceTab === "strategy" && (
@@ -1597,92 +1605,6 @@ function PortfolioRail({
         )}
       </div>
     </Card>
-  );
-}
-
-/* ───────────────────────── Clickable ticker ───────────────────────── */
-
-/**
- * Resolve a full MarketQuote for a symbol from the captured run's scan so the
- * symbol drilldown can open from anywhere — not just the Market Scan table.
- * Prefers the fully-scored `topCandidates`; falls back to the lighter
- * `quotesBySymbol` summary (filling only the MarketQuote-required fields, leaving
- * the rest undefined so the drawer renders "—" rather than fabricated numbers).
- */
-function resolveScanQuote(symbol: string, scan: MarketScan | null | undefined): MarketQuote | null {
-  if (!scan) return null;
-  const full = scan.topCandidates.find((q) => q.symbol === symbol);
-  if (full) return full;
-  const summary = scan.quotesBySymbol[symbol];
-  if (!summary) return null;
-  return { ...summary, volume: 0, intradayChangePct: 0, positionMarketValue: 0 };
-}
-
-/**
- * A ticker that opens the symbol drilldown, mirroring the Market Scan rows.
- * When scan data is missing, it still opens the drawer with a sparse symbol
- * record so event-only tickers do not fall back to inert bold text.
- *
- * - `variant="underline"` (default): a quiet, always-visible underline that thickens
- *   to link-blue on hover. Used for plain text tickers anywhere on the site.
- * - `variant="chip"`: for a ticker sitting inside an already-colored Chip (e.g. the red
- *   wash-sale lockout). Keeps the chip's color and box; on hover it goes bold-italic +
- *   underline instead of turning blue, so the chip's meaning (red = locked) is preserved.
- */
-function SymbolButton({
-  symbol,
-  scan,
-  quote: quoteProp,
-  onDrilldown,
-  className,
-  title,
-  variant = "underline",
-  logoDisplay,
-  showLogo = false
-}: {
-  symbol: string;
-  scan?: MarketScan | null;
-  quote?: MarketQuote | null;
-  onDrilldown?: (q: MarketQuote) => void;
-  className?: string;
-  title?: string;
-  variant?: "underline" | "chip";
-  logoDisplay?: TickerLogoDisplay;
-  showLogo?: boolean;
-}) {
-  // Prefer an explicitly-provided quote (e.g. the Market Scan row already has it);
-  // otherwise resolve it from the scan by symbol.
-  const quote = quoteProp ?? (onDrilldown ? resolveScanQuote(symbol, scan) : null);
-  const drilldownTarget = quote ?? ({ symbol, price: 0, score: 0, source: "", generatedAt: new Date().toISOString() } as unknown as MarketQuote);
-  const content = showLogo && variant !== "chip" && logoDisplay && logoDisplay !== "off"
-    ? (
-      <span className="inline-flex items-center gap-1.5">
-        <TickerLogo symbol={symbol} display={logoDisplay} />
-        <span>{symbol}</span>
-      </span>
-    )
-    : symbol;
-  if (!onDrilldown) {
-    return <span className={className} title={title}>{content}</span>;
-  }
-  const interactive =
-    variant === "chip"
-      ? // Inherit the chip's color/box; signal interactivity with weight + italic on hover.
-        "cursor-pointer transition-all duration-150 underline-offset-2 hover:font-bold hover:italic hover:underline active:scale-95 focus:outline-none focus-visible:rounded-sm focus-visible:ring-1 focus-visible:ring-current"
-      : // Always-on faint underline as the at-rest cue; thickens to link-blue on hover.
-        "cursor-pointer underline decoration-1 decoration-faint/50 underline-offset-[3px] transition-all duration-150 hover:text-info hover:decoration-2 hover:decoration-info active:scale-95 focus:outline-none focus-visible:rounded-sm focus-visible:ring-1 focus-visible:ring-info";
-  return (
-    <button
-      type="button"
-      title={title ?? "Open symbol intelligence"}
-      onClick={(e) => {
-        e.stopPropagation();
-        onDrilldown(drilldownTarget);
-      }}
-      className={cn(className, interactive)}
-    >
-      {content}
-    </button>
   );
 }
 
@@ -4933,8 +4855,7 @@ function IntegrationsSection({
         toast.error("Account Number is required for Alpaca.");
         return;
       }
-      const isPaper = draft.accountNumber.trim().toUpperCase().startsWith("PA");
-      draft.environment = isPaper ? "paper" : "live";
+      draft.environment = inferAlpacaEnvironment(draft);
     } else {
       draft.environment = draft.environment || "live";
     }
@@ -4995,11 +4916,7 @@ function IntegrationsSection({
     const isAlpaca = editing.broker === "alpaca" || editing.broker === "alpaca-mcp";
     const isAlpacaRest = editing.broker === "alpaca";
     const isAlpacaMcp = editing.broker === "alpaca-mcp";
-    const inferredEnvironment = editing.accountNumber?.trim().toUpperCase().startsWith("PA")
-      ? "paper"
-      : editing.environment === "live"
-        ? "live"
-        : "paper";
+    const inferredEnvironment = inferAlpacaEnvironment(editing);
     const defaultAlpacaEndpoint = alpacaDefaultEndpointFor(inferredEnvironment);
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
@@ -5013,12 +4930,7 @@ function IntegrationsSection({
                 : "Add Alpaca Account"}
         </h4>
         <div className="grid gap-3 sm:grid-cols-2">
-          {isAlpacaRest ? (
-            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
-              Alpaca Paper uses <span className="font-mono text-fg">{ALPACA_PAPER_ENDPOINT}</span>; Alpaca Brokerage uses{" "}
-              <span className="font-mono text-fg">{ALPACA_BROKERAGE_ENDPOINT}</span>. The app picks Paper when the account number starts with &quot;PA&quot;.
-            </div>
-          ) : isAlpacaMcp ? (
+          {isAlpacaMcp ? (
             <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
               Alpaca MCP uses your MCP server URL, such as a local SSE endpoint. For direct Alpaca keys, use the regular Alpaca account option.
             </div>
@@ -5047,11 +4959,12 @@ function IntegrationsSection({
               value={editing.accountNumber || ""}
               onChange={e => {
                 const val = e.target.value;
-                const isPaper = val.trim().toUpperCase().startsWith("PA");
+                const environment = inferAlpacaEnvironment({ ...editing, accountNumber: val });
                 setEditing({
                   ...editing,
                   accountNumber: val,
-                  environment: isPaper ? "paper" : "live"
+                  environment,
+                  baseUrl: isAlpacaRest && !showCustomEndpoint ? alpacaDefaultEndpointFor(environment) : editing.baseUrl
                 });
               }}
               placeholder="e.g. PA12345"
@@ -5060,7 +4973,21 @@ function IntegrationsSection({
           {isAlpaca && (
             <>
               <Field label="Alpaca API Key">
-                <input className={inputClass} value={editing.apiKey || ""} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} placeholder="Required (API Key / OAuth Token)" />
+                <input
+                  className={inputClass}
+                  value={editing.apiKey || ""}
+                  onChange={e => {
+                    const apiKey = e.target.value;
+                    const environment = inferAlpacaEnvironment({ ...editing, apiKey });
+                    setEditing({
+                      ...editing,
+                      apiKey,
+                      environment,
+                      baseUrl: isAlpacaRest && !showCustomEndpoint ? alpacaDefaultEndpointFor(environment) : editing.baseUrl
+                    });
+                  }}
+                  placeholder="Required (API Key / OAuth Token)"
+                />
               </Field>
               <Field label="Alpaca API Secret">
                 <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />

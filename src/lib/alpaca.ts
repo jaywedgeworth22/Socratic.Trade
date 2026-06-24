@@ -24,6 +24,15 @@ export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
   return new AlpacaBrokerGateway(userId);
 }
 
+export function classifyAlpacaAccountType(account: Record<string, unknown>): AccountCapabilities["accountType"] {
+  const rawType = String(account.account_type ?? account.accountType ?? "").toLowerCase();
+  const rawSubType = String(account.account_sub_type ?? account.account_subtype ?? account.accountSubType ?? "").toLowerCase();
+  const combined = `${rawType} ${rawSubType}`;
+  if (combined.includes("roth")) return "roth_ira";
+  if (combined.includes("traditional") || combined.includes("trad") || combined.includes("ira")) return "traditional_ira";
+  return "brokerage";
+}
+
 /**
  * Estimate an order's notional for the pre-trade review. NEVER fabricates a price:
  * a wrong notional corrupts the value persisted to `trade_proposals` and the daily
@@ -148,7 +157,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
     const getCapabilities = (acc: any): AccountCapabilities => {
       const shortSelling = Boolean(acc.shorting_enabled);
-      const marginEnabled = shortSelling || String(acc.account_type ?? "").toUpperCase() === "MARGIN";
+      const rawAccountType = String(acc.account_type ?? "").toUpperCase();
+      const accountType = classifyAlpacaAccountType(acc);
+      const marginEnabled = accountType === "brokerage" && (shortSelling || rawAccountType === "MARGIN");
       return {
         equityTrading: true,
         shortSelling,
@@ -156,7 +167,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         futuresTrading: false,
         cryptoTrading: false,
         marginEnabled,
-        accountType: "brokerage"
+        accountType
       };
     };
 
