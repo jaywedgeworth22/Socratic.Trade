@@ -589,6 +589,12 @@ const APP_A_MAX_TRADES = 20000;
 const APP_A_RETENTION_DAYS = 120; // bound the push-merged dataset (> the 60-day signal window)
 const APP_A_SOURCE = "congress.trade";
 
+/** Min extraction confidence (App A stamps 0–1 per row) below which we drop a disclosure as noise. */
+function appAMinConfidence(): number {
+  const v = Number(process.env.CONGRESS_TRADE_MIN_CONFIDENCE ?? 0.3);
+  return Number.isFinite(v) ? v : 0.3;
+}
+
 function pickStr(o: Record<string, unknown>, keys: string[]): string | undefined {
   for (const k of keys) {
     const v = o[k];
@@ -611,6 +617,13 @@ function pickNum(o: Record<string, unknown>, keys: string[]): number | undefined
 export function coerceCongressTrade(raw: unknown): CongressTrade | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
+
+  // App B is equity-focused: skip option disclosures (a P/S txType can't express call/put direction,
+  // so an option trade's directional meaning is ambiguous), and drop very-low-confidence extractions
+  // (App A stamps a 0–1 `confidence` on every transaction row).
+  if (o.isOption === true) return null;
+  const confidence = pickNum(o, ["confidence"]);
+  if (confidence !== undefined && confidence < appAMinConfidence()) return null;
 
   const symbol = normalizeSymbol(pickStr(o, ["symbol", "ticker", "asset", "assetTicker", "issuerTicker"]) ?? "");
   if (!symbol) return null;

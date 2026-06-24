@@ -42,6 +42,19 @@ Branch: claude/magical-faraday-uce1uy
   deletion purge. See `docs/design/per-account-isolation.md` +
   `docs/rollouts/2026-06-24-per-account-isolation.md`.
 
+- 2026-06-24 (`fix/land-workflow-scope-guard`): **Agents can push `.github/workflows/` changes directly.** Root cause wasn't a permission gap — the gh token already has the `workflow` scope and `git push` uses `gh auth git-credential` — it was a STALE `scripts/land.sh` guard that always `die`d on a workflow diff. Made step 5 **scope-aware**: allow the push when `gh auth status` shows the `workflow` scope (the common case), only block (with `gh auth refresh -h github.com -s workflow` guidance) when it's genuinely missing. Corrected `AGENTS.md` step-7 + the stale `ci-pending/README.md` note. This PR proves it end-to-end — its diff includes a `.github/workflows/ci.yml` header comment (documenting `verify` as the required ruleset check), so the push exercises the workflow-scope path. Also closed PR #84 (bot-identity — owner doesn't want enforced review). See `docs/rollouts/2026-06-24-land-workflow-scope-guard.md`.
+- 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
+  Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same
+  hover/click treatment and open symbol drilldown, with ticker-logo display passed through. Simplified
+  Add Alpaca Account by removing the top Paper/Brokerage endpoint explanation, inferred Paper from
+  either account number `PA...` or API key `PK...` in the client and server route, changed the live
+  Alpaca default endpoint to `https://api.alpaca.markets` (no `/v2`), and added best-effort Alpaca
+  IRA account-type parsing when broker payloads expose `account_type`/`account_sub_type`. Verification:
+  `npx tsc --noEmit`; focused `npx vitest run test/connected-accounts-route.test.ts
+  test/alpaca-account-type.test.ts`; full `npm test` (123 files / 1066 tests); `npm run build`;
+  `git diff --check`. Production update requested after landing; see
+  `docs/rollouts/2026-06-24-ticker-alpaca-production-update.md`.
+- 2026-06-24 (`chore/paid-data-tier-limits`): **Captured the paid Polygon/Massive + FMP "Starter" tiers.** Owner upgraded both (already wired via `MASSIVE_API_KEY`/`FMP_API_KEY`). Raised `DEFAULT_REST_MAX_CALLS_PER_MINUTE` 5→100 in `market-signals/massive.ts` (Starter = unlimited; 5/min was the free-tier cap that throttled breadth/news and forced Massive history to fall through to rate-limited Yahoo) and fixed stale `.env.example` (`MASSIVE_REST_MAX_CALLS_PER_MINUTE` 5→100, `FMP_MAX_SYMBOLS` 15→30; FMP code default was already 30). Paid FMP auto-restores the sector/industry/news fields the free tier dropped. No schema/new providers. **Operator action:** set the paid keys + `FMP_MAX_SYMBOLS=30` in the live `.env.local`, `pm2 restart trading --update-env`. tsc clean · history tests 13/13 · trio via land.sh. See `docs/rollouts/2026-06-24-paid-data-tier-limits.md`. (From the paid-tier value survey: these two were the high-value in-budget picks; everything else stays free.)
 - 2026-06-24 (`claude/fix-evaluator-cadence-dead-field`): **Removed dead `evaluatorCadenceHours`
   policy field.** It was declared on `TradingPolicy` (`types.ts`) and accepted in the tuner
   patch-keys union, so it persisted when set but had **zero readers** — a misleading "cadence"

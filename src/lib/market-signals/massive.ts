@@ -27,7 +27,12 @@ interface GroupedBar { T?: string; o?: number; h?: number; l?: number; c?: numbe
 interface GroupedResponse { status?: string; results?: GroupedBar[] }
 
 const numOrUndef = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-const DEFAULT_REST_MAX_CALLS_PER_MINUTE = 5;
+// Client-side politeness / runaway-guard, NOT the provider's hard cap. The operator runs a paid
+// Polygon/Massive "Starter" plan (unlimited API calls), so this default is generous — high enough
+// that Massive reliably serves as the PRIMARY OHLC-history + full-market-breadth source (instead of
+// falling back to rate-limited free Yahoo) while still bounding a pathological loop. A deployment on
+// the FREE Massive tier (5 calls/min) should lower it via MASSIVE_REST_MAX_CALLS_PER_MINUTE=5.
+const DEFAULT_REST_MAX_CALLS_PER_MINUTE = 100;
 const DEFAULT_NEWS_TTL_MS = 30 * 60_000;
 const GROUPED_BARS_TTL_MS = 30 * 60_000;
 const restCallTimestamps: number[] = [];
