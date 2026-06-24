@@ -4,7 +4,7 @@
 import crypto from "crypto";
 import { getDb, audit } from "./db";
 import { getUserSetting, setUserSetting } from "./db-settings";
-import { getActiveConnectedAccount } from "./db-api-keys";
+import { getActiveConnectedAccount, listConnectedAccounts } from "./db-api-keys";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
 import type {
   ScoringWeights,
@@ -78,6 +78,87 @@ function toStrategyProfile(row: RawStrategyProfile): StrategyProfile {
   };
 }
 
+// ── Per-account live strategy state (account_strategy_state) ──────────────────
+// strategy_profiles is the user-level copyable LIBRARY; account_strategy_state is
+// what a given connected account is actually running. Reads go through getPolicy
+// (which prefers the account's live row); every effective-policy writer mirrors into
+// it via mirrorPolicyToActiveAccount, so the live row never goes stale. Lazily seeded
+// on first read so existing single-account users are byte-identical day one.
+
+type RawAccountStrategyState = {
+  policy: string;
+  prompt: string | null;
+  scoring_weights: string | null;
+  system_state: string;
+  derived_from_profile_id: string | null;
+};
+
+/** Resolve the account whose live state applies: an explicit id, else the active account. */
+function resolveAccount(userId: string, connectedAccountId?: string) {
+  if (connectedAccountId) return listConnectedAccounts(userId).find((a) => a.id === connectedAccountId);
+  return getActiveConnectedAccount(userId);
+}
+
+function getAccountStrategyStateRow(userId: string, connectedAccountId: string): RawAccountStrategyState | undefined {
+  return getDb()
+    .prepare(
+      "SELECT policy, prompt, scoring_weights, system_state, derived_from_profile_id FROM account_strategy_state WHERE user_id = ? AND connected_account_id = ?"
+    )
+    .get(userId, connectedAccountId) as RawAccountStrategyState | undefined;
+}
+
+function writeAccountStrategyState(
+  userId: string,
+  connectedAccountId: string,
+  args: { policy: TradingPolicy; prompt: string; scoringWeights: ScoringWeights; derivedFromProfileId?: string | null }
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO account_strategy_state
+         (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, connected_account_id) DO UPDATE SET
+         policy = excluded.policy, prompt = excluded.prompt, scoring_weights = excluded.scoring_weights,
+         system_state = excluded.system_state,
+         derived_from_profile_id = COALESCE(excluded.derived_from_profile_id, account_strategy_state.derived_from_profile_id),
+         updated_at = excluded.updated_at`
+    )
+    .run(
+      userId,
+      connectedAccountId,
+      JSON.stringify(args.policy),
+      args.prompt,
+      JSON.stringify(args.scoringWeights),
+      args.policy.systemState,
+      args.derivedFromProfileId ?? null,
+      new Date().toISOString()
+    );
+}
+
+/**
+ * Mirror the user's new effective policy/prompt into the ACTIVE account's live state.
+ * Called by every effective-policy writer so account_strategy_state never goes stale.
+ * No-op when there is no active connected account (legacy single-context behavior).
+ */
+function mirrorPolicyToActiveAccount(
+  userId: string,
+  policy: TradingPolicy,
+  prompt: string,
+  scoringWeights: ScoringWeights,
+  derivedFromProfileId?: string | null
+): void {
+  const account = getActiveConnectedAccount(userId);
+  if (!account) return;
+  writeAccountStrategyState(userId, account.id, { policy, prompt, scoringWeights, derivedFromProfileId });
+}
+
+/** The user-level base policy (active library profile, else legacy user_settings). */
+function getBasePolicy(userId: string): TradingPolicy {
+  const active = getActiveStrategyProfile(userId);
+  if (active) return mergePolicy({ ...active.policy, activeProfileId: active.id });
+  return mergePolicy(getUserSetting(userId, "policy", DEFAULT_POLICY));
+}
+
 function setSettingDirect(userId: string, key: string, value: unknown, updatedAt: string): void {
   getDb()
     .prepare(
@@ -99,41 +180,77 @@ function syncActiveProfile(patch: { policy?: TradingPolicy; prompt?: string; sco
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
-export function getPolicy(userId: string = "local"): TradingPolicy {
+export function getPolicy(userId: string = "local", connectedAccountId?: string): TradingPolicy {
+  const account = resolveAccount(userId, connectedAccountId);
   let policy: TradingPolicy;
-  const active = getActiveStrategyProfile(userId);
-  if (active) policy = mergePolicy({ ...active.policy, activeProfileId: active.id });
-  else policy = mergePolicy(getUserSetting(userId, "policy", DEFAULT_POLICY));
 
-  const activeAccount = getActiveConnectedAccount(userId);
-  if (activeAccount) {
-    policy.connectedAccountId = activeAccount.id;
-    policy.activeBroker = activeAccount.broker;
-    policy.accountNumber = activeAccount.accountNumber;
+  if (account) {
+    const state = getAccountStrategyStateRow(userId, account.id);
+    if (state) {
+      // Account's live state is authoritative once it exists.
+      const stored = JSON.parse(state.policy) as Partial<TradingPolicy>;
+      const scoringWeights = normalizeScoringWeights(
+        (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
+      );
+      policy = mergePolicy({ ...stored, scoringWeights });
+    } else {
+      // First touch: seed the live row from the user-level base so behavior is identical
+      // to the pre-isolation single-account path on day one.
+      policy = getBasePolicy(userId);
+      writeAccountStrategyState(userId, account.id, {
+        policy,
+        prompt: getStrategyPrompt(userId, account.id),
+        scoringWeights: policy.scoringWeights,
+        derivedFromProfileId: policy.activeProfileId ?? null
+      });
+    }
+    policy.connectedAccountId = account.id;
+    policy.activeBroker = account.broker;
+    policy.accountNumber = account.accountNumber;
     // The active account IS the mode: the Test account runs the local simulator
     // (paperMode), while any real broker account (Alpaca paper/brokerage, Robinhood)
     // runs against the broker. There is no separate paperMode override anymore.
-    policy.paperMode = activeAccount.broker === "test";
+    policy.paperMode = account.broker === "test";
   } else {
+    policy = getBasePolicy(userId);
     policy.paperMode = true;
   }
 
   return policy;
 }
 
-export function setPolicy(policy: TradingPolicy, userId: string = "local"): void {
+export function setPolicy(policy: TradingPolicy, userId: string = "local", connectedAccountId?: string): void {
   const merged = mergePolicy(policy);
   setUserSetting(userId, "policy", merged);
   syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
+  // Per-account isolation: write the live row for the target (default active) account.
+  const account = resolveAccount(userId, connectedAccountId);
+  if (account) {
+    writeAccountStrategyState(userId, account.id, {
+      policy: merged,
+      prompt: getStrategyPrompt(userId, account.id),
+      scoringWeights: merged.scoringWeights
+    });
+  }
 }
 
-export function getStrategyPrompt(userId: string = "local"): string {
+export function getStrategyPrompt(userId: string = "local", connectedAccountId?: string): string {
+  const account = resolveAccount(userId, connectedAccountId);
+  if (account) {
+    const state = getAccountStrategyStateRow(userId, account.id);
+    if (state?.prompt != null) return state.prompt;
+  }
   return getActiveStrategyProfile(userId)?.prompt ?? getUserSetting(userId, "strategyPrompt", DEFAULT_STRATEGY_PROMPT);
 }
 
-export function setStrategyPrompt(prompt: string, userId: string = "local"): void {
+export function setStrategyPrompt(prompt: string, userId: string = "local", connectedAccountId?: string): void {
   setUserSetting(userId, "strategyPrompt", prompt);
   syncActiveProfile({ prompt }, userId);
+  const account = resolveAccount(userId, connectedAccountId);
+  if (account) {
+    const base = getPolicy(userId, account.id);
+    writeAccountStrategyState(userId, account.id, { policy: base, prompt, scoringWeights: base.scoringWeights });
+  }
 }
 
 export function listStrategyProfiles(userId: string = "local"): StrategyProfile[] {
@@ -169,6 +286,7 @@ export function createStrategyProfile(input: { name: string; policy?: Partial<Tr
   if (input.active) {
     setSettingDirect(userId, "policy", policy, now);
     setSettingDirect(userId, "strategyPrompt", prompt, now);
+    mirrorPolicyToActiveAccount(userId, policy, prompt, policy.scoringWeights, id);
   }
   audit("profile_change", { action: "create", id, name: input.name, active: Boolean(input.active) }, userId);
   return getStrategyProfile(id, userId)!;
@@ -194,6 +312,7 @@ export function updateStrategyProfile(id: string, patch: { name?: string; policy
   if (existing.active) {
     setSettingDirect(userId, "policy", policy, now);
     setSettingDirect(userId, "strategyPrompt", prompt, now);
+    mirrorPolicyToActiveAccount(userId, policy, prompt, scoringWeights, id);
   }
   audit("profile_change", { action: "update", id, name: patch.name ?? existing.name }, userId);
   return getStrategyProfile(id, userId)!;
@@ -211,6 +330,8 @@ export function activateStrategyProfile(id: string, userId: string = "local"): S
     setSettingDirect(userId, "strategyPrompt", profile.prompt, now);
   });
   activate();
+  // Activating a library strategy copies it into the active account's live state.
+  mirrorPolicyToActiveAccount(userId, mergePolicy({ ...profile.policy, activeProfileId: id }), profile.prompt, profile.policy.scoringWeights, id);
   audit("profile_change", { action: "activate", id, name: profile.name }, userId);
   return getStrategyProfile(id, userId)!;
 }
