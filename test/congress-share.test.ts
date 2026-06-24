@@ -43,6 +43,7 @@ beforeAll(() => {
 beforeEach(() => {
   delete process.env.CONGRESS_TRADE_TOKEN;
   delete process.env.CONGRESS_SHARE_ENABLED;
+  delete process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED;
   delete process.env.CONGRESS_TRADE_BASE_URL;
   resetCongressRefThrottle();
   mockedFetchDailyOHLC.mockReset();
@@ -413,9 +414,10 @@ describe("marketQuoteToFundamentals / marketQuoteToAnalyst", () => {
 });
 
 describe("shareScanRefs — fundamentals + analyst", () => {
-  it("includes fundamentals + analyst for candidates in the same POST", async () => {
+  it("includes fundamentals + analyst for candidates in the same POST (when the gate is on)", async () => {
     process.env.CONGRESS_TRADE_TOKEN = "tok";
     process.env.CONGRESS_SHARE_ENABLED = "on";
+    process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED = "on"; // App A's #46 migration is live
     const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchSpy);
     const scan = {
@@ -434,5 +436,22 @@ describe("shareScanRefs — fundamentals + analyst", () => {
     expect(body.refs[0].ticker).toBe("AAPL");
     expect(body.fundamentals[0]).toMatchObject({ ticker: "AAPL", peRatio: 25 });
     expect(body.analyst[0]).toMatchObject({ ticker: "AAPL", rating: "Buy", strongBuy: 2 });
+  });
+
+  it("HOLDS fundamentals + analyst by default (refs still flow) until App A's #46 migration", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    // CONGRESS_SHARE_FUNDAMENTALS_ENABLED unset (default) → held
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const scan = {
+      topCandidates: [{ symbol: "AAPL", peRatio: 25, analystRating: "Buy", analystBySource: { fmp: { score: 80, label: "Buy", counts: { strongBuy: 2, buy: 1, hold: 0, sell: 0, strongSell: 0 } } } }]
+    } as unknown as Parameters<typeof shareScanRefs>[0];
+    const res = await shareScanRefs(scan);
+    expect(res?.ok).toBe(true);
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.refs[0].ticker).toBe("AAPL"); // refs still flow
+    expect(body.fundamentals).toEqual([]); // held
+    expect(body.analyst).toEqual([]); // held
   });
 });

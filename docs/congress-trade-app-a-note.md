@@ -45,8 +45,9 @@ shapes:
 - `fundamentals: [{ ticker, date, peRatio?, eps?, beta?, dividendYield?, week52High?, week52Low?, fcfYield?, debtToEquity?, epsGrowth? }]`
 - `analyst: [{ ticker, date, rating?, strongBuy?, buy?, hold?, sell?, strongSell? }]` (App B has no price
   targets → `targetMean/High/Low/Median`/`analystCount` left for App A to fill null)
-Sent in the same idempotent scan-hook POST as `refs` (gated on `CONGRESS_SHARE_ENABLED`); App A ignores
-the keys until #46's migration lands, so it's safe to send now. **App A: ping when #46 is applied** and
+Sent in the same idempotent scan-hook POST as `refs`, but **held behind `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`
+(default off)** per App A's note that pushing these rows before #46's migration *errors them* (the rest of
+the import is unaffected; `refs` keep flowing). **App A: ping when #46 is applied** — we flip the flag and
 these start populating `securities_ref`. Macro/news deferred as agreed.
 
 ## FYI
