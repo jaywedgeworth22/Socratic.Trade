@@ -2,7 +2,9 @@ import React from "react";
 import { Chip } from "./primitives";
 import { Landmark, TrendingUp, Activity, Gauge, Droplets } from "lucide-react";
 import type { DashboardSnapshot } from "../dashboard-types";
+import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import type { MarketQuote, MarketScan } from "@/lib/types";
+import { SymbolButton } from "./symbol-button";
 
 type Board = NonNullable<DashboardSnapshot["macroBoard"]>;
 type Tone = "up" | "down" | "warn" | undefined;
@@ -119,7 +121,17 @@ function TrendsSection({ history }: { history?: Record<string, number[]> }) {
   );
 }
 
-function NewsSection({ news }: { news?: Board["news"] }) {
+function NewsSection({
+  news,
+  scan,
+  onDrilldown,
+  tickerLogoDisplay
+}: {
+  news?: Board["news"];
+  scan?: MarketScan | null;
+  onDrilldown?: (q: MarketQuote) => void;
+  tickerLogoDisplay?: TickerLogoDisplay;
+}) {
   if (!news || news.length === 0) return null;
   return (
     <div className="rounded-xl border border-line p-4">
@@ -134,7 +146,25 @@ function NewsSection({ news }: { news?: Board["news"] }) {
             )}
             <span className="text-faint">
               {n.publisher ? ` · ${n.publisher}` : ""}
-              {n.tickers && n.tickers.length > 0 ? ` · ${n.tickers.join(" ")}` : ""}
+              {n.tickers && n.tickers.length > 0 ? (
+                <>
+                  {" · "}
+                  <span className="inline-flex flex-wrap gap-1.5">
+                    {n.tickers.map((ticker) => (
+                      <SymbolButton
+                        key={ticker}
+                        symbol={ticker}
+                        scan={scan}
+                        onDrilldown={onDrilldown}
+                        className="font-semibold text-fg"
+                        title={`Open ${ticker} symbol intelligence`}
+                        logoDisplay={tickerLogoDisplay}
+                        showLogo
+                      />
+                    ))}
+                  </span>
+                </>
+              ) : ""}
             </span>
           </li>
         ))}
@@ -156,13 +186,15 @@ function MoverList({
   movers,
   scan,
   onDrilldown,
-  asOf
+  asOf,
+  tickerLogoDisplay
 }: {
   title: string;
   movers?: Mover[];
   scan?: MarketScan | null;
   onDrilldown?: (q: MarketQuote) => void;
   asOf?: string;
+  tickerLogoDisplay?: TickerLogoDisplay;
 }) {
   if (!movers?.length) return null;
   const tooltip = macroTitle("Full-market movers from Massive grouped daily bars; volume must be at least 1 million shares; percent change is versus the prior close.", asOf);
@@ -171,25 +203,31 @@ function MoverList({
       <div className="mb-2 text-faint text-[11px] uppercase tracking-wide">{title}</div>
       <div className="space-y-1.5">
         {movers.map((m) => (
-          <button
+          <div
             key={m.sym}
-            type="button"
-            className="grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-md px-1.5 py-1 text-left transition hover:bg-surface-2/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-info"
-            onClick={() => onDrilldown?.(resolveMoverQuote(m.sym, scan))}
+            className="grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-md px-1.5 py-1"
             title={`${m.sym}: ${m.pct >= 0 ? "+" : ""}${m.pct.toFixed(1)}%. Open symbol intelligence.`}
           >
-            <span className="font-semibold text-fg">{m.sym}</span>
+            <SymbolButton
+              symbol={m.sym}
+              quote={resolveMoverQuote(m.sym, scan)}
+              onDrilldown={onDrilldown}
+              className="justify-self-start font-semibold text-fg"
+              title={`${m.sym}: ${m.pct >= 0 ? "+" : ""}${m.pct.toFixed(1)}%. Open symbol intelligence.`}
+              logoDisplay={tickerLogoDisplay}
+              showLogo
+            />
             <span className={`tnum text-xs font-semibold ${m.pct >= 0 ? "text-up" : "text-down"}`}>
               {m.pct >= 0 ? "+" : ""}{m.pct.toFixed(1)}%
             </span>
-          </button>
+          </div>
         ))}
       </div>
     </div>
   );
 }
 
-function BreadthSection({ signals, scan, onDrilldown }: { signals: Board["signals"]; scan?: MarketScan | null; onDrilldown?: (q: MarketQuote) => void }) {
+function BreadthSection({ signals, scan, onDrilldown, tickerLogoDisplay }: { signals: Board["signals"]; scan?: MarketScan | null; onDrilldown?: (q: MarketQuote) => void; tickerLogoDisplay?: TickerLogoDisplay }) {
   if (typeof signals.marketBreadthPct !== "number" && !signals.marketAdvancers) return null;
   const pct = signals.marketBreadthPct;
   const pctTone: Tone = typeof pct === "number" ? (pct >= 55 ? "up" : pct <= 45 ? "down" : undefined) : undefined;
@@ -215,15 +253,15 @@ function BreadthSection({ signals, scan, onDrilldown }: { signals: Board["signal
       </div>
       {(signals.marketTopGainers?.length || signals.marketTopLosers?.length) ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2 text-[13px]">
-          <MoverList title="Top Gainers" movers={signals.marketTopGainers} scan={scan} onDrilldown={onDrilldown} asOf={signals.marketBreadthAsOf} />
-          <MoverList title="Top Losers" movers={signals.marketTopLosers} scan={scan} onDrilldown={onDrilldown} asOf={signals.marketBreadthAsOf} />
+          <MoverList title="Top Gainers" movers={signals.marketTopGainers} scan={scan} onDrilldown={onDrilldown} asOf={signals.marketBreadthAsOf} tickerLogoDisplay={tickerLogoDisplay} />
+          <MoverList title="Top Losers" movers={signals.marketTopLosers} scan={scan} onDrilldown={onDrilldown} asOf={signals.marketBreadthAsOf} tickerLogoDisplay={tickerLogoDisplay} />
         </div>
       ) : null}
     </div>
   );
 }
 
-export function MacroBoardView({ snapshot, scan, onDrilldown }: { snapshot: DashboardSnapshot; scan?: MarketScan | null; onDrilldown?: (q: MarketQuote) => void }) {
+export function MacroBoardView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { snapshot: DashboardSnapshot; scan?: MarketScan | null; onDrilldown?: (q: MarketQuote) => void; tickerLogoDisplay?: TickerLogoDisplay }) {
   const board = snapshot.macroBoard as Board | undefined;
   if (!board) {
     return <div className="rounded-xl border border-line p-6 text-sm text-faint">Macro data unavailable.</div>;
@@ -297,9 +335,9 @@ export function MacroBoardView({ snapshot, scan, onDrilldown }: { snapshot: Dash
       <Section icon={<Activity size={16} className="text-info" />} title="Inflation & Growth" tiles={inflationGrowth} />
       <Section icon={<Gauge size={16} className="text-info" />} title="Risk & Volatility" tiles={risk} />
       <Section icon={<Gauge size={16} className="text-[var(--accent)]" />} title="Positioning & Factor Regime" tiles={positioning} />
-      <BreadthSection signals={signals} scan={scan} onDrilldown={onDrilldown} />
+      <BreadthSection signals={signals} scan={scan} onDrilldown={onDrilldown} tickerLogoDisplay={tickerLogoDisplay} />
       <Section icon={<Droplets size={16} className="text-info" />} title="Liquidity & Other" tiles={liquidity} />
-      <NewsSection news={board.news} />
+      <NewsSection news={board.news} scan={scan} onDrilldown={onDrilldown} tickerLogoDisplay={tickerLogoDisplay} />
     </div>
   );
 }
