@@ -5,6 +5,7 @@
 // subsequent calls within the same process. In production (`next start`) it runs once.
 
 import { checkAllUserPriceAlerts } from "./alerts";
+import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getLastStrategyRunStartedAt, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { expireStalePendingProposals } from "./proposal-revalidation";
@@ -114,6 +115,13 @@ async function tick(): Promise<void> {
       console.error("[scheduler] filing-body refresh error:", err)
     );
   }
+
+  // Once-per-day share of company refs + daily closes + the S&P-500 series to congress.trade
+  // (App A) so it can avoid spending the shared FMP quota. No-op unless CONGRESS_TRADE_TOKEN +
+  // CONGRESS_SHARE_ENABLED are set and the batch hasn't already run today. Fully self-guarded.
+  void runCongressDailyShareIfDue(Date.now()).catch((err) =>
+    console.error("[scheduler] congress-share daily batch error:", err)
+  );
 
   // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded, runs beside the web-source
   // refresh. Records + announces a regime change; only triggers a run when TRIGGER_ENGINE is on.
