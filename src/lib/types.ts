@@ -4,7 +4,15 @@ export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
-export type IndexUniverse = "sp500" | "nasdaq100" | "dow30";
+export type IndexUniverse =
+  | "sp100"
+  | "sp500"
+  | "nasdaq100"
+  | "nasdaqComposite"
+  | "dow30"
+  | "russell2000"
+  | "nyseComposite"
+  | "ftWilshire5000";
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
 
@@ -322,6 +330,17 @@ export interface TradingPolicy {
   maxDailyOrders: number;
   maxProposalsPerRun: number;
   /**
+   * Number of ranked Market Scan candidates that receive expensive enrichment and are exposed to the
+   * LLM as `marketScan.topCandidates`. Lower values reduce cost/noise; higher values broaden choice.
+   */
+  marketScanCandidateLimit?: number;
+  /**
+   * Maximum number of below-cutoff candidates with notable cached web signals (congressional buying,
+   * insider buying, short pressure, or strong technicals) that may replace lower-ranked plain top
+   * candidates inside the candidate limit.
+   */
+  marketScanOutlierReserve?: number;
+  /**
    * Hard time-to-live for a still-pending (unapproved/unrejected) proposal, in minutes.
    * A proposal older than this is auto-expired (status → "expired") so the approval queue
    * never implies the agent is still actively recommending an hours/days-old idea. 0 or
@@ -532,6 +551,12 @@ export interface MarketScan {
   generatedAt: string;
   scannedSymbols: number;
   returnedQuotes: number;
+  /** Configured cap for enriched/prompted candidates in this scan. */
+  candidateLimit?: number;
+  /** Configured reserve for below-cutoff notable outliers inside `candidateLimit`. */
+  outlierReserve?: number;
+  /** Number of notable below-cutoff candidates included in `topCandidates`. */
+  outlierCandidateCount?: number;
   /** Market breadth: % of the full screener advancing today (risk-on/off gauge). */
   breadthPct?: number;
   topCandidates: MarketQuote[];
@@ -625,6 +650,9 @@ export interface MarketDataProviderOptions {
   scoringWeights?: ScoringWeights;
   ttlMs?: number;
   userId?: string;
+  dynamicUniverses?: IndexUniverse[];
+  candidateLimit?: number;
+  outlierReserve?: number;
 }
 
 export interface MarketDataProvider {
@@ -723,6 +751,19 @@ export interface PendingProposal {
   /** The LLM's most recent re-validation note (why it still stands). */
   revalidationNote?: string;
   accountNumber?: string;
+  executionMode?: ExecutionMode;
+}
+
+export interface RecentProposal {
+  id: string;
+  runId: string;
+  accountNumber: string;
+  createdAt: string;
+  proposal: TradeProposal;
+  decision: PolicyDecision;
+  review?: ReviewedOrder;
+  estimatedNotional?: number;
+  status: string;
   executionMode?: ExecutionMode;
 }
 

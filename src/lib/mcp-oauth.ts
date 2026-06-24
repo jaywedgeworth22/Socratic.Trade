@@ -1,4 +1,4 @@
-import { deleteInternalSetting, findInternalSettingByKeyLike, getInternalSetting, setInternalSetting } from "./db";
+import { deleteInternalSetting, findInternalSettingByKeyLike, getDb, getInternalSetting, setInternalSetting } from "./db";
 
 // CLIENT registration is global (one OAuth app client shared across users).
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
@@ -172,6 +172,19 @@ export function getStoredMcpOAuthTokens(userId: string): McpOAuthTokens | undefi
 
 export function clearMcpOAuthTokens(userId: string): void {
   deleteInternalSetting(tokenSettingKey(userId));
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+export function clearMcpOAuthForUser(userId: string): { tokenDeleted: number; stateDeleted: number } {
+  const db = getDb();
+  const tokenDeleted = db.prepare("DELETE FROM settings WHERE key = ?").run(tokenSettingKey(userId)).changes;
+  const stateDeleted = db
+    .prepare("DELETE FROM settings WHERE key LIKE ? ESCAPE '\\'")
+    .run(`robinhood_mcp_oauth_state:${escapeLike(userId)}:%`).changes;
+  return { tokenDeleted, stateDeleted };
 }
 
 export function setMcpOAuthTokens(userId: string, tokens: McpOAuthTokens): void {

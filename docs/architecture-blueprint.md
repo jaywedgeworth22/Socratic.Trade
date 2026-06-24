@@ -597,7 +597,7 @@ Instructions:
 2. Cross-reference the regime with historical performance:
    - Learn from 'thesisOutcomes', 'regimeOutcomes', and 'comboOutcomes' to avoid repeating unprofitable patterns.
    - Demand higher conviction for sectors or factors with weak historical win rates.
-3. Analyze the candidate list. Candidates are pre-filtered (score >= 40) and abbreviated:
+3. Analyze the candidate list. Candidates are locally ranked to the configured scan cap, with notable below-cutoff outliers eligible for the reserve, and abbreviated:
    - 'sym': symbol, 'px': price, 'vol': volume, 'mktCap': marketCap, 'chgPct': change %, 'pe': P/E, 'pb': P/B, 'div': dividend, 'fcf': FCF Yield, 'de': D/E, 'epsGr': EPS Growth, 'shortFloat': short float %, 'secRelStr': SEC relevance, 'senateNet': Senate Net, 'newsSent': news sentiment, 'insiderSent': insider sentiment, 'posMV': position market value.
 4. Construct long or short trade proposals based on clear catalysts and scoring edges.
 5. Provide a confidence score (1-100) and assign one of the 10 tags from the THESIS_PLAYBOOK.

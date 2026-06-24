@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, outlierInterestScore, rankMarketQuotes, scoreFactors } from "../src/lib/market";
 import type { SymbolEnrichment } from "../src/lib/data-providers";
 import type { MarketQuote, MarketScan } from "../src/lib/types";
 
@@ -75,6 +75,14 @@ describe("hasNotableWebSignal (event candidate union)", () => {
   it("does not flag neutral insider, ordinary short volume, or undefined", () => {
     expect(hasNotableWebSignal({ insiderSentiment: 40, shortVolumeRatio: 45, bulletins: [] })).toBe(false);
     expect(hasNotableWebSignal(undefined)).toBe(false);
+  });
+
+  it("scores stronger below-cutoff outlier signals ahead of weaker ones", () => {
+    const thinInsider = outlierInterestScore({ insiderSentiment: 61, bulletins: [] });
+    const broadCongressBuying = outlierInterestScore({ congress: { netSignal: 3, buyCount: 4 } as never, bulletins: [] });
+
+    expect(thinInsider).toBeGreaterThan(0);
+    expect(broadCongressBuying).toBeGreaterThan(thinInsider);
   });
 });
 

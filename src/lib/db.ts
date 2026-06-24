@@ -146,6 +146,33 @@ const MIGRATIONS: Migration[] = [
       database.exec("CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_execution_mode ON portfolio_snapshots (user_id, account_number, execution_mode, created_at)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_execution_mode ON fill_events (user_id, account_number, execution_mode, filled_at)");
     }
+  },
+  {
+    version: 4,
+    name: "account_deletion_lifecycle",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS account_deletion_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          email TEXT,
+          requested_at TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('prepared','completed','cancelled')),
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_deletion_requests_user_status ON account_deletion_requests (user_id, status, requested_at);
+
+        CREATE TABLE IF NOT EXISTS account_deletion_audit (
+          id TEXT PRIMARY KEY,
+          subject_hash TEXT NOT NULL,
+          requested_at TEXT NOT NULL,
+          completed_at TEXT NOT NULL,
+          counts_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_deletion_audit_subject ON account_deletion_audit (subject_hash, completed_at);
+      `);
+    }
   }
 ];
 

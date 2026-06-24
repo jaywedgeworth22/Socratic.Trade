@@ -167,6 +167,38 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
   });
 
+  it("allows a dynamic-universe symbol when it is present in the latest market scan", () => {
+    const marketScan = {
+      source: "test",
+      generatedAt: "2026-06-23T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [],
+      sectorBySymbol: {},
+      quotesBySymbol: { XYZ: { symbol: "XYZ", price: 25, score: 62 } },
+      warnings: []
+    } as MarketScan;
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "XYZ" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["russell2000"], additionalSymbols: [] },
+      estimatedNotional: 10,
+      marketScan
+    });
+
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks a dynamic-universe symbol when no scan proves membership", () => {
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "XYZ" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["russell2000"], additionalSymbols: [] },
+      estimatedNotional: 10
+    });
+
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
+  });
+
   it("allows S&P 500 symbols when the S&P universe is selected", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "AAPL" }, {
       ...context(),

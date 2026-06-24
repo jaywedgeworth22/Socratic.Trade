@@ -1,6 +1,6 @@
 import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
-import { symbolsForPolicyUniverse } from "./index-universes";
+import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./index-universes";
 import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
@@ -62,8 +62,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   const isOpening = proposal.side === "buy" || proposal.side === "short";
   if (isOpening) {
     const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+    const hasDynamicUniverse = dynamicIndexUniversesForPolicy(context.policy).length > 0;
+    if (allowedSymbols.length === 0 && !hasDynamicUniverse) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol) && !isDynamicScanSymbol(symbol, context)) reasons.push(`${symbol} is not in the allowed universe.`);
   }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
@@ -346,6 +347,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
 export function allowedSymbolsForPolicy(policy: TradingPolicy): string[] {
   return symbolsForPolicyUniverse(policy);
+}
+
+function isDynamicScanSymbol(symbol: string, context: PolicyContext): boolean {
+  if (dynamicIndexUniversesForPolicy(context.policy).length === 0) return false;
+  const quote = context.marketScan?.quotesBySymbol[symbol];
+  return typeof quote?.score === "number" && quote.score > 0;
 }
 
 export function estimateNotional(proposal: TradeProposal): number {

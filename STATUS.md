@@ -24,6 +24,91 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Current Codex bundle prepared for integration.**
+  Bundled the current Codex preview changes for landing: custom Additional
+  Watchlist ticker validation and error surfacing; expanded index universes and
+  dynamic broad-scan narrowing; user-configurable Market Scan cap/outlier
+  reserve; app-local account deletion lifecycle and account-row visual polish;
+  stopped-system proposal action gating; and related docs/tests. Local
+  verification passed before commit: `npx tsc --noEmit`, `npm test` (107 files /
+  936 tests), `npm run build`, and `git diff --check`. Integration path is
+  `scripts/land.sh` into `main`; beta follows the main integration worktree, and
+  production follows the existing `main` deploy workflow. See
+  `docs/rollouts/2026-06-23-codex-bundle-integration.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Visual QA + multi-step app account deletion.**
+  Added a signed-in-user account deletion lifecycle with `GET/POST/DELETE
+  /api/account/deletion`: preview counts, prepare-by-halting the user's system
+  and clearing the run lock, typed-email/phrase confirmations, extra local
+  operator phrase, in-flight placement/reconciliation blockers, transactional
+  purge of private app data, per-user Robinhood MCP OAuth cleanup, and a minimal
+  hashed deletion audit. Settings -> Data now has a danger-zone procedure that
+  explains Google/Apple/broker limitations and requires multiple acknowledgements
+  before deletion. Accounts rows now stack better on mobile, make inactive
+  `Use` primary, and visually anchor the active account. Visual QA ran through
+  desktop/tablet/mobile Playwright screenshots with the trusted Cloudflare
+  Access email header: no horizontal overflow at 1440, 1024, or 390 px; the
+  deletion modal opened on desktop/mobile. Verification: `npx tsc --noEmit`,
+  focused `npx vitest run test/account-deletion.test.ts`, full `npm test` (107
+  files / 936 tests), `npm run build`, `git diff --check`, local `/api/health`,
+  and local deletion-preview API smoke all passed. Restarted `trading-codex`
+  after build. See
+  `docs/rollouts/2026-06-23-ui-account-deletion-visual-pass.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **User-controlled Market Scan cap + stronger outlier reserve.**
+  The Market Scan cap is no longer env-only. Per-user policy now carries
+  `marketScanCandidateLimit` (default 30, bounded 10-100) and
+  `marketScanOutlierReserve` (default 8, bounded 0-25 and never above the cap).
+  `/api/scan`, scheduled strategy runs, and approval re-scans pass those values
+  into `scanMarket`; the scan response reports the active cap, reserve, and
+  outlier count. Settings -> Data exposes both controls, and the Market Scan tab
+  now has a gauge shortcut that opens directly to those settings. The previous
+  hidden prompt-side `score >= 40` filter was removed so scan outliers can
+  actually reach the LLM when they are included in `topCandidates`. Below-cutoff
+  outliers are now ordered by signal strength across congressional buying,
+  insider buying, short pressure, and bullish technical signals before filling
+  the reserve. Expert consensus documented in the UI/docs: 10-12 is the lowest
+  reasonable cost-sensitive range, 25-40 is balanced, 60-80 is broad research,
+  and 100 is the practical upper bound before attention dilution usually hurts
+  proposal quality. Verification passed: `npx tsc --noEmit`, full `npm test`
+  (106 files / 934 tests), and `npm run build`. See
+  `docs/rollouts/2026-06-23-market-scan-cap-settings.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Expanded base index universes + broad-scan narrowing.**
+  Added S&P 100, Nasdaq Composite, Russell 2000, NYSE Composite, and FT
+  Wilshire 5000 universe options while keeping S&P 100 mutually exclusive with
+  S&P 500 and Nasdaq 100 mutually exclusive with Nasdaq Composite in both the UI
+  and policy API. Broad/dynamic universes now flow into Market Scan: Nasdaq/NYSE
+  exchange universes use the existing Nasdaq screener filters, S&P 100 and
+  Russell 2000 use BlackRock iShares holdings downloads (OEF/IWM), and FT
+  Wilshire 5000 uses the app's free all-screener U.S.-listed proxy. The scan
+  still ranks the broad universe down to the configured candidate cap before
+  expensive enrichment and LLM prompting, so large selections broaden
+  discovery without sending thousands of rows to the model. Dynamic-universe
+  trade approval only passes when the symbol was present in the latest ranked
+  scan, while manual chat drafts explain that broad indexes are scan-ranked and
+  require either a scanned candidate or an explicit Additional Watchlist symbol.
+  Verification: focused Vitest passed 55 tests; `npx tsc --noEmit`, full
+  `npm test` (105 files / 927 tests), and `npm run build` passed; live-source
+  smoke returned 101 S&P 100/OEF holdings, 1901 Russell 2000/IWM holdings, and
+  2714 NYSE screener quotes; restarted `trading-codex`; local `/api/health`
+  returned OK and public `codex.jays.services` returned the expected Cloudflare
+  Access 302. See `docs/rollouts/2026-06-23-expanded-index-universes.md`.
+- 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Custom Additional Watchlist tickers + visible error surfaces.**
+  Additional Watchlist now accepts quote-resolvable custom U.S. equity/ETF
+  tickers such as `SPCX` instead of limiting entries to the embedded S&P 500 /
+  Nasdaq 100 / Dow 30 snapshots. Newly added custom symbols are quote-checked
+  through the shared Yahoo Finance chart fetcher; if no quote is available, the
+  policy save fails with a plain-English ticker-specific explanation. Market
+  Scan now carries quote-only custom symbols forward when Nasdaq's screener
+  omits them, and scan warning banners show the concrete warning text instead
+  of a generic data-source message. App-level route/global error screens now
+  show the real error message when available, and uncaught browser-side runtime
+  errors surface as bottom-right toasts. Applied into `/Users/jay/apps/trading-codex`
+  on top of the in-progress account-deletion work and restarted `trading-codex`
+  for `codex.jays.services` / port `4101`. Verification: focused Vitest
+  (`test/policy-custom-symbol.test.ts`, `test/market-custom-symbol.test.ts`,
+  `test/alternative-data.test.ts`, `test/watchlist-alerts.test.ts`) passed 16
+  tests; `npx tsc --noEmit`, full `npm test` (102 files / 915 tests), and
+  `npm run build` passed; local `/api/health` returned OK. See
+  `docs/rollouts/2026-06-23-custom-watchlist-errors.md`.
 - 2026-06-23 (`codex/multi-user-auth-prod`): **Multi-user auth + account UI production pass.**
   Integrated the Auth.js/Cloudflare Access identity work onto current `origin/main`
   and fixed the account UI issues found during the expert/site pass. Middleware now
@@ -862,7 +947,7 @@ steps materially change.
   repair with `scripts/setup-agent-previews.sh`; see the rewritten "Hosting & dev servers"
   section in `AGENTS.md`. Key rule: a running port is NOT a work lock — coordinate via git +
   STATUS.md only. (Supersedes the earlier single committed `trading-preview` :4100 idea.)
-- **Data Optimization**: Market Scan candidates with a score < 40 are filtered out backend-side. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
+- **Data Optimization**: Market Scan ranks the broad universe down to the configured candidate cap, then can reserve below-cutoff outliers with notable congress, insider, short-pressure, or technical signals. The JSON payload is heavily minified (`symbol` -> `sym`, `marketCap` -> `mktCap`) to save LLM context window tokens.
 - **Regime Detection**: The current market regime is deterministically evaluated using VIX and Fed rates, shifting the responsibility entirely from the LLM.
 - **UI UX Polish**: The cockpit features interactive charting (Recharts Brush for panning/zooming), Sonner toasts for real-time action feedback, and dynamic lazy-loading for heavy bundle dependencies.
 
