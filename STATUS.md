@@ -24,6 +24,22 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-24 (`codex/market-data-mcp-evaluation`): **Market-data MCP/provider evaluation.**
+  Documented whether MCP should change the app's provider strategy for FMP,
+  Alpha Vantage, Twelve Data, Tiingo, Intrinio, EODHD, FinancialData.net,
+  Nasdaq Data Link, Tastytrade, Pyth, Databento, Unusual Whales, Trading
+  Volatility, and a generic Yahoo-backed MCP server. Recommendation: keep
+  direct REST/WebSocket adapters for scheduled scans, scoring, history, cache
+  writes, and execution-adjacent data; use MCP for provider research,
+  field-coverage exploration, trial benchmarking, and optional Strategy
+  Studio-style deep dives only after normalizing outputs through the same
+  source-attributed cache path. Intrinio should be benchmarked during the trial
+  before paying $150/month; Tiingo is the best low-cost direct-adapter next
+  step if the key is active; FinancialData.net/EODHD/Twelve Data are cheaper
+  broad alternatives; Trading Volatility/Unusual Whales are differentiated
+  options-flow overlays, not core price/fundamental replacements. No API keys
+  were recorded. See `docs/data-provider-mcp-evaluation.md` and
+  `docs/rollouts/2026-06-24-market-data-mcp-evaluation.md`.
 - 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Current Codex bundle prepared for integration.**
   Bundled the current Codex preview changes for landing: custom Additional
   Watchlist ticker validation and error surfacing; expanded index universes and
