@@ -17,6 +17,7 @@ import {
   notionalInLastMinutes
 } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
+import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "@/lib/policy";
 import { emitDashboardEvent } from "@/lib/events";
 import { chatDraftToProposal } from "@/lib/chat/promote-draft";
@@ -49,7 +50,11 @@ export async function POST(request: Request) {
   }
   // Never trust the LLM draft: the symbol must be in the user's allowed universe.
   if (!allowedSymbolsForPolicy(policy).includes(proposal.symbol)) {
-    return NextResponse.json({ error: "SYMBOL_NOT_ALLOWED", reasons: [`${proposal.symbol} is not in the allowed universe.`] }, { status: 400 });
+    const hasDynamicUniverse = dynamicIndexUniversesForPolicy(policy).length > 0;
+    const reason = hasDynamicUniverse
+      ? `${proposal.symbol} is not in the explicit watchlist. Broad indexes are scan-ranked first; run Market Scan and use a scanned candidate, or add ${proposal.symbol} to Additional Watchlist.`
+      : `${proposal.symbol} is not in the allowed universe.`;
+    return NextResponse.json({ error: "SYMBOL_NOT_ALLOWED", reasons: [reason] }, { status: 400 });
   }
 
   const gateway = getBrokerGateway(policy, userId);

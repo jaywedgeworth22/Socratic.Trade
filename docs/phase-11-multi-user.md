@@ -207,6 +207,49 @@ Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
 
 Per-user Robinhood account linking (originally noted in M6 scope) is deferred as a follow-up.
 
+### M7 `[done]` App account deletion and re-onboarding
+
+Signed-in users can start a deletion flow from Settings -> Data -> Delete this
+app account. The server exposes one request-scoped endpoint:
+
+- `GET /api/account/deletion` returns a preview for the verified user: current
+  email, userId, whether the identity maps to the shared `local` operator
+  dataset, connected accounts, private row counts, and blockers.
+- `POST /api/account/deletion` prepares deletion. It halts that user's system,
+  clears `strategy_run_lock:<userId>`, cancels any older prepared request, and
+  records a fresh prepared deletion request. It does not delete data.
+- `DELETE /api/account/deletion` performs the final deletion only after the
+  user has prepared the request, typed the verified email, typed
+  `DELETE MY ACCOUNT`, acknowledged app-data deletion, broker/API connection
+  deletion, provider-revocation limitations, broker-position limitations, and
+  fresh sign-in behavior. If `userId === "local"`, it also requires the
+  `DELETE LOCAL OPERATOR ACCOUNT` phrase and an explicit local-operator checkbox.
+
+Final deletion blocks with `409` while any strategy run is `running`, any
+proposal is `placing`, or any broker-routed fill is still
+`pending_reconciliation`. The app does not auto-cancel broker orders or close
+broker positions during account deletion.
+
+Deletion removes the user's private app rows from user API keys, connected
+accounts, strategy profiles/runs/settings, proposals, snapshots, fills,
+synthetic stops, notifications, watchlists, alerts, chat, user memory,
+learned-context pending rows, learned-context rows where they are either owner
+or contributor, LLM usage, market-data demands, and normal audit events. It also
+clears per-user Robinhood MCP OAuth tokens and pending OAuth states while
+preserving the global MCP client registration. The only retained deletion record
+is `account_deletion_audit`, which stores a non-reversible subject hash, schema
+version, timestamps, and row counts; it does not store raw email, raw userId,
+symbols, broker account numbers, chat text, proposal JSON, or credentials.
+
+Provider identity deletion is intentionally separate. This app cannot delete a
+Google account, Apple ID, or broker account. After app-data deletion, signing in
+again with Google or Apple can create a fresh empty app account; users who also
+want to remove the OAuth grant should revoke Agentic Trading from their Google
+Account third-party access page or Apple ID Sign in with Apple settings. Before
+Apple private-relay identities become a first-class login path, add a
+`user_identities` table keyed by provider + provider account id so identity is
+not derived from relay email alone.
+
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real
 architectural lift (userId scoping across the DB + scheduler) and should land

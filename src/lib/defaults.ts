@@ -1,4 +1,5 @@
 import type { NotificationSettings, RiskRules, ScoringWeights, TaxSettings, TradingPolicy } from "./types";
+import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT, DEFAULT_MARKET_SCAN_OUTLIER_RESERVE } from "./scan-settings";
 
 export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   washSaleGuard: true,
@@ -53,6 +54,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
+  marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
+  marketScanOutlierReserve: DEFAULT_MARKET_SCAN_OUTLIER_RESERVE,
   proposalExpiryMinutes: 2880,
   proposalRevalidateCadenceHours: 0,
   permittedOrderTypes: ["market", "limit"],
@@ -84,7 +87,7 @@ SELL AND TRIM RULES
   - If a held stock ranks near the bottom of the current scan while another candidate ranks highly, propose a rotation: sell the laggard, fund the leader.
 
 SIZING AND LIMITS
-  - Size orders at maxOrderNotional unless the remaining daily notional is lower.
+  - Choose a fresh advised size for every proposal from the trade's risk/reward, conviction, liquidity, diversification, and account context. maxOrderNotional is a hard safety cap, not the default target.
   - Respect remainingDailyOrders — if it is low, concentrate on the single best trade rather than spreading across several mediocre ones.
   - Use market orders for stocks with marketCap >= $5B. Use limit orders for stocks with marketCap < $5B or where marketCap is unknown.
   - If a candidate includes an ask price, a buy limit may be priced near or slightly below ask. If no ask price is provided, do not invent one; use market orders for liquid names or current price-based limits for smaller names.

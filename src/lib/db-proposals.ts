@@ -5,6 +5,7 @@ import type {
   ExecutionMode,
   PendingProposal,
   PolicyDecision,
+  RecentProposal,
   ReviewedOrder,
   TradeProposal
 } from "./types";
@@ -38,6 +39,40 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     lastRevalidatedAt: r.last_revalidated_at ?? undefined,
     revalidationNote: r.revalidation_note ?? undefined,
     accountNumber: r.account_number,
+    executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined
+  }));
+}
+
+export function listRecentProposals(accountNumber: string, limit: number = 100, userId: string = "local"): RecentProposal[] {
+  type RawRow = {
+    id: string;
+    run_id: string;
+    account_number: string;
+    created_at: string;
+    proposal: string;
+    decision: string;
+    review: string | null;
+    estimated_notional: number | null;
+    status: string;
+    execution_mode: string | null;
+  };
+  const cappedLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+  const rows = getDb()
+    .prepare(
+      "SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, execution_mode FROM trade_proposals WHERE account_number = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?"
+    )
+    .all(scopeAccount(accountNumber), userId, cappedLimit) as RawRow[];
+
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    accountNumber: r.account_number,
+    createdAt: r.created_at,
+    proposal: JSON.parse(r.proposal) as TradeProposal,
+    decision: JSON.parse(r.decision) as PolicyDecision,
+    review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined,
+    estimatedNotional: r.estimated_notional ?? undefined,
+    status: r.status,
     executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined
   }));
 }

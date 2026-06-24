@@ -2,30 +2,48 @@ import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import type { GroupedDailyBar } from "./market-signals/massive";
 import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
 import type { SymbolWebSignal } from "./web-sources";
-
-/** How many freshly-disclosed "event" names may be unioned into the candidate set. */
-const EVENT_CANDIDATE_RESERVE = Number(process.env.MARKET_SCAN_EVENT_RESERVE ?? 8);
+import { clearFundHoldingsCache, fetchBlackRockHoldingSymbols, isBlackRockHoldingUniverse } from "./fund-holdings";
 
 /** A web signal worth pulling a below-cutoff name into the candidate set for. */
 export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
-  if (!sig) return false;
+  return outlierInterestScore(sig) > 0;
+}
+
+export function outlierInterestScore(sig?: SymbolWebSignal): number {
+  if (!sig) return 0;
   // Congress: require at least 2 distinct members buying AND net >= 2 (more buys than sells).
   // Single-member disclosures are too thin to justify overriding the scan score cutoff.
   const congressNotable =
     (sig.congress?.buyCount ?? 0) >= 2 &&
     (sig.congress?.netSignal ?? 0) >= 2;
-  return (
-    congressNotable ||
-    (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) || // insider buying
-    (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) || // elevated short pressure
-    (sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70) // strong bullish technical
-  );
+  const congressScore = congressNotable
+    ? 70 + Math.min(25, (sig.congress?.netSignal ?? 0) * 5 + (sig.congress?.buyCount ?? 0) * 2)
+    : 0;
+  const insiderScore = typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60
+    ? sig.insiderSentiment
+    : 0;
+  const shortScore = typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55
+    ? Math.min(90, sig.shortVolumeRatio)
+    : 0;
+  const technicalScore = sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70
+    ? sig.technical.score
+    : 0;
+  return Math.max(congressScore, insiderScore, shortScore, technicalScore);
 }
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
+import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";
 import { normalizeSymbol } from "./money";
+import {
+  DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
+  DEFAULT_MARKET_SCAN_OUTLIER_RESERVE,
+  normalizeMarketScanCandidateLimit,
+  normalizeMarketScanOutlierReserve
+} from "./scan-settings";
+import { fetchYahooFinanceQuote, type YahooFinanceQuote } from "./yahoo-finance";
 import type {
   EnrichmentSources,
   EquityPosition,
+  IndexUniverse,
   MarketDataProvider,
   MarketFactor,
   MarketFactorBreakdown,
@@ -35,49 +53,75 @@ import type {
   ScoringWeights
 } from "./types";
 
-const DEFAULT_SCAN_LIMIT = 30;
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0";
 
 type RawNasdaqRow = Record<string, unknown>;
+type NasdaqExchange = "nasdaq" | "nyse";
 
 // Nasdaq screener is a public, unauthenticated endpoint — no user API key is
 // consumed, so this single shared cache is safe to serve to all users.
-let screenerCache:
-  | {
-      expiresAt: number;
-      rows: RawNasdaqRow[];
-      asOf?: string;
-    }
-  | undefined;
+let screenerCache = new Map<string, { expiresAt: number; rows: RawNasdaqRow[]; asOf?: string }>();
 
 export async function scanMarket(
   symbols: string[],
   positions: EquityPosition[],
   scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
-  userId?: string
+  userId?: string,
+  dynamicUniverses: IndexUniverse[] = [],
+  scanOptions: { candidateLimit?: number; outlierReserve?: number } = {}
 ): Promise<MarketScan> {
-  return nasdaqDelayedProvider.scan(symbols, positions, { scoringWeights, ttlMs: marketCacheTtlMs(), userId });
+  return nasdaqDelayedProvider.scan(symbols, positions, {
+    scoringWeights,
+    ttlMs: marketCacheTtlMs(),
+    userId,
+    dynamicUniverses,
+    candidateLimit: scanOptions.candidateLimit,
+    outlierReserve: scanOptions.outlierReserve
+  });
 }
 
 export const nasdaqDelayedProvider: MarketDataProvider = {
   name: "nasdaq-delayed-screener",
   async scan(symbols, positions, options) {
     const allowed = new Set([
-      ...symbols.map(normalizeSymbol),
-      ...positions.map((p) => normalizeSymbol(p.symbol))
+      ...symbols.map(normalizeSymbol).filter(Boolean),
+      ...positions.map((p) => normalizeSymbol(p.symbol)).filter(Boolean)
     ]);
+    const dynamicUniverses = Array.from(new Set(options?.dynamicUniverses ?? []));
     const weights = options?.scoringWeights ?? DEFAULT_SCORING_WEIGHTS;
     const warnings: string[] = [];
     let quotes: MarketQuote[] = [];
     let cached = false;
     let breadthPct: number | undefined;
+    const universeSources = new Set<string>();
 
     try {
       const result = await fetchNasdaqScreener(options?.ttlMs ?? marketCacheTtlMs());
       cached = result.cached;
       const allQuotes = result.rows.flatMap((row) => toMarketQuote(row, positions, this.name, result.asOf));
       quotes = allQuotes.filter((quote) => allowed.has(quote.symbol));
+
+      const dynamicResult = await loadDynamicUniverseQuotes({
+        dynamicUniverses,
+        allQuotes,
+        positions,
+        providerName: this.name,
+        ttlMs: options?.ttlMs ?? marketCacheTtlMs()
+      });
+      quotes = uniqueQuotes([...quotes, ...dynamicResult.quotes]);
+      dynamicResult.warnings.forEach((warning) => warnings.push(warning));
+      dynamicResult.sources.forEach((source) => universeSources.add(source));
+      if (dynamicResult.cached) cached = true;
+
+      const returnedSymbols = new Set(quotes.map((quote) => quote.symbol));
+      const customSymbolsMissingFromScreener = Array.from(allowed)
+        .filter((symbol) => !returnedSymbols.has(symbol) && !isIndexMemberSymbol(symbol));
+      if (customSymbolsMissingFromScreener.length > 0) {
+        const quoteOnly = await fetchQuoteOnlyMarketQuotes(customSymbolsMissingFromScreener, positions);
+        quotes = [...quotes, ...quoteOnly.quotes];
+        warnings.push(...quoteOnly.warnings);
+      }
       // Market breadth: % of the full screener that's advancing today — a free,
       // market-wide risk-on/risk-off gauge (computed from data we already fetched).
       const moved = allQuotes.filter((q) => q.intradayChangePct !== 0);
@@ -89,8 +133,8 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     }
 
     const ranked = rankMarketQuotes(quotes, weights).map((quote) => ({ ...quote, cached }));
-    const limit = Number(process.env.MARKET_SCAN_LIMIT ?? DEFAULT_SCAN_LIMIT);
-    const quoteLimit = Number.isFinite(limit) && limit > 0 ? limit : DEFAULT_SCAN_LIMIT;
+    const candidateLimit = normalizeMarketScanCandidateLimit(options?.candidateLimit, envNumber("MARKET_SCAN_LIMIT", DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT));
+    const outlierReserve = normalizeMarketScanOutlierReserve(options?.outlierReserve, candidateLimit, envNumber("MARKET_SCAN_EVENT_RESERVE", DEFAULT_MARKET_SCAN_OUTLIER_RESERVE));
 
     // Read cached web-source signals for the WHOLE ranked universe (no network) so a
     // freshly-disclosed congressional/insider/short name that scored below the top-N
@@ -101,13 +145,17 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     } catch (error) {
       warnings.push(error instanceof Error ? `Web signals failed: ${error.message}` : "Web signals failed.");
     }
-    const topCut = new Set(ranked.slice(0, quoteLimit).map((quote) => quote.symbol));
+    const topCut = new Set(ranked.slice(0, candidateLimit).map((quote) => quote.symbol));
     const eventExtra = ranked
       .filter((quote) => !topCut.has(quote.symbol) && hasNotableWebSignal(allWebSignals[quote.symbol]))
-      .slice(0, EVENT_CANDIDATE_RESERVE);
+      .sort((a, b) => {
+        const signalDelta = outlierInterestScore(allWebSignals[b.symbol]) - outlierInterestScore(allWebSignals[a.symbol]);
+        return signalDelta !== 0 ? signalDelta : b.score - a.score;
+      })
+      .slice(0, outlierReserve);
     // Keep the union within the enrichment cap by trimming the lowest-scored top names
     // to make room for the event names (so both get enriched).
-    const keepTop = Math.max(0, quoteLimit - eventExtra.length);
+    const keepTop = Math.max(0, candidateLimit - eventExtra.length);
     let topCandidates: MarketQuote[] = [...ranked.slice(0, keepTop), ...eventExtra];
 
     // Enrich the candidate set with news sentiment + fundamentals, then re-score & re-sort.
@@ -206,13 +254,19 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const mergedRanked = ranked.map((quote) => enrichedBySymbol.get(quote.symbol) ?? quote);
 
     const baseSource = provider.configured ? `${this.name}+${provider.name}` : this.name;
-    const source = overlaySources.size > 0 ? `${baseSource}+${[...overlaySources].join("+")}` : baseSource;
+    const source = appendUniqueSources(
+      overlaySources.size > 0 ? `${baseSource}+${[...overlaySources].join("+")}` : baseSource,
+      [...universeSources]
+    );
 
     return {
       source,
       generatedAt: new Date().toISOString(),
-      scannedSymbols: allowed.size,
+      scannedSymbols: new Set([...allowed, ...quotes.map((quote) => quote.symbol)]).size,
       returnedQuotes: quotes.length,
+      candidateLimit,
+      outlierReserve,
+      outlierCandidateCount: eventExtra.length,
       breadthPct,
       topCandidates,
       sectorBySymbol: sectorBySymbol(mergedRanked),
@@ -372,17 +426,25 @@ function appendUniqueSources(baseSource: string, additions: string[]): string {
   return parts.join("+");
 }
 
-export function clearMarketCache(): void {
-  screenerCache = undefined;
+function envNumber(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) ? value : fallback;
 }
 
-async function fetchNasdaqScreener(ttlMs: number): Promise<{ rows: RawNasdaqRow[]; asOf?: string; cached: boolean }> {
+export function clearMarketCache(): void {
+  screenerCache = new Map();
+  clearFundHoldingsCache();
+}
+
+async function fetchNasdaqScreener(ttlMs: number, exchange?: NasdaqExchange): Promise<{ rows: RawNasdaqRow[]; asOf?: string; cached: boolean }> {
   const now = Date.now();
-  if (screenerCache && screenerCache.expiresAt > now) {
-    return { rows: screenerCache.rows, asOf: screenerCache.asOf, cached: true };
+  const cacheKey = exchange ?? "all";
+  const cached = screenerCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return { rows: cached.rows, asOf: cached.asOf, cached: true };
   }
 
-  const response = await fetch(NASDAQ_SCREENER_URL, {
+  const response = await fetch(nasdaqScreenerUrl(exchange), {
     cache: "no-store",
     headers: {
       accept: "application/json",
@@ -394,12 +456,12 @@ async function fetchNasdaqScreener(ttlMs: number): Promise<{ rows: RawNasdaqRow[
   const payload = await response.json();
   const rows = Array.isArray(payload?.data?.table?.rows) ? (payload.data.table.rows as RawNasdaqRow[]) : [];
   const asOf = typeof payload?.data?.asof === "string" ? payload.data.asof : undefined;
-  screenerCache = { rows, asOf, expiresAt: now + ttlMs };
+  screenerCache.set(cacheKey, { rows, asOf, expiresAt: now + ttlMs });
   return { rows, asOf, cached: false };
 }
 
 function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider: string, asOf?: string): MarketQuote[] {
-  const symbol = normalizeSymbol(String(row.symbol ?? ""));
+  const symbol = normalizeMarketDataSymbol(String(row.symbol ?? ""));
   const price = number(row.lastsale);
   const intradayChangePct = percent(row.pctchange);
   const marketCap = number(row.marketCap);
@@ -430,6 +492,115 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
       asOf
     }
   ];
+}
+
+async function loadDynamicUniverseQuotes(input: {
+  dynamicUniverses: IndexUniverse[];
+  allQuotes: MarketQuote[];
+  positions: EquityPosition[];
+  providerName: string;
+  ttlMs: number;
+}): Promise<{ quotes: MarketQuote[]; warnings: string[]; sources: string[]; cached: boolean }> {
+  const quotes: MarketQuote[] = [];
+  const warnings: string[] = [];
+  const sources: string[] = [];
+  let cached = false;
+
+  for (const universe of input.dynamicUniverses) {
+    const config = INDEX_UNIVERSES[universe];
+    if (!config?.dynamicSource) continue;
+    if (config.dynamicSource === "nasdaq-screener") {
+      quotes.push(...input.allQuotes);
+      sources.push(`${universe}-universe`);
+      continue;
+    }
+    if (config.dynamicSource === "nasdaq-exchange") {
+      const exchange = config.exchange;
+      if (!exchange) continue;
+      try {
+        const result = await fetchNasdaqScreener(input.ttlMs, exchange);
+        cached = cached || result.cached;
+        quotes.push(...result.rows.flatMap((row) => toMarketQuote(row, input.positions, input.providerName, result.asOf)));
+        sources.push(`${universe}-universe`);
+      } catch (error) {
+        warnings.push(error instanceof Error ? `${config.label} universe failed: ${error.message}` : `${config.label} universe failed.`);
+      }
+      continue;
+    }
+    if (isBlackRockHoldingUniverse(universe)) {
+      try {
+        const holdings = await fetchBlackRockHoldingSymbols(universe, Math.max(input.ttlMs, 6 * 60 * 60_000));
+        cached = cached || holdings.cached;
+        const holdingSymbols = new Set(holdings.symbols.map(normalizeMarketDataSymbol));
+        quotes.push(...input.allQuotes.filter((quote) => holdingSymbols.has(quote.symbol)));
+        sources.push(holdings.provider);
+      } catch (error) {
+        warnings.push(error instanceof Error ? `${config.label} holdings failed: ${error.message}` : `${config.label} holdings failed.`);
+      }
+    }
+  }
+
+  return { quotes: uniqueQuotes(quotes), warnings, sources, cached };
+}
+
+function uniqueQuotes(quotes: MarketQuote[]): MarketQuote[] {
+  return Array.from(new Map(quotes.map((quote) => [quote.symbol, quote])).values());
+}
+
+function nasdaqScreenerUrl(exchange?: NasdaqExchange): string {
+  if (!exchange) return NASDAQ_SCREENER_URL;
+  const url = new URL(NASDAQ_SCREENER_URL);
+  url.searchParams.set("exchange", exchange);
+  return url.toString();
+}
+
+function normalizeMarketDataSymbol(value: string): string {
+  return normalizeSymbol(value).replace(/\//g, "-");
+}
+
+async function fetchQuoteOnlyMarketQuotes(symbols: string[], positions: EquityPosition[]): Promise<{ quotes: MarketQuote[]; warnings: string[] }> {
+  const quotes: MarketQuote[] = [];
+  const unresolved: string[] = [];
+  const requested = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+  const results = await Promise.all(requested.map(async (symbol) => [symbol, await fetchYahooFinanceQuote(symbol)] as const));
+  for (const [symbol, quote] of results) {
+    if (quote) quotes.push(toQuoteOnlyMarketQuote(symbol, quote, positions));
+    else unresolved.push(symbol);
+  }
+  const warnings = unresolved.length > 0
+    ? [`No market data returned for custom symbol${unresolved.length === 1 ? "" : "s"}: ${unresolved.join(", ")}. Check the ticker or try again if the market data provider is temporarily unavailable.`]
+    : [];
+  return { quotes, warnings };
+}
+
+function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positions: EquityPosition[]): MarketQuote {
+  const prevClose = quote.prevClose > 0 ? quote.prevClose : quote.price;
+  const netChange = quote.price - prevClose;
+  const intradayChangePct = prevClose > 0 ? Math.round((netChange / prevClose) * 10_000) / 100 : 0;
+  const position = positions.find((p) => normalizeSymbol(p.symbol) === symbol);
+  return {
+    symbol,
+    price: quote.price,
+    bid: quote.bid,
+    ask: quote.ask,
+    volume: quote.volume > 0 ? quote.volume : 0,
+    intradayChangePct,
+    netChange: Math.round(netChange * 100) / 100,
+    sector: position?.sector,
+    industry: position?.industry,
+    positionMarketValue: position?.marketValue ?? 0,
+    score: 0,
+    provider: "yahoo-finance",
+    asOf: new Date().toISOString(),
+    sources: {
+      price: "yahoo-finance",
+      bid: "yahoo-finance",
+      ask: "yahoo-finance",
+      volume: "yahoo-finance",
+      intradayChangePct: "yahoo-finance",
+      asOf: "yahoo-finance"
+    }
+  };
 }
 
 // Merge a provider enrichment record onto a screener quote (first-non-undefined wins,

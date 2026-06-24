@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { applyDeterministicSizing } from "../src/lib/strategy";
-import type { EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import type { EquityPosition, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 
 // Conviction-size cap (panel finding): AI confidenceScore is a direct linear multiplier on size and
 // a learned "fact" can inflate it. The 20-lot evidence floor only protects UNPROVEN theses, so a
@@ -182,6 +182,78 @@ describe("conviction-size cap", () => {
     expect(lowConf.rationale).not.toContain("Conviction capped");
     expect(notionalFromRationale(lowConf)).toBeGreaterThan(0);
     expect(notionalFromRationale(lowConf)).toBeLessThan(notionalFromRationale(highConfCapped));
+  });
+
+  it("preserves an explicit LLM-advised notional when it is inside risk limits", async () => {
+    const account = "CAP-LLM-A";
+    const sized = applyDeterministicSizing(
+      { ...buyProposal(95), dollarAmount: 499 },
+      policyFor(account),
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(notionalFromRationale(sized)).toBe(499);
+    expect(sized.rationale).toContain("LLM advised $499; preserved within risk limits.");
+  });
+
+  it("preserves a larger explicit LLM-advised notional when hard caps allow it", async () => {
+    const account = "CAP-LLM-B";
+    const sized = applyDeterministicSizing(
+      { ...buyProposal(95), dollarAmount: 9_000 },
+      policyFor(account),
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(notionalFromRationale(sized)).toBe(9_000);
+    expect(sized.rationale).toContain("LLM advised $9,000; preserved within risk limits.");
+  });
+
+  it("trims an explicit LLM-advised notional to remaining per-symbol capacity", async () => {
+    const account = "CAP-LLM-C";
+    const smallPortfolio: Portfolio = { ...PORTFOLIO, totalMarketValue: 10_000, buyingPower: 10_000, cash: 10_000 };
+    const positions: EquityPosition[] = [{ symbol: "NVDA", quantity: 4, averageCost: 100, marketValue: 400 }];
+    const sized = applyDeterministicSizing(
+      { ...buyProposal(95), dollarAmount: 900 },
+      { ...policyFor(account), maxSymbolExposurePct: 5 },
+      smallPortfolio,
+      "paper",
+      "local",
+      positions
+    );
+
+    expect(notionalFromRationale(sized)).toBe(100);
+    expect(sized.rationale).toContain("risk controls limited it to $100");
+    expect(sized.rationale).toContain("5% NVDA exposure cap");
+  });
+
+  it("trims an explicit LLM-advised notional to remaining sector capacity", async () => {
+    const account = "CAP-LLM-D";
+    const smallPortfolio: Portfolio = { ...PORTFOLIO, totalMarketValue: 10_000, buyingPower: 10_000, cash: 10_000 };
+    const positions: EquityPosition[] = [{ symbol: "MSFT", quantity: 12, averageCost: 200, marketValue: 2_400, sector: "Technology" }];
+    const marketScan = {
+      sectorBySymbol: { NVDA: "Technology" },
+      quotesBySymbol: {},
+      topCandidates: []
+    } as unknown as MarketScan;
+    const sized = applyDeterministicSizing(
+      { ...buyProposal(95), dollarAmount: 900 },
+      { ...policyFor(account), sectorCaps: { Technology: 25 } },
+      smallPortfolio,
+      "paper",
+      "local",
+      positions,
+      marketScan
+    );
+
+    expect(notionalFromRationale(sized)).toBe(100);
+    expect(sized.rationale).toContain("risk controls limited it to $100");
+    expect(sized.rationale).toContain("Technology sector cap");
   });
 
   it("(d) unproven thesis (< minLots) stays pinned to the sizing floor (existing behavior preserved)", async () => {

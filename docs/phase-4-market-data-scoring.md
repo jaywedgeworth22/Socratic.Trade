@@ -74,11 +74,65 @@ available, `/api/scan` merges source-provided `vw` into scan rows as
 keys, weekends/holidays, or plan gaps leave the cell blank instead of
 fabricating a value.
 
+**Custom quote-only universe rows (2026-06-23):** Additional Watchlist symbols
+are no longer limited to embedded index members. When Nasdaq's screener omits a
+quote-resolvable custom U.S. equity/ETF ticker, the scan carries it forward as a
+Yahoo Finance quote-only row and still runs enrichment/scoring. If a custom
+ticker cannot be priced, Market Scan keeps the rest of the scan usable and shows
+a concrete warning naming the ticker.
+
+**Expanded dynamic universes (2026-06-23):** Base universe selection now covers
+small and broad indexes without sending the whole market to the LLM. Static
+embedded lists still cover S&P 500, Nasdaq 100, and Dow 30. Dynamic universes
+flow into `scanMarket` as follows:
+
+- S&P 100 and Russell 2000 are loaded from BlackRock iShares holdings downloads
+  (`OEF` and `IWM`) and intersected with the live Nasdaq screener rows.
+- Nasdaq Composite and NYSE Composite use the existing free Nasdaq screener with
+  `exchange=nasdaq` / `exchange=nyse`.
+- FT Wilshire 5000 uses the free all-screener U.S.-listed universe as the app's
+  no-license proxy, not a licensed exact constituent feed.
+
+The full selected universe is ranked locally first. Only the capped candidate
+set receives expensive enrichment and enters the LLM prompt. The cap is now a
+per-user policy setting (`marketScanCandidateLimit`, default 30, bounded
+10-100); `MARKET_SCAN_LIMIT` remains only a fallback for direct/internal scan
+calls that do not pass policy. The below-cutoff outlier reserve is also
+per-user (`marketScanOutlierReserve`, default 8, bounded 0-25 and never above
+the candidate cap); `MARKET_SCAN_EVENT_RESERVE` is the direct-call fallback.
+Outliers are ordered by signal strength across notable congressional buying,
+insider buying, short pressure, and bullish technical signals, and they replace
+lower-ranked plain candidates inside the cap rather than expanding it. This
+limit is primarily about prompt quality, latency, and API/provider cost; it also
+reduces free-data endpoint pressure. Dynamic-universe trade approval is
+scan-proven: an opening order for a broad-index-only symbol must be present in
+the latest ranked scan, while explicit Additional Watchlist symbols remain
+allowed directly.
+
+Expert review guidance for the candidate cap:
+
+- 10-12: lowest reasonable cost-sensitive range; useful for narrow universes or
+  cheap smoke runs, but diversity and outlier coverage suffer.
+- 25-40: balanced default range; enough breadth for sector rotation and LLM
+  comparison without overwhelming the prompt.
+- 60-80: broad research mode; useful for Russell/NYSE/Wilshire scans when cost
+  is acceptable.
+- 100: practical upper bound. Above this, extra breadth usually adds attention
+  dilution/noise faster than it improves proposal quality, even if token cost is
+  ignored.
+
 ## Acceptance
 
 - Scan results include `factorBreakdown` for each candidate.
 - `MarketScan.sectorBySymbol` and `quotesBySymbol` cover all returned quotes.
 - Nasdaq delayed data is still available as fallback.
+- Quote-resolvable custom Additional Watchlist tickers can appear in Market Scan
+  even when omitted by the Nasdaq screener, with concrete warnings for custom
+  tickers that cannot be priced.
+- Dynamic base universes can broaden discovery without expanding the enriched
+  LLM candidate set beyond the configured scan cap, outlier reserve names remain
+  eligible for the prompt, and broad-index symbols are policy-approved only when
+  scan-proven.
 - Robinhood quote enrichment adds bid/ask where available and does not fail the run when unsupported.
 - Optional unofficial quote enrichment is clearly attributed and disabled by default.
 - Broker quote source attribution reflects the actual provider and does not duplicate repeated merges.

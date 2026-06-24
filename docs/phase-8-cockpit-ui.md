@@ -91,6 +91,9 @@ Result/success toasts auto-dismiss after a few seconds; error toasts persist
 until dismissed. Each toast carries an icon and an accessible dismiss button.
 Setup-blocked actions route to the next setup surface instead of failing
 silently: account blockers open Accounts, universe blockers open Settings.
+Route/global error screens show the actual error message when available, and an
+app-level browser listener surfaces uncaught runtime errors and unhandled promise
+rejections as bottom-right error toasts.
 
 ## Accessibility
 
@@ -128,14 +131,28 @@ across panels, feeds, popovers, or status chips.
 - Settings → Operate groups the tradable universe controls together: Base
   indexes are large multi-select toggle buttons, S&P 500 is selected by
   default, Additional Watchlist adds explicit tickers, and Ignore List subtracts
-  symbols from the final universe. The backend runs a one-time migration for
+  symbols from the final universe. S&P 100 and S&P 500 are mutually exclusive;
+  Nasdaq 100 and Nasdaq Composite are mutually exclusive. The backend normalizes
+  those same families so API writes cannot persist both at once. Dynamic broad
+  indexes show approximate counts because their constituents come from live
+  holdings/screener feeds rather than embedded arrays. The backend runs a one-time migration for
   untouched empty default policies so existing local installs get the same S&P
-  500 start state without repeatedly overriding later user edits.
+  500 start state without repeatedly overriding later user edits. Additional
+  Watchlist accepts quote-resolvable non-index U.S. equity/ETF tickers such as
+  `SPCX`; newly added custom tickers are quote-checked before save and rejected
+  with a ticker-specific explanation when no quote is available.
 - Settings → Display includes a local ticker-logo preference: `Option 1` (tile),
   `Option 2` (transparent), or `Off`. The field hint explains the visual styles.
   Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Data includes Market Scan candidate controls. `Candidate cap`
+  controls how many ranked/enriched rows reach `marketScan.topCandidates` and
+  the LLM prompt; `Outlier reserve` controls how many below-cutoff names with
+  notable web/technical signals may replace lower-ranked plain candidates inside
+  that cap. The Market Scan tab header includes a gauge button that opens
+  Settings directly to this Data section, and the scan subtitle shows returned
+  candidates against the active cap.
 - Settings → Connections owns provider/API keys and connection status context.
   Editable Green/Red Team model behavior belongs in Strategy Studio; Connections
   may show a read-only model summary and a link to Studio.
@@ -173,6 +190,15 @@ across panels, feeds, popovers, or status chips.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
   incomplete account list does not strand the user away from Settings.
+- Account rows should remain readable on narrow screens: stack account details
+  above actions, make inactive `Use` the primary action, keep Edit/Remove as
+  secondary actions, and visually anchor the active account with a subtle left
+  accent rather than all-caps badges alone.
+- Settings -> Data owns privacy, sharing, and destructive app-account actions.
+  The app-account deletion procedure must be multi-step, must explain what the
+  app can and cannot delete from Google/Apple/brokers, and must keep the final
+  destructive button disabled until every acknowledgement and typed phrase is
+  satisfied.
 - Symbol drilldown factor values are normalized 0-100 **factor scores**, not
   signed contribution deltas. Avoid labeling that panel as a waterfall unless
   the UI is changed to show actual weighted contributions around a baseline.

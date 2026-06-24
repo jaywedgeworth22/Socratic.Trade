@@ -15,6 +15,7 @@ import type {
     PendingProposal,
     PerformanceSummary,
     Portfolio,
+    RecentProposal,
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
@@ -62,6 +63,7 @@ export interface DashboardSnapshot {
   dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
+  recentProposals?: RecentProposal[];
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };
   webSources?: {
     congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
