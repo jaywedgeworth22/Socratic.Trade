@@ -1,3 +1,4 @@
+import { shareScanRefs } from "./congress-share";
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import type { GroupedDailyBar } from "./market-signals/massive";
 import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
@@ -19,6 +20,11 @@ export function outlierInterestScore(sig?: SymbolWebSignal): number {
   const congressScore = congressNotable
     ? 70 + Math.min(25, (sig.congress?.netSignal ?? 0) * 5 + (sig.congress?.buyCount ?? 0) * 2)
     : 0;
+  // App A analytics boost (the "Trends" composite): a strong dollar-weighted net buy flow, a cluster
+  // buy (many members → same ticker), or multiple distinct members + high-track-record members can
+  // surface a name even when the scraped per-member netSignal is thin. Only present when
+  // CONGRESS_ANALYTICS_ENABLED is on; absent → 0 → no behavior change (back-compatible).
+  const analyticsScore = congressAnalyticsScore(sig.congressAnalytics);
   const insiderScore = typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60
     ? sig.insiderSentiment
     : 0;
@@ -28,7 +34,19 @@ export function outlierInterestScore(sig?: SymbolWebSignal): number {
   const technicalScore = sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70
     ? sig.technical.score
     : 0;
-  return Math.max(congressScore, insiderScore, shortScore, technicalScore);
+  return Math.max(congressScore, analyticsScore, insiderScore, shortScore, technicalScore);
+}
+
+/** 0–100 outlier weight from App A's aggregate congressional analytics; 0 unless there is net buying. */
+export function congressAnalyticsScore(a?: SymbolWebSignal["congressAnalytics"]): number {
+  if (!a) return 0;
+  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0;
+  if (!netBuying) return 0; // net selling / neutral is not a long-side outlier
+  const flowBoost = (a.netFlowUsd ?? 0) > 0 ? Math.min(20, Math.log10(Math.max(1, a.netFlowUsd ?? 0)) * 3) : 0;
+  const clusterBoost = a.cluster ? 15 : 0;
+  const memberBoost = (a.memberCount ?? 0) >= 2 ? Math.min(10, (a.memberCount ?? 0) * 2) : 0;
+  const qualityBoost = a.topMemberScore ? Math.min(15, a.topMemberScore * 0.15) : 0;
+  return Math.min(95, 50 + flowBoost + clusterBoost + memberBoost + qualityBoost);
 }
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";
@@ -71,7 +89,7 @@ export async function scanMarket(
   dynamicUniverses: IndexUniverse[] = [],
   scanOptions: { candidateLimit?: number; outlierReserve?: number } = {}
 ): Promise<MarketScan> {
-  return nasdaqDelayedProvider.scan(symbols, positions, {
+  const scan = await nasdaqDelayedProvider.scan(symbols, positions, {
     scoringWeights,
     ttlMs: marketCacheTtlMs(),
     userId,
@@ -79,6 +97,11 @@ export async function scanMarket(
     candidateLimit: scanOptions.candidateLimit,
     outlierReserve: scanOptions.outlierReserve
   });
+  // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
+  // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
+  // throttled and fully self-guarded, so it never delays or breaks a scan. Fire-and-forget.
+  void shareScanRefs(scan);
+  return scan;
 }
 
 export const nasdaqDelayedProvider: MarketDataProvider = {

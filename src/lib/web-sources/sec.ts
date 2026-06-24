@@ -231,6 +231,65 @@ export function mergeInsiderFilings(existing: InsiderFiling[], fresh: InsiderFil
   return Array.from(byAccession.values());
 }
 
+// ── External upsert (push webhook / SSE from App A congress.trade) ────────────
+// App A may push raw Form-4 filings OR a precomputed per-symbol insiderSentiment (0–100). We accept
+// both: raw filings merge straight into the rolling dataset; a scalar is represented as one synthetic
+// "marker" filing whose buy/sell transaction counts reproduce that sentiment when aggregated.
+
+/** Build a synthetic marker filing so a pushed insiderSentiment (0–100) flows through aggregation. */
+export function insiderFilingFromSentiment(symbol: string, sentiment: number, asOf?: string): InsiderFiling | null {
+  const sym = normalizeSymbol(symbol);
+  const s = Math.max(0, Math.min(100, Math.round(sentiment)));
+  if (!sym || !Number.isFinite(sentiment)) return null;
+  const filedAt = asOf && /^\d{4}-\d{2}-\d{2}/.test(asOf) ? asOf.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  // buyTx/sellTx sum to 100 so aggregateInsiderSignals reproduces `s` = buyTx/(buyTx+sellTx)*100.
+  // Accession is stable per symbol+day → re-sends overwrite rather than accumulate.
+  return {
+    symbol: sym,
+    owner: "congress.trade",
+    buyTx: s,
+    sellTx: 100 - s,
+    buyShares: 0,
+    sellShares: 0,
+    filedAt,
+    accession: `appA:insider:${sym}:${filedAt}`
+  };
+}
+
+/** Tolerantly coerce a pushed raw Form-4 row into an InsiderFiling (requires symbol + accession). */
+export function coerceInsiderFiling(raw: unknown): InsiderFiling | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const symbol = normalizeSymbol(typeof o.symbol === "string" ? o.symbol : typeof o.ticker === "string" ? o.ticker : "");
+  const accession = typeof o.accession === "string" ? o.accession : typeof o.id === "string" ? o.id : "";
+  if (!symbol || !accession) return null;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const filedAt = typeof o.filedAt === "string" ? o.filedAt : typeof o.date === "string" ? o.date : new Date().toISOString().slice(0, 10);
+  return {
+    symbol,
+    // Never store an empty owner (the InsiderFiling contract wants a non-empty string); the
+    // buy/sell counts carry the actual signal, so default a missing owner rather than dropping it.
+    owner: (typeof o.owner === "string" && o.owner.trim()) || "unknown",
+    buyTx: num(o.buyTx),
+    sellTx: num(o.sellTx),
+    buyShares: num(o.buyShares),
+    sellShares: num(o.sellShares),
+    filedAt,
+    accession
+  };
+}
+
+/** Merge externally-received insider filings into the persisted dataset. Returns the new total. */
+export function upsertInsiderFilings(incoming: InsiderFiling[], now: number = Date.now()): { total: number } {
+  const clean = incoming.filter((f): f is InsiderFiling => Boolean(f && f.symbol && f.accession));
+  const prior = getInsiderDataset();
+  if (clean.length === 0) return { total: prior?.recordCount ?? 0 };
+  const merged = mergeInsiderFilings(prior?.filings ?? [], clean, now);
+  const dataset: InsiderDataset = { filings: merged, fetchedAt: new Date(now).toISOString(), recordCount: merged.length };
+  setInternalSetting(DATASET_KEY, dataset);
+  return { total: merged.length };
+}
+
 export async function refreshInsider(now: number = Date.now(), force = false): Promise<WebSourceRefreshResult> {
   if (!force && !isInsiderRefreshDue(now)) {
     const ds = getInsiderDataset();

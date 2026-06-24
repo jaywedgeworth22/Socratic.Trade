@@ -1360,9 +1360,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         onCountChange={setLearnedQueueCount}
       />
 
-      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Pipeline & node visualizer" icon={<Network size={18} />} size="full">
+      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Live pipeline status" icon={<Network size={18} />} size="full">
         <div className="h-full w-full">
-          <StrategyFlow />
+          <StrategyFlow snapshot={snapshot} />
         </div>
       </Modal>
 
@@ -2547,6 +2547,7 @@ function PerformanceView({
   const unrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
   const winRate = mode === "paper" ? perf?.paperWinRate ?? 0 : perf?.liveWinRate ?? 0;
   const avgReturn = mode === "paper" ? perf?.paperAverageReturnPct ?? 0 : perf?.liveAverageReturnPct ?? 0;
+  const benchmark = perf?.benchmark;
   const thesis = (snapshot.thesisScorecard ?? []).map((t) => ({ label: t.thesisTag, pnl: t.totalPnl, winRate: t.winRate, trades: t.trades }));
   const regime = (snapshot.regimeScorecard ?? []).map((r) => ({ label: r.regime, pnl: r.totalPnl, winRate: r.winRate, trades: r.trades }));
 
@@ -2563,6 +2564,17 @@ function PerformanceView({
         <div className="h-64 p-4">
           <EquityCurve data={curve} />
         </div>
+        {benchmark ? (
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-4 text-xs">
+            <span className={`font-medium ${benchmark.excessReturnPct >= 0 ? "text-up" : "text-down"}`}>
+              {benchmark.excessReturnPct >= 0 ? "+" : ""}{benchmark.excessReturnPct.toFixed(1)}% vs {benchmark.benchmarkSymbol}
+            </span>
+            <span className="text-faint">
+              (you {benchmark.accountReturnPct >= 0 ? "+" : ""}{benchmark.accountReturnPct.toFixed(1)}% · {benchmark.benchmarkSymbol} {benchmark.benchmarkReturnPct >= 0 ? "+" : ""}{benchmark.benchmarkReturnPct.toFixed(1)}%, {benchmark.startDate}→{benchmark.endDate})
+            </span>
+            <span className="text-faint/70" title="Compares equity growth from the first snapshot date. Not adjusted for deposits/withdrawals.">ⓘ</span>
+          </div>
+        ) : null}
       </Card>
 
       <Card>
@@ -2820,6 +2832,7 @@ function StrategyView({
                <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
                <NumberField label="Max hourly notional ($)" value={policy.maxHourlyNotional} onCommit={(v) => updatePolicy({ maxHourlyNotional: v })} />
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
+               <OptionalNumberField label="Max avg correlation" value={policy.maxAvgCorrelation} placeholder="blank disables" step={0.05} onCommit={(v) => updatePolicy({ maxAvgCorrelation: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
              </div>
              <Field label="Sector Caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
@@ -3801,7 +3814,21 @@ function SettingsContent({
               step={0.5}
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, bearVetoDebtToEquityCeiling: v } })}
             />
+            {tuning.skipNegativeExpectancy && (
+              <NumberField
+                label="Negative-EV skip threshold %"
+                value={tuning.skipNegativeExpectancyEdgePct ?? 0}
+                onCommit={(v) => updatePolicy({ tuning: { ...tuning, skipNegativeExpectancyEdgePct: v } })}
+              />
+            )}
           </div>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Skip proven money-losers (negative-EV gate)</span>
+              <span className="block text-xs text-faint">Off by default. When on, an opening trade is skipped entirely if its thesis is <em>proven</em> (≥ min lots) and its realized post-cost edge is at or below the threshold. Normally the sizer instead downsizes such theses to the exploratory floor to keep gathering data; this is the more conservative &ldquo;don&apos;t open a proven money-loser&rdquo; stance. Unproven theses are never skipped.</span>
+            </span>
+            <Switch checked={Boolean(tuning.skipNegativeExpectancy)} onChange={(v) => updatePolicy({ tuning: { ...tuning, skipNegativeExpectancy: v } })} />
+          </label>
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Shrinkage prior</span> pulls thin-sample win/return stats toward neutral (higher = more skeptical of small samples; default 5).{" "}
             <span className="font-medium text-muted">Min lots for weight shift</span> is how many closed trades must accumulate before the auto-tuner may change factor weights (default 20).
