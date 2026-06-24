@@ -123,8 +123,10 @@ must not silently drift behind beta after work lands.
   your branch and `origin/main` both touched the same files since the branch forked (manual
   review required to avoid stale UI/text/behavior landing without a Git conflict); (5) merges
   `origin/main` — aborts on conflict so you can resolve; (6) runs `npx tsc --noEmit` →
-  `npm test` → `npm run build` — aborts on any failure; (7) refuses if your diff includes
-  `.github/workflows/` (token lacks workflow scope — use `ci-pending/` staging instead);
+  `npm test` → `npm run build` — aborts on any failure; (7) allows `.github/workflows/` changes
+  when the gh token has the `workflow` scope (it does now — `git push` goes through
+  `gh auth git-credential`, so agents can push CI changes directly; the old `ci-pending/` staging
+  is only the fallback if the scope is ever missing — `gh auth refresh -h github.com -s workflow`);
   (8) pushes your agent branch and opens a PR via `gh`.
   After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
 - **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
