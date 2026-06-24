@@ -29,6 +29,7 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`chore/paid-data-tier-limits`): **Captured the paid Polygon/Massive + FMP "Starter" tiers.** Owner upgraded both (already wired via `MASSIVE_API_KEY`/`FMP_API_KEY`). Raised `DEFAULT_REST_MAX_CALLS_PER_MINUTE` 5→100 in `market-signals/massive.ts` (Starter = unlimited; 5/min was the free-tier cap that throttled breadth/news and forced Massive history to fall through to rate-limited Yahoo) and fixed stale `.env.example` (`MASSIVE_REST_MAX_CALLS_PER_MINUTE` 5→100, `FMP_MAX_SYMBOLS` 15→30; FMP code default was already 30). Paid FMP auto-restores the sector/industry/news fields the free tier dropped. No schema/new providers. **Operator action:** set the paid keys + `FMP_MAX_SYMBOLS=30` in the live `.env.local`, `pm2 restart trading --update-env`. tsc clean · history tests 13/13 · trio via land.sh. See `docs/rollouts/2026-06-24-paid-data-tier-limits.md`. (From the paid-tier value survey: these two were the high-value in-budget picks; everything else stays free.)
 - 2026-06-24 (`claude/fix-evaluator-cadence-dead-field`): **Removed dead `evaluatorCadenceHours`
   policy field.** It was declared on `TradingPolicy` (`types.ts`) and accepted in the tuner
   patch-keys union, so it persisted when set but had **zero readers** — a misleading "cadence"
