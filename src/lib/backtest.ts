@@ -392,6 +392,18 @@ export interface OOSRunOptions extends BuildFactorObservationsOptions {
   taxRate?: number;
   /** Number of top-ranked names per date included in the simulated long portfolio. Default 3. */
   topK?: number;
+  /**
+   * Candidate scoring weights to validate OOS — e.g. a tuning proposal's proposed weights merged
+   * over the current policy. When supplied, the result includes `oosICCandidate`: the OOS composite
+   * IC of THESE weights. This is what lets the tuning gate validate the actual PROPOSED weights
+   * rather than the data-derived IC weights (which `oosIC` measures).
+   */
+  candidateWeights?: ScoringWeights;
+  /**
+   * Baseline weights the candidate is compared against — e.g. the current policy weights (the
+   * status quo a proposal would replace). When supplied, the result includes `oosICBaseline`.
+   */
+  baselineWeights?: ScoringWeights;
 }
 
 /** Full walk-forward OOS validation result. */
@@ -404,6 +416,10 @@ export interface OOSResult {
   icWeights: ScoringWeights;
   /** Mean cross-sectional IC of the IC-weighted composite score on OOS dates. */
   oosIC: number;
+  /** OOS composite IC of `options.candidateWeights` (the proposed weights), when supplied. */
+  oosICCandidate?: number;
+  /** OOS composite IC of `options.baselineWeights` (the status-quo weights), when supplied. */
+  oosICBaseline?: number;
   /**
    * OOS IC information ratio (mean / sample-std of per-date ICs).
    * Values > 0.5 are conventionally considered evidence of a real signal.
@@ -636,6 +652,15 @@ export async function runWalkForwardOOS(
 
   const { meanIC: oosIC, icIR: oosICIR } = computeCompositeIC(adjustedTest, icWeights);
   const { meanIC: oosICDefault } = computeCompositeIC(adjustedTest, DEFAULT_SCORING_WEIGHTS);
+  // Validate the ACTUAL proposed/candidate weights (and the status-quo baseline) against the same
+  // held-out test fold, so callers can gate on whether the candidate beats what's running today —
+  // not on whether the data-derived IC weights beat default (which `oosIC` measures).
+  const oosICCandidate = options.candidateWeights
+    ? computeCompositeIC(adjustedTest, options.candidateWeights).meanIC
+    : undefined;
+  const oosICBaseline = options.baselineWeights
+    ? computeCompositeIC(adjustedTest, options.baselineWeights).meanIC
+    : undefined;
 
   const oosDates = [...new Set(adjustedTest.map((o) => o.date))];
   const spyReturnByDate = await buildSpyReturnMap(oosDates, horizonDays, now, fetchOHLC);
@@ -691,6 +716,8 @@ export async function runWalkForwardOOS(
     oosIC,
     oosICIR,
     oosICDefault,
+    oosICCandidate,
+    oosICBaseline,
     equityCurve,
     annualizedReturn,
     benchmarkAnnualizedReturn,

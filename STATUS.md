@@ -24,6 +24,23 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-24 (`claude/safety-fixes-a-e`): **Codex-review safety fixes A–E** (re-verified
+  against current `main`, which had advanced past the review base). A (HIGH): OOS gate now
+  validates the ACTUAL proposed scoring weights vs current weights, not the data-derived IC
+  weights (`backtest.ts`/`strategy-tuning.ts`); fallback footgun removed (skips gate if
+  candidate/baseline ICs absent rather than reverting to the old comparison). B (MED):
+  already fixed on main by #109 (daily-order-count cap guards on `isOpening`). C (MED):
+  synthetic trailing-stop skips symbols with a live broker-held bracket stop
+  (`synthetic-stops.ts`), keyed off actual resting orders so nothing is left unprotected.
+  D (MED): `upsertConnectedAccount` tenant guard blocks cross-user row overwrite via a
+  guessable id. E (LOW): stale execution-cost comment fixed; Grok `max_completion_tokens`
+  verified correct (xAI deprecated `max_tokens`). Reviewed by per-fix adversarial agents
+  (Haiku on D/E, Sonnet on A/C). tsc/build clean; 1008/1009 tests (only the pre-existing
+  `cache-provenance` date flake). See `docs/rollouts/2026-06-24-safety-fixes-a-e.md`.
+  NEXT staged PRs: per-account state isolation → shared saved-strategy library +
+  copy-to-account → sell-to-fund-buy (3-way setting: Automated/Propose/Suggest,
+  default = account's current mode).
+
 - 2026-06-22 (`agent/claude-congress-share`, round 3): **Consume App A's "Trends" analytics + sync origin/main.**
   Merged a large origin/main (scan refactor) keeping the congress hooks; then built the App A **analytics
   overlay** (`CONGRESS_ANALYTICS_ENABLED`, default off): `congress-analytics.ts` pulls App A's

@@ -408,13 +408,15 @@ describe("OOS walk-forward gate (Task 1)", () => {
       insertFillEvent({ accountNumber: "OOS-NOIMPROVE", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
     }
 
-    // OOS result where proposed IC (0.05) does NOT beat default IC (0.10).
+    // OOS result where the CANDIDATE (proposed) weights IC (0.05) does NOT beat the current/baseline
+    // weights IC (0.10). The gate now reads oosICCandidate vs oosICBaseline (not oosIC vs default).
     mockRunWalkForwardOOS.mockResolvedValueOnce({
       trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
       trainICs: [], icWeights: customWeights as any,
-      oosIC: 0.05,        // proposed weights: worse
+      oosIC: 0.99, oosICDefault: 0.01,        // data-derived vs default — must be IGNORED by the gate now
+      oosICCandidate: 0.05,                    // proposed weights: worse than current
+      oosICBaseline: 0.10,                     // current weights: better — so OOS gate fires
       oosICIR: 0.3,
-      oosICDefault: 0.10, // default: better — so OOS gate fires
       equityCurve: [], annualizedReturn: null, benchmarkAnnualizedReturn: null,
       activeReturn: null, sharpeRatio: null, maxDrawdownPct: 5,
       note: "test"
@@ -422,12 +424,21 @@ describe("OOS walk-forward gate (Task 1)", () => {
 
     const proposal = await proposeStrategyTuning();
 
-    // Weights should be stripped by the OOS gate.
+    // The gate must validate the PROPOSED weights, not the data-derived IC weights: it should be
+    // called with candidateWeights (proposed merged over current) and baselineWeights (= current).
+    const oosArgs = mockRunWalkForwardOOS.mock.calls.at(-1) as unknown as [string, { candidateWeights?: Record<string, number>; baselineWeights?: unknown }];
+    expect(oosArgs?.[1]?.baselineWeights).toEqual(customWeights);
+    // The candidate must be the proposed delta merged over the baseline — NOT a copy of the baseline
+    // (guards against a regression where baseline is accidentally passed as the candidate).
+    expect(oosArgs?.[1]?.candidateWeights).toBeDefined();
+    expect(oosArgs?.[1]?.candidateWeights).not.toEqual(customWeights);
+
+    // Weights should be stripped by the OOS gate (candidate 0.05 < current 0.10), DESPITE oosIC>default.
     expect(proposal.proposedPatch.scoringWeights).toBeUndefined();
     // A caution explaining the OOS strip must be present.
     const cautions = proposal.cautions.join(" ");
-    expect(cautions).toMatch(/OOS.*IC did not improve|Withheld.*OOS IC did not improve/i);
-    expect(cautions).toMatch(/oosIC|IC=/i);
+    expect(cautions).toMatch(/did not improve OOS IC over the current weights/i);
+    expect(cautions).toMatch(/IC=/i);
   });
 
   it("keeps scoringWeights and attaches an OOS info-caution when OOS IC DOES improve", async () => {
@@ -446,13 +457,14 @@ describe("OOS walk-forward gate (Task 1)", () => {
       insertFillEvent({ accountNumber: "OOS-IMPROVE", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
     }
 
-    // OOS result where proposed IC (0.15) beats default IC (0.10).
+    // OOS result where the CANDIDATE (proposed) weights IC (0.15) beats the current/baseline IC (0.10).
     mockRunWalkForwardOOS.mockResolvedValueOnce({
       trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
       trainICs: [], icWeights: customWeights as any,
-      oosIC: 0.15,        // proposed weights: better
+      oosIC: 0.01, oosICDefault: 0.99,        // data-derived vs default — must be IGNORED by the gate now
+      oosICCandidate: 0.15,                    // proposed weights: better than current
+      oosICBaseline: 0.10,                     // current weights: worse — OOS gate passes
       oosICIR: 0.8,
-      oosICDefault: 0.10, // default: worse — OOS gate passes
       equityCurve: [], annualizedReturn: null, benchmarkAnnualizedReturn: null,
       activeReturn: null, sharpeRatio: null, maxDrawdownPct: 3,
       note: "test"
@@ -460,11 +472,16 @@ describe("OOS walk-forward gate (Task 1)", () => {
 
     const proposal = await proposeStrategyTuning();
 
-    // Weights should be kept (OOS improved).
+    // The new path is taken: candidate (proposed merged over current) + baseline (= current) passed in.
+    const oosArgs = mockRunWalkForwardOOS.mock.calls.at(-1) as unknown as [string, { candidateWeights?: Record<string, number>; baselineWeights?: unknown }];
+    expect(oosArgs?.[1]?.baselineWeights).toEqual(customWeights);
+    expect(oosArgs?.[1]?.candidateWeights).not.toEqual(customWeights);
+
+    // Weights should be kept (candidate 0.15 > current 0.10), DESPITE oosIC<default.
     expect(proposal.proposedPatch.scoringWeights).toBeDefined();
     // An OOS info-caution must be present.
     const cautions = proposal.cautions.join(" ");
-    expect(cautions).toMatch(/OOS-validated|OOS.*improved/i);
+    expect(cautions).toMatch(/OOS-validated|improved OOS IC over the current/i);
   });
 });
 

@@ -15,9 +15,21 @@ import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
-import type { EquityPosition, ExecutionMode, FillSource, TradeProposal, TradingPolicy } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradeProposal, TradingPolicy } from "./types";
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
+
+// Order states that mean a broker order is still RESTING (not filled/canceled/expired/rejected).
+// We list only clearly-live states so a terminal or unknown-status order never makes us skip
+// synthetic protection (bias: when unsure, protect).
+const LIVE_ORDER_STATES = new Set([
+  "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open"
+]);
+
+/** A resting broker-held stop leg (e.g. an Alpaca OCO bracket stop) — a live order whose type is a stop. */
+function isLiveBrokerStop(order: EquityOrder): boolean {
+  return /stop/i.test(order.type) && LIVE_ORDER_STATES.has(String(order.state).trim().toLowerCase());
+}
 
 export interface StopEvaluation {
   newExtreme: number;
@@ -92,6 +104,19 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   }
   const liveSymbols = new Set(positions.filter((p) => Math.abs(p.quantity) > 0.000001).map((p) => normalizeSymbol(p.symbol)));
 
+  // Symbols that already carry a broker-held stop (Alpaca OCO bracket). We must NOT also auto-register
+  // a synthetic trailing stop on these: with two exit paths, if the synthetic market-sells first the
+  // broker's resting stop leg is stranded and can later fill as an oversell (an unintended short).
+  // Keyed off ACTUAL resting orders (not policy inference) so a position is never left unprotected —
+  // if listing orders fails or no live broker stop exists, the synthetic still registers below.
+  let brokerStopSymbols = new Set<string>();
+  try {
+    const openOrders = await gateway.getEquityOrders(accountNumber);
+    brokerStopSymbols = new Set(openOrders.filter(isLiveBrokerStop).map((o) => normalizeSymbol(o.symbol)));
+  } catch {
+    // Can't list orders — fall back to registering synthetic stops (protection over dedup).
+  }
+
   // Purge stops whose position has closed (size hit 0).
   for (const stop of listSyntheticStops(accountNumber, userId)) {
     if (!liveSymbols.has(stop.symbol.toUpperCase())) {
@@ -108,7 +133,8 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const existing = new Set(listSyntheticStops(accountNumber, userId).map((s) => s.symbol.toUpperCase()));
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
-      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
+      // Skip symbols already covered by a broker-held stop — the broker bracket is the exit path there.
+      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym) || brokerStopSymbols.has(sym)) continue;
       const isShort = pos.quantity < 0;
       if (isShort && !policy.shortSellingEnabled) continue;
       const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
