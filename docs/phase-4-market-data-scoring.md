@@ -121,6 +121,19 @@ Expert review guidance for the candidate cap:
   dilution/noise faster than it improves proposal quality, even if token cost is
   ignored.
 
+**MCP/provider evaluation (2026-06-24):** `docs/data-provider-mcp-evaluation.md`
+compares FMP, Alpha Vantage, Twelve Data, Tiingo, Intrinio, EODHD,
+FinancialData.net, Nasdaq Data Link, Tastytrade, Pyth, Databento, Unusual
+Whales, Trading Volatility, and a generic Yahoo-backed MCP server. The
+production guidance is to keep scheduled scans, scoring, history, cache writes,
+and execution-adjacent data on direct REST/WebSocket adapters. MCP is useful for
+provider research, trial benchmarking, and interactive deep dives, but app-side
+MCP calls should be promoted only through a narrow server adapter that normalizes
+and caches source-attributed results. Near-term candidates are Tiingo as a
+low-cost direct adapter, an Intrinio trial benchmark before paying $150/month,
+and FinancialData.net/EODHD/Twelve Data as cheaper broad replacements if their
+coverage and licensing fit.
+
 ## Acceptance
 
 - Scan results include `factorBreakdown` for each candidate.

@@ -25,6 +25,76 @@ steps materially change.
 ## Active Focus
 
 - 2026-06-23 (`feat/rh-stops-price-triggers-spy-bench`): **Three deferred Antigravity follow-ups, built after reviewing the Codex bundle (#113) + safety (#109) + auth (#110).** (1) **True Robinhood broker-held protective stops** — new `broker-protective-stops.ts` places a resting GTC stop-market SELL at `stopLossPct` below entry for each open live-RH long and cancels it on close / synthetic-exit (no orphaned stops); new `broker_protective_stops` table; runs from the synthetic monitor each tick (self-heals on restart). **DEFAULT OFF** behind `policy.robinhoodBrokerStops` (verify RH MCP stop semantics live first; synthetic monitor stays the fallback). (2) **Alpaca real-time price event-trigger producer** — new `streams/alpaca-price-events-stream.ts` subscribes to minute bars for active users' watched symbols, runs a pure deterministic filter (prior-day-high break / intraday move / volume spike), and fires `submitMaterialEvent` per watching user. **DEFAULT OFF** (`STREAMS_ALPACA_PRICE_EVENTS_ENABLED`; needs `TRIGGER_ENGINE=1`). The missing live-price source for the event engine #96 built. (3) **SPY-benchmark scoreboard** — new `benchmark.ts` normalizes the account equity curve vs SPY buy-and-hold to 100, surfaced as "+X% vs SPY" under the equity chart (`performance.benchmark`); the honest beat-the-market readout (measurement, not alpha). All additive/opt-in → no behavior change by default. tsc clean · 957 tests (+20) · build green. Isolated worktree off `origin/main`; landing via PR. See `docs/rollouts/2026-06-23-rh-stops-price-triggers-spy-bench.md`.
+- 2026-06-24 (`claude/strategy-flow-live`): **Strategy Flow popup is now live/data-driven.**
+  Rewrote `app/ui/strategy-flow.tsx` from a hardcoded decorative React Flow
+  diagram into a snapshot-driven pipeline status view — node colors/details
+  reflect which data sources are enabled & have data, last-run candidate/proposal
+  counts, gate state, and execution mode (Test/Paper/Brokerage · Propose/Autonomous).
+  Wired `snapshot` through from `dashboard-client.tsx`; re-seeds on each poll.
+  tsc/build clean; 935/936 tests (only the pre-existing date-sensitive
+  `cache-provenance` flake fails). See `docs/rollouts/2026-06-24-strategy-flow-live.md`.
+  Separately, deep-reviewed Codex's recent auth/money-path/learning-loop work —
+  notable: a HIGH OOS-gate logic bug (`strategy-tuning.ts` validates data-derived
+  IC weights, not the proposal's weights) and a MEDIUM "daily order-count cap can
+  block a protective exit" (`policy.ts:178` not guarded on `isOpening`). Reported
+  to owner; not yet fixed.
+
+- 2026-06-22 (`agent/claude-congress-share`, round 2): **Bidirectional congress.trade — receiving side (default OFF).**
+  Added App B's consume side on top of the push side: (1) **cache-aside reads** of App A's
+  `/api/market/*` as the first tier of `fetchDailyOHLC` (saves keyed-history quota; close-only on hits)
+  — `CONGRESS_TRADE_READS_ENABLED`; (2) **App A as congressional source** — `refreshCongress` pulls
+  App A's **public** `/api/transactions` feed (rolling ~90d cursor pagination, no token; tolerant
+  `coerceCongressTrade` mapped to App A's confirmed object shape) instead of scraping —
+  `CONGRESS_TRADE_AS_CONGRESS_SOURCE`; (3) **push
+  receiver** — webhook `POST /api/webhooks/congress` (constant-time bearer `CONGRESS_WEBHOOK_SECRET`) +
+  outbound **SSE** consumer (`CONGRESS_STREAM_ENABLED`, `Last-Event-ID` resume), both feeding
+  `applyCongressEvent` → existing `getSymbolWebSignals` overlay. Built via a 5-agent mapping pass + a
+  10-agent adversarial review; **all 6 verified findings fixed** (unparseable-date ingestion, added-count
+  under retention pruning, chamber `startsWith("sen")`, empty-owner default, SSE drop logging, seq/gap
+  documented). Contract files for App A: `docs/push-to-app-b.md`, `docs/congress-trade-consume.md`. tsc
+  clean · `npm test` 920 pass (98 files, +36 new) · build green. Round-2 contract finalized: the
+  `/api/transactions` feed is **public** (no token); cache-aside `closes` carry `volume`; and the nightly
+  **push** now also forwards `insider[]` + `shortVolume[]` (App A added the import slots) +
+  `volume`-on-closes (`buildInsiderImport`/`buildShortVolumeImport` from App B's cached web-sources).
+  **Live-verified (2026-06-22 PM):** App A endpoints up (`/api/health` `db:true`); cache-aside reads
+  cold→fall through cleanly; `/api/transactions` shape matches the coercer. Fixed: the feed is
+  oldest-first by `cursor_seq` (insertion order), so `fetchAppACongressTrades` now bounds the window via
+  App A's `?from=` param (verified live). **Real gate:** App A's transactions feed is still seed/historical
+  (mostly 2012–2020) — keep `CONGRESS_TRADE_AS_CONGRESS_SOURCE` OFF until it carries current disclosures;
+  cache-aside reads + nightly push are safe to enable now. **Top next:** consume App A analytics
+  (member track-record weighting, cluster-buys, per-trade performance) to upgrade the congressional signal.
+  See `docs/rollouts/2026-06-22-congress-trade-consume.md`.
+- 2026-06-22 (`agent/claude-congress-share`): **Outbound data-share to congress.trade (App A) — default OFF.**
+  New `src/lib/congress-share.ts` forwards the company `refs` + daily `closes` + `^GSPC` series this app
+  already fetches to App A's idempotent `POST /api/admin/securities/import`, so App A can avoid spending the
+  *shared* daily FMP quota. Two triggers: (1) **after each scan** — `scanMarket()` fire-and-forgets
+  `shareScanRefs` (candidate refs, per-symbol 6h throttle, rollback-on-failure); (2) **nightly batch** — the
+  scheduler tick runs `runCongressDailyShareIfDue` once/UTC-day over the union of all users' watchlist +
+  policy-universe symbols, POSTing `prices`+`spx` in capped chunks (≤2000 tickers / ≤20000 closes/call).
+  Manual ops trigger: `POST /api/admin/congress-share` (admin-gated, token-only). **Correction to the brief:**
+  App B never calls FMP `/v3/profile` or `/v3/historical-price-full` (its only FMP use is fundamentals
+  enrichment), so refs/prices/spx come from the screener enrichment + the `fetchDailyOHLC` cascade, not FMP —
+  but sharing them still conserves App A's quota. Gated on `CONGRESS_TRADE_TOKEN` + `CONGRESS_SHARE_ENABLED`
+  (both off by default); token is server-only; every POST is timeout-bounded + self-guarded. tsc clean ·
+  `npm test` 884 pass (95 files, +25 new) · build green. See `docs/congress-trade-share.md` and
+  `docs/rollouts/2026-06-22-congress-trade-share.md`. **Next:** owner sets the token + flag in the target
+  worktree's `.env.local`, then optionally test via the admin route before enabling the auto hooks.
+- 2026-06-24 (`codex/market-data-mcp-evaluation`): **Market-data MCP/provider evaluation.**
+  Documented whether MCP should change the app's provider strategy for FMP,
+  Alpha Vantage, Twelve Data, Tiingo, Intrinio, EODHD, FinancialData.net,
+  Nasdaq Data Link, Tastytrade, Pyth, Databento, Unusual Whales, Trading
+  Volatility, and a generic Yahoo-backed MCP server. Recommendation: keep
+  direct REST/WebSocket adapters for scheduled scans, scoring, history, cache
+  writes, and execution-adjacent data; use MCP for provider research,
+  field-coverage exploration, trial benchmarking, and optional Strategy
+  Studio-style deep dives only after normalizing outputs through the same
+  source-attributed cache path. Intrinio should be benchmarked during the trial
+  before paying $150/month; Tiingo is the best low-cost direct-adapter next
+  step if the key is active; FinancialData.net/EODHD/Twelve Data are cheaper
+  broad alternatives; Trading Volatility/Unusual Whales are differentiated
+  options-flow overlays, not core price/fundamental replacements. No API keys
+  were recorded. See `docs/data-provider-mcp-evaluation.md` and
+  `docs/rollouts/2026-06-24-market-data-mcp-evaluation.md`.
 - 2026-06-23 (`codex/ui-account-deletion-visual-pass` / Codex preview): **Current Codex bundle prepared for integration.**
   Bundled the current Codex preview changes for landing: custom Additional
   Watchlist ticker validation and error surfacing; expanded index universes and
