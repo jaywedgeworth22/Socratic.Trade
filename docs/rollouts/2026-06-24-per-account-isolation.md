@@ -50,15 +50,22 @@ PR 2 (shared strategy library + copy-to-account) a natural follow-on.
 - `npm run build` — green.
 
 ## Remaining (next slices on this branch, NOT yet done)
-- **Run-state / run-lock per account**: `strategy_run_lock:${userId}` →
-  `:${connectedAccountId}`; `strategy_runs.connected_account_id` writes;
-  `getLastStrategyRunStartedAt` account param.
-- **Scheduler**: `userSchedules` keyed by `(userId, accountId)`; per-account cadence
-  rehydrate; iterate a user's autonomy-active accounts.
+- **DONE — Run-state / run-lock per account** (see item 3 above).
+- **Audit / notification account tagging** (writers pass account; readers gain
+  filter). DO THIS BEFORE learning isolation — the counterfactual loop's
+  `listSignalSnapshotAuditAfter` reads `audit_events`, so per-account learning
+  attribution requires `audit_events.connected_account_id` to be populated first
+  (the nullable column exists; the `audit()` writer must start passing the account).
 - **Performance-derived learning per account**: write/read
   `skipped_candidate_counterfactuals` + `counterfactual_learning_watermarks` by
   `connected_account_id`. Fact-tier `learned_context` stays user-wide (owner rule).
-- **Audit / notification account tagging** (writers pass account; readers gain filter).
+  GOTCHA: `counterfactual_learning_watermarks` has `user_id` as the SOLE primary key,
+  so a nullable column is not enough for per-account watermarks — it needs a
+  PK-rebuild migration to `(user_id, connected_account_id)` (create new table → copy
+  → drop → rename, inside a versioned migration). Plan it carefully.
+- **Scheduler** (HIGHEST RISK — core trading loop): `userSchedules` keyed by
+  `(userId, accountId)`; per-account cadence rehydrate; iterate a user's
+  autonomy-active accounts. Do this last, with focused attention.
 - **Deletion purge**: extend `deleteConnectedAccount` + account-deletion to remove
   `account_strategy_state` + per-account learning rows.
 - PR stays a **draft** until these land + full trio re-verified.
