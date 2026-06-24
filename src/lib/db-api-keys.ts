@@ -113,7 +113,9 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   powerintell: "FINTECH_STUDIOS_API_KEY",
   tiingo: "TIINGO_API_KEY",
   intrinio: "INTRINIO_API_KEY",
-  twelvedata: "TWELVEDATA_API_KEY"
+  twelvedata: "TWELVEDATA_API_KEY",
+  logodev: "LOGO_DEV_TOKEN",
+  logodev_secret: "LOGO_DEV_SECRET_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -147,7 +149,13 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   intrinio_api_key: "intrinio",
   twelve_data: "twelvedata",
   twelve_data_api_key: "twelvedata",
-  twelvedata_api_key: "twelvedata"
+  twelvedata_api_key: "twelvedata",
+  logo_dev: "logodev",
+  logo_dev_token: "logodev",
+  logodev_token: "logodev",
+  logo_dev_secret: "logodev_secret",
+  logo_dev_secret_key: "logodev_secret",
+  logodev_secret_key: "logodev_secret"
 };
 
 function keyRowToApiKey(row: {
@@ -277,7 +285,9 @@ const API_KEY_TIER: Record<string, CredTier> = {
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
   intrinio: "shared-operator-infra",
-  twelvedata: "shared-operator-infra"
+  twelvedata: "shared-operator-infra",
+  logodev: "shared-operator-infra",
+  logodev_secret: "shared-operator-infra"
 };
 
 export function credTierForService(service: string): CredTier {
