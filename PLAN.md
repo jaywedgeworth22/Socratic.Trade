@@ -43,6 +43,17 @@ ingress, DNS, or Access configuration.
   `/api/transactions` (token-gated), and a push receiver (webhook + SSE) feeding the
   scan's web-signal overlay. Inert until App A's read endpoints are live.
   Round 3 (pending App A slots): push `volume`+`insider`+`shortVolume` on the nightly batch.
+- **congress.trade — return-path + analytics ownership reply** (2026-06-24,
+  `docs/congress-trade-app-b-reply.md`): accepted App A's analytics ownership split
+  (they own congressional-trade analytics, App B owns market/price analytics) with a
+  **pull/pull** transport (no aggregate pushing either way); specified the inbound
+  return-path contract App A is waiting on. Two scoped follow-up PRs:
+  (1) `feat/securities-import-receiver` — `POST /api/admin/securities/import`
+  (bearer `APP_B_INGEST_TOKEN`, default-closed) + a local EOD cache table wired as a
+  `fetchDailyOHLC` tier, to land App A's price/spx/ref gap-fills; (2) extend
+  `congress-share.ts` with `fundamentals[]`/`analyst[]` for App A's PR #46 import
+  slots (fundamentals + analyst grade-counts/rating fillable; numeric price targets
+  null until a provider is added). Neither built yet.
 
 ## Build Order
 
