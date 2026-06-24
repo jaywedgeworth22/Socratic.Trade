@@ -29,6 +29,13 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`codex/alpaca-account-label-display`): **Preserve custom Alpaca account labels in Accounts.**
+  Fixed the Accounts list formatter so Alpaca/Alpaca MCP rows use the saved account label as the row title
+  (for example, "Roth IRA") instead of replacing it with the inferred execution environment ("Paper" or
+  "Brokerage"). The subtitle still shows the broker/environment/account number. Verification:
+  `npx tsc --noEmit`; `npm test` (123 files / 1067 tests); `npm run build`; `git diff --check`.
+  See `docs/rollouts/2026-06-24-alpaca-account-label-display.md`.
+
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
   Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same
   hover/click treatment and open symbol drilldown, with ticker-logo display passed through. Simplified
