@@ -110,7 +110,10 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
   apify: "APIFY_API_TOKEN",
   fintechstudios: "FINTECH_STUDIOS_API_KEY",
-  powerintell: "FINTECH_STUDIOS_API_KEY"
+  powerintell: "FINTECH_STUDIOS_API_KEY",
+  tiingo: "TIINGO_API_KEY",
+  intrinio: "INTRINIO_API_KEY",
+  twelvedata: "TWELVEDATA_API_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -139,7 +142,12 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   voyage_api_key: "voyage",
   alpaca_paper_api_key: "alpaca_paper_api_key",
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
-  apify_api_token: "apify"
+  apify_api_token: "apify",
+  tiingo_api_key: "tiingo",
+  intrinio_api_key: "intrinio",
+  twelve_data: "twelvedata",
+  twelve_data_api_key: "twelvedata",
+  twelvedata_api_key: "twelvedata"
 };
 
 function keyRowToApiKey(row: {
@@ -266,7 +274,10 @@ const API_KEY_TIER: Record<string, CredTier> = {
   apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
   pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
   voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
-  sec_edgar_user_agent: "shared-operator-infra" // a UA string SEC requires, not a secret; one per app
+  sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
+  tiingo: "shared-operator-infra",
+  intrinio: "shared-operator-infra",
+  twelvedata: "shared-operator-infra"
 };
 
 export function credTierForService(service: string): CredTier {
@@ -547,7 +558,7 @@ export function deleteConnectedAccount(id: string, userId: string = "local"): bo
   const run = database.transaction(() => {
     const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
     if (acct) {
-      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops"]) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops"]) {
         database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
       }
     }
@@ -656,6 +667,66 @@ export function purgeSyntheticStops(accountNumber: string, liveSymbols: Set<stri
     }
   }
   return purged;
+}
+
+// ── Broker-held protective stops (Robinhood) ──────────────────────────────────
+
+export interface BrokerProtectiveStop {
+  id: string;
+  userId: string;
+  accountNumber: string;
+  symbol: string;
+  brokerOrderId: string;
+  quantity: number;
+  stopPrice: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapBrokerProtectiveStop(r: Record<string, unknown>): BrokerProtectiveStop {
+  return {
+    id: String(r.id),
+    userId: String(r.user_id),
+    accountNumber: String(r.account_number),
+    symbol: String(r.symbol),
+    brokerOrderId: String(r.broker_order_id),
+    quantity: Number(r.quantity),
+    stopPrice: Number(r.stop_price),
+    status: String(r.status),
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at)
+  };
+}
+
+export function upsertBrokerProtectiveStop(stop: Omit<BrokerProtectiveStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO broker_protective_stops (id, user_id, account_number, symbol, broker_order_id, quantity, stop_price, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
+        broker_order_id = excluded.broker_order_id,
+        quantity = excluded.quantity,
+        stop_price = excluded.stop_price,
+        status = excluded.status,
+        updated_at = excluded.updated_at`
+    )
+    .run(
+      stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.brokerOrderId,
+      stop.quantity, stop.stopPrice, stop.status, stop.createdAt ?? now, now
+    );
+}
+
+export function listBrokerProtectiveStops(accountNumber: string, userId: string = "local"): BrokerProtectiveStop[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM broker_protective_stops WHERE user_id = ? AND account_number = ? AND status = 'resting' ORDER BY created_at ASC")
+    .all(userId, accountNumber) as Record<string, unknown>[];
+  return rows.map(mapBrokerProtectiveStop);
+}
+
+export function deleteBrokerProtectiveStop(id: string, userId: string = "local"): void {
+  getDb().prepare("DELETE FROM broker_protective_stops WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
 // ── listUsers ────────────────────────────────────────────────────────────────

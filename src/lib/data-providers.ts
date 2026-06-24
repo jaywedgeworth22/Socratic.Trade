@@ -269,6 +269,9 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const alphaVantage = resolveApiKeyWithSource("alphavantage", userId);
   const fmp = resolveApiKeyWithSource("fmp", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
+  const intrinio = resolveApiKeyWithSource("intrinio", userId);
+  const tiingo = resolveApiKeyWithSource("tiingo", userId);
+  const twelvedata = resolveApiKeyWithSource("twelvedata", userId);
   // Alpaca MARKET DATA: own key (individual) → operator's paper key (shared) for background/tenants.
   // Trading is unaffected (alpaca.ts resolves Alpaca strictly per-user).
   const alpacaData = resolveAlpacaMarketData(userId);
@@ -294,8 +297,11 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
+  if (intrinio.key) providers.push(new IntrinioEnrichmentProvider(intrinio.key, intrinio.source, userId));
+  if (tiingo.key) providers.push(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId));
   if (fintech.key) providers.push(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId));
   if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
+  if (twelvedata.key) providers.push(new TwelveDataEnrichmentProvider(twelvedata.key, twelvedata.source, userId));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
@@ -1646,6 +1652,406 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
           }
         })
       );
+    }
+
+    return result;
+  }
+}
+
+// ── Intrinio provider ─────────────────────────────────────────────────────────
+// Real-time delayed quotes + company fundamentals from Intrinio v2 API.
+// 14-day trial covers prices/realtime, companies, and data_point endpoints.
+
+export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "intrinio";
+  readonly configured = true;
+  private readonly base = "https://api-v2.intrinio.com";
+  private readonly scope: CacheScope;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("intrinio", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const k = this.apiKey;
+            const [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw] = await Promise.allSettled([
+              this.getJson(`${this.base}/securities/${symbol}/prices/realtime?api_key=${k}`),
+              this.getJson(`${this.base}/companies/${symbol}?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/pe_ratio?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/eps_basic?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/dividend_yield?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/52_week_high?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/52_week_low?api_key=${k}`)
+            ]);
+
+            let price: number | undefined;
+            let bid: number | undefined;
+            let ask: number | undefined;
+            let volume: number | undefined;
+            let intradayChangePct: number | undefined;
+            let asOf: string | undefined;
+
+            if (realtimeRaw.status === "fulfilled" && realtimeRaw.value && typeof realtimeRaw.value === "object") {
+              const rt = realtimeRaw.value as Record<string, unknown>;
+              const last = firstNumber(rt, ["last_price", "close_price", "adj_close_price"]);
+              if (last && last > 0) price = last;
+              const b = firstNumber(rt, ["bid_price"]);
+              if (b && b > 0) bid = b;
+              const a = firstNumber(rt, ["ask_price"]);
+              if (a && a > 0) ask = a;
+              const v = firstNumber(rt, ["market_volume", "exchange_volume"]);
+              if (v && v > 0) volume = v;
+              const chg = firstNumber(rt, ["change_percent"]);
+              if (typeof chg === "number") intradayChangePct = chg;
+              if (typeof rt.last_time === "string") asOf = rt.last_time;
+            }
+
+            let companyName: string | undefined;
+            let sector: string | undefined;
+            let industry: string | undefined;
+
+            if (companyRaw.status === "fulfilled" && companyRaw.value && typeof companyRaw.value === "object") {
+              const co = companyRaw.value as Record<string, unknown>;
+              companyName = firstString(co, ["name", "legal_name"]);
+              // Intrinio nests sector/industry differently depending on plan
+              sector = firstString(co, ["sector"]);
+              if (!sector && co.industry_template && typeof co.industry_template === "object") {
+                sector = firstString(co.industry_template as Record<string, unknown>, ["sector", "name"]);
+              }
+              industry = firstString(co, ["industry_category"]);
+            }
+
+            const peRatio = peRaw.status === "fulfilled" && typeof peRaw.value === "number" && peRaw.value > 0 ? peRaw.value : undefined;
+            const eps = epsRaw.status === "fulfilled" && typeof epsRaw.value === "number" ? epsRaw.value : undefined;
+            let dividendYield: number | undefined;
+            if (divRaw.status === "fulfilled" && typeof divRaw.value === "number" && divRaw.value >= 0) {
+              dividendYield = divRaw.value <= 1 ? normalizePercent(divRaw.value) : divRaw.value;
+            }
+            const fiftyTwoWeekHigh = hiRaw.status === "fulfilled" && typeof hiRaw.value === "number" && hiRaw.value > 0 ? hiRaw.value : undefined;
+            const fiftyTwoWeekLow = loRaw.status === "fulfilled" && typeof loRaw.value === "number" && loRaw.value > 0 ? loRaw.value : undefined;
+
+            const data: SymbolEnrichment = {
+              ...(price !== undefined && { price }),
+              ...(bid !== undefined && { bid }),
+              ...(ask !== undefined && { ask }),
+              ...(volume !== undefined && { volume }),
+              ...(intradayChangePct !== undefined && { intradayChangePct }),
+              ...(asOf !== undefined && { asOf }),
+              ...(companyName !== undefined && { companyName }),
+              ...(sector !== undefined && { sector }),
+              ...(industry !== undefined && { industry }),
+              ...(peRatio !== undefined && { peRatio }),
+              ...(eps !== undefined && { eps }),
+              ...(dividendYield !== undefined && { dividendYield }),
+              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+            };
+
+            const allRejected = [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw].every((p) => p.status === "rejected");
+            const hasTransientErr = [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw].some(
+              (p) => p.status === "rejected" && isTransientError(p.reason)
+            );
+
+            if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
+              writeEnrichmentCache("intrinio", symbol, this.scope, this.userId, data, now + ttlMs());
+            }
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── Tiingo provider ───────────────────────────────────────────────────────────
+// Free plan: IEX real-time quotes, ticker meta (company name), and news.
+
+export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "tiingo";
+  readonly configured = true;
+  private readonly scope: CacheScope;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("tiingo", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const headers = { "Authorization": `Token ${this.apiKey}`, "Accept": "application/json" };
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const ticker = symbol.toLowerCase();
+            const [iexRaw, metaRaw, newsRaw] = await Promise.allSettled([
+              this.getJson(`https://api.tiingo.com/iex/${ticker}?token=${this.apiKey}`, headers),
+              this.getJson(`https://api.tiingo.com/tiingo/daily/${ticker}?token=${this.apiKey}`, headers),
+              this.getJson(`https://api.tiingo.com/tiingo/news?tickers=${ticker}&limit=5&token=${this.apiKey}`, headers)
+            ]);
+
+            let price: number | undefined;
+            let bid: number | undefined;
+            let ask: number | undefined;
+            let volume: number | undefined;
+            let intradayChangePct: number | undefined;
+
+            if (iexRaw.status === "fulfilled") {
+              const arr = Array.isArray(iexRaw.value) ? iexRaw.value : [iexRaw.value];
+              if (arr.length > 0 && arr[0] && typeof arr[0] === "object") {
+                const q = arr[0] as Record<string, unknown>;
+                const last = firstNumber(q, ["tngoLast", "mid", "lastPrice", "last"]);
+                if (last && last > 0) price = last;
+                const b = firstNumber(q, ["bidPrice"]);
+                if (b && b > 0) bid = b;
+                const a = firstNumber(q, ["askPrice"]);
+                if (a && a > 0) ask = a;
+                const v = firstNumber(q, ["volume"]);
+                if (v && v > 0) volume = v;
+                const prevClose = firstNumber(q, ["prevClose"]);
+                if (price && prevClose && prevClose > 0) {
+                  intradayChangePct = Math.round(((price - prevClose) / prevClose) * 10000) / 100;
+                }
+              }
+            }
+
+            let companyName: string | undefined;
+            if (metaRaw.status === "fulfilled" && metaRaw.value && typeof metaRaw.value === "object") {
+              companyName = firstString(metaRaw.value as Record<string, unknown>, ["name"]);
+            }
+
+            let headlines: string[] | undefined;
+            let sentiment: number | undefined;
+            if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
+              const items = newsRaw.value as Array<Record<string, unknown>>;
+              const titles = items.slice(0, 5).map((n) => firstString(n, ["title"])).filter((t): t is string => Boolean(t));
+              if (titles.length > 0) {
+                headlines = titles;
+                sentiment = scoreHeadlines(titles);
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(price !== undefined && { price }),
+              ...(bid !== undefined && { bid }),
+              ...(ask !== undefined && { ask }),
+              ...(volume !== undefined && { volume }),
+              ...(intradayChangePct !== undefined && { intradayChangePct }),
+              ...(companyName !== undefined && { companyName }),
+              ...(headlines !== undefined && { headlines }),
+              ...(sentiment !== undefined && { sentiment })
+            };
+
+            const allRejected = [iexRaw, metaRaw, newsRaw].every((p) => p.status === "rejected");
+            const hasTransientErr = [iexRaw, metaRaw, newsRaw].some(
+              (p) => p.status === "rejected" && isTransientError(p.reason)
+            );
+
+            if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
+              writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, data, now + ttlMs());
+            }
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string, headers: Record<string, string>): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── Twelve Data provider ──────────────────────────────────────────────────────
+// Rich /quote endpoint: price, % change, volume, company name, sector, industry,
+// P/E, EPS, beta, 52-week range — one batched call for all scan symbols.
+
+export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "twelvedata";
+  readonly configured = true;
+  private readonly scope: CacheScope;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("twelvedata", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    if (misses.length === 0) return result;
+
+    // Batch all misses in one request (Twelve Data supports comma-separated symbols).
+    // Chunk at 120 symbols (API limit) in case the scan is very large.
+    const BATCH_SIZE = 120;
+    for (let i = 0; i < misses.length; i += BATCH_SIZE) {
+      const batch = misses.slice(i, i + BATCH_SIZE);
+      try {
+        const url = `https://api.twelvedata.com/quote?symbol=${batch.join(",")}&apikey=${this.apiKey}&country=US`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        let raw: unknown;
+        try {
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          raw = await response.json();
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        if (!raw || typeof raw !== "object") continue;
+
+        // Normalise to a map symbol → quote object.
+        // Single symbol → { symbol: "AAPL", close: "..." }
+        // Multiple symbols → { AAPL: { symbol: "AAPL", ... }, MSFT: { ... } }
+        const quoteMap: Record<string, Record<string, unknown>> = {};
+        const rawObj = raw as Record<string, unknown>;
+        if (typeof rawObj.symbol === "string") {
+          // Single-symbol response
+          quoteMap[rawObj.symbol as string] = rawObj;
+        } else {
+          for (const [key, val] of Object.entries(rawObj)) {
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              quoteMap[key] = val as Record<string, unknown>;
+            }
+          }
+        }
+
+        for (const symbol of batch) {
+          const q = quoteMap[symbol];
+          if (!q) continue;
+          // Skip error responses
+          if (q.code || q.status === "error" || q.message) {
+            result[symbol] = {};
+            continue;
+          }
+
+          const price = firstNumber(q, ["close", "last"]);
+          const volume = firstNumber(q, ["volume"]);
+          const companyName = firstString(q, ["name"]);
+          const sector = firstString(q, ["sector"]);
+          const industry = firstString(q, ["industry"]);
+          const peRatio = firstNumber(q, ["pe"]);
+          const eps = firstNumber(q, ["eps"]);
+          const beta = firstNumber(q, ["beta"]);
+
+          const pctChange = q.percent_change !== undefined ? firstNumber(q, ["percent_change"]) : undefined;
+
+          const fw = q.fifty_two_week && typeof q.fifty_two_week === "object"
+            ? q.fifty_two_week as Record<string, unknown>
+            : null;
+          const fiftyTwoWeekHigh = fw ? firstNumber(fw, ["high"]) : undefined;
+          const fiftyTwoWeekLow = fw ? firstNumber(fw, ["low"]) : undefined;
+
+          const data: SymbolEnrichment = {
+            ...(price !== undefined && price > 0 && { price }),
+            ...(volume !== undefined && volume > 0 && { volume }),
+            ...(pctChange !== undefined && { intradayChangePct: pctChange }),
+            ...(companyName && { companyName }),
+            ...(sector && { sector }),
+            ...(industry && { industry }),
+            ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+            ...(eps !== undefined && { eps }),
+            ...(beta !== undefined && { beta }),
+            ...(fiftyTwoWeekHigh !== undefined && fiftyTwoWeekHigh > 0 && { fiftyTwoWeekHigh }),
+            ...(fiftyTwoWeekLow !== undefined && fiftyTwoWeekLow > 0 && { fiftyTwoWeekLow })
+          };
+
+          if (Object.keys(data).length > 0) {
+            writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, data, now + ttlMs());
+          }
+          result[symbol] = data;
+        }
+      } catch (err) {
+        if (isTransientError(err)) {
+          console.warn("[data-providers] TwelveData transient error:", err instanceof Error ? err.message : err);
+        }
+        for (const symbol of batch) {
+          if (!result[symbol]) result[symbol] = {};
+        }
+      }
     }
 
     return result;

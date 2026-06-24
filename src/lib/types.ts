@@ -178,6 +178,18 @@ export interface TuningSettings {
    * arbitrarily bad print in a fast tape. Default 15 bps.
    */
   marketableLimitBufferBps?: number;
+  /**
+   * OPTIONAL negative-expectancy skip gate (default OFF). When true, a deterministic opening
+   * proposal is SKIPPED entirely (not opened) if its thesis is PROVEN (≥ minClosedLotsForWeightShift
+   * closed lots) AND its shrunk realized avg edge — already net of the paper cost model — is at or
+   * below `skipNegativeExpectancyEdgePct`. Off by default on purpose: the normal sizer DOWNSIZES
+   * such theses to the exploratory floor rather than skipping, which keeps gathering data; this gate
+   * is the more conservative "don't open a proven money-loser" stance for operators who want it.
+   * UNPROVEN theses are never skipped by this gate (their floor sizing is intentional exploration).
+   */
+  skipNegativeExpectancy?: boolean;
+  /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
+  skipNegativeExpectancyEdgePct?: number;
 }
 
 export interface RiskRules {
@@ -388,6 +400,14 @@ export interface TradingPolicy {
    */
   maxPortfolioBeta?: number;
   /**
+   * OPTIONAL correlation cluster cap (0–1; undefined disables). The precise version of the beta cap:
+   * an OPENING buy/short is SKIPPED when the candidate's average daily-return correlation (over ~90
+   * trading days) to the current holdings exceeds this value — i.e. it would pile onto an
+   * already-correlated cluster the per-symbol/sector/beta caps don't see. Exits/reductions are never
+   * blocked; the gate is skipped (never false-rejects) when there is too little overlapping bar data.
+   */
+  maxAvgCorrelation?: number;
+  /**
    * Max allowed % drift between a proposal's recorded entry anchor (referencePrice) and the current
    * market price, enforced at the approval/execution moment for OPENING market/dollar orders only
    * (limit orders are already protected by the broker's limit). Rejects a stale proposal whose
@@ -404,6 +424,17 @@ export interface TradingPolicy {
    * when undefined); set false to opt out. No-op for brokers without native bracket support.
    */
   brokerBracketsEnabled?: boolean;
+  /**
+   * Robinhood-only: maintain a TRUE broker-held protective stop. Robinhood's MCP cannot hold a
+   * native OCO bracket (unlike Alpaca), so a held position is otherwise protected only by the app's
+   * synthetic scheduler-tick monitor — a single point of failure if the app is offline. When enabled,
+   * the monitor places a resting broker-side stop-market SELL (GTC) at riskRules.stopLossPct below
+   * entry for each open Robinhood LIVE position, and cancels it when the position closes or a synthetic
+   * exit fires (so an orphaned stop can't sell shares we no longer hold). DEFAULT OFF (opt-in): the
+   * exact Robinhood MCP stop semantics should be verified against a live account before enabling, and
+   * the synthetic monitor remains the always-on fallback either way.
+   */
+  robinhoodBrokerStops?: boolean;
   /**
    * Scale per-position stop-loss distance by the name's beta (clamped 0.5×–2.0×) so high-beta names
    * get wider stops (fewer noise stop-outs) and low-beta names tighter stops (cut losers sooner),
@@ -752,6 +783,12 @@ export interface PendingProposal {
   revalidationNote?: string;
   accountNumber?: string;
   executionMode?: ExecutionMode;
+  /** Side-adjusted % move from the proposal's referencePrice to the current price (positive = the proposed direction worked). Undefined when no anchor/current price is available. */
+  performanceSinceProposalPct?: number;
+  /** The entry anchor the performance is measured from. */
+  proposalReferencePrice?: number;
+  /** The current price used for the performance figure. */
+  proposalCurrentPrice?: number;
 }
 
 export interface RecentProposal {
@@ -765,6 +802,12 @@ export interface RecentProposal {
   estimatedNotional?: number;
   status: string;
   executionMode?: ExecutionMode;
+  /** Side-adjusted % move from the proposal's referencePrice to the current price. For a REJECTED proposal this is the realized counterfactual ("what it did since we passed"); for an accepted one it's how the entry has fared. Undefined when no anchor/current price is available. */
+  performanceSinceProposalPct?: number;
+  /** The entry anchor the performance is measured from. */
+  proposalReferencePrice?: number;
+  /** The current price used for the performance figure. */
+  proposalCurrentPrice?: number;
 }
 
 export interface StrategyOutcome {
@@ -882,9 +925,38 @@ export interface RunAttribution {
   realizedPnl: number;
 }
 
+/** One point on a benchmark-normalized curve (base date = 100). */
+export interface BenchmarkSeriesPoint {
+  date: string;
+  index: number;
+}
+
+/**
+ * SPY-benchmark equity-curve comparison: the account's equity curve and a SPY buy-and-hold curve,
+ * both normalized to 100 at the first common date, plus the window's total returns. The honest
+ * "are we beating the market" readout. Computed on the fly from portfolio snapshots + SPY daily
+ * closes; null/absent when there isn't enough history or SPY data is unavailable (degrade to "—").
+ */
+export interface BenchmarkComparison {
+  equityIndex: BenchmarkSeriesPoint[];
+  benchmarkIndex: BenchmarkSeriesPoint[];
+  /** Account total return over the window (%, base→last). */
+  accountReturnPct: number;
+  /** Benchmark (SPY) total return over the same window (%). */
+  benchmarkReturnPct: number;
+  /** accountReturnPct − benchmarkReturnPct, in percentage points (positive = outperformance). */
+  excessReturnPct: number;
+  startDate: string;
+  endDate: string;
+  points: number;
+  benchmarkSymbol: string;
+}
+
 export interface PerformanceSummary {
   liveEquityCurve: EquityCurvePoint[];
   paperEquityCurve: EquityCurvePoint[];
+  /** SPY-benchmark comparison for the active execution mode's equity curve (absent when insufficient data). */
+  benchmark?: BenchmarkComparison;
   liveRealizedPnl: number;
   paperRealizedPnl: number;
   liveUnrealizedPnl: number;

@@ -14,8 +14,26 @@ import type {
   Portfolio,
   ReviewedOrder,
   RunAttribution,
+  OrderSide,
   TradeProposal
 } from "./types";
+
+/**
+ * Side-adjusted % move from a proposal's entry anchor to a current price. Positive means the
+ * proposed direction worked (a long that rose / a short that fell). For a REJECTED proposal this is
+ * the realized counterfactual ("what it did since we passed"). Returns undefined when either price is
+ * missing/non-positive so callers can omit the figure rather than show a misleading 0.
+ */
+export function returnSinceProposalPct(
+  referencePrice: number | undefined,
+  currentPrice: number | undefined,
+  side: OrderSide
+): number | undefined {
+  if (referencePrice == null || !(referencePrice > 0) || currentPrice == null || !(currentPrice > 0)) return undefined;
+  const raw = ((currentPrice - referencePrice) / referencePrice) * 100;
+  const adjusted = side === "sell" || side === "short" ? -raw : raw;
+  return Math.round(adjusted * 100) / 100;
+}
 
 export interface ClosedLot {
   pnl: number;

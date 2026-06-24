@@ -215,6 +215,22 @@ export function findProposedIdByRunId(runId: string, userId: string = "local"): 
   return row?.id ?? null;
 }
 
+/**
+ * Guarantee a positive `referencePrice` entry-anchor on the stored proposal so the entry-drift guard,
+ * counterfactual learning, and the "performance since proposal" readout always have something to
+ * measure from. enrichOpeningProposal already sets it from the live market price on the main path;
+ * this is a defensive fallback (limit → stop) for any path that didn't.
+ */
+function ensureReferencePrice(proposal: unknown): unknown {
+  if (!proposal || typeof proposal !== "object") return proposal;
+  const p = proposal as Record<string, unknown>;
+  const ref = Number(p.referencePrice);
+  if (Number.isFinite(ref) && ref > 0) return proposal;
+  const fallback = Number(p.limitPrice) || Number(p.stopPrice);
+  if (Number.isFinite(fallback) && fallback > 0) return { ...p, referencePrice: fallback };
+  return proposal;
+}
+
 export function insertProposal(input: {
   userId?: string;
   id: string;
@@ -241,7 +257,7 @@ export function insertProposal(input: {
       input.runId,
       scopeAccount(input.accountNumber),
       new Date().toISOString(),
-      JSON.stringify(input.proposal),
+      JSON.stringify(ensureReferencePrice(input.proposal)),
       JSON.stringify(input.decision),
       input.review ? JSON.stringify(input.review) : null,
       input.estimatedNotional ?? null,
