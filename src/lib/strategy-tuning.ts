@@ -4,7 +4,8 @@ import {
   getActiveConnectedAccount,
   latestAuditByKind,
   listFillEvents,
-  listStrategyRuns
+  listStrategyRuns,
+  normalizeScoringWeights
 } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
@@ -257,8 +258,10 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
 /**
  * OOS walk-forward gate for proposed `scoringWeights`. Called after both the LLM and local-rules
  * paths complete. If the proposal includes `scoringWeights`:
- *  - Runs `runWalkForwardOOS` to measure OOS composite IC of the proposed weights vs default.
- *  - If OOS IC does NOT improve over the default, strips the weights and emits a caution.
+ *  - Runs `runWalkForwardOOS` with the ACTUAL proposed weights (merged over the current policy as
+ *    the full candidate vector) and the current weights as the baseline.
+ *  - If the candidate's OOS composite IC does NOT beat the current weights' OOS IC, strips the
+ *    weights and emits a caution.
  *  - Otherwise, attaches an OOS readout to the cautions array (informational).
  * Returns the proposal unchanged when no scoring-weight changes are proposed, or when OOS
  * data is insufficient (< 4 snapshot dates → runWalkForwardOOS returns null).
@@ -267,9 +270,17 @@ async function applyOosGate(proposal: StrategyTuningProposal, userId: string): P
   const proposedWeights = proposal.proposedPatch.scoringWeights;
   if (!proposedWeights || Object.keys(proposedWeights).length === 0) return proposal;
 
+  // The status-quo weights this proposal would replace, and the full candidate vector that WOULD be
+  // applied. A proposed patch only names the factors it changes, so merge it over the baseline and
+  // normalize — exactly mirroring how db-profiles persists a weight patch.
+  const baselineWeights = getPolicy(userId).scoringWeights;
+  const candidateWeights = normalizeScoringWeights({ ...baselineWeights, ...proposedWeights });
+
   let oosResult;
   try {
-    oosResult = await runWalkForwardOOS(userId);
+    // Validate the ACTUAL proposed weights (and the current baseline) on held-out data — not the
+    // data-derived IC weights, which answer a different question.
+    oosResult = await runWalkForwardOOS(userId, { candidateWeights, baselineWeights });
   } catch {
     // OOS fetch failed (e.g. network error in test); skip the gate gracefully.
     return proposal;
@@ -280,22 +291,29 @@ async function applyOosGate(proposal: StrategyTuningProposal, userId: string): P
     return proposal;
   }
 
-  const { oosIC, oosICIR, oosICDefault } = oosResult;
-  const improves = oosIC > oosICDefault;
-  const oosReadout = `OOS walk-forward: IC-weighted composite IC=${oosIC.toFixed(3)} vs default IC=${oosICDefault.toFixed(3)}, ICIR=${oosICIR.toFixed(2)}.`;
+  // Gate on the CANDIDATE weights vs the CURRENT weights — "does what's proposed beat what's
+  // running today on held-out data?". We always pass both weight vectors into runWalkForwardOOS, so
+  // these are present on the real path; if they're somehow absent, skip the gate (keep weights, no
+  // misleading "validated" caution) rather than falling back to a comparison that ignores the
+  // proposed weights — the exact bug this fix removes.
+  const candidateIC = oosResult.oosICCandidate;
+  const baselineIC = oosResult.oosICBaseline;
+  if (candidateIC == null || baselineIC == null) return proposal;
+  const improves = candidateIC > baselineIC;
+  const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}.`;
 
   const cautions = [...proposal.cautions];
   const patch = { ...proposal.proposedPatch };
 
   if (!improves) {
-    // OOS IC did not beat default → strip the weight changes, keep prompt/risk nudges.
+    // Proposed weights did not beat the current weights OOS → strip them, keep prompt/risk nudges.
     delete patch.scoringWeights;
     cautions.push(
-      `Withheld model-proposed factor-weight changes: ${oosReadout} OOS IC did not improve over default weights — weights withheld to avoid overfitting.`
+      `Withheld model-proposed factor-weight changes: ${oosReadout} Proposed weights did not improve OOS IC over the current weights — withheld to avoid overfitting.`
     );
   } else {
-    // OOS IC improved → attach informational readout.
-    cautions.push(`OOS-validated weight changes: ${oosReadout} IC improved over default. Apply with care.`);
+    // Proposed weights improved OOS IC over the current weights → attach informational readout.
+    cautions.push(`OOS-validated weight changes: ${oosReadout} Proposed weights improved OOS IC over the current weights. Apply with care.`);
   }
 
   return { ...proposal, proposedPatch: patch, cautions };

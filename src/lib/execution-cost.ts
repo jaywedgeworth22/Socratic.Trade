@@ -7,9 +7,10 @@
 // live cost is worst. This model debits an estimated cost on simulated fills so the scorecards are
 // net-of-cost.
 //
-// DEFAULT OFF: with no env configured, executionCostConfig().enabled is false and
-// recordFillFromProposal leaves the price unchanged — existing P&L/fixtures are untouched. Real
-// broker (live) fills already carry their realized price and are never adjusted (no double-count).
+// DEFAULT ON: with no env configured, executionCostConfig().enabled is true (1 bps base +
+// sqrt market-impact), so simulated scorecards are net-of-cost by default. Opt out per box with
+// PAPER_EXECUTION_COST_MODEL=off (or 0/false/no). Real broker (live) fills already carry their
+// realized price and are never adjusted (no double-count) — only paper/Test fills are affected.
 
 import type { OrderSide } from "./types";
 

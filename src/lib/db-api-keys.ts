@@ -482,6 +482,11 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
   };
 }
 
+// Insert or update a connected account. The `ON CONFLICT(id) DO UPDATE ... WHERE user_id = excluded.user_id`
+// guard makes the UPDATE branch a no-op when the existing row belongs to a DIFFERENT user, so a caller
+// who supplies someone else's account `id` (e.g. the deterministic `test-<userId>` id, derivable from a
+// known email) can neither overwrite that row's broker/key fields nor hijack it — the conflicting write
+// silently does nothing. Creates with a fresh id are unaffected; legitimate same-user edits still apply.
 export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdAt" | "updatedAt">): void {
   const now = new Date().toISOString();
   const encryptedApiKey = account.apiKey?.trim() ? encryptValue(account.apiKey.trim()) : null;
@@ -507,7 +512,8 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           base_url = COALESCE(excluded.base_url, connected_accounts.base_url),
           capabilities = COALESCE(excluded.capabilities, connected_accounts.capabilities),
           is_active = excluded.is_active,
-          updated_at = excluded.updated_at`
+          updated_at = excluded.updated_at
+         WHERE connected_accounts.user_id = excluded.user_id`
       )
       .run(
         account.id,

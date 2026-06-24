@@ -29,6 +29,23 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`claude/safety-fixes-a-e`): **Codex-review safety fixes A–E** (re-verified
+  against current `main`, which had advanced past the review base). A (HIGH): OOS gate now
+  validates the ACTUAL proposed scoring weights vs current weights, not the data-derived IC
+  weights (`backtest.ts`/`strategy-tuning.ts`); fallback footgun removed (skips gate if
+  candidate/baseline ICs absent rather than reverting to the old comparison). B (MED):
+  already fixed on main by #109 (daily-order-count cap guards on `isOpening`). C (MED):
+  synthetic trailing-stop skips symbols with a live broker-held bracket stop
+  (`synthetic-stops.ts`), keyed off actual resting orders so nothing is left unprotected.
+  D (MED): `upsertConnectedAccount` tenant guard blocks cross-user row overwrite via a
+  guessable id. E (LOW): stale execution-cost comment fixed; Grok `max_completion_tokens`
+  verified correct (xAI deprecated `max_tokens`). Reviewed by per-fix adversarial agents
+  (Haiku on D/E, Sonnet on A/C). tsc/build clean; 1008/1009 tests (only the pre-existing
+  `cache-provenance` date flake). See `docs/rollouts/2026-06-24-safety-fixes-a-e.md`.
+  NEXT staged PRs: per-account state isolation → shared saved-strategy library +
+  copy-to-account → sell-to-fund-buy (3-way setting: Automated/Propose/Suggest,
+  default = account's current mode).
+
 - 2026-06-24 (`feat/proposal-perf-and-rag-power`): **Performance-since-proposal surfacing + Voyage/Pinecone at full power** (after a 6-agent review). **Part A — show stock performance from the proposal date, esp. rejected:** every proposal is guaranteed a `referencePrice` anchor (`ensureReferencePrice`); the dashboard computes a side-adjusted `performanceSinceProposalPct` per recent/pending proposal from prices already in hand (new pure `returnSinceProposalPct` in `performance.ts`) — no new calls; UI shows a colored "since X%"/"missed X%" chip on pending + decision-ledger cards and the counterfactual note now covers all statuses; and a user-REJECTED proposal is fed into the existing skipped-candidate counterfactual pipeline (`recordRejectedProposalCounterfactual` → matures via `fetchDailyOHLC`) so its post-rejection return reaches missed-opportunity analytics (additive, no schema change). **Part B — Voyage/Pinecone fullest power:** Voyage **reranking** (rerank-2.5) over an over-fetched candidate set in `retrieveContextDetailed` (ON by default `VECTOR_ENABLE_RERANK`, fails safe to cosine order) — the biggest retrieval-quality lever; **8-K look-ahead fix** (vectors now carry `acceptance_datetime`+`doc_type`, activating the `isWithinAsOf` point-in-time guard); optional query-time metadata filters (`docType`/`section`/`source`) + `minScore` floor; memoized clients. All advisory/observability-only (no fills/policy writes; RAG stays prompt DATA). Gated follow-ups (paid Voyage batch profile; voyage-3-large 1536-dim reindex) documented in `docs/prod-config-voyage.md`. tsc clean · 1041 tests (+18) · build green. Isolated worktree off `origin/main`; landing via PR. See `docs/rollouts/2026-06-24-proposal-perf-and-rag-power.md`.
 - 2026-06-24 (`claude/magical-faraday-uce1uy`): **Intrinio, Tiingo, TwelveData enrichment providers + GCP Secret Manager runner.**
   Wired three new providers into the cascading enrichment cascade: `IntrinioEnrichmentProvider` (7 parallel calls per symbol: realtime price, company profile, PE/EPS/dividend_yield/52-week range), `TiingoEnrichmentProvider` (IEX quotes + company name + news/sentiment), `TwelveDataEnrichmentProvider` (batch `/quote` call for all symbols with price/volume/sector/industry/PE/EPS/beta/52-week). All three registered in `API_KEY_ENV_MAP`/`API_KEY_SERVICE_ALIASES`/`API_KEY_TIER` as `shared-operator-infra`. Added `scripts/gcp-secrets-run.mjs` mirroring the Infisical runner; `package.json` gains `dev:gcp`/`build:gcp`/`start:gcp` scripts and `@google-cloud/secret-manager ^5.6.0`. Real API keys stored in `.env.local` (git-ignored). Verification: `npx tsc --noEmit` clean, `npm test` 935/936 pass (1 pre-existing `cache-provenance` failure), `npm run build` green. See `docs/rollouts/2026-06-24-intrinio-tiingo-twelvedata-gcp-secrets.md`.
