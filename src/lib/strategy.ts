@@ -108,13 +108,15 @@ export function liveApprovalText(symbol: string): string {
 }
 
 export async function runStrategyOnce(userId: string = "local", options: { manual?: boolean } = {}): Promise<StrategyResult> {
-  // Run lock: prevent overlapping runs from double-counting daily limits.
-  if (!acquireStrategyLock(userId)) {
+  // Per-account run lock: prevent overlapping runs from double-counting daily limits,
+  // scoped to the active account so a different account isn't blocked.
+  const connectedAccountId = getPolicy(userId).connectedAccountId;
+  if (!acquireStrategyLock(userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
   const runId = crypto.randomUUID();
-  insertStrategyRun(runId, userId);
+  insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   const manualRun = Boolean(options.manual);
 
@@ -614,7 +616,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, connectedAccountId);
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
@@ -1129,7 +1131,7 @@ export async function executeProposal(
   // Approve can each read the same pre-cap totals and both place — jointly
   // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
   // the same lock here serialises approval execution against the strategy loop.
-  if (!acquireStrategyLock(userId)) {
+  if (!acquireStrategyLock(userId, policy.connectedAccountId)) {
     return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
   }
 
@@ -1336,7 +1338,7 @@ export async function executeProposal(
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
     return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, policy.connectedAccountId);
   }
 }
 

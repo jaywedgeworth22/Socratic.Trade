@@ -24,6 +24,14 @@ Landed on the branch so far (each verified green):
    library strategy copies it into the active account's live state.
    `test/per-account-policy-isolation.test.ts` proves independent policy +
    per-account `systemState` + broker-derived `paperMode`.
+3. **Run-state / run-lock per account** (`db-execution.ts`, `strategy.ts`):
+   `acquireStrategyLock`/`releaseStrategyLock`/`insertStrategyRun`/
+   `getLastStrategyRunStartedAt` gained an optional `connectedAccountId`
+   (back-compat: legacy user-wide key when omitted; no-account release clears ALL
+   the user's locks for teardown). `runStrategyOnce` and the manual-approval path
+   key the lock + run record by the active account's id, so one account's run no
+   longer blocks another and runs are attributed per account. Tests added for
+   per-account lock concurrency + per-account cadence clock.
 
 ## Why
 See `docs/design/per-account-isolation.md` §1–3. The library-vs-live split makes

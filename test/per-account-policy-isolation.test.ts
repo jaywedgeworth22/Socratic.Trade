@@ -59,4 +59,33 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getPolicy(userId, testAcct).paperMode).toBe(true);   // Test broker = local sim
     expect(db.getPolicy(userId, a1).paperMode).toBe(false);        // Alpaca paper = real broker path
   });
+
+  it("run-lock is per account — one account's lock doesn't block another", async () => {
+    const db = await import("../src/lib/db");
+    const u = `lockuser-${randomUUID()}`;
+    const x = `acct-x-${randomUUID()}`;
+    const y = `acct-y-${randomUUID()}`;
+
+    expect(db.acquireStrategyLock(u, x)).toBe(true);
+    expect(db.acquireStrategyLock(u, x)).toBe(false); // same account re-lock blocked
+    expect(db.acquireStrategyLock(u, y)).toBe(true);  // different account NOT blocked
+
+    db.releaseStrategyLock(u, x);
+    expect(db.acquireStrategyLock(u, x)).toBe(true);
+
+    db.releaseStrategyLock(u); // no account → releases ALL of the user's locks
+    expect(db.acquireStrategyLock(u, x)).toBe(true);
+    expect(db.acquireStrategyLock(u, y)).toBe(true);
+  });
+
+  it("strategy runs and the cadence clock are per account", async () => {
+    const db = await import("../src/lib/db");
+    const u = `runuser-${randomUUID()}`;
+    const x = `racct-x-${randomUUID()}`;
+    const y = `racct-y-${randomUUID()}`;
+
+    db.insertStrategyRun(randomUUID(), u, x);
+    expect(db.getLastStrategyRunStartedAt(u, x)).not.toBeNull();
+    expect(db.getLastStrategyRunStartedAt(u, y)).toBeNull(); // account y has no runs of its own
+  });
 });
