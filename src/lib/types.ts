@@ -178,6 +178,18 @@ export interface TuningSettings {
    * arbitrarily bad print in a fast tape. Default 15 bps.
    */
   marketableLimitBufferBps?: number;
+  /**
+   * OPTIONAL negative-expectancy skip gate (default OFF). When true, a deterministic opening
+   * proposal is SKIPPED entirely (not opened) if its thesis is PROVEN (≥ minClosedLotsForWeightShift
+   * closed lots) AND its shrunk realized avg edge — already net of the paper cost model — is at or
+   * below `skipNegativeExpectancyEdgePct`. Off by default on purpose: the normal sizer DOWNSIZES
+   * such theses to the exploratory floor rather than skipping, which keeps gathering data; this gate
+   * is the more conservative "don't open a proven money-loser" stance for operators who want it.
+   * UNPROVEN theses are never skipped by this gate (their floor sizing is intentional exploration).
+   */
+  skipNegativeExpectancy?: boolean;
+  /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
+  skipNegativeExpectancyEdgePct?: number;
 }
 
 export interface RiskRules {
@@ -387,6 +399,14 @@ export interface TradingPolicy {
    * from the market scan; names without a beta count as 1.0. Especially relevant once shorting is on.
    */
   maxPortfolioBeta?: number;
+  /**
+   * OPTIONAL correlation cluster cap (0–1; undefined disables). The precise version of the beta cap:
+   * an OPENING buy/short is SKIPPED when the candidate's average daily-return correlation (over ~90
+   * trading days) to the current holdings exceeds this value — i.e. it would pile onto an
+   * already-correlated cluster the per-symbol/sector/beta caps don't see. Exits/reductions are never
+   * blocked; the gate is skipped (never false-rejects) when there is too little overlapping bar data.
+   */
+  maxAvgCorrelation?: number;
   /**
    * Max allowed % drift between a proposal's recorded entry anchor (referencePrice) and the current
    * market price, enforced at the approval/execution moment for OPENING market/dollar orders only
