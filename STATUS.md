@@ -24,6 +24,15 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-22 (`agent/claude-congress-share`, round 3): **Consume App A's "Trends" analytics + sync origin/main.**
+  Merged a large origin/main (scan refactor) keeping the congress hooks; then built the App A **analytics
+  overlay** (`CONGRESS_ANALYTICS_ENABLED`, default off): `congress-analytics.ts` pulls App A's
+  ticker-leaderboard (dollar net flow, member counts) + cluster-buys + member-leaderboard (track-record)
+  daily, persists a per-symbol `CongressAnalytics` overlay on `SymbolWebSignal`, and `outlierInterestScore`
+  folds it into scan candidate selection (`congressAnalyticsScore`: net-flow + cluster + member quality;
+  net-selling=0; additive/back-compat). Comprehensive App A coordination note: `docs/congress-trade-app-a-note.md`.
+  tsc clean · **1005 tests / 112 files** · build green. Gate unchanged: App A's feed is still seed/historical,
+  so keep the consume flags off until it carries current disclosures. See `docs/rollouts/2026-06-22-congress-trade-consume.md`.
 - 2026-06-24 (`claude/strategy-flow-live`): **Strategy Flow popup is now live/data-driven.**
   Rewrote `app/ui/strategy-flow.tsx` from a hardcoded decorative React Flow
   diagram into a snapshot-driven pipeline status view — node colors/details
