@@ -21,6 +21,7 @@ the Alpaca dashboard lists live keys against `https://api.alpaca.markets`.
 - `src/lib/alpaca.ts`
 - `test/connected-accounts-route.test.ts`
 - `test/alpaca-account-type.test.ts`
+- `.gitleaks.toml`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/phase-8-cockpit-ui.md`
@@ -34,6 +35,7 @@ the Alpaca dashboard lists live keys against `https://api.alpaca.markets`.
 - `npm test` — 123 files / 1066 tests passed.
 - `npm run build` — passed. Next.js rewrote `next-env.d.ts` / `tsconfig.json` during build; that generated drift was restored.
 - `git diff --check` — clean.
+- GitHub Security/gitleaks initially flagged synthetic Alpaca-looking test fixtures; the fixture strings were de-secretized and `.gitleaks.toml` gained a path-scoped allowlist for that test fixture only.
 
 ## Follow-ups
 

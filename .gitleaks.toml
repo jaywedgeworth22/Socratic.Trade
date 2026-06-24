@@ -2,3 +2,8 @@ title = "Agentic Trading gitleaks config"
 
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "Synthetic Alpaca prefix fixtures in connected-account route tests"
+paths = ['''test/connected-accounts-route\.test\.ts''']
+regexes = ['''apiKey:\s*"[AP]K[A-Z0-9_]+"''']
