@@ -39,7 +39,19 @@ back to `txDate`) and rejects unparseable dates. A 0-result pull keeps the prior
 > disclosures) with stale data — a regression. The flag + `from=` pull are validated live; just keep it
 > OFF until `GET /api/transactions?from=<today-7d>` returns real recent rows.
 
-## 3. Push receiver — webhook + SSE
+## 3. App A analytics overlay — the "Trends" composite (`CONGRESS_ANALYTICS_ENABLED`)
+App A computes aggregate congressional analytics App B can't derive from raw trades — its public
+"Trends" page (dollar-weighted net flow, distinct-member counts, cluster buys, member track-record).
+`src/lib/web-sources/congress-analytics.ts` refreshes these daily (`getAppATickerLeaderboard` +
+`getAppAClusterBuys` + `getAppAMemberLeaderboard`, `?window=90d`), persists a per-symbol overlay, and
+`getSymbolWebSignals` attaches it as `SymbolWebSignal.congressAnalytics`. `outlierInterestScore`
+(`market.ts`) then folds it into scan candidate selection via `congressAnalyticsScore`: a strong
+**dollar net buy flow** + **cluster buy** + **multiple high-track-record members** can surface a name
+even when the scraped per-member `netSignal` is thin. Net-selling/neutral contributes 0 (long-side
+only). Member quality rank-normalizes whatever numeric performance field App A's member-leaderboard
+exposes (tolerant; inert until App A ships one). Additive + default-off → no behavior change when off.
+
+## 4. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,
 `applyCongressEvent` (`src/lib/congress-trade-events.ts`), which upserts into App B's existing persisted
 web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unchanged.
