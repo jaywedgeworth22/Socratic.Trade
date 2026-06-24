@@ -47,6 +47,7 @@ import {
   recordFillFromProposal,
   recordPortfolioSnapshot
 } from "./performance";
+import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, betaScaledStopPct, evaluateTradeProposal } from "./policy";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
@@ -283,10 +284,22 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       learnedContext
     });
 
-    const sizedProposals = llmProposals.map((p) => {
-      const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan);
-      return enrichOpeningProposal(sized, policy, marketScan);
-    });
+    // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
+    // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
+    // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
+    const sizedProposals = llmProposals
+      .filter((p) => {
+        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId);
+        if (gate.skip) {
+          console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
+          audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
+        }
+        return !gate.skip;
+      })
+      .map((p) => {
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan);
+        return enrichOpeningProposal(sized, policy, marketScan);
+      });
 
     const debatedProposals: TradeProposal[] = [];
     // Red Team is REQUIRED for high-conviction trades. If it could not run (no key, provider
@@ -728,6 +741,59 @@ export function deterministicBearFilter(
 }
 
 /**
+ * Pick the most-specific sufficiently-sampled realized scorecard bucket for a proposal's thesis:
+ * the thesis×regime bucket once it has ≥5 trades, else the thesis bucket. Pure. Shared by the
+ * deterministic sizer and the negative-expectancy gate so both always read the SAME realized edge.
+ */
+export function selectThesisStat(
+  regimeScorecard: ThesisRegimeStat[],
+  thesisScorecard: ThesisStat[],
+  proposal: TradeProposal
+): ThesisStat | ThesisRegimeStat | undefined {
+  const comboStat = regimeScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
+  const thesisStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
+  return comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
+}
+
+/**
+ * OPTIONAL negative-expectancy skip gate (policy.tuning.skipNegativeExpectancy, default OFF). Returns
+ * skip=true for an OPENING proposal whose thesis is PROVEN (≥ minClosedLotsForWeightShift closed
+ * lots) and whose shrunk realized avg edge — already net of the paper cost model — is ≤
+ * skipNegativeExpectancyEdgePct. Exits and unproven theses are never skipped (the sizer's
+ * exploratory floor on unproven theses is intentional). Pure aside from the realized-scorecard read.
+ */
+export function shouldSkipNegativeExpectancy(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  source: FillSource,
+  userId: string = "local"
+): { skip: boolean; reason?: string } {
+  if (!policy.tuning?.skipNegativeExpectancy) return { skip: false };
+  if (proposal.side === "sell" || proposal.side === "cover") return { skip: false }; // exits unaffected
+  const account = policy.accountNumber;
+  if (!account) return { skip: false };
+
+  const stat = selectThesisStat(
+    getThesisRegimeScorecard(account, source, {}, userId),
+    getThesisScorecard(account, source, {}, userId),
+    proposal
+  );
+  const sampleTrades = stat?.trades ?? 0;
+  const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
+  if (sampleTrades < minLots) return { skip: false }; // never skip an UNPROVEN (exploratory) thesis
+
+  const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
+  const threshold = policy.tuning?.skipNegativeExpectancyEdgePct ?? 0;
+  if (avgReturn <= threshold) {
+    return {
+      skip: true,
+      reason: `Negative-expectancy skip: thesis "${proposal.tradeThesisTag ?? "—"}" has a proven negative post-cost edge (shrunk avg ${avgReturn}% over ${sampleTrades} closed lots ≤ ${threshold}%).`
+    };
+  }
+  return { skip: false };
+}
+
+/**
  * OPTIONAL correlation cluster gate (policy.maxAvgCorrelation, default off). Returns the proposals to
  * proceed with, DROPPING any OPENING buy/short whose average daily-return correlation to the current
  * holdings exceeds the cap — the precise version of what maxPortfolioBeta approximates. Exits and
@@ -788,11 +854,8 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
   const thesisScorecard = getThesisScorecard(account, source, {}, userId);
   
-  const comboStat = regimeScorecard.find(s => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
-  const thesisStat = thesisScorecard.find(s => s.thesisTag === proposal.tradeThesisTag);
-
   // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
-  const stat = comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
+  const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
   const sampleTrades = stat?.trades ?? 0;
   const winRate = stat?.shrunkWinRate ?? 50;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
