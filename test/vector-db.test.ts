@@ -178,7 +178,9 @@ describe("vector-db", () => {
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
     expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
-      topK: 2,
+      // Reranking is on by default, so Pinecone over-fetches (overFetchK(2)=10) and Voyage reranks
+      // back down to the requested limit. The filter is the tenant-isolation contract under test.
+      topK: 10,
       filter: {
         symbol: { $eq: "AAPL" },
         userId: { $eq: "user-1" }

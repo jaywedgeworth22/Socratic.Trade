@@ -248,6 +248,9 @@ export async function reindexEightKDataset(
         symbol: event.symbol,
         source: "sec-8k",
         timestamp: event.filedAt,
+        // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+        acceptance_datetime: event.filedAt,
+        doc_type: "8-k",
         accession: event.accession,
         filingUrl: event.filingUrl,
         items: event.items ?? []
@@ -323,6 +326,9 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
             symbol: event.symbol,
             source: "sec-8k",
             timestamp: event.filedAt,
+            // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+            acceptance_datetime: event.filedAt,
+            doc_type: "8-k",
             accession: event.accession,
             filingUrl: event.filingUrl,
             items: event.items ?? []

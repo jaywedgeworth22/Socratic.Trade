@@ -20,7 +20,7 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
+import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -33,7 +33,7 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
-import type { MarketQuote, MarketScan } from "./types";
+import type { MarketQuote, MarketScan, TradeProposal } from "./types";
 
 export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
   ensureTestAccount(userId);
@@ -140,6 +140,28 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const marketEarningsYield = scanForInternals
     ? computeMarketInternals(scanForInternals).medianEarnYld
     : undefined;
+
+  // Performance-since-proposal: side-adjusted move from each proposal's referencePrice to the current
+  // price. For REJECTED proposals this is the realized counterfactual ("what it did after we passed");
+  // for accepted ones, how the entry has fared. Reuses prices already in hand (held-position quotes +
+  // the latest scan's quotes), so it's a free read — no new network calls. Degrades to undefined when
+  // no anchor or current price is available (UI then shows no badge).
+  const scanQuotes = scanForInternals?.quotesBySymbol;
+  const proposalCurrentPrice = (symbol: string): number | undefined => {
+    const sym = normalizeSymbol(symbol);
+    if (typeof currentPrices[sym] === "number" && currentPrices[sym] > 0) return currentPrices[sym];
+    const q = scanQuotes?.[sym];
+    return q && typeof q.price === "number" && q.price > 0 ? q.price : undefined;
+  };
+  const withProposalPerf = <T extends { proposal: TradeProposal }>(items: T[]): T[] =>
+    items.map((item) => {
+      const current = proposalCurrentPrice(item.proposal.symbol);
+      const pct = returnSinceProposalPct(item.proposal.referencePrice, current, item.proposal.side);
+      if (pct == null) return item;
+      return { ...item, performanceSinceProposalPct: pct, proposalReferencePrice: item.proposal.referencePrice, proposalCurrentPrice: current };
+    });
+  const recentProposalsWithPerf = withProposalPerf(recentProposals);
+  const pendingProposalsWithPerf = withProposalPerf(pendingProposals);
   const macroBoard = {
     macro,
     derived: deriveMacroMetrics(macro, { marketEarningsYield }),
@@ -190,8 +212,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     latestStrategyRun,
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId),
-    pendingProposals,
-    recentProposals,
+    pendingProposals: pendingProposalsWithPerf,
+    recentProposals: recentProposalsWithPerf,
     performance,
     thesisScorecard,
     regimeScorecard,
