@@ -61,6 +61,15 @@ export function isCongressShareAutoEnabled(): boolean {
   return congressTradeToken() !== undefined && flagOn(process.env.CONGRESS_SHARE_ENABLED);
 }
 
+/**
+ * Whether to include fundamentals[]/analyst[] in the scan-hook push. Held OFF by default: App A's #46
+ * tables don't exist until its migration runs, and pushing those rows earlier just errors them on App A
+ * (the rest of the import is unaffected). Flip this on only after App A confirms #46 is applied.
+ */
+export function congressFundamentalsShareEnabled(): boolean {
+  return flagOn(process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED);
+}
+
 function maxDailyTickers(): number {
   const v = Number(process.env.CONGRESS_SHARE_MAX_TICKERS ?? 2000);
   return Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), MAX_TICKERS_PER_POST) : 2000;
@@ -449,8 +458,9 @@ const refSentAt: Map<string, number> = refGuardHost.__congressRefSentAt ?? (refG
  * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
  * fetched for them — to App A. The scan already paid for this data, so sharing it lets App A skip its
  * own FMP calls (PR #46 import slots). Fire-and-forget friendly + self-guarded; no-op unless automatic
- * sharing is enabled; per-symbol throttled (default 6h) so it never spams. Fundamentals/analyst land
- * only once App A's #46 migration is live (extra keys are ignored before then — safe to send now).
+ * sharing is enabled; per-symbol throttled (default 6h) so it never spams. Fundamentals/analyst are
+ * HELD OFF (refs still flow) until CONGRESS_SHARE_FUNDAMENTALS_ENABLED is set — App A's #46 tables don't
+ * exist until its migration runs, and pushing those rows earlier errors them on App A.
  */
 export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Promise<CongressShareResult | null> {
   try {
@@ -458,6 +468,8 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
     const now = Date.now();
     const ttl = refTtlMs();
     const date = utcDate(now);
+    // Held OFF until App A's #46 migration is live (pushing these rows earlier errors them on App A).
+    const includeFundamentals = congressFundamentalsShareEnabled();
     const refs: CongressRef[] = [];
     const fundamentals: CongressFundamental[] = [];
     const analyst: CongressAnalyst[] = [];
@@ -468,10 +480,12 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       const sentAt = refSentAt.get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
-      const f = marketQuoteToFundamentals(quote, date);
-      if (f) fundamentals.push(f);
-      const a = marketQuoteToAnalyst(quote, date);
-      if (a) analyst.push(a);
+      if (includeFundamentals) {
+        const f = marketQuoteToFundamentals(quote, date);
+        if (f) fundamentals.push(f);
+        const a = marketQuoteToAnalyst(quote, date);
+        if (a) analyst.push(a);
+      }
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
       refSentAt.set(ref.ticker, now);
