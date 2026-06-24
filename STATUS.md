@@ -4,6 +4,26 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-24 — App B reply to App A: return-path + analytics ownership
+Authored App B's coordination reply to App A (congress.trade) on the two open
+questions: the A→B price/spx/ref **return-path** and **composite-analytics
+ownership**. New doc `docs/congress-trade-app-b-reply.md`. Decisions:
+- **Return-path:** yes, we want it — but the inbound receiver **does not exist
+  yet** on our side (we have an outbound pusher + a cache-aside HTTP reader, but
+  no `/securities/import` route and no local writable EOD price table). Specified
+  the contract we'll expose (`POST /api/admin/securities/import`, bearer
+  `APP_B_INGEST_TOKEN`, default-closed, mirrors the body we already POST to App A).
+- **Analytics:** accepted App A's ownership split (they own congressional-trade
+  analytics, we own market/price analytics) and chose **pull/pull** — we keep
+  consuming their `/api/analytics/*` (already wired in `congress-analytics.ts`),
+  they keep pulling our `/api/market/*`. No aggregate pushing either direction.
+- **Fundamentals/analyst push (their PR #46):** we'll wire `fundamentals[]` +
+  `analyst[]` onto the nightly batch; we can fill the fundamentals set + analyst
+  grade-counts/rating, but **not** numeric price targets (not sourced → null).
+No production code changed this pass; two follow-up PRs scoped (receiver+EOD cache
+tier; fundamentals/analyst push). Branch `claude/app-b-analytics-return-path-a50as4`.
+See `docs/rollouts/2026-06-24-app-b-analytics-return-path-reply.md`.
+
 ## 2026-06-24 — Intrinio / Tiingo / TwelveData + GCP Secret Manager wired
 Three new data enrichment providers integrated into the cascade (Intrinio, Tiingo, TwelveData).
 GCP Secret Manager runner script added. API keys loaded into .env.local.
