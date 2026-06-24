@@ -2832,6 +2832,7 @@ function StrategyView({
                <NumberField label="Max daily orders" value={policy.maxDailyOrders} onCommit={(v) => updatePolicy({ maxDailyOrders: Math.round(v) })} />
                <NumberField label="Max hourly notional ($)" value={policy.maxHourlyNotional} onCommit={(v) => updatePolicy({ maxHourlyNotional: v })} />
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
+               <OptionalNumberField label="Max avg correlation" value={policy.maxAvgCorrelation} placeholder="blank disables" step={0.05} onCommit={(v) => updatePolicy({ maxAvgCorrelation: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
              </div>
              <Field label="Sector Caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
