@@ -24,6 +24,20 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-06-24 (`claude/strategy-flow-live`): **Strategy Flow popup is now live/data-driven.**
+  Rewrote `app/ui/strategy-flow.tsx` from a hardcoded decorative React Flow
+  diagram into a snapshot-driven pipeline status view — node colors/details
+  reflect which data sources are enabled & have data, last-run candidate/proposal
+  counts, gate state, and execution mode (Test/Paper/Brokerage · Propose/Autonomous).
+  Wired `snapshot` through from `dashboard-client.tsx`; re-seeds on each poll.
+  tsc/build clean; 935/936 tests (only the pre-existing date-sensitive
+  `cache-provenance` flake fails). See `docs/rollouts/2026-06-24-strategy-flow-live.md`.
+  Separately, deep-reviewed Codex's recent auth/money-path/learning-loop work —
+  notable: a HIGH OOS-gate logic bug (`strategy-tuning.ts` validates data-derived
+  IC weights, not the proposal's weights) and a MEDIUM "daily order-count cap can
+  block a protective exit" (`policy.ts:178` not guarded on `isOpening`). Reported
+  to owner; not yet fixed.
+
 - 2026-06-22 (`agent/claude-congress-share`, round 2): **Bidirectional congress.trade — receiving side (default OFF).**
   Added App B's consume side on top of the push side: (1) **cache-aside reads** of App A's
   `/api/market/*` as the first tier of `fetchDailyOHLC` (saves keyed-history quota; close-only on hits)
