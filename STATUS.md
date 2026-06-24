@@ -29,6 +29,19 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`claude/per-account-isolation`, **IN PROGRESS / draft PR**): **Per-account state
+  isolation — PR 1 of 3.** Each connected account gets its own isolated state instead of all of a
+  user's accounts sharing one. Owner decision: full isolation, except shareable (fact-tier) learning
+  stays user-wide; `strategy_profiles` becomes a copyable **library** + each account has its own
+  **live** state. DONE so far (verified green): (1) schema — new `account_strategy_state` table +
+  nullable `connected_account_id` tags on strategy_runs / counterfactuals / watermarks / audit /
+  notifications; (2) core policy + system-state isolation in `getPolicy/setPolicy` (account-aware,
+  lazy-seeded, write-through mirror) + `test/per-account-policy-isolation.test.ts`. 1064/1065 tests
+  (only `cache-provenance` flake); build green. REMAINING (same branch): run-state/run-lock per
+  account, scheduler per-account, performance-learning per account, audit/notification tagging,
+  deletion purge. See `docs/design/per-account-isolation.md` +
+  `docs/rollouts/2026-06-24-per-account-isolation.md`.
+
 - 2026-06-24 (`claude/fix-evaluator-cadence-dead-field`): **Removed dead `evaluatorCadenceHours`
   policy field.** It was declared on `TradingPolicy` (`types.ts`) and accepted in the tuner
   patch-keys union, so it persisted when set but had **zero readers** — a misleading "cadence"
