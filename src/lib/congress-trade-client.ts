@@ -180,6 +180,70 @@ export async function getAppATransactions(query: AppATransactionsQuery = {}): Pr
   return json;
 }
 
+// ── App A analytics (the public "Trends" composite) ──────────────────────────
+// App A computes aggregate congressional analytics App B can't derive from raw trades alone:
+// dollar-weighted net flow, distinct-member counts, cluster buys (many members → same ticker), and
+// member performance leaderboards. Public, no token. Gated on CONGRESS_ANALYTICS_ENABLED (default off).
+
+/** Whether App B reads App A's congressional analytics overlay. */
+export function congressAnalyticsEnabled(): boolean {
+  return flagOn(process.env.CONGRESS_ANALYTICS_ENABLED);
+}
+
+export interface AppATickerLeader {
+  ticker: string;
+  name?: string;
+  tradeCount?: number;
+  buyCount?: number;
+  sellCount?: number;
+  memberCount?: number;
+  estVolumeUsd?: number;
+  estNetFlowUsd?: number;
+  netSentiment?: number;
+}
+
+/** A cluster-buy row (shape not fully fixed on App A — read tolerantly). */
+export interface AppAClusterRow {
+  ticker?: string;
+  memberCount?: number;
+  topMembers?: Array<{ memberName?: string; name?: string; filerId?: string }>;
+  [k: string]: unknown;
+}
+
+/** A member-leaderboard row (shape not fully fixed on App A — read tolerantly). */
+export interface AppAMemberRow {
+  filerId?: string;
+  memberName?: string;
+  name?: string;
+  [k: string]: unknown;
+}
+
+function analyticsQuery(opts: { window?: string; limit?: number }): string {
+  const p = new URLSearchParams();
+  if (opts.window) p.set("window", opts.window);
+  if (opts.limit) p.set("limit", String(opts.limit));
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function getAppATickerLeaderboard(opts: { window?: string; limit?: number } = {}): Promise<AppATickerLeader[]> {
+  if (!congressAnalyticsEnabled()) return [];
+  const json = await getJson<{ tickers?: AppATickerLeader[] }>(`/api/analytics/ticker-leaderboard${analyticsQuery(opts)}`, readToken());
+  return Array.isArray(json?.tickers) ? json!.tickers : [];
+}
+
+export async function getAppAClusterBuys(opts: { window?: string; limit?: number } = {}): Promise<AppAClusterRow[]> {
+  if (!congressAnalyticsEnabled()) return [];
+  const json = await getJson<{ clusters?: AppAClusterRow[] }>(`/api/analytics/cluster-buys${analyticsQuery(opts)}`, readToken());
+  return Array.isArray(json?.clusters) ? json!.clusters : [];
+}
+
+export async function getAppAMemberLeaderboard(opts: { window?: string; limit?: number } = {}): Promise<AppAMemberRow[]> {
+  if (!congressAnalyticsEnabled()) return [];
+  const json = await getJson<{ members?: AppAMemberRow[] }>(`/api/analytics/member-leaderboard${analyticsQuery(opts)}`, readToken());
+  return Array.isArray(json?.members) ? json!.members : [];
+}
+
 /**
  * Convert App A's {date, close} series to OHLCBars (close-only — open/high/low/volume undefined,
  * which OHLCBar permits). Suitable for close-series consumers (technical/returns); a price chart

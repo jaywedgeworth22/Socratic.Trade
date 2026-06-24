@@ -110,6 +110,30 @@ App A's round-2 endpoints went live (`/api/health` → `{"db":true}`). Verified 
 ingests current disclosures — switching now would replace App B's working scrapers with stale data. The
 cache-aside reads + nightly push are safe to enable now (they fall through / populate on cold cache).
 
+## Update — App A analytics overlay (#3) + origin/main merge (2026-06-22 late)
+
+Merged a large `origin/main` (scan refactor: dynamic universes, candidate/outlier-reserve settings,
+`outlierInterestScore`, fund-holdings, NextAuth, account-deletion, etc.) into the branch — only
+`STATUS.md` + `market.ts` conflicted; both resolved keeping my `shareScanRefs` hook alongside the new
+scan params. Verified clean: tsc · **1005 tests / 112 files** · build green.
+
+Then built **#3 — consume App A's analytics ("Trends" composite):**
+- `src/lib/congress-trade-client.ts`: `getAppATickerLeaderboard` / `getAppAClusterBuys` /
+  `getAppAMemberLeaderboard` + `congressAnalyticsEnabled()` (live shapes verified:
+  `ticker-leaderboard` → `{ticker,tradeCount,buyCount,sellCount,memberCount,estVolumeUsd,estNetFlowUsd,netSentiment}`).
+- `src/lib/web-sources/congress-analytics.ts` (new): daily refresh → persisted per-symbol overlay
+  (`CongressAnalytics`); `getCongressAnalyticsOverlay`; `buildMemberScores` (rank-normalized member
+  track-record, tolerant of App A's not-yet-fixed perf field).
+- `web-sources/types.ts`: `CongressAnalytics` + `SymbolWebSignal.congressAnalytics`.
+- `web-sources/index.ts`: refresh registered in `runDueRefreshes`; overlay attached in `getSymbolWebSignals`.
+- `market.ts`: `congressAnalyticsScore` folded into `outlierInterestScore` (dollar net flow + cluster +
+  member quality lift a name even when scraped netSignal is thin; net-selling = 0; default-off → no change).
+- `.env.example`: `CONGRESS_ANALYTICS_ENABLED` (+ window/ttl). +7 tests (`test/congress-analytics.test.ts`).
+
+Comprehensive coordination note for App A written: `docs/congress-trade-app-a-note.md` (data-currency,
+member-perf-field question, fundamentals/analyst push offer, per-trade-performance + richer-field asks,
+SSE backlog confirm).
+
 ## Follow-ups
 
 - Enable `CONGRESS_TRADE_READS_ENABLED` + `CONGRESS_SHARE_ENABLED` now (safe; warms as backfill runs);
