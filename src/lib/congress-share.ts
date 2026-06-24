@@ -26,13 +26,17 @@ import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSi
 
 const IMPORT_PATH = "/api/admin/securities/import";
 const DEFAULT_BASE_URL = "https://congress.trade";
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
 
-// Endpoint caps (from the import contract): ≤ ~2,000 tickers / ≤ ~20,000 closes per call.
-const MAX_REFS_PER_POST = 2000;
-const MAX_TICKERS_PER_POST = 2000;
-const CLOSE_BUDGET_PER_POST = 18_000; // stay safely under the 20k closes/call ceiling
+// Per-POST sizing. The endpoint accepts up to ~2,000 tickers / ~20,000 closes, but App A's per-call
+// work (row upserts + per-trade performance recompute) made big chunks blow the timeout in prod, so we
+// keep each POST small and bounded — many small POSTs beat one timing-out megabatch.
+const MAX_REFS_PER_POST = 2000; // refs are tiny (no closes) — fine in bulk
+const MAX_TICKERS_PER_POST = 100; // bound per-POST perf recompute on App A
+const CLOSE_BUDGET_PER_POST = 5_000; // bound per-POST upload + upsert
+const MAX_ROWS_PER_POST = 500; // insider / short-volume rows per POST
+const DEFAULT_MAX_CLOSES_PER_TICKER = 260; // ~1y; App A backfills deeper history itself
 
 // ── Configuration / gating ────────────────────────────────────────────────────
 
@@ -71,8 +75,23 @@ export function congressFundamentalsShareEnabled(): boolean {
 }
 
 function maxDailyTickers(): number {
+  // Caps the nightly UNIVERSE (chunked into MAX_TICKERS_PER_POST-sized POSTs), not the per-POST size.
   const v = Number(process.env.CONGRESS_SHARE_MAX_TICKERS ?? 2000);
-  return Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), MAX_TICKERS_PER_POST) : 2000;
+  return Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), 2000) : 2000;
+}
+
+/** Per-symbol close cap for the nightly price push — bounds payload (App A backfills deeper itself). */
+function maxClosesPerTicker(): number {
+  const v = Number(process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER ?? DEFAULT_MAX_CLOSES_PER_TICKER);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_MAX_CLOSES_PER_TICKER;
+}
+
+/** Split an array into fixed-size chunks (for insider / short-volume rows). */
+function rowChunks<T>(rows: T[], size = MAX_ROWS_PER_POST): T[][] {
+  if (rows.length === 0) return [];
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
 }
 
 function refTtlMs(): number {
@@ -405,7 +424,12 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     return { ok: true, status: res.status, response, sent };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error("[congress-share] import error:", error);
+    // Include payload sizes so a timeout/abort points at which dataset was too big.
+    console.error(
+      `[congress-share] import error: ${error} ` +
+        `(refs=${sent.refs} spx=${sent.spx} prices=${sent.prices} closes=${sent.closes} ` +
+        `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst})`
+    );
     return { ok: false, error, sent };
   } finally {
     clearTimeout(timer);
@@ -614,10 +638,15 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   }
 
   const concurrency = Number(process.env.CONGRESS_SHARE_CONCURRENCY ?? 4) || 4;
+  const maxCloses = maxClosesPerTicker();
   const priceEntries = (
     await mapPool(universe, concurrency, async (symbol) => {
       try {
-        return ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now));
+        const entry = ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now));
+        // Cap each symbol's history to the most-recent N closes — App A backfills deeper itself, and
+        // shipping full multi-year history per symbol is what blew the per-POST timeout in prod.
+        if (entry && entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
+        return entry;
       } catch {
         return null;
       }
@@ -628,16 +657,14 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const insider = customUniverse ? [] : buildInsiderImport();
   const shortVolume = customUniverse ? [] : buildShortVolumeImport();
 
-  // POST: the first chunk carries the SPX series + insider + short-volume (one fewer round-trip);
-  // remaining chunks are prices only.
-  const chunks = chunkPrices(priceEntries);
-  const head: CongressSharePayload = { spx, insider, shortVolume };
-  const payloads: CongressSharePayload[] =
-    chunks.length === 0
-      ? spx.length > 0 || insider.length > 0 || shortVolume.length > 0
-        ? [head]
-        : []
-      : chunks.map((prices, i) => (i === 0 ? { ...head, prices } : { prices }));
+  // Send each dataset as its OWN bounded POST(s) rather than one bundled megabatch: App A's per-call
+  // work (upserts + per-trade perf recompute) made big combined payloads exceed the timeout, and a
+  // bundled POST also let one oversized dataset abort the rest. Independent small POSTs each succeed.
+  const payloads: CongressSharePayload[] = [];
+  if (spx.length > 0) payloads.push({ spx });
+  for (const rows of rowChunks(insider)) payloads.push({ insider: rows });
+  for (const rows of rowChunks(shortVolume)) payloads.push({ shortVolume: rows });
+  for (const prices of chunkPrices(priceEntries)) payloads.push({ prices });
 
   const responses: unknown[] = [];
   let posts = 0;

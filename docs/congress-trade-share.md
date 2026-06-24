@@ -86,10 +86,13 @@ applied** — App A's tables don't exist until then, and pushing those rows earl
   dashboard snapshot. No unauthenticated write path is exposed.
 - Every outbound call is self-guarded (timeout + try/catch) and **never throws**
   into a scan or scheduler tick.
-- Array sizes are capped to the endpoint's limits (≤ ~2,000 tickers / ≤ ~20,000
-  closes per call): `chunkPrices()` packs by both a close budget (18,000/POST)
-  and a ticker count, truncating any single oversized ticker to its most-recent
-  closes.
+- **POSTs are kept small and split per dataset** (prod hardening, 2026-06-24): App A's per-call work
+  (row upserts + per-trade perf recompute) blew the timeout on big bundled payloads, so the nightly
+  batch now sends `spx`, `insider` (≤500/POST), `shortVolume` (≤500/POST), and `prices` (chunked by a
+  5,000-close budget + ≤100 tickers/POST) as **independent** bounded requests, caps each symbol's
+  history to ~1y (`CONGRESS_SHARE_MAX_CLOSES_PER_TICKER`, default 260 — App A backfills deeper itself),
+  and uses a 30s per-POST timeout (`CONGRESS_SHARE_TIMEOUT_MS`). Errors log the per-dataset `sent` counts
+  for diagnosis.
 - A persisted marker (`congress-share:lastDailyRunDate`) makes the nightly batch
   idempotent per UTC day.
 
