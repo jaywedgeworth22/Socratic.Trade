@@ -12,6 +12,7 @@ import {
   type SyntheticTrailingStop
 } from "./db";
 import { getBrokerGateway } from "./broker";
+import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
@@ -98,6 +99,14 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       deleteSyntheticStop(stop.id, userId);
       result.purged++;
     }
+  }
+
+  // Robinhood true broker-held protective stops (opt-in): place resting stops for open longs and
+  // cancel them on close. No-op unless policy.robinhoodBrokerStops is on and execution is live RH.
+  try {
+    await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running });
+  } catch (err) {
+    audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId);
   }
 
   // Auto-register a trailing stop for each open position when a trail % is configured.
@@ -246,6 +255,9 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });
+      // If a broker-held protective stop is resting for this symbol, cancel it now so it can't
+      // also fire on shares this synthetic exit is selling (double-sell). Best-effort.
+      await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway).catch(() => {});
       // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
       result.exited++;
