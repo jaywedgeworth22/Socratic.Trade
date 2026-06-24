@@ -29,6 +29,19 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`claude/fix-evaluator-cadence-dead-field`): **Removed dead `evaluatorCadenceHours`
+  policy field.** It was declared on `TradingPolicy` (`types.ts`) and accepted in the tuner
+  patch-keys union, so it persisted when set but had **zero readers** — a misleading "cadence"
+  control that did nothing (flagged as pre-existing in the safety-fixes A–E note). Removed from
+  both declaration sites; no default/validation/UI referenced it, so no migration needed (extra
+  keys on already-persisted policy JSON are ignored by `mergePolicy`). tsc clean; 1061/1062 tests
+  (only the pre-existing `cache-provenance` date flake); build green. See
+  `docs/rollouts/2026-06-24-fix-evaluator-cadence-dead-field.md`. NOTE: an audit for similar
+  silent free-tier caps + dead controls was run this session — top items: Voyage 21s batch delay
+  (free-tier 3 RPM → slow bulk ingest), filing-body ingest 1/tick on free tier, scan enrichment
+  capped to top 30, Alpaca price-event stream silently drops symbols >30. Documented for the owner;
+  not yet fixed (see chat).
+
 - 2026-06-24 (`claude/safety-fixes-a-e`): **Codex-review safety fixes A–E** (re-verified
   against current `main`, which had advanced past the review base). A (HIGH): OOS gate now
   validates the ACTUAL proposed scoring weights vs current weights, not the data-derived IC

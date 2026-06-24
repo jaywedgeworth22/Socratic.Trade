@@ -369,7 +369,6 @@ export interface TradingPolicy {
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
-  evaluatorCadenceHours?: number;
   runDuringExtendedHours: boolean;
   scoringWeights: ScoringWeights;
   sectorCaps: Record<string, number>;
@@ -859,7 +858,7 @@ export interface StrategyTuningPatch {
       | "maxSymbolExposurePct"
       | "maxDailyOrders"
       | "maxProposalsPerRun"
-      | "runCadenceMinutes" | "evaluatorCadenceHours"
+      | "runCadenceMinutes"
       | "strategyAuthority"
       | "runDuringExtendedHours"
     >
