@@ -49,26 +49,56 @@ PR 2 (shared strategy library + copy-to-account) a natural follow-on.
 - `npm test` — 1064/1065 (+3 new; only the pre-existing `cache-provenance` date flake).
 - `npm run build` — green.
 
-## Remaining (next slices on this branch, NOT yet done)
-- **DONE — Run-state / run-lock per account** (see item 3 above).
-- **Audit / notification account tagging** (writers pass account; readers gain
-  filter). DO THIS BEFORE learning isolation — the counterfactual loop's
-  `listSignalSnapshotAuditAfter` reads `audit_events`, so per-account learning
-  attribution requires `audit_events.connected_account_id` to be populated first
-  (the nullable column exists; the `audit()` writer must start passing the account).
-- **Performance-derived learning per account**: write/read
-  `skipped_candidate_counterfactuals` + `counterfactual_learning_watermarks` by
-  `connected_account_id`. Fact-tier `learned_context` stays user-wide (owner rule).
-  GOTCHA: `counterfactual_learning_watermarks` has `user_id` as the SOLE primary key,
-  so a nullable column is not enough for per-account watermarks — it needs a
-  PK-rebuild migration to `(user_id, connected_account_id)` (create new table → copy
-  → drop → rename, inside a versioned migration). Plan it carefully.
-- **Scheduler** (HIGHEST RISK — core trading loop): `userSchedules` keyed by
-  `(userId, accountId)`; per-account cadence rehydrate; iterate a user's
-  autonomy-active accounts. Do this last, with focused attention.
-- **Deletion purge**: extend `deleteConnectedAccount` + account-deletion to remove
-  `account_strategy_state` + per-account learning rows.
-- PR stays a **draft** until these land + full trio re-verified.
+## All slices COMPLETE (2026-06-24)
+All five slices below are implemented + verified (tsc clean; 1075/1076 — only the
+unrelated `cache-provenance` macro-cache timing flake; build green):
+
+4. **Audit / notification account tagging** (`db.ts` `audit()`, `db-notifications.ts`,
+   `notifications.ts`, `db-learning.ts`): `audit()` + `insertNotificationEvent` take an
+   optional `connectedAccountId`; the `signal_snapshot`, `proposal_rejected`, and
+   notification writes thread the active/target account. `listSignalSnapshotAuditAfter`
+   gained an account filter (rowid is globally monotonic so per-account watermarks
+   advance independently). Done before learning, since the counterfactual loop reads
+   `audit_events`.
+5. **Performance-derived learning per account** (`db-learning.ts`,
+   `counterfactual-learning.ts`, `performance.ts`, `strategy-tuning.ts`,
+   `strategy.ts`): skipped-candidate counterfactuals are tagged + read per account;
+   the tuner + dashboard readouts filter by the active account. `counterfactual_learning_watermarks`
+   is now keyed `(user_id, connected_account_id)` via a one-time PK-rebuild migration
+   (account-agnostic row uses `''` sentinel, never NULL, so composite-PK upsert is
+   well-defined). Maturation loop stays user-wide (self-dedupes via recheck guard;
+   matured rows keep their tag). Fact-tier `learned_context` stays user-wide (owner rule).
+6. **Scheduler multi-account iteration** (`scheduler.ts`, `strategy.ts`,
+   `db-api-keys.ts`, `db-profiles.ts`): `runStrategyOnce(userId, { connectedAccountId })`
+   override runs the whole loop against a target account (tuning is NOT invoked in the
+   run path, so the override is self-contained around the `policy` object). Scheduler
+   schedule state keyed `(userId, accountId)`; per-account cadence rehydrate; iterates
+   each user's connected accounts and runs each whose own `systemState === "active"`.
+   SAFETY GUARD: a freshly-seeded non-active account seeds `systemState: "halted"`
+   (never inherits `"active"` from the base policy) so the multi-account scheduler can't
+   silently start trading a dormant account; the boot interlock now reconciles every
+   account too. Added `getConnectedAccount(id, userId)`.
+7. **Deletion purge** (`db-api-keys.ts` `deleteConnectedAccount`, `account-deletion.ts`):
+   deleting a connected account purges its `account_strategy_state`, `strategy_runs`,
+   `skipped_candidate_counterfactuals`, watermark, `audit_events`, `notification_events`
+   (by `connected_account_id`) + its run lock. Full-user deletion list gained
+   `account_strategy_state` and now clears all per-account run locks (prefix LIKE).
+
+## Verification
+- `npx tsc --noEmit` clean.
+- `npm test`: 1075/1076 (sole failure = pre-existing `cache-provenance` macro-cache
+  timing flake, unrelated — confirmed it touches no isolation code).
+- `npm run build` green.
+- New tests in `test/per-account-policy-isolation.test.ts`: policy/system-state/paperMode
+  isolation, run-lock per account, cadence clock per account, watermark isolation,
+  matured-counterfactual per-account read, non-active-account-never-auto-arms safety
+  guard, deletion purge.
+
+## Follow-ups / notes
+- In-memory `accountSchedules` keeps a stale entry after an account is deleted until the
+  next process restart — harmless (the account is gone so it's never iterated).
+- Multi-account autonomy is opt-in per account by design; arming a second account
+  requires explicitly setting its `systemState` to `"active"`.
 
 ## Follow-ups / risks
 - Dual keying scheme (new state on `connected_account_id`; legacy execution tables on

@@ -195,8 +195,17 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
       policy = mergePolicy({ ...stored, scoringWeights });
     } else {
       // First touch: seed the live row from the user-level base so behavior is identical
-      // to the pre-isolation single-account path on day one.
+      // to the pre-isolation single-account path on day one — EXCEPT autonomy must never
+      // auto-arm a freshly-seeded account. Only the currently-active account inherits the
+      // base `systemState`; any other account seeds as "halted" so per-account autonomy is
+      // opt-in (mirrors reconcileAutonomyOnBoot's safe default). Without this, adding a
+      // second account while the first is "active" would silently start trading the new one
+      // the moment the multi-account scheduler iterates it.
       policy = getBasePolicy(userId);
+      const activeId = getActiveConnectedAccount(userId)?.id;
+      if (account.id !== activeId && policy.systemState === "active") {
+        policy = { ...policy, systemState: "halted" };
+      }
       writeAccountStrategyState(userId, account.id, {
         policy,
         prompt: getStrategyPrompt(userId, account.id),

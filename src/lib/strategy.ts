@@ -6,6 +6,7 @@ import {
   dailyExecutionStats,
   finishStrategyRun,
   getActiveConnectedAccount,
+  getConnectedAccount,
   getPolicy,
   getProposal,
   getStrategyPrompt,
@@ -107,10 +108,17 @@ export function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
 }
 
-export async function runStrategyOnce(userId: string = "local", options: { manual?: boolean } = {}): Promise<StrategyResult> {
+export async function runStrategyOnce(
+  userId: string = "local",
+  options: { manual?: boolean; connectedAccountId?: string } = {}
+): Promise<StrategyResult> {
+  // Target account: an explicit override (scheduler running a non-active account) or the active
+  // account. Everything below derives from this account's policy, so a single override here runs
+  // the whole loop against the targeted account.
+  const targetAccountId = options.connectedAccountId;
   // Per-account run lock: prevent overlapping runs from double-counting daily limits,
-  // scoped to the active account so a different account isn't blocked.
-  const connectedAccountId = getPolicy(userId).connectedAccountId;
+  // scoped to the target account so a different account isn't blocked.
+  const connectedAccountId = targetAccountId ?? getPolicy(userId).connectedAccountId;
   if (!acquireStrategyLock(userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
@@ -121,14 +129,14 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
   const manualRun = Boolean(options.manual);
 
   try {
-    const savedPolicy = getPolicy(userId);
+    const savedPolicy = getPolicy(userId, targetAccountId);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
     if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
     const policy: RunnablePolicy = manualRun
       ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
       : { ...savedPolicy, accountNumber };
-    const activeAccount = getActiveConnectedAccount(userId);
+    const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
 
     const gateway = getBrokerGateway(policy, userId);
@@ -608,7 +616,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     finishStrategyRun(runId, "failed", summary, userId);
-    const policy = getPolicy(userId);
+    const policy = getPolicy(userId, targetAccountId);
     result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });

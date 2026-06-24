@@ -89,6 +89,48 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getLastStrategyRunStartedAt(u, y)).toBeNull(); // account y has no runs of its own
   });
 
+  it("a newly-seeded non-active account never auto-arms autonomy (seeds 'halted')", async () => {
+    const db = await import("../src/lib/db");
+    const u = `armuser-${randomUUID()}`;
+    const active = `active-${randomUUID()}`;
+    const other = `other-${randomUUID()}`;
+
+    db.upsertConnectedAccount({ id: active, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-A", label: "Active", isActive: true });
+    db.upsertConnectedAccount({ id: other, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-O", label: "Other", isActive: false });
+
+    // Arm autonomy on the active account.
+    db.setPolicy({ ...db.getPolicy(u, active), systemState: "active" }, u, active);
+    expect(db.getPolicy(u, active).systemState).toBe("active");
+
+    // First touch of the non-active account must NOT inherit "active" — it seeds "halted" so the
+    // multi-account scheduler can't silently start trading a dormant account.
+    expect(db.getPolicy(u, other).systemState).toBe("halted");
+  });
+
+  it("deleting a connected account purges its per-account isolated state", async () => {
+    const db = await import("../src/lib/db");
+    const u = `deluser-${randomUUID()}`;
+    const keep = `keep-${randomUUID()}`;
+    const drop = `drop-${randomUUID()}`;
+
+    db.upsertConnectedAccount({ id: keep, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-K", label: "Keep", isActive: true });
+    db.upsertConnectedAccount({ id: drop, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-D", label: "Drop", isActive: false });
+
+    // Seed per-account state for both accounts.
+    db.setPolicy({ ...db.getPolicy(u, keep), maxOrderNotional: 500 }, u, keep);
+    db.setPolicy({ ...db.getPolicy(u, drop), maxOrderNotional: 600 }, u, drop);
+    db.insertStrategyRun(randomUUID(), u, drop);
+    db.setCounterfactualLearningWatermark({ userId: u, connectedAccountId: drop, lastAuditRowid: 42 });
+
+    expect(db.deleteConnectedAccount(drop, u)).toBe(true);
+
+    // Dropped account's isolated state is gone…
+    expect(db.getLastStrategyRunStartedAt(u, drop)).toBeNull();
+    expect(db.getCounterfactualLearningWatermark(u, drop)).toBeUndefined();
+    // …while the kept account's state survives untouched.
+    expect(db.getPolicy(u, keep).maxOrderNotional).toBe(500);
+  });
+
   it("counterfactual learning watermark is isolated per account", async () => {
     const db = await import("../src/lib/db");
     const u = `wmuser-${randomUUID()}`;
