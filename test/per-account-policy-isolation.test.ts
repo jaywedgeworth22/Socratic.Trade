@@ -88,4 +88,45 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getLastStrategyRunStartedAt(u, x)).not.toBeNull();
     expect(db.getLastStrategyRunStartedAt(u, y)).toBeNull(); // account y has no runs of its own
   });
+
+  it("counterfactual learning watermark is isolated per account", async () => {
+    const db = await import("../src/lib/db");
+    const u = `wmuser-${randomUUID()}`;
+    const x = `wacct-x-${randomUUID()}`;
+    const y = `wacct-y-${randomUUID()}`;
+
+    db.setCounterfactualLearningWatermark({ userId: u, connectedAccountId: x, lastAuditRowid: 100 });
+    db.setCounterfactualLearningWatermark({ userId: u, connectedAccountId: y, lastAuditRowid: 7 });
+
+    expect(db.getCounterfactualLearningWatermark(u, x)?.lastAuditRowid).toBe(100);
+    expect(db.getCounterfactualLearningWatermark(u, y)?.lastAuditRowid).toBe(7);
+    // The account-agnostic (user-wide) watermark is a distinct row, untouched by the per-account ones.
+    expect(db.getCounterfactualLearningWatermark(u)).toBeUndefined();
+  });
+
+  it("matured skipped-candidate counterfactuals read back per account", async () => {
+    const db = await import("../src/lib/db");
+    const u = `cfuser-${randomUUID()}`;
+    const x = `cacct-x-${randomUUID()}`;
+    const y = `cacct-y-${randomUUID()}`;
+
+    // One skipped candidate per account, then mature each.
+    db.insertSkippedCounterfactualCandidate({
+      userId: u, connectedAccountId: x, runId: "rx", symbol: "AAA",
+      snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 10, horizonDays: 5, targetDate: "2026-06-06"
+    });
+    db.insertSkippedCounterfactualCandidate({
+      userId: u, connectedAccountId: y, runId: "ry", symbol: "BBB",
+      snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 20, horizonDays: 5, targetDate: "2026-06-06"
+    });
+    db.markSkippedCounterfactualMatured({ id: `${u}:rx:AAA:5`, userId: u, exitDate: "2026-06-06", exitPrice: 12, returnPct: 20 });
+    db.markSkippedCounterfactualMatured({ id: `${u}:ry:BBB:5`, userId: u, exitDate: "2026-06-06", exitPrice: 22, returnPct: 10 });
+
+    const xRows = db.listMaturedSkippedCounterfactuals(u, 50, x);
+    const yRows = db.listMaturedSkippedCounterfactuals(u, 50, y);
+    expect(xRows.map((r) => r.symbol)).toEqual(["AAA"]);
+    expect(yRows.map((r) => r.symbol)).toEqual(["BBB"]);
+    // User-wide read (no account) still sees both — back-compat.
+    expect(db.listMaturedSkippedCounterfactuals(u, 50).length).toBe(2);
+  });
 });

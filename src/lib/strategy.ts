@@ -549,8 +549,8 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       runId,
       asOf: new Date().toISOString(),
       signals: [...chosenEvidence, ...skippedEvidence]
-    }, userId);
-    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25 })
+    }, userId, connectedAccountId);
+    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
@@ -1344,19 +1344,21 @@ export async function executeProposal(
 
 export function rejectProposal(proposalId: string, userId: string = "local"): void {
   const proposal = getProposal(proposalId, userId);
+  const connectedAccountId = getPolicy(userId).connectedAccountId;
   updateProposalStatus(proposalId, "rejected", undefined, undefined, undefined, userId);
   audit("proposal_rejected", {
     proposalId,
     symbol: proposal?.proposal.symbol,
     side: proposal?.proposal.side,
     action: "rejection"
-  }, userId);
+  }, userId, connectedAccountId);
   // Feed the rejection into the counterfactual pipeline so its post-rejection return matures and
   // shows up in missed-opportunity analytics — "the app analyzes it anyway". Best-effort, non-fatal.
   if (proposal) {
     try {
       recordRejectedProposalCounterfactual({
         userId,
+        connectedAccountId,
         runId: proposal.runId,
         symbol: proposal.proposal.symbol,
         refPrice: proposal.proposal.referencePrice,
@@ -1481,7 +1483,7 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14 })
+  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId })
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
