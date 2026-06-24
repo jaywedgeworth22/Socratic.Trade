@@ -299,6 +299,25 @@ function migrate(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    -- Per-account LIVE strategy state (policy + system_state), keyed by the stable
+    -- connected_accounts.id. strategy_profiles is the user-level copyable LIBRARY;
+    -- this is what an account is actually running. Seeded lazily on first read
+    -- (migration-on-read in db-profiles.getPolicy) so existing single-account users
+    -- are byte-identical day one. No hard FK — deletion is handled in code
+    -- (deleteConnectedAccount / account-deletion purge), matching the per-account
+    -- execution tables above.
+    CREATE TABLE IF NOT EXISTS account_strategy_state (
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL,
+      policy TEXT NOT NULL,
+      prompt TEXT,
+      scoring_weights TEXT,
+      system_state TEXT NOT NULL DEFAULT 'halted',
+      derived_from_profile_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, connected_account_id)
+    );
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       id TEXT PRIMARY KEY,
       run_id TEXT,
@@ -660,6 +679,27 @@ function migrate(database: Database.Database): void {
   }
   if (!connectedAccountColumns.some((column) => column.name === "capabilities")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN capabilities TEXT");
+  }
+
+  // Per-account state isolation: tag user-level state tables with the connected
+  // account they belong to (nullable — account-agnostic rows keep NULL). New per-account
+  // state (policy/system_state) lives in account_strategy_state above; these columns let
+  // run-state, performance-derived learning, audit and notifications be filtered per account.
+  const addAccountColumn = (table: string) => {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "connected_account_id")) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN connected_account_id TEXT`);
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_account ON ${table} (user_id, connected_account_id)`);
+    }
+  };
+  for (const table of [
+    "strategy_runs",
+    "skipped_candidate_counterfactuals",
+    "counterfactual_learning_watermarks",
+    "audit_events",
+    "notification_events"
+  ]) {
+    addAccountColumn(table);
   }
 
   // Rename: legacy "dry_run" proposal status is now "paper".
