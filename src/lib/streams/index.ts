@@ -1,4 +1,5 @@
 import { startAlpacaNewsStream } from "./alpaca-news-stream";
+import { startAlpacaPriceEventProducer } from "./alpaca-price-events-stream";
 import { startAlpacaTradeUpdatesStream } from "./alpaca-trade-updates-stream";
 
 // Start all enabled outbound streaming workers. Called once from instrumentation.register()
@@ -7,4 +8,5 @@ import { startAlpacaTradeUpdatesStream } from "./alpaca-trade-updates-stream";
 export function startStreams(): void {
   startAlpacaNewsStream();
   startAlpacaTradeUpdatesStream();
+  startAlpacaPriceEventProducer();
 }
