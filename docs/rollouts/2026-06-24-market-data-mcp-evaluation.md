@@ -22,6 +22,10 @@ $150/month, add Tiingo as a low-cost direct adapter if the key is active, and
 consider FinancialData.net or EODHD as cheaper broad alternatives if Intrinio is
 too expensive or licensing does not fit.
 
+During landing, `origin/main` advanced with PR #113. The overlapping roadmap,
+status, and Phase 4 docs were manually merged so the current scan/universe
+updates from `origin/main` and this MCP/provider evaluation are both preserved.
+
 ## Files
 
 - `STATUS.md`
@@ -36,6 +40,9 @@ too expensive or licensing does not fit.
 - `npx tsc --noEmit`
 - `npm test -- --run` - 99 files / 908 tests passed
 - `npm run build`
+- Post-`origin/main` merge: `npx tsc --noEmit`
+- Post-`origin/main` merge: `npm test -- --run` - 107 files / 936 tests passed
+- Post-`origin/main` merge: `npm run build`
 
 Notable setup failure:
 

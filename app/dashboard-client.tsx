@@ -42,6 +42,11 @@ import { DEFAULT_STRATEGY_PROMPT } from "@/lib/defaults";
 import { deriveMetrics } from "@/lib/derived-metrics";
 import { deriveExecutionState, type ExecutionState } from "@/lib/execution-mode";
 import {
+  STOPPED_PROPOSAL_ACTION_DESCRIPTION,
+  STOPPED_PROPOSAL_ACTION_TITLE,
+  isProposalActionStopped
+} from "@/lib/proposal-actions";
+import {
   companyTitle,
   enrichPositionsForDisplay,
   formatNotificationDisplay,
@@ -53,11 +58,29 @@ import {
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
-import { INDEX_UNIVERSES, SUPPORTED_INDEX_UNIVERSES, symbolsForPolicyUniverse, isValidAppSymbol } from "@/lib/index-universes";
+import {
+  INDEX_UNIVERSES,
+  SUPPORTED_INDEX_UNIVERSES,
+  indexUniverseSymbolCount,
+  isValidAppSymbol,
+  policyUniverseSymbolCount,
+  toggleIncludedIndex
+} from "@/lib/index-universes";
 import { DEFAULT_TICKER_LOGO_DISPLAY, isTickerLogoDisplay } from "@/lib/ticker-logos";
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
+import {
+  DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
+  DEFAULT_MARKET_SCAN_OUTLIER_RESERVE,
+  MAX_MARKET_SCAN_CANDIDATE_LIMIT,
+  MAX_MARKET_SCAN_OUTLIER_RESERVE,
+  MIN_MARKET_SCAN_CANDIDATE_LIMIT,
+  MIN_MARKET_SCAN_OUTLIER_RESERVE,
+  normalizeMarketScanCandidateLimit,
+  normalizeMarketScanOutlierReserve
+} from "@/lib/scan-settings";
 import type {
   EquityPosition,
+  ExecutionMode,
   IndexUniverse,
   MarketQuote,
   MarketScan,
@@ -101,6 +124,17 @@ type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
+type SettingsSection = "operate" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
+type AccountDeletionPreview = {
+  userId: string;
+  email?: string;
+  isLocalOperatorAccount: boolean;
+  prepared: boolean;
+  requestedAt?: string;
+  connectedAccounts: Array<{ id: string; label: string; broker: string; environment: string; accountNumber?: string; isActive: boolean }>;
+  blockers: { runningStrategyRuns: number; placingProposals: number; pendingReconciliationFills: number };
+  counts: Record<string, number>;
+};
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
 const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
@@ -108,6 +142,8 @@ const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
 const FEED_TAB_KEY = "dashboard-feed-tab";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
 const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets/v2";
+const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
+const LOCAL_OPERATOR_DELETE_PHRASE = "DELETE LOCAL OPERATOR ACCOUNT";
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
   ok: boolean;
@@ -208,6 +244,10 @@ function plainAppError(raw: string, fallback = "Something went wrong."): string 
 async function responseError(response: Response, fallback: string): Promise<Error> {
   const raw = await response.text().catch(() => "");
   return new Error(plainAppError(raw, `${fallback} (${response.status}).`));
+}
+
+function showStoppedProposalActionToast() {
+  toast.warning(STOPPED_PROPOSAL_ACTION_TITLE, { description: STOPPED_PROPOSAL_ACTION_DESCRIPTION });
 }
 
 function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
@@ -319,17 +359,44 @@ function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
   );
 }
 
-export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot }) {
+export function DashboardClient({ initialSnapshot }: { initialSnapshot: DashboardSnapshot | null }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  if (!initialSnapshot) return mounted ? <DashboardBootstrap /> : <DashboardSsrShell />;
   if (!mounted) return <DashboardSsrShell snapshot={initialSnapshot} />;
   return <DashboardApp initialSnapshot={initialSnapshot} />;
 }
 
-function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const executionState = executionStateFor(snapshot);
-  const mode = `${executionState.label} Mode`;
-  const state = snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed";
+function DashboardBootstrap() {
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function loadInitialSnapshot() {
+      try {
+        const response = await fetch("/api/dashboard", { cache: "no-store" });
+        if (!response.ok) throw await responseError(response, "Dashboard load failed");
+        const body = (await response.json()) as DashboardSnapshot;
+        if (active) setSnapshot(body);
+      } catch (error) {
+        if (active) setLoadError(error instanceof Error ? error.message : "Dashboard load failed.");
+      }
+    }
+    void loadInitialSnapshot();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (snapshot) return <DashboardApp initialSnapshot={snapshot} />;
+  return <DashboardSsrShell message={loadError ?? "Loading cockpit..."} detail={loadError ? "Refresh the page after checking the preview server." : undefined} />;
+}
+
+function DashboardSsrShell({ snapshot, message = "Loading cockpit...", detail = "Preparing the local dashboard view." }: { snapshot?: DashboardSnapshot | null; message?: string; detail?: string }) {
+  const executionState = snapshot ? executionStateFor(snapshot) : undefined;
+  const mode = executionState ? `${executionState.label} Mode` : "Loading";
+  const state = snapshot ? (snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed") : "starting";
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
       <header className="flex min-h-14 items-center justify-between border-b border-line bg-surface/70 px-4">
@@ -345,20 +412,20 @@ function DashboardSsrShell({ snapshot }: { snapshot: DashboardSnapshot }) {
             </div>
           </div>
         </div>
-        <span className="text-xs text-faint">Loading cockpit...</span>
+        <span className="text-xs text-faint">{message}</span>
       </header>
       <main className="flex flex-1 items-center justify-center p-6">
         <div className="rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted">
-          Preparing the local dashboard view.
+          {detail}
         </div>
       </main>
     </div>
   );
 }
 
-// Symbols the user SENT (watchlist + ignore list) that the server dropped as unsupported (equity-only),
-// so we can warn explicitly instead of silently losing them. The server uses the same validity rule for
-// both lists, so a dropped symbol is absent from both saved lists.
+// Symbols the user SENT (watchlist + ignore list) that the server dropped as malformed legacy entries,
+// so we can warn explicitly instead of silently losing them. Newly added unsupported custom symbols now
+// fail the save with a specific server message before reaching this diff.
 function droppedUnsupportedSymbols(sent: TradingPolicy, saved: TradingPolicy): string[] {
   const up = (list: string[] | undefined): string[] => (list ?? []).map((s) => s.trim().toUpperCase()).filter(Boolean);
   const savedSet = new Set([...up(saved.additionalSymbols), ...up(saved.blocklist)]);
@@ -468,6 +535,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [feedTab, setFeedTab] = useState<FeedTab>(readStoredFeedTab);
   const [feedOpen, setFeedOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("operate");
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
@@ -645,6 +713,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
+  function openSettings(section: SettingsSection = "operate") {
+    setSettingsInitialSection(section);
+    setSettingsOpen(true);
+  }
+
   async function updatePolicy(patch: PolicyPatch) {
     setBusy(true);
     try {
@@ -656,14 +729,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       if (!response.ok) {
         throw await responseError(response, "Policy update failed");
       }
-      // The server drops unsupported symbols (equity-only) from the watchlist / ignore list. Detect any
-      // that were silently removed and warn explicitly, so nothing is ever thought to be watched when it
-      // isn't. (Add-time validation already blocks these at the input; this also catches legacy entries.)
+      // The server drops malformed legacy symbols from the watchlist / ignore list. Detect any that were
+      // removed and warn explicitly, so nothing is ever thought to be watched when it isn't.
       const saved = (await response.json().catch(() => null)) as TradingPolicy | null;
       const dropped = saved ? droppedUnsupportedSymbols({ ...snapshot.policy, ...patch }, saved) : [];
       if (dropped.length > 0) {
         toast.warning(`Removed unsupported symbol${dropped.length > 1 ? "s" : ""}: ${dropped.join(", ")}`, {
-          description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported, so these were not kept on the list."
+          description: "These entries are not valid ticker formats, so they were not kept on the list."
         });
       } else {
         toast.success("Policy updated.");
@@ -706,6 +778,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   async function approveProposal(proposalId: string) {
+    if (isProposalActionStopped(snapshot.policy)) {
+      showStoppedProposalActionToast();
+      return;
+    }
     const pending = snapshot.pendingProposals.find((proposal) => proposal.id === proposalId);
     let requestBody: Record<string, unknown> = {};
     if (executionState.mode === "broker/live") {
@@ -741,18 +817,28 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         body: JSON.stringify(requestBody)
       });
       if (!response.ok) throw await responseError(response, "Proposal approval failed");
-      const body = (await response.json()) as { status: string; orderId?: string; reasons?: string[] };
+      const body = (await response.json()) as { status: string; orderId?: string; brokerState?: string; fillStatus?: string; reasons?: string[] };
       if (body.status === "blocked") {
         const reasonsMsg = body.reasons?.map((r) => `• ${r}`).join("\n") ?? "No reasons provided.";
         toast.warning("Proposal blocked by policy", { description: reasonsMsg });
       } else {
-        toast.success(
-          body.status === "placed"
-            ? `Order placed${body.orderId ? `: ${body.orderId}` : ""}.`
-            : body.status === "paper"
-              ? "Proposal executed in Test mode."
-              : `Result: ${body.status}`
-        );
+        if (body.status === "placed" && body.fillStatus === "pending_reconciliation") {
+          toast.info("Order accepted by broker and pending execution.", {
+            description: [
+              body.brokerState ? `Broker state: ${readableOrderState(body.brokerState)}.` : undefined,
+              body.orderId ? `Order ${body.orderId}.` : undefined,
+              "The Activity feed will update when the broker reports filled, rejected, canceled, or expired."
+            ].filter(Boolean).join(" ")
+          });
+        } else {
+          toast.success(
+            body.status === "placed"
+              ? `Order filled or placed${body.orderId ? `: ${body.orderId}` : ""}.`
+              : body.status === "paper"
+                ? "Proposal executed in Test mode."
+                : `Result: ${body.status}`
+          );
+        }
       }
       if (body.status === "placed" || body.status === "paper") await load({ quiet: true });
     } catch (approvalError) {
@@ -764,6 +850,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   async function rejectProposal(proposalId: string) {
+    if (isProposalActionStopped(snapshot.policy)) {
+      showStoppedProposalActionToast();
+      return;
+    }
     setBusy(true);
     try {
       const response = await fetch(`/api/proposals/${proposalId}/reject`, { method: "POST" });
@@ -848,7 +938,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
       : undefined;
-  const allowedCount = symbolsForPolicyUniverse(policy).length;
+  const allowedUniverse = policyUniverseSymbolCount(policy);
+  const allowedCount = allowedUniverse.count;
   
   const isDefault = policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0;
   const selectedIndexLabels = policy.includedIndices
@@ -889,7 +980,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         : "Open Settings to choose a tradable universe."
     });
     if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
-    else setSettingsOpen(true);
+    else openSettings("operate");
   }
 
   async function activateAccount(id: string) {
@@ -929,16 +1020,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     {
       label: "Universe",
       ok: allowedCount > 0,
-      detail: allowedCount > 0 ? `${allowedCount} symbols are allowed.` : "No base index or additional watchlist symbol is selected.",
+      detail: allowedCount > 0 ? `${allowedUniverse.approximate ? "About " : ""}${allowedCount} symbols are allowed.` : "No base index or additional watchlist symbol is selected.",
       actionLabel: "Settings",
-      onAction: () => setSettingsOpen(true)
+      onAction: () => openSettings("operate")
     },
     {
       label: "Risk Caps",
       ok: riskCapsReady,
       detail: riskCapsReady ? "Daily, order, and count caps are configured." : "Daily notional, order notional, and order-count caps must be positive.",
       actionLabel: "Settings",
-      onAction: () => setSettingsOpen(true)
+      onAction: () => openSettings("operate")
     },
     {
       label: executionState.label,
@@ -963,7 +1054,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
     { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={15} />, run: () => setWorkspaceTab("strategy") },
     { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
-    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => setSettingsOpen(true) },
+    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => openSettings("operate") },
     { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
     { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
     { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
@@ -1068,7 +1159,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <option value="manage">Manage Accounts...</option>
               </select>
             </div>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => setSettingsOpen(true)}>
+            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
               <SettingsIcon size={15} />
             </IconButton>
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Help" onClick={() => setHelpOpen(true)}>
@@ -1195,7 +1286,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             )}
             {workspaceTab === "market" && (
               <div className="space-y-3">
-                <MarketScanView snapshot={snapshot} onDrilldown={setDrilldownSymbol} onConfigureUniverse={() => setSettingsOpen(true)} tickerLogoDisplay={tickerLogoDisplay} />
+                <MarketScanView
+                  snapshot={snapshot}
+                  onDrilldown={setDrilldownSymbol}
+                  onConfigureUniverse={() => openSettings("operate")}
+                  onConfigureScanSettings={() => openSettings("data")}
+                  tickerLogoDisplay={tickerLogoDisplay}
+                />
                 <SmartMoneyView snapshot={snapshot} scan={drilldownScan} onDrilldown={setDrilldownSymbol} tickerLogoDisplay={tickerLogoDisplay} />
               </div>
             )}
@@ -1291,6 +1388,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
+          initialSection={settingsInitialSection}
           allowedCount={allowedCount}
           enableBlockedReason={enableBlockedReason}
           remainingNotional={remainingNotional}
@@ -1611,6 +1709,8 @@ function DecisionView({
 }) {
   const decision = snapshot.latestStrategyRun;
   const pending = snapshot.pendingProposals;
+  const executionState = executionStateFor(snapshot);
+  const recentDecisionItems = decisionLedgerItems(snapshot);
   return (
     <div className="space-y-3">
       {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
@@ -1626,11 +1726,26 @@ function DecisionView({
             {pending.map((p) => {
               const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
               const age = proposalAgeTone(p.createdAt);
+              const modeMismatch = Boolean(p.executionMode && p.executionMode !== executionState.mode);
+              const stoppedActionReason =
+                isProposalActionStopped(snapshot.policy) ? STOPPED_PROPOSAL_ACTION_DESCRIPTION : undefined;
+              const approvalBlockReason =
+                stoppedActionReason ??
+                (modeMismatch
+                    ? `Generated in ${executionModeLabel(p.executionMode)}. Current mode is ${executionModeLabel(executionState.mode)}; re-run before approving.`
+                    : undefined);
               return (
-                <div key={p.id} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
+                <div
+                  key={p.id}
+                  className={cn(
+                    "rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3",
+                    stoppedActionReason && "border-warn/60 bg-warn/10 ring-1 ring-warn/20"
+                  )}
+                >
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
                     {accountLabel && <span>{accountLabel}</span>}
-                    {p.createdAt && <span title="When this proposal was generated. Re-run before approving stale ideas.">Proposed {proposalTimeLabel(p.createdAt)}</span>}
+                    {p.executionMode && <Chip tone={modeMismatch ? "warn" : "neutral"}>{executionModeLabel(p.executionMode)}</Chip>}
+                    {p.createdAt && <ProposalTimeMeta iso={p.createdAt} label="Proposed" />}
                     {age && <Chip tone={age.tone}>{age.label}</Chip>}
                   </div>
                   <div className="flex items-center gap-2">
@@ -1652,12 +1767,57 @@ function DecisionView({
                       Revalidated {proposalTimeLabel(p.lastRevalidatedAt)}
                     </p>
                   )}
+                  {stoppedActionReason && (
+                    <div className="mt-3 flex gap-2 rounded-lg border border-warn/40 bg-warn/10 p-2 text-[12px] leading-snug text-warn">
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                      <div>
+                        <div className="font-semibold">System stopped</div>
+                        <p className="text-fg/80">{stoppedActionReason}</p>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-3 flex gap-2">
-                    <Button variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => approve(p.id)}>
-                      <Check size={14} /> Approve
-                    </Button>
-                    <Button variant="ghost" size="sm" className="flex-1" disabled={busy} onClick={() => reject(p.id)}>
-                      <XCircle size={14} /> Reject
+                    <span className="flex-1" title={approvalBlockReason}>
+                      <Button
+                        variant={approvalBlockReason ? "ghost" : "primary"}
+                        size="sm"
+                        className={cn(
+                          "w-full",
+                          approvalBlockReason && "border-warn/60 bg-warn/10 text-warn hover:bg-warn/15"
+                        )}
+                        disabled={busy}
+                        onClick={() => {
+                          if (approvalBlockReason) {
+                            toast.warning(stoppedActionReason ? STOPPED_PROPOSAL_ACTION_TITLE : "Approval unavailable.", {
+                              description: approvalBlockReason
+                            });
+                            return;
+                          }
+                          approve(p.id);
+                        }}
+                      >
+                        {approvalBlockReason ? <AlertTriangle size={14} /> : <Check size={14} />}
+                        {stoppedActionReason ? "Start to Accept" : "Accept"}
+                      </Button>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "flex-1",
+                        stoppedActionReason && "border-warn/60 bg-warn/10 text-warn hover:bg-warn/15"
+                      )}
+                      disabled={busy}
+                      onClick={() => {
+                        if (stoppedActionReason) {
+                          showStoppedProposalActionToast();
+                          return;
+                        }
+                        reject(p.id);
+                      }}
+                    >
+                      {stoppedActionReason ? <AlertTriangle size={14} /> : <XCircle size={14} />}
+                      {stoppedActionReason ? "Start to Reject" : "Reject"}
                     </Button>
                   </div>
                 </div>
@@ -1670,14 +1830,20 @@ function DecisionView({
       <Card className="overflow-hidden">
         <PanelHeader
           title="Latest Decisions"
-          subtitle={decision?.marketScan ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}` : "Run the strategy to generate a decision"}
+          subtitle={
+            recentDecisionItems.length > 0
+              ? `${Math.min(recentDecisionItems.length, 100)} recent proposal decisions`
+              : decision?.marketScan
+                ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}`
+                : "Run the strategy to generate a decision"
+          }
           icon={<Sparkles size={16} />}
         />
-        {!decision ? (
+        {!decision && recentDecisionItems.length === 0 ? (
           <EmptyState icon={<BrainCircuit size={20} />} title="No Decision Yet" hint="Set your tradable universe in Settings → Operate, then use Run to generate the agent's first decision." />
         ) : (
           <div className="space-y-3 p-4 pt-3">
-            {(() => {
+            {decision && (() => {
               const decisionSummary = decision.status === "failed"
                 ? plainAppError(decision.summary, "Strategy run failed.")
                 : decision.summary;
@@ -1692,22 +1858,26 @@ function DecisionView({
             </div>
               );
             })()}
-            {decision.proposals.map((item, i) => {
-              const accountLabel = getProposalAccountLabel(decision.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
-              const age = proposalAgeTone(decision.createdAt);
+            <div className="max-h-[760px] space-y-2 overflow-y-auto pr-1">
+            {recentDecisionItems.slice(0, 100).map((item) => {
+              const accountLabel = getProposalAccountLabel(item.accountNumber || decision?.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
+              const age = proposalAgeTone(item.createdAt);
+              const quote = scan?.quotesBySymbol[item.proposal.symbol] ?? decision?.marketScan?.quotesBySymbol[item.proposal.symbol];
+              const reasons = decisionLedgerReasons(item);
+              const hypothetical = decisionHypotheticalNote(item, quote);
               return (
-                <div key={`${item.proposal.symbol}-${i}`} className="rounded-xl border border-line bg-surface-2/50 backdrop-blur-lg p-3">
-                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                <div key={item.id} className={cn("rounded-lg border bg-surface-2/50 p-3", decisionCardTone(item.status))}>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
                     {accountLabel && <span>{accountLabel}</span>}
-                    {decision.createdAt && <span title="When this decision run completed. Re-run old decisions before acting on them.">Proposed {proposalTimeLabel(decision.createdAt)}</span>}
+                      {item.executionMode && <Chip tone="neutral">{executionModeLabel(item.executionMode)}</Chip>}
+                      {item.createdAt && <ProposalTimeMeta iso={item.createdAt} label="Decided" />}
                     {age && <Chip tone={age.tone}>{age.label}</Chip>}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {item.status === "paper" ? (
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">TEST</span>
-                    ) : (
-                      <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
-                    )}
+                    <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="flex flex-wrap items-center gap-2">
                     <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
                     <SymbolButton
                       symbol={item.proposal.symbol}
@@ -1718,19 +1888,108 @@ function DecisionView({
                       logoDisplay={tickerLogoDisplay}
                       showLogo
                     />
-                    <span className="tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(item.proposal, undefined, decision?.marketScan?.quotesBySymbol[item.proposal.symbol]?.price)} · {item.proposal.type}</span>
                     {item.proposal.tradeThesisTag && <Chip tone="accent">{item.proposal.tradeThesisTag}</Chip>}
+                    </div>
+                    <div className="rounded-md border border-line/70 bg-bg/35 px-2 py-1 text-right">
+                      <div className="tnum text-xs font-semibold text-fg" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price and exact shares can differ.">
+                        {proposalSize(item.proposal, item.estimatedNotional ?? item.review?.estimatedNotional, quote?.price)}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-wide text-faint">{labelize(item.proposal.type)}</div>
+                    </div>
                   </div>
                   <p className="mt-2 text-[13px] leading-snug text-fg/85">{item.proposal.rationale}</p>
-                  {item.reasons.length > 0 && <p className="mt-1.5 rounded bg-surface-3/50 backdrop-blur-md px-2 py-1 text-[11px] text-faint">{item.reasons.join("; ")}</p>}
+                  {(reasons.length > 0 || hypothetical) && (
+                    <div className="mt-2 grid gap-1.5 text-[11px] text-faint sm:grid-cols-2">
+                      {reasons.length > 0 && <p className="rounded-md bg-surface-3/50 px-2 py-1">{reasons.join("; ")}</p>}
+                      {hypothetical && <p className="rounded-md border border-info/20 bg-info/10 px-2 py-1 text-muted">{hypothetical}</p>}
+                    </div>
+                  )}
                 </div>
               );
             })}
+            </div>
             <p className="text-[11px] text-faint">Automated, for this single owner account — not investment advice. Past performance is not indicative of future results.</p>
           </div>
         )}
       </Card>
     </div>
+  );
+}
+
+type DecisionLedgerItem = {
+  id: string;
+  createdAt?: string;
+  accountNumber?: string;
+  executionMode?: ExecutionMode;
+  proposal: TradeProposal;
+  status: string;
+  reasons: string[];
+  estimatedNotional?: number;
+  review?: { estimatedNotional?: number };
+};
+
+function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
+  const recent = snapshot.recentProposals ?? [];
+  if (recent.length > 0) {
+    return recent.map((item) => ({
+      id: item.id,
+      createdAt: item.createdAt,
+      accountNumber: item.accountNumber,
+      executionMode: item.executionMode,
+      proposal: item.proposal,
+      status: item.status,
+      reasons: item.decision?.reasons ?? [],
+      estimatedNotional: item.estimatedNotional,
+      review: item.review
+    }));
+  }
+  const decision = snapshot.latestStrategyRun;
+  if (!decision) return [];
+  return decision.proposals.map((item, index) => ({
+    id: `${decision.runId}-${index}`,
+    createdAt: decision.createdAt,
+    accountNumber: decision.accountNumber,
+    proposal: item.proposal,
+    status: item.status,
+    reasons: item.reasons ?? []
+  }));
+}
+
+function decisionLedgerReasons(item: DecisionLedgerItem): string[] {
+  if (item.reasons.length > 0) return item.reasons;
+  if (item.status === "rejected") return ["Rejected manually."];
+  if (item.status === "expired") return ["Expired before approval."];
+  if (item.status === "withdrawn") return ["Withdrawn after revalidation."];
+  return [];
+}
+
+function decisionCardTone(status: string): string {
+  if (status === "rejected" || status === "blocked" || status === "failed" || status === "expired") return "border-down/35";
+  if (status === "proposed" || status === "placing" || status === "pending_order" || status === "pending_reconciliation") return "border-warn/35";
+  if (status === "placed" || status === "paper" || status === "filled") return "border-up/30";
+  return "border-line";
+}
+
+function decisionHypotheticalNote(item: DecisionLedgerItem, quote?: { price: number }): string | undefined {
+  if (!["rejected", "blocked", "expired", "withdrawn"].includes(item.status)) return undefined;
+  const referencePrice = item.proposal.referencePrice ?? item.proposal.limitPrice ?? item.proposal.stopPrice;
+  if (!quote || typeof referencePrice !== "number" || referencePrice <= 0) {
+    return "Counterfactual pending future quote.";
+  }
+  const sideMultiplier = item.proposal.side === "sell" || item.proposal.side === "short" ? -1 : 1;
+  const hypotheticalPct = ((quote.price - referencePrice) / referencePrice) * 100 * sideMultiplier;
+  return `Counterfactual so far: ${formatPct(hypotheticalPct)} if accepted.`;
+}
+
+function ProposalTimeMeta({ iso, label }: { iso?: string; label: string }) {
+  const display = proposalTimeParts(iso);
+  if (!display) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 normal-case tracking-normal" title={display.full}>
+      <span className="font-semibold uppercase tracking-wider text-muted">{label}</span>
+      <span className="rounded-md bg-surface-3/55 px-1.5 py-0.5 text-[10px] font-semibold text-fg">{display.absolute}</span>
+      <span className="text-[10px] font-medium text-faint">{display.relative}</span>
+    </span>
   );
 }
 
@@ -1927,11 +2186,13 @@ function MarketScanView({
   snapshot,
   onDrilldown,
   onConfigureUniverse,
+  onConfigureScanSettings,
   tickerLogoDisplay
 }: {
   snapshot: DashboardSnapshot;
   onDrilldown: (q: MarketQuote) => void;
   onConfigureUniverse: () => void;
+  onConfigureScanSettings: () => void;
   tickerLogoDisplay: TickerLogoDisplay;
 }) {
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
@@ -1997,9 +2258,14 @@ function MarketScanView({
           subtitle={scanError || undefined}
           icon={<LineChartIcon size={16} />}
           actions={
-            <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
-              <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
-            </IconButton>
+            <div className="flex items-center gap-1.5">
+              <IconButton label="Scan settings" onClick={onConfigureScanSettings}>
+                <Gauge size={14} />
+              </IconButton>
+              <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
+                <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
+              </IconButton>
+            </div>
           }
         />
         <EmptyState
@@ -2025,9 +2291,17 @@ function MarketScanView({
     : [...scan.topCandidates];
   const scanSources = formatScanSources(scan.source);
   const freshness = liveScan ? "Live" : scan.cached ? "Cached" : "Latest";
+  const candidateLimit = scan.candidateLimit ?? snapshot.policy.marketScanCandidateLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT;
+  const outlierCount = scan.outlierCandidateCount ?? 0;
+  const candidateSummary = `${scan.topCandidates.length}/${candidateLimit} candidates${outlierCount > 0 ? ` · ${outlierCount} outlier${outlierCount === 1 ? "" : "s"}` : ""}`;
   const subtitle = scan.returnedQuotes === 0
     ? `No quotes returned · ${freshness}`
-    : `${scan.returnedQuotes} quotes · ${freshness}${scanSources ? ` · Sources: ${scanSources}` : ""}`;
+    : `${scan.returnedQuotes} quotes · ${candidateSummary} · ${freshness}${scanSources ? ` · Sources: ${scanSources}` : ""}`;
+  const scanWarningText = scan.warnings && scan.warnings.length > 0
+    ? scan.warnings.length === 1
+      ? scan.warnings[0]
+      : `${scan.warnings[0]} (${scan.warnings.length - 1} more warning${scan.warnings.length === 2 ? "" : "s"})`
+    : "";
   return (
     <Card>
       <PanelHeader
@@ -2036,6 +2310,9 @@ function MarketScanView({
         icon={<LineChartIcon size={16} />}
         actions={
           <div className="flex items-center gap-1.5">
+            <IconButton label={`Scan settings: ${scan.candidateLimit ?? snapshot.policy.marketScanCandidateLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT} candidates, ${scan.outlierReserve ?? snapshot.policy.marketScanOutlierReserve ?? DEFAULT_MARKET_SCAN_OUTLIER_RESERVE} outlier reserve`} onClick={onConfigureScanSettings}>
+              <Gauge size={14} />
+            </IconButton>
             <Chip tone="neutral">{new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Chip>
             <IconButton label="Refresh scan" onClick={() => void refreshScan()} disabled={scanLoading}>
               <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
@@ -2073,7 +2350,7 @@ function MarketScanView({
       )}
       {scan.warnings && scan.warnings.length > 0 && (
         <p className="mx-4 mt-3 rounded-lg border border-warn/25 bg-warn/10 px-3 py-1.5 text-[12px] text-warn" title={scan.warnings.join("\n")}>
-          Some data sources did not respond, so this scan uses the best available quotes and enrichment.
+          {scanWarningText}
         </p>
       )}
       {sorted.length === 0 ? (
@@ -3032,6 +3309,7 @@ function ScoringWeights({ weights, onCommit }: { weights: ScoringWeights; onComm
 function SettingsContent({
   snapshot,
   policy,
+  initialSection,
   allowedCount,
   enableBlockedReason,
   remainingNotional,
@@ -3049,6 +3327,7 @@ function SettingsContent({
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
+  initialSection: SettingsSection;
   allowedCount: number;
   enableBlockedReason?: string;
   remainingNotional: number;
@@ -3064,10 +3343,11 @@ function SettingsContent({
   onRequestDecideConfirm: () => void;
   onRequestSystemToggle: () => void;
 }) {
-  type Section = "operate" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
-  const [section, setSection] = useState<Section>("operate");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
+  useEffect(() => setSection(initialSection), [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
   const [poolConsent, setPoolConsent] = useState<boolean | null>(null);
   const [poolConsentLoading, setPoolConsentLoading] = useState(false);
@@ -3153,14 +3433,18 @@ function SettingsContent({
   const liveBlockedReason = !activeAccount
     ? "Connect or select a supported account before switching out of Test mode."
     : undefined;
+  const settingsAllowedUniverse = policyUniverseSymbolCount(policy);
+  const scanCandidateLimit = normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit);
+  const scanOutlierReserve = normalizeMarketScanOutlierReserve(policy.marketScanOutlierReserve, scanCandidateLimit);
+  const scanOutlierMax = Math.min(MAX_MARKET_SCAN_OUTLIER_RESERVE, scanCandidateLimit);
 
   function addAllowlist() {
     if (draft.trim() === "") return;
     const inputs = draft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
     const invalid = inputs.filter(s => !isValidAppSymbol(s));
     if (invalid.length > 0) {
-      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
-        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      toast.error(`Invalid ticker format${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Use 1-10 letters, numbers, or dots, starting with a letter."
       });
       return;
     }
@@ -3174,8 +3458,8 @@ function SettingsContent({
     const inputs = blockDraft.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
     const invalid = inputs.filter(s => !isValidAppSymbol(s));
     if (invalid.length > 0) {
-      toast.error(`Invalid symbol${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
-        description: "Only S&P 500, Nasdaq 100, and Dow 30 components are supported."
+      toast.error(`Invalid ticker format${invalid.length > 1 ? "s" : ""}: ${invalid.join(", ")}`, {
+        description: "Use 1-10 letters, numbers, or dots, starting with a letter."
       });
       return;
     }
@@ -3185,10 +3469,7 @@ function SettingsContent({
   }
 
   function toggleIndex(index: IndexUniverse, checked: boolean) {
-    const selected = new Set(policy.includedIndices);
-    if (checked) selected.add(index);
-    else selected.delete(index);
-    updatePolicy({ includedIndices: SUPPORTED_INDEX_UNIVERSES.filter((item) => selected.has(item)) });
+    updatePolicy({ includedIndices: toggleIncludedIndex(policy.includedIndices, index, checked) });
   }
 
   function requestModeSwitch() {
@@ -3210,7 +3491,7 @@ function SettingsContent({
         <div className="overflow-x-auto">
           <Tabs
             value={section}
-            onChange={(v) => setSection(v as Section)}
+            onChange={(v) => setSection(v as SettingsSection)}
             tabs={[
               { id: "operate", label: "Operate" },
               { id: "connections", label: "Connections" },
@@ -3241,7 +3522,7 @@ function SettingsContent({
               {executionState.clarification}
             </p>
           </div>
-          <Field label="Base Indexes" hint={`${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
+          <Field label="Base Indexes" hint={`${settingsAllowedUniverse.approximate ? "About " : ""}${allowedCount} symbol${allowedCount === 1 ? "" : "s"} allowed after ignores`} className="sm:col-span-2">
             <div className="grid gap-2 sm:grid-cols-3">
               {SUPPORTED_INDEX_UNIVERSES.map((index) => {
                 const selected = policy.includedIndices.includes(index);
@@ -3260,7 +3541,9 @@ function SettingsContent({
                   >
                     <span>
                       <span className="block font-semibold">{INDEX_UNIVERSES[index].label}</span>
-                      <span className={cn("block text-xs", selected ? "text-muted" : "text-faint")}>{INDEX_UNIVERSES[index].symbols.length} symbols</span>
+                      <span className={cn("block text-xs", selected ? "text-muted" : "text-faint")}>
+                        {INDEX_UNIVERSES[index].dynamicSource ? "about " : ""}{indexUniverseSymbolCount(index)} symbols
+                      </span>
                     </span>
                     <span className={cn(
                       "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
@@ -3540,6 +3823,50 @@ function SettingsContent({
       {section === "data" && (
         <div className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-info/15 text-info">
+              <Gauge size={16} />
+            </span>
+            <div>
+              <span className="block text-sm font-medium text-fg">Market Scan candidate set</span>
+              <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                Controls how many ranked scan rows receive expensive enrichment and are sent to the LLM as the allowed opportunity set.
+                Default is {DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT}; expert guardrails allow {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-{MAX_MARKET_SCAN_CANDIDATE_LIMIT}.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumberField
+              label="Candidate cap"
+              value={scanCandidateLimit}
+              min={MIN_MARKET_SCAN_CANDIDATE_LIMIT}
+              max={MAX_MARKET_SCAN_CANDIDATE_LIMIT}
+              step={1}
+              onCommit={(v) => {
+                const nextLimit = normalizeMarketScanCandidateLimit(v);
+                updatePolicy({
+                  marketScanCandidateLimit: nextLimit,
+                  marketScanOutlierReserve: normalizeMarketScanOutlierReserve(scanOutlierReserve, nextLimit)
+                });
+              }}
+            />
+            <NumberField
+              label="Outlier reserve"
+              value={scanOutlierReserve}
+              min={MIN_MARKET_SCAN_OUTLIER_RESERVE}
+              max={scanOutlierMax}
+              step={1}
+              onCommit={(v) => updatePolicy({ marketScanOutlierReserve: normalizeMarketScanOutlierReserve(v, scanCandidateLimit) })}
+            />
+          </div>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">Candidate cap</span> is the maximum `marketScan.topCandidates` count the LLM may choose from.{" "}
+            <span className="font-medium text-muted">Outlier reserve</span> is included inside that cap and lets below-cutoff names with notable congressional, insider, short-pressure, or technical signals replace lower-ranked plain candidates.
+          </p>
+          <p className="text-xs text-faint">
+            Expert consensus: {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-12 is the lowest reasonable range for very cost-sensitive runs, 25-40 is balanced, 60-80 is broad research, and {MAX_MARKET_SCAN_CANDIDATE_LIMIT} is the practical upper bound before attention dilution usually outweighs extra breadth.
+          </p>
+
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
               <Network size={16} />
             </span>
@@ -3612,6 +3939,10 @@ function SettingsContent({
             Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
             directives go through a human approval queue and are never shared automatically.
           </p>
+          <AccountDeletionPanel
+            signedInEmail={snapshot.currentUser?.email}
+            onOpen={() => setAccountDeletionOpen(true)}
+          />
         </div>
       )}
 
@@ -3660,23 +3991,319 @@ function SettingsContent({
         confirmLabel={`Switch to ${brokerTargetLabel}`}
         tone={activeAccount?.environment === "paper" ? "primary" : "danger"}
       />
+      <AccountDeletionModal
+        open={accountDeletionOpen}
+        onClose={() => setAccountDeletionOpen(false)}
+        signedInEmail={snapshot.currentUser?.email}
+      />
     </>
+  );
+}
+
+function AccountDeletionPanel({ signedInEmail, onOpen }: { signedInEmail?: string; onOpen: () => void }) {
+  return (
+    <div className="mt-5 rounded-lg border border-down/35 bg-down/10 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-down/15 text-down">
+            <Trash2 size={16} />
+          </span>
+          <div>
+            <div className="text-sm font-semibold text-fg">Delete this app account</div>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+              Deletes app data and stored broker/API connections for {signedInEmail ?? "the signed-in user"}.
+              Broker positions, open broker orders, and your Google or Apple account are not deleted.
+            </p>
+          </div>
+        </div>
+        <Button variant="danger" size="sm" onClick={onOpen} className="sm:shrink-0">
+          <Trash2 size={14} /> Start deletion
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function accountDeletionRecordTotal(preview: AccountDeletionPreview | null): number {
+  if (!preview) return 0;
+  return Object.values(preview.counts ?? {}).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+function accountDeletionBlockerTotal(preview: AccountDeletionPreview | null): number {
+  if (!preview) return 0;
+  return Object.values(preview.blockers ?? {}).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+function AccountDeletionModal({
+  open,
+  onClose,
+  signedInEmail
+}: {
+  open: boolean;
+  onClose: () => void;
+  signedInEmail?: string;
+}) {
+  const [preview, setPreview] = useState<AccountDeletionPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [typedEmail, setTypedEmail] = useState("");
+  const [typedPhrase, setTypedPhrase] = useState("");
+  const [localOperatorPhrase, setLocalOperatorPhrase] = useState("");
+  const [ack, setAck] = useState({
+    deleteAppData: false,
+    deleteBrokerConnections: false,
+    understandBrokerPositionsRemain: false,
+    understandProviderRevocation: false,
+    understandCanSignInAgain: false,
+    confirmLocalOperator: false
+  });
+
+  const email = preview?.email ?? signedInEmail ?? "";
+  const blockers = accountDeletionBlockerTotal(preview);
+  const canSubmit =
+    Boolean(preview?.prepared) &&
+    blockers === 0 &&
+    typedEmail.trim().toLowerCase() === email.trim().toLowerCase() &&
+    typedPhrase.trim() === ACCOUNT_DELETE_PHRASE &&
+    ack.deleteAppData &&
+    ack.deleteBrokerConnections &&
+    ack.understandBrokerPositionsRemain &&
+    ack.understandProviderRevocation &&
+    ack.understandCanSignInAgain &&
+    (!preview?.isLocalOperatorAccount || (ack.confirmLocalOperator && localOperatorPhrase.trim() === LOCAL_OPERATOR_DELETE_PHRASE));
+
+  const loadPreview = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/account/deletion", { cache: "no-store" });
+      if (!response.ok) throw await responseError(response, "Deletion preview failed");
+      const next = (await response.json()) as AccountDeletionPreview;
+      setPreview(next);
+      setStep(next.prepared ? 1 : 0);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Deletion preview failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setStep(0);
+    setTypedEmail("");
+    setTypedPhrase("");
+    setLocalOperatorPhrase("");
+    setAck({
+      deleteAppData: false,
+      deleteBrokerConnections: false,
+      understandBrokerPositionsRemain: false,
+      understandProviderRevocation: false,
+      understandCanSignInAgain: false,
+      confirmLocalOperator: false
+    });
+    void loadPreview();
+  }, [open, loadPreview]);
+
+  async function prepareDeletion() {
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/account/deletion", { method: "POST" });
+      if (!response.ok) throw await responseError(response, "Deletion preparation failed");
+      setPreview((await response.json()) as AccountDeletionPreview);
+      setStep(1);
+      toast.success("Account deletion prepared.", { description: "The system was halted for this user. Review the final confirmations before deleting." });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Deletion preparation failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function deleteAccount() {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/account/deletion", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ typedEmail, typedPhrase, localOperatorPhrase, ...ack })
+      });
+      const body = await response.json().catch(() => ({})) as { logoutUrl?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "Account deletion failed.");
+      toast.success("Account deleted.", { description: "Signing out now." });
+      window.location.href = body.logoutUrl || "/logout";
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Account deletion failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function check(key: keyof typeof ack, label: React.ReactNode) {
+    return (
+      <label className="flex items-start gap-2 rounded-lg border border-line bg-bg/55 px-3 py-2 text-sm text-muted">
+        <input
+          type="checkbox"
+          className="mt-1 accent-down"
+          checked={ack[key]}
+          onChange={(e) => setAck((current) => ({ ...current, [key]: e.target.checked }))}
+        />
+        <span>{label}</span>
+      </label>
+    );
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Delete app account"
+      subtitle={email ? `Signed in as ${email}` : "Verified sign-in required"}
+      icon={<Trash2 size={18} />}
+      size="lg"
+      footer={
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+          {step < 2 ? (
+            <Button
+              variant={step === 0 ? "primary" : "danger"}
+              onClick={() => {
+                if (step === 0) void prepareDeletion();
+                else setStep(2);
+              }}
+              disabled={loading || submitting || (step === 1 && blockers > 0)}
+            >
+              {step === 0 ? <Shield size={15} /> : <Trash2 size={15} />}
+              {step === 0 ? "Prepare deletion" : "Continue to final confirmation"}
+            </Button>
+          ) : (
+            <Button variant="danger" onClick={deleteAccount} disabled={!canSubmit || submitting}>
+              <Trash2 size={15} /> Permanently delete account
+            </Button>
+          )}
+        </div>
+      }
+    >
+      <div className="space-y-4 p-5 text-sm text-muted">
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[
+            { label: "1. Review", active: step === 0, done: step > 0 },
+            { label: "2. Prepare", active: step === 1, done: step > 1 },
+            { label: "3. Confirm", active: step === 2, done: false }
+          ].map((item) => (
+            <div
+              key={item.label}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-xs font-semibold",
+                item.active ? "border-down/40 bg-down/10 text-down" : item.done ? "border-up/30 bg-up/10 text-up" : "border-line bg-surface-2/55 text-muted"
+              )}
+            >
+              {item.done ? <CheckCircle size={13} className="mr-1 inline" /> : null}{item.label}
+            </div>
+          ))}
+        </div>
+
+        {loading && <p className="rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-xs text-faint">Loading deletion preview...</p>}
+
+        {preview && (
+          <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="mb-2 text-sm font-semibold text-fg">What will be deleted from this app</div>
+              <ul className="space-y-1.5 text-xs leading-relaxed">
+                <li><CheckCircle size={13} className="mr-1 inline text-up" />Stored API keys, broker links, and Robinhood MCP OAuth tokens for this user.</li>
+                <li><CheckCircle size={13} className="mr-1 inline text-up" />Settings, strategy profiles, watchlists, alerts, chat history, memories, proposals, fills, snapshots, notifications, and private learned context.</li>
+                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, Google accounts, and Apple IDs are not deleted by this app.</li>
+              </ul>
+              <div className="mt-3 rounded-lg border border-line bg-bg/55 px-3 py-2 text-xs text-faint">
+                {preview.connectedAccounts.length} connection{preview.connectedAccounts.length === 1 ? "" : "s"} and about {accountDeletionRecordTotal(preview)} private app row{accountDeletionRecordTotal(preview) === 1 ? "" : "s"} are in scope.
+              </div>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="mb-2 text-sm font-semibold text-fg">Sign-in and provider access</div>
+              <p className="text-xs leading-relaxed">
+                Signing in later with Google or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke Agentic Trading in your Google Account third-party access page or Apple ID Sign in with Apple settings.
+              </p>
+              {preview.isLocalOperatorAccount && (
+                <p className="mt-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  This is the local operator dataset shared by the primary email aliases. It includes legacy app data and requires one extra typed phrase.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {preview && blockers > 0 && (
+          <div className="rounded-lg border border-warn/35 bg-warn/10 px-3 py-2 text-xs text-warn">
+            <AlertTriangle size={14} className="mr-1 inline" />
+            Deletion is blocked until trading activity settles:
+            {" "}
+            {preview.blockers.runningStrategyRuns} running strategy run(s), {preview.blockers.placingProposals} placing proposal(s), and {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation.
+          </div>
+        )}
+
+        {step === 0 && (
+          <div className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-xs leading-relaxed text-muted">
+            Preparing deletion halts this user's system and clears its run lock. It does not delete anything yet.
+          </div>
+        )}
+
+        {step >= 1 && (
+          <div className="space-y-2 rounded-lg border border-line bg-surface-2/45 p-3">
+            <div className="text-sm font-semibold text-fg">Required acknowledgements</div>
+            {check("deleteAppData", "Delete my app data for this signed-in user.")}
+            {check("deleteBrokerConnections", "Delete stored broker/API connections from this app.")}
+            {check("understandBrokerPositionsRemain", "I understand broker positions and open broker orders are not closed or cancelled.")}
+            {check("understandProviderRevocation", "I understand I may need to revoke Google, Apple, or broker access in those provider settings too.")}
+            {check("understandCanSignInAgain", "I understand signing in again later can create a fresh empty app account.")}
+            {preview?.isLocalOperatorAccount && check("confirmLocalOperator", "I understand this deletes the local operator dataset shared by primary aliases.")}
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Type signed-in email">
+              <input className={inputClass} value={typedEmail} onChange={(e) => setTypedEmail(e.target.value)} placeholder={email || "email@example.com"} />
+            </Field>
+            <Field label={`Type ${ACCOUNT_DELETE_PHRASE}`}>
+              <input className={inputClass} value={typedPhrase} onChange={(e) => setTypedPhrase(e.target.value)} placeholder={ACCOUNT_DELETE_PHRASE} />
+            </Field>
+            {preview?.isLocalOperatorAccount && (
+              <Field label={`Type ${LOCAL_OPERATOR_DELETE_PHRASE}`} className="sm:col-span-2">
+                <input className={inputClass} value={localOperatorPhrase} onChange={(e) => setLocalOperatorPhrase(e.target.value)} placeholder={LOCAL_OPERATOR_DELETE_PHRASE} />
+              </Field>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
 /* ───────────────────────── Form controls ───────────────────────── */
 
-function NumberField({ label, value, onCommit }: { label: string; value?: number; onCommit: (v: number) => void }) {
+function NumberField({ label, value, min = 0, max, step = 1, onCommit }: { label: string; value?: number; min?: number; max?: number; step?: number; onCommit: (v: number) => void }) {
   const [draft, setDraft] = useState(String(value ?? 0));
   useEffect(() => setDraft(String(value ?? 0)), [value]);
+  function commit() {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value ?? 0));
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max ?? parsed, parsed));
+    onCommit(clamped);
+  }
   return (
     <Field label={label}>
       <input
         type="number"
-        min="0"
+        min={min}
+        max={max}
+        step={step}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => onCommit(Number(draft))}
+        onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
@@ -3772,6 +4399,13 @@ function getProposalAccountLabel(accountNumber: string | undefined, connectedAcc
   return `Brokerage ${suffix}`;
 }
 
+function executionModeLabel(mode: ExecutionMode | undefined): string {
+  if (mode === "test/local") return "Test";
+  if (mode === "broker/paper") return "Paper";
+  if (mode === "broker/live") return "Brokerage";
+  return "Unknown Mode";
+}
+
 function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
   const activeAcc = activeConnectedAccountFor(snapshot);
   if (!activeAcc || activeAcc.broker === "test") {
@@ -3788,14 +4422,37 @@ function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
 
 function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
   if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
-  if (status === "blocked" || status === "rejected" || status === "failed") return "down";
-  if (status === "pending_approval" || status === "pending" || status === "proposed") return "warn";
+  if (status === "blocked" || status === "rejected" || status === "failed" || status === "canceled" || status === "cancelled" || status === "expired" || status === "withdrawn") return "down";
+  if (status === "pending_approval" || status === "pending" || status === "proposed" || status === "pending_order" || status === "pending_reconciliation" || status === "partially_filled" || status === "placing" || status === "placing_failed") return "warn";
   return "neutral";
 }
 
 function displayStatus(status: string): string {
   if (status === "paper") return "TEST";
-  return status.toUpperCase();
+  const labels: Record<string, string> = {
+    pending_approval: "Pending approval",
+    pending_order: "Pending order",
+    pending_reconciliation: "Pending order",
+    partially_filled: "Partially filled",
+    placing_failed: "Placement uncertain",
+    placed: "Placed",
+    proposed: "Proposed",
+    rejected: "Rejected",
+    blocked: "Blocked",
+    expired: "Expired",
+    withdrawn: "Withdrawn",
+    filled: "Filled",
+    failed: "Failed",
+    completed: "Completed",
+    approved: "Approved",
+    canceled: "Canceled",
+    cancelled: "Canceled"
+  };
+  return labels[status] ?? labelize(status);
+}
+
+function readableOrderState(state: string): string {
+  return state.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price?: number): string {
@@ -3819,10 +4476,11 @@ function relativeAge(iso?: string): string {
   if (!Number.isFinite(ageMs)) return "";
   const mins = Math.max(0, Math.round(ageMs / 60_000));
   if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m old`;
+  if (mins < 60) return `${mins} min old`;
   const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours}h old`;
-  return `${Math.round(hours / 24)}d old`;
+  if (hours < 48) return `${hours} hr old`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} old`;
 }
 
 function proposalAgeTone(iso?: string): { label: string; tone: "neutral" | "warn" | "down" } | null {
@@ -3835,10 +4493,19 @@ function proposalAgeTone(iso?: string): { label: string; tone: "neutral" | "warn
 }
 
 function proposalTimeLabel(iso?: string): string {
-  if (!iso) return "";
+  const parts = proposalTimeParts(iso);
+  return parts ? `${parts.full} · ${parts.relative}` : "";
+}
+
+function proposalTimeParts(iso?: string): { absolute: string; full: string; relative: string } | null {
+  if (!iso) return null;
   const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return "";
-  return `${date.toLocaleString()} · ${relativeAge(iso)}`;
+  if (!Number.isFinite(date.getTime())) return null;
+  return {
+    absolute: date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    full: date.toLocaleString(),
+    relative: relativeAge(iso)
+  };
 }
 
 function compare(left: unknown, right: unknown, dir: SortDir): number {
@@ -4412,22 +5079,28 @@ function IntegrationsSection({
             const info = formatAccountInfo(acc);
             const isActive = acc.id === activeId;
             return (
-              <div key={acc.id} className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3">
-                <div>
+              <div
+                key={acc.id}
+                className={cn(
+                  "flex flex-col gap-3 rounded-lg border bg-surface/50 p-3 sm:flex-row sm:items-center sm:justify-between",
+                  isActive ? "border-accent/45 bg-accent/5 shadow-[inset_3px_0_0_rgba(20,184,166,0.55)]" : "border-line"
+                )}
+              >
+                <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-fg">{info.title}</span>
                     {info.showBadges && (isActive ? (
-                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                        ACTIVE
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                        Active
                       </span>
                     ) : (
-                      <span className="rounded-full bg-surface-3/60 border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      <span className="rounded-full bg-surface-3/60 border border-line px-2 py-0.5 text-[10px] font-semibold text-muted">
                         Connected
                       </span>
                     ))}
                     {info.showBadges && isActive && policy?.strategyAuthority === "decide" && (
-                      <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-400">
-                        AUTONOMOUS
+                      <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
+                        Autonomous
                       </span>
                     )}
                   </div>
@@ -4436,33 +5109,33 @@ function IntegrationsSection({
                     {acc.capabilities && (
                       <span className="ml-2">
                         {acc.capabilities.accountType !== "brokerage" && (
-                          <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400 uppercase">
+                          <span className="mr-1 rounded bg-blue-500/10 px-1 py-0.5 text-[10px] font-medium text-blue-400">
                             {acc.capabilities.accountType === "roth_ira" ? "Roth IRA" : "Trad IRA"}
                           </span>
                         )}
                         {acc.capabilities.marginEnabled && (
-                          <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400 uppercase">Margin</span>
+                          <span className="mr-1 rounded bg-yellow-500/10 px-1 py-0.5 text-[10px] font-medium text-yellow-400">Margin</span>
                         )}
                         {acc.capabilities.shortSelling && (
-                          <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400 uppercase">Short</span>
+                          <span className="mr-1 rounded bg-orange-500/10 px-1 py-0.5 text-[10px] font-medium text-orange-400">Short</span>
                         )}
                         {acc.capabilities.optionsTrading && (
-                          <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400 uppercase">
+                          <span className="mr-1 rounded bg-purple-500/10 px-1 py-0.5 text-[10px] font-medium text-purple-400">
                             Options{acc.capabilities.optionsLevel !== undefined ? ` L${acc.capabilities.optionsLevel}` : ""}
                           </span>
                         )}
                         {acc.capabilities.cryptoTrading && (
-                          <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400 uppercase">Crypto</span>
+                          <span className="mr-1 rounded bg-cyan-500/10 px-1 py-0.5 text-[10px] font-medium text-cyan-400">Crypto</span>
                         )}
                         {acc.capabilities.futuresTrading && (
-                          <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400 uppercase">Futures</span>
+                          <span className="mr-1 rounded bg-pink-500/10 px-1 py-0.5 text-[10px] font-medium text-pink-400">Futures</span>
                         )}
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  {!isActive && <Button variant="ghost" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
+                <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+                  {!isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
                   <Button variant="ghost" size="sm" onClick={() => openAccountEditor(acc)} disabled={busy}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>

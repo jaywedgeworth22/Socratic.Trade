@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import { ThemeProvider, themeInitScript } from "./ui/theme";
 import { Toaster } from "sonner";
+import { GlobalErrorToasts } from "./ui/global-error-toasts";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://trading.jays.services"),
@@ -57,6 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           {children}
+          <GlobalErrorToasts />
           <Toaster theme="system" position="bottom-right" />
         </ThemeProvider>
       </body>

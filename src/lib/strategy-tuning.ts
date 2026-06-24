@@ -8,7 +8,7 @@ import {
 } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
-import { symbolsForPolicyUniverse } from "./index-universes";
+import { policyUniverseSymbolCount } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { fetchMacroData } from "./macro";
@@ -309,7 +309,9 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
     includedIndices: policy.includedIndices,
     additionalWatchlistCount: policy.additionalSymbols.length,
     ignoredSymbolCount: policy.blocklist?.length ?? 0,
-    allowedCount: symbolsForPolicyUniverse(policy).length,
+    allowedCount: policyUniverseSymbolCount(policy).count,
+    marketScanCandidateLimit: policy.marketScanCandidateLimit,
+    marketScanOutlierReserve: policy.marketScanOutlierReserve,
     strategyAuthority: policy.strategyAuthority,
     maxOrderNotional: policy.maxOrderNotional,
     maxDailyNotional: policy.maxDailyNotional,

@@ -253,6 +253,98 @@ describe("dashboard feed helpers", () => {
     expect(pendingApprovalEvent).toBeDefined();
     expect(pendingApprovalEvent!.title).toBe("Test Buy PLTR Awaiting Approval");
   });
+
+  it("shows an accepted broker order as pending until it fills or terminates", () => {
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "a1",
+          createdAt: "2026-06-15T22:00:00.000Z",
+          kind: "proposal_approved",
+          payload: {
+            proposalId: "p-vz",
+            result: "placed",
+            orderId: "alpaca-order-vz",
+            brokerState: "accepted",
+            fillStatus: "pending_reconciliation"
+          }
+        }
+      ],
+      notifications: [],
+      fills: [
+        {
+          id: "f-vz",
+          proposalId: "p-vz",
+          runId: "run-vz",
+          accountNumber: "APCA-PAPER",
+          source: "paper",
+          executionMode: "broker/paper",
+          symbol: "VZ",
+          side: "buy",
+          quantity: 3,
+          price: 41.25,
+          notional: 123.75,
+          status: "pending_reconciliation",
+          brokerOrderId: "alpaca-order-vz",
+          filledAt: "2026-06-15T22:00:01.000Z"
+        }
+      ],
+      orders: [
+        {
+          id: "alpaca-order-vz",
+          symbol: "VZ",
+          side: "buy",
+          type: "market",
+          state: "accepted",
+          quantity: 3,
+          filledQuantity: 0,
+          createdAt: "2026-06-15T22:00:00.000Z"
+        }
+      ],
+      symbolMetaBySymbol: { VZ: { companyName: "Verizon Communications Inc." } },
+      getProposalById: () => ({ proposal: proposal({ symbol: "VZ", side: "buy" }) })
+    });
+
+    const tradeGroup = feed.find(g => g.proposalId === "p-vz");
+    expect(tradeGroup).toBeDefined();
+    expect(tradeGroup!.status).toBe("pending_order");
+    expect(tradeGroup!.detail).toContain("Accepted by broker; awaiting fill");
+    expect(tradeGroup!.detail).toContain("Accepted");
+  });
+
+  it("shows terminal broker reconciliation as a broker outcome", () => {
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [],
+      fills: [
+        {
+          id: "f-vz-rejected",
+          proposalId: "p-vz",
+          runId: "run-vz",
+          accountNumber: "APCA-PAPER",
+          source: "paper",
+          executionMode: "broker/paper",
+          symbol: "VZ",
+          side: "buy",
+          quantity: 3,
+          price: 41.25,
+          notional: 123.75,
+          status: "rejected",
+          brokerOrderId: "alpaca-order-vz",
+          filledAt: "2026-06-16T13:35:00.000Z"
+        }
+      ],
+      orders: [],
+      symbolMetaBySymbol: { VZ: { companyName: "Verizon Communications Inc." } },
+      getProposalById: () => ({ proposal: proposal({ symbol: "VZ", side: "buy" }) })
+    });
+
+    const tradeGroup = feed.find(g => g.proposalId === "p-vz");
+    expect(tradeGroup).toBeDefined();
+    expect(tradeGroup!.status).toBe("rejected");
+    expect(tradeGroup!.detail).toContain("Broker reported Rejected");
+    expect(tradeGroup!.detail).not.toContain("Rejected manually");
+  });
 });
 
 function proposal(input: { symbol: string; side: "buy" | "sell" }) {

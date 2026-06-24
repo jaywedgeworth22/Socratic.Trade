@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPolicy } from "@/lib/db";
+import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
 import { getBrokerGateway } from "@/lib/broker";
@@ -27,7 +28,10 @@ export async function GET(request: Request) {
         positions = [];
       }
     }
-    const base = await scanMarket(symbols, positions, policy.scoringWeights, userId);
+    const base = await scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+      candidateLimit: policy.marketScanCandidateLimit,
+      outlierReserve: policy.marketScanOutlierReserve
+    });
     // Merge live broker bid/ask quotes for the top candidates, matching the strategy
     // run path (mergeQuoteData) so the table's Bid/Ask and freshest prices are populated.
     let scan = base;

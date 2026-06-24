@@ -8,6 +8,7 @@ import {
   listAudit,
   listNotificationEvents,
   listPendingProposals,
+  listRecentProposals,
   listStrategyProfiles,
   listStrategyRuns,
   listFillEvents,
@@ -87,6 +88,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
+  const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
   const activeAccountForTax = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccountForTax);
@@ -150,6 +152,12 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       return proposal ? { proposal: proposal.proposal } : undefined;
     }
   });
+  const clientAudit = audit.map((event) => ({
+    id: event.id,
+    createdAt: event.createdAt,
+    kind: event.kind,
+    payload: null
+  }));
 
   return {
     currentUser: {
@@ -167,7 +175,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     paperPortfolio: paperProjection?.portfolio,
     paperPositions: paperProjection?.positions,
     orders,
-    audit,
+    audit: clientAudit,
     auditFeed,
     unifiedFeed,
     connectedAccounts: listConnectedAccounts(userId),
@@ -175,6 +183,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId),
     pendingProposals,
+    recentProposals,
     performance,
     thesisScorecard,
     regimeScorecard,

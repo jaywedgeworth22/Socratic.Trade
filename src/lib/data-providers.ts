@@ -175,9 +175,9 @@ export function analystScoreFromMean(mean: number): number {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-// Cover the full scan candidate set (MARKET_SCAN_LIMIT, default 30) so every row the
-// dashboard displays is enriched — otherwise symbols that climb in rank after enrichment
-// would render blank. The 6h cache means only the first run is heavy.
+// Cover the default scan candidate set so every row the dashboard displays is
+// enriched — otherwise symbols that climb in rank after enrichment would render
+// blank. The 6h cache means only the first run is heavy.
 const DEFAULT_MAX_SYMBOLS = 30;
 const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
