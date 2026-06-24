@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyCongressEvent,
   applyCongressEvents,
   resetCongressEventDedupe
 } from "../src/lib/congress-trade-events";
 import { verifyCongressWebhookSecret } from "../src/lib/congress-webhook-auth";
-import { coerceCongressTrade } from "../src/lib/web-sources/congress";
+import { coerceCongressTrade, fetchAppACongressTrades } from "../src/lib/web-sources/congress";
 import { getCongressDataset, getInsiderSignals, getSymbolWebSignals } from "../src/lib/web-sources";
 
 beforeAll(() => {
@@ -150,6 +150,33 @@ describe("applyCongressEvent — dedupe + other types", () => {
     expect(results).toHaveLength(2);
     expect(results[0].ok).toBe(true);
     expect(results[1].ok).toBe(false);
+  });
+});
+
+describe("fetchAppACongressTrades — public feed with rolling from= window", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE;
+  });
+
+  it("sends a from= window bound and coerces App A rows (oldest-first feed)", async () => {
+    process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE = "on";
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          transactions: [
+            { ticker: "AAPL", memberName: "Jane Doe", chamber: "house", txType: "P", txDate: recent(3), amountMin: 1, amountMax: 2 }
+          ],
+          cursor: 1
+        }),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const trades = await fetchAppACongressTrades(Date.now());
+    expect(trades.length).toBeGreaterThanOrEqual(1);
+    expect(trades[0]).toMatchObject({ symbol: "AAPL", side: "buy", member: "Jane Doe", chamber: "house" });
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("from="); // rolling-window bound is sent
   });
 });
 

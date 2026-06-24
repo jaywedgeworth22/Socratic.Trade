@@ -34,8 +34,8 @@ export interface AppABundle {
 }
 
 export interface AppATransactionsPage {
-  transactions: unknown[]; // raw App A rows — normalized by the congress integration (App A shape TBD)
-  cursor?: string;
+  transactions: unknown[]; // raw App A rows — normalized by the congress integration
+  cursor?: string | number; // App A returns a numeric cursor_seq
   count?: number;
   total?: number;
   limit?: number;
@@ -46,6 +46,10 @@ export interface AppATransactionsPage {
 
 export interface AppATransactionsQuery {
   since?: string;
+  /** Rolling-window bounds (YYYY-MM-DD). `from` is essential: the feed is oldest-first, so without it
+   *  a recent-window pull would have to page through all historical rows to reach today's disclosures. */
+  from?: string;
+  to?: string;
   ticker?: string;
   member?: string;
   chamber?: string;
@@ -161,6 +165,8 @@ export async function getAppATransactions(query: AppATransactionsQuery = {}): Pr
   if (!congressAsCongressSourceEnabled()) return null;
   const params = new URLSearchParams();
   if (query.since) params.set("since", query.since);
+  if (query.from) params.set("from", query.from);
+  if (query.to) params.set("to", query.to);
   if (query.ticker) params.set("ticker", query.ticker);
   if (query.member) params.set("member", query.member);
   if (query.chamber) params.set("chamber", query.chamber);

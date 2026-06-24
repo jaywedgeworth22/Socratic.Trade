@@ -92,8 +92,31 @@ App A confirmed the round-2 contract; applied to App B:
 - +5 tests (volume mapping, both import builders, nightly insider/short-vol payload, public-feed no
   token-leak). **tsc clean · npm test 920 pass · build green.**
 
+## Update — live verification + `from=` window fix (2026-06-22 PM)
+
+App A's round-2 endpoints went live (`/api/health` → `{"db":true}`). Verified against the live service:
+- Cache-aside `/api/market/prices` + `/spx` return `200` with empty `closes` (cold cache); App B's
+  history tier treats that as a miss and falls through to its own providers — confirmed graceful.
+- `/api/transactions` object shape matches `coerceCongressTrade` 1:1 (`ticker`/`memberName`/`chamber`/
+  `txType`/`amountMin,Max`/`owner`/`txDate`; `filedDate` null → falls back to `txDate`).
+- **Feed is oldest-first by `cursor_seq` = insertion order, NOT trade-date** (`since=7100` returns 2012
+  rows). So `fetchAppACongressTrades` now bounds the window with App A's documented `?from=` param
+  (`from = today − (windowDays + 7)`) and pages forward — replacing the earlier (incorrect) cursor
+  early-break. `from=` filtering verified live (`from=2020-11-15` correctly drops the 2020-11-10 row).
+  +`from`/`to` added to the read client + a windowed-pull test. tsc clean · npm test 921 pass · build green.
+
+**Important:** App A's `/api/transactions` currently holds only seed/historical data (mostly 2012–2020;
+`from=2026-01-01` → `total:1`, null ticker). **Keep `CONGRESS_TRADE_AS_CONGRESS_SOURCE` OFF** until App A
+ingests current disclosures — switching now would replace App B's working scrapers with stale data. The
+cache-aside reads + nightly push are safe to enable now (they fall through / populate on cold cache).
+
 ## Follow-ups
 
-- **Wait for `GET https://congress.trade/api/health` → `{"db":true}`** (App A's round-2 deploy + prod
-  migration), then enable the flags and verify all paths end-to-end against the live service.
-- Optional: explicit seq-gap auto-repull once App A's reads are live (today: Last-Event-ID resume).
+- Enable `CONGRESS_TRADE_READS_ENABLED` + `CONGRESS_SHARE_ENABLED` now (safe; warms as backfill runs);
+  enable `CONGRESS_TRADE_AS_CONGRESS_SOURCE` only once `GET /api/transactions?from=<today-7d>` returns
+  real recent rows.
+- **High-value next (proposed):** consume App A's analytics — member track-record weighting
+  (`/api/analytics/member-leaderboard`, `/member/:filerId`), cluster-buys (`/cluster-buys`), and
+  per-trade performance (`/performance/:txId`) — to make App B's congressional signal far smarter than
+  its current equal-weight distinct-member netSignal. See the round-2 evaluation.
+- Optional: explicit seq-gap auto-repull once App A ships the SSE 24h backlog (today: Last-Event-ID resume).

@@ -583,9 +583,9 @@ export async function refreshCongress(now: number = Date.now(), force = false): 
 // We pull its /api/transactions feed and coerce rows into App B's CongressTrade shape. App A's
 // exact per-row field names are not finalized, so the coercer is tolerant (accepts common aliases).
 
-const APP_A_MAX_PAGES = 20;
-const APP_A_PAGE_SIZE = 250;
-const APP_A_MAX_TRADES = 5000;
+const APP_A_MAX_PAGES = 40;
+const APP_A_PAGE_SIZE = 500;
+const APP_A_MAX_TRADES = 20000;
 const APP_A_RETENTION_DAYS = 120; // bound the push-merged dataset (> the 60-day signal window)
 const APP_A_SOURCE = "congress.trade";
 
@@ -655,32 +655,26 @@ export function coerceCongressTrade(raw: unknown): CongressTrade | null {
 }
 
 /**
- * Pull the rolling congressional window from App A's public /api/transactions feed: page forward via
- * `cursor` (newest-first) and stop once trades fall before the signal window (+ a small buffer), or at
- * the page/row cap. Bounded so it can't run away if the feed never reports the window edge.
+ * Pull the rolling congressional window from App A's public /api/transactions feed. App A's feed is
+ * oldest-first by `cursor_seq`, so we bound it server-side with `from=<window start>` (the documented
+ * rolling-window param) and page forward via `cursor` until the window is exhausted. Without `from`
+ * a recent-window pull would have to walk all historical rows to reach today's disclosures.
  */
 export async function fetchAppACongressTrades(now: number = Date.now()): Promise<CongressTrade[]> {
   const out: CongressTrade[] = [];
-  const cutoff = now - (windowDays() + 14) * 24 * 60 * 60_000;
+  const from = new Date(now - (windowDays() + 7) * 24 * 60 * 60_000).toISOString().slice(0, 10);
   let since: string | undefined;
   for (let page = 0; page < APP_A_MAX_PAGES; page++) {
-    const res = await getAppATransactions({ ...(since ? { since } : {}), limit: APP_A_PAGE_SIZE });
+    const res = await getAppATransactions({ from, limit: APP_A_PAGE_SIZE, ...(since ? { since } : {}) });
     if (!res || res.transactions.length === 0) break;
-    let reachedWindowEdge = false;
     for (const raw of res.transactions) {
       const t = coerceCongressTrade(raw);
-      if (!t) continue;
-      const ts = Date.parse(t.tradedAt);
-      if (Number.isFinite(ts) && ts < cutoff) {
-        reachedWindowEdge = true; // older than the window — drop it and stop after this page
-        continue;
-      }
-      out.push(t);
+      if (t) out.push(t);
       if (out.length >= APP_A_MAX_TRADES) return out;
     }
-    if (reachedWindowEdge) break;
-    if (!res.cursor || res.cursor === since) break; // no more pages / no forward progress
-    since = res.cursor;
+    const next = res.cursor === undefined || res.cursor === null ? undefined : String(res.cursor);
+    if (!next || next === since) break; // no more pages / no forward progress
+    since = next;
   }
   return out;
 }

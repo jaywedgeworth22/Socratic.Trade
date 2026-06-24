@@ -24,13 +24,20 @@ flows through the same path via `/api/market/spx`.
 
 ## 2. App A as the congressional source (`CONGRESS_TRADE_AS_CONGRESS_SOURCE`)
 When on, `refreshCongress` (`src/lib/web-sources/congress.ts`) swaps its scraper cascade (Senate eFD /
-Apify / Capitol Trades) for a single App A adapter, `fetchAppACongressTrades`, that pages App A's
-**public** `/api/transactions` feed (no token) forward via `cursor` over a rolling ~90-day window
-(stops when trades fall before the signal window, bounded by page/row caps), coercing rows into App B's
-`CongressTrade` shape. `coerceCongressTrade` maps App A's confirmed fields (`ticker→symbol`,
-`memberName/fullName→member`, `txType` `P`→buy / `S`,`S_partial`→sell, `amountMin/Max`, `owner`,
-`txDate→tradedAt`, `filedDate→disclosedAt`) and rejects unparseable dates. A 0-result pull keeps the
-prior dataset (never wipes).
+Apify / Capitol Trades) for a single App A adapter, `fetchAppACongressTrades`, that pulls App A's
+**public** `/api/transactions` feed (no token). The feed is **oldest-first by `cursor_seq`
+(insertion order, NOT trade-date order)**, so the pull bounds the window server-side with
+`?from=<today − (signal window + 7d)>` (App A's documented rolling-window param) and pages forward via
+`cursor` until the window is exhausted (page/row capped). `coerceCongressTrade` maps App A's confirmed
+fields (`ticker→symbol`, `memberName/fullName→member`, `txType` `P`→buy / `S`,`S_partial`→sell,
+`amountMin/Max`, `owner`, `txDate→tradedAt`, `filedDate→disclosedAt`; `filedDate` may be null → falls
+back to `txDate`) and rejects unparseable dates. A 0-result pull keeps the prior dataset (never wipes).
+
+> **Do not enable this flag until App A's feed carries CURRENT disclosures.** As of 2026-06-22 App A's
+> `/api/transactions` is still seed/historical (mostly 2012–2020; `from=2026-01-01` → `total:1` with a
+> null ticker). Switching the source now would replace App B's working scrapers (which fetch current
+> disclosures) with stale data — a regression. The flag + `from=` pull are validated live; just keep it
+> OFF until `GET /api/transactions?from=<today-7d>` returns real recent rows.
 
 ## 3. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,

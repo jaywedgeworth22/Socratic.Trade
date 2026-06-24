@@ -41,9 +41,14 @@ steps materially change.
   `/api/transactions` feed is **public** (no token); cache-aside `closes` carry `volume`; and the nightly
   **push** now also forwards `insider[]` + `shortVolume[]` (App A added the import slots) +
   `volume`-on-closes (`buildInsiderImport`/`buildShortVolumeImport` from App B's cached web-sources).
-  **Blocker/next:** App A's round-2 endpoints are merged, live after its next deploy — **wait for
-  `GET /api/health` → `{"db":true}`**, then enable the flags + verify end-to-end. See
-  `docs/rollouts/2026-06-22-congress-trade-consume.md`.
+  **Live-verified (2026-06-22 PM):** App A endpoints up (`/api/health` `db:true`); cache-aside reads
+  cold→fall through cleanly; `/api/transactions` shape matches the coercer. Fixed: the feed is
+  oldest-first by `cursor_seq` (insertion order), so `fetchAppACongressTrades` now bounds the window via
+  App A's `?from=` param (verified live). **Real gate:** App A's transactions feed is still seed/historical
+  (mostly 2012–2020) — keep `CONGRESS_TRADE_AS_CONGRESS_SOURCE` OFF until it carries current disclosures;
+  cache-aside reads + nightly push are safe to enable now. **Top next:** consume App A analytics
+  (member track-record weighting, cluster-buys, per-trade performance) to upgrade the congressional signal.
+  See `docs/rollouts/2026-06-22-congress-trade-consume.md`.
 - 2026-06-22 (`agent/claude-congress-share`): **Outbound data-share to congress.trade (App A) — default OFF.**
   New `src/lib/congress-share.ts` forwards the company `refs` + daily `closes` + `^GSPC` series this app
   already fetches to App A's idempotent `POST /api/admin/securities/import`, so App A can avoid spending the
