@@ -21,6 +21,7 @@ import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
 import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "./performance";
+import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
@@ -93,6 +94,13 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const activeAccountForTax = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccountForTax);
   const scorecardSource = fillSourceForExecutionMode(executionState);
+  // SPY-benchmark scoreboard for the active execution mode's equity curve. Best-effort: a SPY fetch
+  // failure or sparse history simply leaves performance.benchmark undefined (UI shows "—").
+  if (performance) {
+    const curve = scorecardSource === "live" ? performance.liveEquityCurve : performance.paperEquityCurve;
+    const benchmark = await computeSpyBenchmark(curve, userId).catch(() => null);
+    if (benchmark) performance.benchmark = benchmark;
+  }
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const tax = accountNumber

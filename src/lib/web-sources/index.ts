@@ -44,10 +44,17 @@ import {
   setTechnicalWatchlist,
   technicalEnabled
 } from "./technical";
+import {
+  congressAnalyticsEnabled,
+  getCongressAnalyticsOverlay,
+  isCongressAnalyticsRefreshDue,
+  refreshCongressAnalytics
+} from "./congress-analytics";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
-export type { CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
+export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
+export { getCongressAnalyticsOverlay, refreshCongressAnalytics } from "./congress-analytics";
 export { getCongressDataset, getCongressSignals, refreshCongress } from "./congress";
 export { getInsiderDataset, getInsiderSignals, refreshInsider } from "./sec";
 export { getFinraDataset, getShortVolumeSignals, refreshFinra } from "./finra";
@@ -123,6 +130,15 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "insider", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  // App A (congress.trade) analytics overlay — the Trends composite (dollar net flow, cluster buys,
+  // member track-record). Network pull, so it lives here in the cadence-gated refresh; default off.
+  if (congressAnalyticsEnabled() && isCongressAnalyticsRefreshDue(now)) {
+    try {
+      results.push(await refreshCongressAnalytics(now));
+    } catch (error) {
+      results.push({ id: "congress-analytics", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
   if (finraEnabled() && isFinraRefreshDue(now)) {
     try {
       results.push(await refreshFinra(now));
@@ -161,6 +177,19 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
     const entry = (out[symbol] ??= { bulletins: [] });
     entry.congress = signal;
     entry.bulletins.push(signal.bulletin);
+  }
+  // App A analytics overlay (dollar net flow / cluster / member quality) — additive to the scraped
+  // signal; only present when CONGRESS_ANALYTICS_ENABLED is on and the refresh has populated it.
+  const analytics = congressAnalyticsEnabled() ? getCongressAnalyticsOverlay(symbols) : {};
+  for (const [symbol, a] of Object.entries(analytics)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.congressAnalytics = a;
+    if (a.cluster) {
+      entry.bulletins.push(
+        `Congress cluster buy${a.clusterMemberCount ? ` (${a.clusterMemberCount} members)` : ""}` +
+          (typeof a.netFlowUsd === "number" ? `, net $${Math.round(a.netFlowUsd).toLocaleString()}` : "")
+      );
+    }
   }
   const insider = insiderEnabled() ? getInsiderSignals(symbols, now) : {};
   for (const [symbol, signal] of Object.entries(insider)) {

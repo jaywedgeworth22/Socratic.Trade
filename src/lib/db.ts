@@ -400,6 +400,24 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
 
+    -- Broker-held protective stops (Robinhood): the resting stop-market order id placed at the broker
+    -- for an open position, so it can be cancelled when the position closes (no orphaned stops). One
+    -- per (user, account, symbol). Distinct from synthetic_trailing_stops, which is the app-side monitor.
+    CREATE TABLE IF NOT EXISTS broker_protective_stops (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      broker_order_id TEXT NOT NULL,
+      quantity REAL NOT NULL,
+      stop_price REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'resting',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, account_number, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_broker_protective_stops_account ON broker_protective_stops (user_id, account_number);
+
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
       id TEXT PRIMARY KEY,
