@@ -129,12 +129,41 @@ export interface CongressShortVol {
   elevated: boolean;
 }
 
+/** Fundamentals row in App A's import shape (PR #46). Keyed by ticker+date; missing → null on A. */
+export interface CongressFundamental {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  peRatio?: number;
+  eps?: number;
+  beta?: number;
+  dividendYield?: number;
+  week52High?: number;
+  week52Low?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+}
+
+/** Analyst-consensus row in App A's import shape (PR #46). App B has no price targets → omitted. */
+export interface CongressAnalyst {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  rating?: string; // blended consensus label
+  strongBuy?: number;
+  buy?: number;
+  hold?: number;
+  sell?: number;
+  strongSell?: number;
+}
+
 export interface CongressSharePayload {
   refs?: CongressRef[];
   spx?: CongressClose[];
   prices?: CongressPrice[];
   insider?: CongressInsider[];
   shortVolume?: CongressShortVol[];
+  fundamentals?: CongressFundamental[];
+  analyst?: CongressAnalyst[];
 }
 
 export interface CongressShareResult {
@@ -145,7 +174,16 @@ export interface CongressShareResult {
   response?: unknown;
   error?: string;
   /** Counts actually transmitted across all POSTs in this call. */
-  sent: { refs: number; spx: number; prices: number; closes: number; insider: number; shortVolume: number };
+  sent: {
+    refs: number;
+    spx: number;
+    prices: number;
+    closes: number;
+    insider: number;
+    shortVolume: number;
+    fundamentals: number;
+    analyst: number;
+  };
 }
 
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
@@ -169,6 +207,63 @@ export function marketQuoteToRef(
     ref.marketCap = q.marketCap;
   }
   return ref;
+}
+
+function numOrUndef(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Map a scanned MarketQuote's fundamentals to App A's import row (PR #46). `date` is the as-of day.
+ * Returns null when the quote carries no fundamental values (nothing worth sending). App A saves App B's
+ * FMP quota by accepting these — App B already fetched them during the scan.
+ */
+export function marketQuoteToFundamentals(
+  q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
+  date: string
+): CongressFundamental | null {
+  const ticker = normalizeSymbol(q.symbol);
+  if (!ticker) return null;
+  const row: CongressFundamental = { ticker, date };
+  const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
+  const eps = numOrUndef(q.eps); if (eps !== undefined) row.eps = eps;
+  const beta = numOrUndef(q.beta); if (beta !== undefined) row.beta = beta;
+  const dy = numOrUndef(q.dividendYield); if (dy !== undefined) row.dividendYield = dy;
+  const hi = numOrUndef(q.fiftyTwoWeekHigh); if (hi !== undefined) row.week52High = hi;
+  const lo = numOrUndef(q.fiftyTwoWeekLow); if (lo !== undefined) row.week52Low = lo;
+  const fcf = numOrUndef(q.fcfYield); if (fcf !== undefined) row.fcfYield = fcf;
+  const de = numOrUndef(q.debtToEquity); if (de !== undefined) row.debtToEquity = de;
+  const eg = numOrUndef(q.epsGrowth); if (eg !== undefined) row.epsGrowth = eg;
+  // Only the ticker+date keys present → nothing real to share.
+  return Object.keys(row).length > 2 ? row : null;
+}
+
+/**
+ * Map a scanned MarketQuote's analyst consensus to App A's import row (PR #46). Blends the per-source
+ * rating counts App B holds; App B has no price targets, so those are omitted (App A fills null).
+ */
+export function marketQuoteToAnalyst(
+  q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource">,
+  date: string
+): CongressAnalyst | null {
+  const ticker = normalizeSymbol(q.symbol);
+  if (!ticker) return null;
+  const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
+  let haveCounts = false;
+  for (const detail of Object.values(q.analystBySource ?? {})) {
+    if (!detail?.counts) continue;
+    haveCounts = true;
+    counts.strongBuy += detail.counts.strongBuy ?? 0;
+    counts.buy += detail.counts.buy ?? 0;
+    counts.hold += detail.counts.hold ?? 0;
+    counts.sell += detail.counts.sell ?? 0;
+    counts.strongSell += detail.counts.strongSell ?? 0;
+  }
+  if (!q.analystRating && !haveCounts) return null;
+  const row: CongressAnalyst = { ticker, date };
+  if (q.analystRating) row.rating = q.analystRating;
+  if (haveCounts) Object.assign(row, counts);
+  return row;
 }
 
 /** Convert OHLC bars to deduped, date-sorted {date, close, volume?} closes (drops invalid bars). */
@@ -269,11 +364,14 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     prices: payload.prices?.length ?? 0,
     closes: countCloses(payload),
     insider: payload.insider?.length ?? 0,
-    shortVolume: payload.shortVolume?.length ?? 0
+    shortVolume: payload.shortVolume?.length ?? 0,
+    fundamentals: payload.fundamentals?.length ?? 0,
+    analyst: payload.analyst?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
-  if (sent.refs === 0 && sent.spx === 0 && sent.prices === 0 && sent.insider === 0 && sent.shortVolume === 0) {
+  const total = sent.refs + sent.spx + sent.prices + sent.insider + sent.shortVolume + sent.fundamentals + sent.analyst;
+  if (total === 0) {
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
@@ -348,15 +446,21 @@ const refGuardHost = globalThis as unknown as { __congressRefSentAt?: Map<string
 const refSentAt: Map<string, number> = refGuardHost.__congressRefSentAt ?? (refGuardHost.__congressRefSentAt = new Map());
 
 /**
- * Forward the scan's candidate company refs to App A. Fire-and-forget friendly + self-guarded.
- * No-op unless automatic sharing is enabled. Per-symbol throttled (default 6h) so it never spams.
+ * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
+ * fetched for them — to App A. The scan already paid for this data, so sharing it lets App A skip its
+ * own FMP calls (PR #46 import slots). Fire-and-forget friendly + self-guarded; no-op unless automatic
+ * sharing is enabled; per-symbol throttled (default 6h) so it never spams. Fundamentals/analyst land
+ * only once App A's #46 migration is live (extra keys are ignored before then — safe to send now).
  */
 export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Promise<CongressShareResult | null> {
   try {
     if (!isCongressShareAutoEnabled()) return null;
     const now = Date.now();
     const ttl = refTtlMs();
+    const date = utcDate(now);
     const refs: CongressRef[] = [];
+    const fundamentals: CongressFundamental[] = [];
+    const analyst: CongressAnalyst[] = [];
     const claimed: string[] = [];
     for (const quote of scan.topCandidates ?? []) {
       const ref = marketQuoteToRef(quote);
@@ -364,13 +468,17 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       const sentAt = refSentAt.get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
+      const f = marketQuoteToFundamentals(quote, date);
+      if (f) fundamentals.push(f);
+      const a = marketQuoteToAnalyst(quote, date);
+      if (a) analyst.push(a);
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
       refSentAt.set(ref.ticker, now);
       if (refs.length >= MAX_REFS_PER_POST) break;
     }
     if (refs.length === 0) return null;
-    const result = await shareWithCongressTrade({ refs });
+    const result = await shareWithCongressTrade({ refs, fundamentals, analyst });
     if (!result.ok) {
       // Roll back the throttle so a later scan retries the failed refs (don't spam on success).
       for (const ticker of claimed) refSentAt.delete(ticker);

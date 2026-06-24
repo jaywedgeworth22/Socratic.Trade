@@ -19,6 +19,8 @@ import {
   chunkPrices,
   isCongressDailyShareDue,
   isCongressShareAutoEnabled,
+  marketQuoteToAnalyst,
+  marketQuoteToFundamentals,
   marketQuoteToRef,
   ohlcBarsToCloses,
   ohlcBarsToPriceEntry,
@@ -376,5 +378,61 @@ describe("runCongressDailyShare — insider + short-volume on the nightly batch"
     const firstBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
     expect(firstBody.insider.length).toBeGreaterThanOrEqual(1);
     expect(firstBody.shortVolume.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("marketQuoteToFundamentals / marketQuoteToAnalyst", () => {
+  it("maps fundamentals (52w aliases), omits absent fields, null when empty", () => {
+    expect(
+      marketQuoteToFundamentals(
+        { symbol: "aapl", peRatio: 25, eps: 6, beta: 1.2, dividendYield: 0.5, fiftyTwoWeekHigh: 200, fiftyTwoWeekLow: 120, fcfYield: 3, debtToEquity: 1.5, epsGrowth: 10 },
+        "2026-06-23"
+      )
+    ).toMatchObject({
+      ticker: "AAPL", date: "2026-06-23", peRatio: 25, eps: 6, beta: 1.2, dividendYield: 0.5,
+      week52High: 200, week52Low: 120, fcfYield: 3, debtToEquity: 1.5, epsGrowth: 10
+    });
+    expect(marketQuoteToFundamentals({ symbol: "AAPL" }, "2026-06-23")).toBeNull();
+  });
+
+  it("blends analyst counts across sources, keeps rating, null when empty", () => {
+    const a = marketQuoteToAnalyst(
+      {
+        symbol: "AAPL",
+        analystRating: "Buy",
+        analystBySource: {
+          fmp: { score: 80, label: "Buy", counts: { strongBuy: 2, buy: 3, hold: 1, sell: 0, strongSell: 0 } },
+          finnhub: { score: 75, label: "Buy", counts: { strongBuy: 1, buy: 2, hold: 2, sell: 1, strongSell: 0 } }
+        }
+      },
+      "2026-06-23"
+    );
+    expect(a).toMatchObject({ ticker: "AAPL", date: "2026-06-23", rating: "Buy", strongBuy: 3, buy: 5, hold: 3, sell: 1, strongSell: 0 });
+    expect(marketQuoteToAnalyst({ symbol: "AAPL" }, "2026-06-23")).toBeNull();
+  });
+});
+
+describe("shareScanRefs — fundamentals + analyst", () => {
+  it("includes fundamentals + analyst for candidates in the same POST", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const scan = {
+      topCandidates: [
+        {
+          symbol: "AAPL",
+          peRatio: 25,
+          analystRating: "Buy",
+          analystBySource: { fmp: { score: 80, label: "Buy", counts: { strongBuy: 2, buy: 1, hold: 0, sell: 0, strongSell: 0 } } }
+        }
+      ]
+    } as unknown as Parameters<typeof shareScanRefs>[0];
+    const res = await shareScanRefs(scan);
+    expect(res?.ok).toBe(true);
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.refs[0].ticker).toBe("AAPL");
+    expect(body.fundamentals[0]).toMatchObject({ ticker: "AAPL", peRatio: 25 });
+    expect(body.analyst[0]).toMatchObject({ ticker: "AAPL", rating: "Buy", strongBuy: 2 });
   });
 });
