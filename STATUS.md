@@ -25,6 +25,15 @@ steps materially change.
 ## Active Focus
 
 - 2026-06-22 (`feat/correlation-cluster-gate`): **Optional correlation cluster gate (default off).** `policy.maxAvgCorrelation` (0–1) — the precise version of `maxPortfolioBeta`: an OPENING buy/short is SKIPPED before execution when the candidate's avg daily-return correlation (Pearson, ~90 common trading days, via `fetchDailyOHLC` bars) to current holdings exceeds the cap. New `src/lib/correlation.ts` (pure `closesByDate`/`alignedReturns`/`pearson` + async `avgReturnCorrelation`, injectable fetcher) + `applyCorrelationClusterGate` wired into `runStrategyOnce` (async; the sync policy gate can't fetch bars). Exits/reductions always pass; skips when bar data is insufficient (never false-rejects). Policy-route validated + "Max avg correlation" Settings field by the beta cap. Surfaced from the closed PR #89 review; off by default → no behavior change unless enabled. tsc clean, **1006 tests** (+8), build green. Built in `~/apps/trading-corr` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-correlation-cluster-gate.md`.
+- 2026-06-22 (`agent/claude-congress-share`, round 3): **Consume App A's "Trends" analytics + sync origin/main.**
+  Merged a large origin/main (scan refactor) keeping the congress hooks; then built the App A **analytics
+  overlay** (`CONGRESS_ANALYTICS_ENABLED`, default off): `congress-analytics.ts` pulls App A's
+  ticker-leaderboard (dollar net flow, member counts) + cluster-buys + member-leaderboard (track-record)
+  daily, persists a per-symbol `CongressAnalytics` overlay on `SymbolWebSignal`, and `outlierInterestScore`
+  folds it into scan candidate selection (`congressAnalyticsScore`: net-flow + cluster + member quality;
+  net-selling=0; additive/back-compat). Comprehensive App A coordination note: `docs/congress-trade-app-a-note.md`.
+  tsc clean · **1005 tests / 112 files** · build green. Gate unchanged: App A's feed is still seed/historical,
+  so keep the consume flags off until it carries current disclosures. See `docs/rollouts/2026-06-22-congress-trade-consume.md`.
 - 2026-06-24 (`claude/strategy-flow-live`): **Strategy Flow popup is now live/data-driven.**
   Rewrote `app/ui/strategy-flow.tsx` from a hardcoded decorative React Flow
   diagram into a snapshot-driven pipeline status view — node colors/details
