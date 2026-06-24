@@ -202,19 +202,28 @@ export interface AppATickerLeader {
   netSentiment?: number;
 }
 
-/** A cluster-buy row (shape not fully fixed on App A — read tolerantly). */
+/** A cluster-buy row. topMembers carry App A's `fullName` (not memberName). */
 export interface AppAClusterRow {
   ticker?: string;
+  name?: string;
+  txType?: string;
   memberCount?: number;
-  topMembers?: Array<{ memberName?: string; name?: string; filerId?: string }>;
+  tradeCount?: number;
+  estVolumeUsd?: number;
+  topMembers?: Array<{ filerId?: string; fullName?: string; memberName?: string; name?: string; tradeCount?: number }>;
   [k: string]: unknown;
 }
 
-/** A member-leaderboard row (shape not fully fixed on App A — read tolerantly). */
+/** A member-leaderboard row. App A exposes activity numerics (no realized-performance metric yet). */
 export interface AppAMemberRow {
   filerId?: string;
+  fullName?: string;
   memberName?: string;
   name?: string;
+  tradeCount?: number;
+  estVolumeUsd?: number;
+  estNetFlowUsd?: number;
+  netSentiment?: number;
   [k: string]: unknown;
 }
 
