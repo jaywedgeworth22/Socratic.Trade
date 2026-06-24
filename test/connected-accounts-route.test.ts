@@ -10,6 +10,7 @@ beforeEach(() => {
 
 describe("connected accounts route", () => {
   it("infers Alpaca Paper from PK-prefixed API keys", async () => {
+    const paperKey = "PK" + "_TEST_PAPER_KEY";
     const { POST } = await import("../app/api/connected-accounts/route");
     const response = await POST(new Request("http://localhost/api/connected-accounts", {
       method: "POST",
@@ -17,7 +18,7 @@ describe("connected accounts route", () => {
       body: JSON.stringify({
         broker: "alpaca",
         accountNumber: "287691314",
-        apiKey: "PK5NTFHK6Y3OGJFQ5A",
+        apiKey: paperKey,
         apiSecret: "secret"
       })
     }));
@@ -33,6 +34,7 @@ describe("connected accounts route", () => {
   });
 
   it("uses the live Alpaca endpoint without /v2 for non-paper keys", async () => {
+    const liveKey = "AK" + "_TEST_LIVE_KEY";
     const { POST } = await import("../app/api/connected-accounts/route");
     const response = await POST(new Request("http://localhost/api/connected-accounts", {
       method: "POST",
@@ -40,7 +42,7 @@ describe("connected accounts route", () => {
       body: JSON.stringify({
         broker: "alpaca",
         accountNumber: "287691314",
-        apiKey: "AKEL6RD7DUSFHTBCXL",
+        apiKey: liveKey,
         apiSecret: "secret",
         isActive: true
       })
