@@ -783,6 +783,12 @@ export interface PendingProposal {
   revalidationNote?: string;
   accountNumber?: string;
   executionMode?: ExecutionMode;
+  /** Side-adjusted % move from the proposal's referencePrice to the current price (positive = the proposed direction worked). Undefined when no anchor/current price is available. */
+  performanceSinceProposalPct?: number;
+  /** The entry anchor the performance is measured from. */
+  proposalReferencePrice?: number;
+  /** The current price used for the performance figure. */
+  proposalCurrentPrice?: number;
 }
 
 export interface RecentProposal {
@@ -796,6 +802,12 @@ export interface RecentProposal {
   estimatedNotional?: number;
   status: string;
   executionMode?: ExecutionMode;
+  /** Side-adjusted % move from the proposal's referencePrice to the current price. For a REJECTED proposal this is the realized counterfactual ("what it did since we passed"); for an accepted one it's how the entry has fared. Undefined when no anchor/current price is available. */
+  performanceSinceProposalPct?: number;
+  /** The entry anchor the performance is measured from. */
+  proposalReferencePrice?: number;
+  /** The current price used for the performance figure. */
+  proposalCurrentPrice?: number;
 }
 
 export interface StrategyOutcome {

@@ -30,7 +30,7 @@ import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
+import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
@@ -1349,6 +1349,22 @@ export function rejectProposal(proposalId: string, userId: string = "local"): vo
     side: proposal?.proposal.side,
     action: "rejection"
   }, userId);
+  // Feed the rejection into the counterfactual pipeline so its post-rejection return matures and
+  // shows up in missed-opportunity analytics — "the app analyzes it anyway". Best-effort, non-fatal.
+  if (proposal) {
+    try {
+      recordRejectedProposalCounterfactual({
+        userId,
+        runId: proposal.runId,
+        symbol: proposal.proposal.symbol,
+        refPrice: proposal.proposal.referencePrice,
+        createdAt: proposal.createdAt,
+        regime: proposal.entryMarketRegime ?? proposal.proposal.entryMarketRegime
+      });
+    } catch (err) {
+      console.warn("[strategy] recordRejectedProposalCounterfactual failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
   emitDashboardEvent({ type: "proposal", userId, at: new Date().toISOString(), detail: { proposalId, status: "rejected" } });
 }
 

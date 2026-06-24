@@ -1747,6 +1747,13 @@ function DecisionView({
                     {p.executionMode && <Chip tone={modeMismatch ? "warn" : "neutral"}>{executionModeLabel(p.executionMode)}</Chip>}
                     {p.createdAt && <ProposalTimeMeta iso={p.createdAt} label="Proposed" />}
                     {age && <Chip tone={age.tone}>{age.label}</Chip>}
+                    {typeof p.performanceSinceProposalPct === "number" && (
+                      <span title="Side-adjusted move since this proposal was made.">
+                        <Chip tone={p.performanceSinceProposalPct >= 0 ? "up" : "down"}>
+                          since {formatPct(p.performanceSinceProposalPct)}
+                        </Chip>
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Chip tone={p.proposal.side === "buy" ? "up" : "down"}>{p.proposal.side.toUpperCase()}</Chip>
@@ -1874,7 +1881,25 @@ function DecisionView({
                       {item.createdAt && <ProposalTimeMeta iso={item.createdAt} label="Decided" />}
                     {age && <Chip tone={age.tone}>{age.label}</Chip>}
                   </div>
-                    <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(() => {
+                        const perf = proposalPerformancePct(item, quote);
+                        if (perf == null) return null;
+                        const missed = isMissedProposal(item.status);
+                        return (
+                          <span
+                            title={missed
+                              ? "Side-adjusted move since this proposal — what it would have returned if accepted (counterfactual)."
+                              : "Side-adjusted move since this proposal was made."}
+                          >
+                            <Chip tone={perf >= 0 ? "up" : "down"}>
+                              {missed ? "missed " : "since "}{formatPct(perf)}
+                            </Chip>
+                          </span>
+                        );
+                      })()}
+                      <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
+                    </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1926,6 +1951,9 @@ type DecisionLedgerItem = {
   reasons: string[];
   estimatedNotional?: number;
   review?: { estimatedNotional?: number };
+  performanceSinceProposalPct?: number;
+  proposalReferencePrice?: number;
+  proposalCurrentPrice?: number;
 };
 
 function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
@@ -1940,7 +1968,10 @@ function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] 
       status: item.status,
       reasons: item.decision?.reasons ?? [],
       estimatedNotional: item.estimatedNotional,
-      review: item.review
+      review: item.review,
+      performanceSinceProposalPct: item.performanceSinceProposalPct,
+      proposalReferencePrice: item.proposalReferencePrice,
+      proposalCurrentPrice: item.proposalCurrentPrice
     }));
   }
   const decision = snapshot.latestStrategyRun;
@@ -1970,15 +2001,33 @@ function decisionCardTone(status: string): string {
   return "border-line";
 }
 
-function decisionHypotheticalNote(item: DecisionLedgerItem, quote?: { price: number }): string | undefined {
-  if (!["rejected", "blocked", "expired", "withdrawn"].includes(item.status)) return undefined;
-  const referencePrice = item.proposal.referencePrice ?? item.proposal.limitPrice ?? item.proposal.stopPrice;
-  if (!quote || typeof referencePrice !== "number" || referencePrice <= 0) {
-    return "Counterfactual pending future quote.";
-  }
+/** A rejected/blocked/expired/withdrawn proposal shows a "didn't take it" counterfactual framing. */
+function isMissedProposal(status: string): boolean {
+  return ["rejected", "blocked", "expired", "withdrawn"].includes(status);
+}
+
+/** Side-adjusted performance since the proposal — prefers the server figure, falls back to the live quote. */
+function proposalPerformancePct(item: DecisionLedgerItem, quote?: { price: number }): number | undefined {
+  if (typeof item.performanceSinceProposalPct === "number") return item.performanceSinceProposalPct;
+  const referencePrice = item.proposalReferencePrice ?? item.proposal.referencePrice ?? item.proposal.limitPrice ?? item.proposal.stopPrice;
+  if (!quote || typeof referencePrice !== "number" || referencePrice <= 0) return undefined;
   const sideMultiplier = item.proposal.side === "sell" || item.proposal.side === "short" ? -1 : 1;
-  const hypotheticalPct = ((quote.price - referencePrice) / referencePrice) * 100 * sideMultiplier;
-  return `Counterfactual so far: ${formatPct(hypotheticalPct)} if accepted.`;
+  return ((quote.price - referencePrice) / referencePrice) * 100 * sideMultiplier;
+}
+
+function decisionHypotheticalNote(item: DecisionLedgerItem, quote?: { price: number }): string | undefined {
+  const pct = proposalPerformancePct(item, quote);
+  const missed = isMissedProposal(item.status);
+  if (pct == null) {
+    // Only nag about a pending counterfactual for the missed cases; accepted ones simply omit it.
+    return missed ? "Counterfactual pending a current quote." : undefined;
+  }
+  const ref = item.proposalReferencePrice ?? item.proposal.referencePrice ?? item.proposal.limitPrice ?? item.proposal.stopPrice;
+  const cur = item.proposalCurrentPrice ?? quote?.price;
+  const fromTo = typeof ref === "number" && ref > 0 && typeof cur === "number" && cur > 0 ? ` (from ${money(ref)} → ${money(cur)})` : "";
+  return missed
+    ? `Counterfactual since proposal: ${formatPct(pct)} if accepted${fromTo}.`
+    : `Performance since proposal: ${formatPct(pct)}${fromTo}.`;
 }
 
 function ProposalTimeMeta({ iso, label }: { iso?: string; label: string }) {
