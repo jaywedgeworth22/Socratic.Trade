@@ -68,6 +68,32 @@ only) so they mature into missed-opportunity analytics like user rejections do. 
 1113/1114 tests (+2; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-learning-loop-honesty.md`.
 
+## 2026-06-25 — SEC EDGAR XBRL company-facts enrichment provider (keyless, default-OFF)
+Branch `claude/sec-xbrl-enrichment` (PR #145). Keyless, default-OFF enrichment provider filling the
+EXISTING `debtToEquity` field from authoritative SEC filings (companyfacts API). No new field threading
+(stays within existing fields). Reuses `secUserAgent`/`politeFetchText`/`runRateLimited`/
+`loadTickerCikMap`/`padCik`; cascade order after FMP, before Yahoo. Pure tested `parseCompanyFacts`
+(debt-specific concepts ÷ equity at the LATEST balance-sheet period — annual or 10-Q — amended-10-K/A-aware,
+budget-bounded, dedup'd background warms, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was
+dropped in Codex review round 3** — annual 10-K EPS isn't the TTM that `SymbolEnrichment.eps` documents,
+so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Twelve Codex review rounds
+applied — incl. round 6 (honest `MarketScan.source`: cascade now names only providers that actually
+contributed a field, app-wide), round 7 (dropped the per-symbol budget guard so the background loop keeps
+warming the 24 h cache after the interactive 8 s budget elapses; the outer race alone caps latency), round
+8 (debt aggregation: use the complete `LongTermDebt` total — not just noncurrent — when only short-term
+debt is separately tagged, so D/E isn't understated), round 9 (publish the RAW D/E ratio so the
+bear-veto/analytics see true leverage, with the `>10 → ÷100` percentage heuristic now SOURCE-AWARE in
+market.ts/dashboard so a true 12x isn't misread as 0.12; plus `enrich()` returns a snapshot so background
+cache-warming can't retroactively flip a symbol's source), round 10 (restrict parsed facts to periodic
+10-K/10-Q forms so a non-periodic 8-K/pro-forma fact can't win the latest-period reducer), round 11
+(anchor equity on the latest period under EITHER `StockholdersEquity` or the
+`…IncludingPortionAttributableToNoncontrollingInterest` total, preferring parent-only, so filers that tag
+only the inclusive total for the current period don't get stale leverage), and round 12 (three follow-ons:
+D/E column now sorts by the source-aware normalized value; the quote-only Yahoo fallback is recorded in
+`MarketScan.source`; and the cold SEC ticker→CIK map fetch is in-flight-deduped). Verified by the
+main agent (tsc clean · 1183/1184 tests; only the cache-provenance flake · build green). See
+`docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
+
 ## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
 Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When
 `policy.atrStops` is on, the protective stop DISTANCE = `atrStopMultiple × ATR(atrStopPeriod)` as a
