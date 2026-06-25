@@ -231,10 +231,12 @@ export interface AppAMemberRow {
   [k: string]: unknown;
 }
 
-function analyticsQuery(opts: { window?: string; limit?: number }): string {
+function analyticsQuery(opts: { window?: string; limit?: number; chamber?: string; party?: string }): string {
   const p = new URLSearchParams();
   if (opts.window) p.set("window", opts.window);
   if (opts.limit) p.set("limit", String(opts.limit));
+  if (opts.chamber) p.set("chamber", opts.chamber);
+  if (opts.party) p.set("party", opts.party);
   const s = p.toString();
   return s ? `?${s}` : "";
 }
@@ -292,4 +294,103 @@ export function appAClosesToBars(closes: CongressClose[] | null | undefined): OH
       ...(typeof c.volume === "number" && Number.isFinite(c.volume) ? { volume: c.volume } : {})
     }))
     .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+}
+
+// ── New analytics endpoints (App A PR #77/79/80) ───────────────────────────────
+
+/**
+ * Per-ticker composite conviction score (0–100). Direction-aware: a high score on a SELL ticker
+ * means strong bearish conviction. `convictionScore` is `null` (not 0) when the signal is too thin
+ * (resolved-side trades < 3) so callers can distinguish "no signal" from "bearish".
+ */
+export interface AppAConvictionTicker {
+  ticker: string;
+  name?: string;
+  /** 0–100 composite, or null when signal is too thin (< 3 resolved-side trades). */
+  convictionScore: number | null;
+  direction: "BUY" | "SELL" | null;
+  /** true while realized-skill coverage is sparse (score uses activity heuristics only). */
+  fallback?: boolean;
+  memberCount?: number;
+  tradeCount?: number;
+  directionalMembers?: number;
+  directionalTrades?: number;
+  netSentiment?: number;
+  estNetFlowUsd?: number;
+  parties?: Record<string, number>;
+}
+
+export async function getAppAConviction(opts: { window?: string; limit?: number } = {}): Promise<AppAConvictionTicker[]> {
+  if (!congressAnalyticsEnabled()) return [];
+  const json = await getJson<{ tickers?: AppAConvictionTicker[] }>(`/api/analytics/conviction${analyticsQuery(opts)}`);
+  return Array.isArray(json?.tickers) ? json!.tickers : [];
+}
+
+/**
+ * Per-horizon post-buy return stats for a ticker (congressional backtest).
+ * `n` is the number of buy events with full forward price history; horizons with n < 5 report null stats.
+ * Returns are fractions: 0.18 = +18%. `winRate` = share beating the S&P (excess > 0).
+ */
+export interface AppABacktestHorizon {
+  days: number;
+  tradeCount: number;
+  n: number;
+  medianReturn: number | null;
+  avgReturn: number | null;
+  winRate: number | null;
+  medianExcess: number | null;
+  avgExcess: number | null;
+}
+
+export interface AppATickerBacktest {
+  ticker: string;
+  txType: string;
+  totalBuyEvents: number;
+  pricedDays: number;
+  horizons: AppABacktestHorizon[];
+}
+
+export async function getAppATickerBacktest(
+  ticker: string,
+  opts: { window?: string; horizons?: string; filerId?: string } = {}
+): Promise<AppATickerBacktest | null> {
+  if (!congressAnalyticsEnabled()) return null;
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return null;
+  const p = new URLSearchParams();
+  if (opts.window) p.set("window", opts.window);
+  if (opts.horizons) p.set("horizons", opts.horizons);
+  if (opts.filerId) p.set("filerId", opts.filerId);
+  const qs = p.toString();
+  const json = await getJson<AppATickerBacktest>(
+    `/api/analytics/ticker/${encodeURIComponent(sym)}/backtest${qs ? `?${qs}` : ""}`
+  );
+  return json?.horizons?.length ? json : null;
+}
+
+/**
+ * Trades flagged as potential committee conflicts of interest (member sits on a committee
+ * overseeing the traded stock's GICS sector). Educational/observational — not an accusation
+ * of wrongdoing. ETFs (no single sector) are not flagged.
+ */
+export interface AppAConflict {
+  id: string;
+  ticker: string;
+  sector: string;
+  txType: string;
+  txDate: string;
+  filerId: string;
+  memberName: string;
+  chamber: string;
+  partyBucket: string;
+  viaCommittees: string[];
+  estAmountUsd: number;
+}
+
+export async function getAppAConflicts(
+  opts: { window?: string; limit?: number; chamber?: string; party?: string } = {}
+): Promise<AppAConflict[]> {
+  if (!congressAnalyticsEnabled()) return [];
+  const json = await getJson<{ conflicts?: AppAConflict[] }>(`/api/analytics/conflicts${analyticsQuery(opts)}`);
+  return Array.isArray(json?.conflicts) ? json!.conflicts : [];
 }

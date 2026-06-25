@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — App A handoff: new analytics endpoints + adjusted-close push fix
+Branch `claude/magical-faraday-uce1uy`. Implements App A (congress.trade) handoff from `1cdd5ecf-appBhandoff.md`.
+**Read side** — three new endpoints wired into `congress-trade-client.ts`: `getAppAConviction` (composite 0–100
+conviction score per ticker, `GET /api/analytics/conviction`), `getAppATickerBacktest` (post-buy return stats
+per ticker, `GET /api/analytics/ticker/{T}/backtest`), `getAppAConflicts` (committee conflict-of-interest
+trades, `GET /api/analytics/conflicts`). All three are gated on `CONGRESS_ANALYTICS_ENABLED` (default off).
+**Overlay** — `CongressAnalytics` type gains `convictionScore`, `convictionDirection`, `conflictCount`; the daily
+`refreshCongressAnalytics` now fetches conviction + conflicts in parallel with the leaderboard/cluster/member
+calls and wires both into the per-ticker overlay. **Write side** — `history.ts` Yahoo fetch now prefers
+`indicators.adjclose[0].adjclose` (split+dividend-adjusted) over raw `quote.close`, so prices pushed to App A
+via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1203/1203 tests. **Deferred
+(need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
+See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
+
 ## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
 Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
 opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`

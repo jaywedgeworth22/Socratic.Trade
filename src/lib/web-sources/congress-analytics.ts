@@ -10,9 +10,12 @@ import { audit, getInternalSetting, setInternalSetting } from "../db";
 import {
   congressAnalyticsEnabled,
   getAppAClusterBuys,
+  getAppAConflicts,
+  getAppAConviction,
   getAppAMemberLeaderboard,
   getAppAMemberPerformance,
   getAppATickerLeaderboard,
+  type AppAConvictionTicker,
   type AppAMemberRow
 } from "../congress-trade-client";
 import { normalizeSymbol } from "../money";
@@ -24,6 +27,7 @@ const DEFAULT_WINDOW_DAYS = 90;
 const TICKER_LIMIT = 1000;
 const CLUSTER_LIMIT = 200;
 const MEMBER_LIMIT = 500;
+const CONFLICT_LIMIT = 1000; // fetch all conflicts in window (App A default=100; raise to catch all)
 const MAX_SKILL_LOOKUPS = 200; // cap per-member performance calls per refresh
 
 export { congressAnalyticsEnabled };
@@ -140,13 +144,15 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
   }
 
   const window = `${windowDays()}d`;
-  const [leaders, clusters, members] = await Promise.all([
+  const [leaders, clusters, members, convictions, conflicts] = await Promise.all([
     getAppATickerLeaderboard({ window, limit: TICKER_LIMIT }),
     getAppAClusterBuys({ window, limit: CLUSTER_LIMIT }),
-    getAppAMemberLeaderboard({ window, limit: MEMBER_LIMIT })
+    getAppAMemberLeaderboard({ window, limit: MEMBER_LIMIT }),
+    getAppAConviction({ window, limit: TICKER_LIMIT }),
+    getAppAConflicts({ window, limit: CONFLICT_LIMIT })
   ]);
 
-  if (leaders.length === 0 && clusters.length === 0) {
+  if (leaders.length === 0 && clusters.length === 0 && convictions.length === 0) {
     // App A cold / no recent data — keep any prior dataset rather than wiping to empty.
     const prior = getCongressAnalyticsDataset();
     audit("web_source_refresh", { id: "congress-analytics", ok: false, recordCount: 0, reason: "empty" });
@@ -167,6 +173,21 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     (Array.isArray(c.topMembers) ? c.topMembers : []).map((m) => String(m?.filerId ?? "")).filter(Boolean)
   );
   const skillScores = await buildMemberSkillScores(clusterFilerIds);
+
+  // Conviction scores keyed by normalized ticker.
+  const convictionByTicker = new Map<string, AppAConvictionTicker>();
+  for (const cv of convictions) {
+    const sym = normalizeSymbol(cv.ticker);
+    if (sym) convictionByTicker.set(sym, cv);
+  }
+
+  // Conflict counts keyed by normalized ticker (one conflict trade = one flagged disclosure).
+  const conflictsByTicker = new Map<string, number>();
+  for (const cf of conflicts) {
+    const sym = normalizeSymbol(cf.ticker);
+    if (sym) conflictsByTicker.set(sym, (conflictsByTicker.get(sym) ?? 0) + 1);
+  }
+
   const overlay: Record<string, CongressAnalytics> = {};
   for (const t of leaders) {
     const sym = normalizeSymbol(t.ticker);
@@ -179,6 +200,29 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     if (typeof t.sellCount === "number") entry.sellCount = t.sellCount;
     if (typeof t.memberCount === "number") entry.memberCount = t.memberCount;
     if (typeof t.netSentiment === "number") entry.netSentiment = t.netSentiment;
+    const cv = convictionByTicker.get(sym);
+    if (cv) {
+      entry.convictionScore = cv.convictionScore;
+      entry.convictionDirection = cv.direction;
+    }
+    const cc = conflictsByTicker.get(sym);
+    if (cc) entry.conflictCount = cc;
+    overlay[sym] = entry;
+  }
+  // Tickers in conviction but not leaderboard (e.g. SELL-only tickers that rank below TICKER_LIMIT
+  // on volume but still have a strong directional signal).
+  for (const [sym, cv] of convictionByTicker) {
+    if (overlay[sym]) continue; // already populated from leaders
+    const entry: CongressAnalytics = {
+      convictionScore: cv.convictionScore,
+      convictionDirection: cv.direction
+    };
+    if (typeof cv.memberCount === "number") entry.memberCount = cv.memberCount;
+    if (typeof cv.tradeCount === "number") entry.tradeCount = cv.tradeCount;
+    if (typeof cv.netSentiment === "number") entry.netSentiment = cv.netSentiment;
+    if (typeof cv.estNetFlowUsd === "number") entry.netFlowUsd = cv.estNetFlowUsd;
+    const cc = conflictsByTicker.get(sym);
+    if (cc) entry.conflictCount = cc;
     overlay[sym] = entry;
   }
   for (const c of clusters) {
@@ -213,7 +257,9 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     recordCount,
     tickers: leaders.length,
     clusters: clusters.length,
-    members: members.length
+    members: members.length,
+    convictions: convictions.length,
+    conflicts: conflicts.length
   });
   return { id: "congress-analytics", ok: true, recordCount, sources: ["congress.trade"], fetchedAt: dataset.fetchedAt };
 }

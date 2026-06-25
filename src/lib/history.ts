@@ -34,6 +34,8 @@ interface YahooChartResponse {
           close?: Array<number | null>;
           volume?: Array<number | null>;
         }>;
+        /** Split-and-dividend-adjusted closes — prefer these over quote.close for multi-year returns. */
+        adjclose?: Array<{ adjclose?: Array<number | null> }>;
       };
     }>;
   };
@@ -252,11 +254,15 @@ async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
     const result = json?.chart?.result?.[0];
     const ts = result?.timestamp ?? [];
     const q = result?.indicators?.quote?.[0];
-    const close = q?.close ?? [];
-    if (ts.length === 0 || close.length === 0) return null;
+    const rawClose = q?.close ?? [];
+    // Prefer split+dividend-adjusted closes (adjclose) for correct multi-year returns.
+    // Fall back to raw close if adjclose is absent or length-mismatched.
+    const adjCloseArr = result?.indicators?.adjclose?.[0]?.adjclose ?? [];
+    const closeArr = adjCloseArr.length === ts.length ? adjCloseArr : rawClose;
+    if (ts.length === 0 || closeArr.length === 0) return null;
     const bars: OHLCBar[] = [];
     for (let i = 0; i < ts.length; i++) {
-      const c = close[i];
+      const c = closeArr[i];
       if (typeof c !== "number" || !Number.isFinite(c)) continue; // skip null/holiday gaps
       bars.push({
         time: ts[i] * 1000, // seconds → ms epoch
