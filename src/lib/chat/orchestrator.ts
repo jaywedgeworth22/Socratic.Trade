@@ -16,7 +16,7 @@ import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
 import { extractLearnedCandidates } from "../memory/salience";
-import { ingestLearned } from "../learned-context/store";
+import { ingestLearned, retrieveLearnedContext } from "../learned-context/store";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
@@ -41,15 +41,23 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     appendTurn(userId, { role: "user", text: message });
 
     const mem = ingestMessage(userId, message);
-    // Parallel learned-context producer: durable pattern/decision FACTS route through ingestLearned
-    // (NOT user_memory). The fail-closed classifier hard-caps chat at 'fact'; risk-adjacent prose is
-    // dropped+audited, never written. This keeps chat structurally write-isolated from the brain's
-    // risk knobs while letting it contribute advisory facts.
-    for (const candidate of extractLearnedCandidates(message)) {
-      // Awaited: ingest now runs the async semantic gate. The chat hard-cap still holds — a gate
-      // 'risk' verdict on a chat candidate is DROPPED (never queued) inside ingestLearned.
-      await ingestLearned(userId, candidate, "chat");
+    // Extract learned-context candidates from the message for both the write path (ingest) and
+    // the read path (retrieve facts already in store to inject into the system prompt).
+    const learnedCandidates = extractLearnedCandidates(message);
+    // Fire-and-forget write path: the semantic classifier runs 3+ sequential LLM calls — awaiting
+    // it on the hot path would add 1–3 s of latency to every chat turn. Errors are benign: advisory
+    // writes, never critical. The chat hard-cap (risk-adjacent prose is DROPPED) holds inside
+    // ingestLearned regardless.
+    for (const candidate of learnedCandidates) {
+      ingestLearned(userId, candidate, "chat").catch((e) => {
+        console.warn("[orchestrator] learned-context ingest failed:", e);
+      });
     }
+    // Read path: inject already-stored facts for symbols mentioned in this message so the model
+    // sees prior advisory context it (or the strategy loop) has learned.
+    const learnedSymbols = learnedCandidates.map((c) => c.symbol).filter((s): s is string => s != null);
+    const learnedFacts = learnedSymbols.length > 0 ? retrieveLearnedContext(userId, learnedSymbols) : [];
+    const learnedContextSummary = learnedFacts.join("\n");
     const memories = retrieve(userId);
     const memorySummary = memories.map((m) => `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`).join("\n");
 
@@ -62,7 +70,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     };
 
     const result = await model.run({
-      system: buildSystem(memorySummary),
+      system: buildSystem(memorySummary, learnedContextSummary),
       message,
       tools: toolSchemas,
       executeTool,
