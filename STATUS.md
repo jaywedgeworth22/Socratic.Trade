@@ -15,6 +15,18 @@ only) so they mature into missed-opportunity analytics like user rejections do. 
 1113/1114 tests (+2; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-learning-loop-honesty.md`.
 
+## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
+Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When
+`policy.atrStops` is on, the protective stop DISTANCE = `atrStopMultiple × ATR(atrStopPeriod)` as a
+% of entry (clamped 1–50%) instead of fixed `stopLossPct` — driven by the name's realized daily range
+(no beta needed). Pure `trueRange`/`atr`/`atrStopPct` in `indicators.ts`; policy fields `atrStops` +
+`riskRules.atrStop{Period,Multiple}` (validated); async precompute mirrors `betaBySymbol` and feeds the
+sync `generateProactiveRiskProposals`; falls back to fixed/beta when bars are unavailable (never
+unprotected); ATR > beta when both on. New canonical reference `docs/stop-loss-and-exit-strategies.md`
+covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS validation are live).
+Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
+
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
 analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that

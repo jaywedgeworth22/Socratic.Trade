@@ -51,6 +51,8 @@ import {
 } from "./performance";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, betaScaledStopPct, evaluateTradeProposal } from "./policy";
+import { atr, atrStopPct } from "./indicators";
+import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -246,7 +248,30 @@ export async function runStrategyOnce(
     for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
       if (typeof q.beta === "number" && Number.isFinite(q.beta)) betaBySymbol[normalizeSymbol(sym)] = q.beta;
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol);
+    // ATR-based stops (opt-in, default off): precompute a per-symbol stop DISTANCE (% of entry) from each
+    // open position's recent daily range so the sync proactive generator can use it (mirrors betaBySymbol).
+    // Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the fixed/beta stop.
+    const atrStopPctBySymbol: Record<string, number> = {};
+    if (policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) {
+      const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
+      const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
+      await Promise.all(
+        workingPositions
+          .filter((p) => Math.abs(p.quantity) > 0.000001 && p.averageCost > 0)
+          .map(async (p) => {
+            const sym = normalizeSymbol(p.symbol);
+            try {
+              const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+              if (!bars) return;
+              const pct = atrStopPct(atr(bars, period), p.averageCost, multiple);
+              if (typeof pct === "number") atrStopPctBySymbol[sym] = pct;
+            } catch {
+              // best-effort — fall back to the fixed/beta stop for this name
+            }
+          })
+      );
+    }
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
 
     let ragContext = "";
     try {
@@ -2471,24 +2496,42 @@ export function generateProactiveRiskProposals(
   positions: EquityPosition[],
   currentPrices: Record<string, number>,
   policy: TradingPolicy,
-  betaBySymbol: Record<string, number> = {}
+  betaBySymbol: Record<string, number> = {},
+  // Precomputed ATR-based stop DISTANCE (% of entry) per symbol — supplied by the caller (which has
+  // bars) when policy.atrStops is on. Mirrors the betaBySymbol precompute pattern so this stays a pure
+  // sync function. Empty/absent → fall back to the fixed/beta stop (a name is never left unprotected).
+  atrStopPctBySymbol: Record<string, number> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
   const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
   const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
   const betaStops = policy.betaScaledStops === true;
+  const atrStops = policy.atrStops === true;
 
   if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
 
+  // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
+  // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
+  // over beta-scaling when both are on — it's the more direct, per-name volatility measure.
+  const effectiveStopPct = (sym: string, baseStopPct: number, beta: number | undefined): number => {
+    if (baseStopPct <= 0) return baseStopPct;
+    if (atrStops) {
+      const atrPct = atrStopPctBySymbol[sym];
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
+    }
+    return betaScaledStopPct(baseStopPct, beta, betaStops);
+  };
+
   for (const pos of positions) {
     if (Math.abs(pos.quantity) <= 0.000001 || pos.averageCost <= 0) continue;
-    const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
+    const sym = normalizeSymbol(pos.symbol);
+    const currentPrice = currentPrices[sym] ?? (pos.marketValue / pos.quantity);
     if (!currentPrice || currentPrice <= 0) continue;
-    // Volatility-aware stop distance: widen for high-beta names, tighten for low-beta (no-op when
-    // betaScaledStops is off or the name has no beta). Take-profit stays flat (a target, not a stop).
-    const beta = betaBySymbol[normalizeSymbol(pos.symbol)];
-    const effStopLossPct = betaScaledStopPct(stopLossPct, beta, betaStops);
+    // Volatility-aware stop distance: ATR-based (realized range) or beta-scaled (widen high-beta,
+    // tighten low-beta), else a flat %. Take-profit stays flat (a target, not a stop).
+    const beta = betaBySymbol[sym];
+    const effStopLossPct = effectiveStopPct(sym, stopLossPct, beta);
 
     let reason = "";
     let exitSide: "sell" | "cover" = "sell";
@@ -2508,7 +2551,7 @@ export function generateProactiveRiskProposals(
       if (!policy.shortSellingEnabled) continue;
       const returnPct = ((pos.averageCost - currentPrice) / pos.averageCost) * 100;
       const baseShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
-      const effShortStop = betaScaledStopPct(baseShortStop, beta, betaStops);
+      const effShortStop = effectiveStopPct(sym, baseShortStop, beta);
       if (effShortStop > 0 && returnPct <= -effShortStop) {
         reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop.toFixed(2)}% limit.`;
       } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
