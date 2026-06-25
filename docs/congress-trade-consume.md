@@ -22,7 +22,11 @@ flows through the same path via `/api/market/spx`.
   already free-sourced via Yahoo in App B, so they'd be marginal value. (Fundamentals/analyst ARE now
   wired — see §1b.)
 
-## 1b. Fundamentals / analyst read-back tier (`CONGRESS_TRADE_READS_ENABLED`)
+## 1b. Fundamentals / analyst read-back tier (`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`)
+> Gated by its **own** flag, **separate from** the price/history `CONGRESS_TRADE_READS_ENABLED` (§1), so
+> enabling the price cache-aside does not silently give App A precedence over the direct fundamentals
+> providers. Default OFF — an explicit, independent opt-in.
+
 App A stores fundamentals + analyst consensus (its own enrichment + our donated push) and now serves them
 at **`GET /api/market/fundamentals/:ticker`** and **`GET /api/market/analyst/:ticker`** (date-ascending
 rows; `?from=&to=` like `/market/insider`). App B reads them via `getAppAFundamentals` / `getAppAAnalyst`
@@ -42,7 +46,7 @@ targetMean/High/Low/Median, analystRating/Score/BySource) — **no new field**, 
   derives a score (`scoreFromAnalystLabel`) and writes `analystBySource`, which is what the cascade blends
   into the displayed rating.
 - **Deeper saving — the opt-in coverage hint (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`):** when this flag AND
-  `CONGRESS_TRADE_READS_ENABLED` are on, the cascade runs the **free** providers first to learn what App A
+  `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` are on, the cascade runs the **free** providers first to learn what App A
   already covers, then runs the **paid** providers over the **same** symbols but hands each one an
   `EnrichmentContext` — a per-symbol set of the `SymbolEnrichment` fields App A already filled. A paid
   provider uses it to skip only the redundant **sub-calls** that would re-fetch already-covered fields,
@@ -116,9 +120,10 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 ## Config (all default off)
 | Env var | Purpose |
 |---------|---------|
-| `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (history tier) **and** the fundamentals/analyst enrichment tier (§1b) |
+| `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (price/history tier, §1) |
+| `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` | the fundamentals/analyst enrichment tier (§1b), gated separately from price reads; default off |
 | `CONGRESS_TRADE_MAX_STALE_DAYS` | freshness cap (default 21) for App A fundamentals/analyst rows before they fall through to paid providers |
-| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | hand paid providers a per-symbol coverage hint so they skip only the redundant sub-calls App A already covers (e.g. FMP's P/E + analyst calls) while still fetching their unique fields; no whole provider is skipped (needs `CONGRESS_TRADE_READS_ENABLED`); default off |
+| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | hand paid providers a per-symbol coverage hint so they skip only the redundant sub-calls App A already covers (e.g. FMP's P/E + analyst + price-target calls) while still fetching their unique fields; no whole provider is skipped (needs `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`); default off |
 | `CONGRESS_TRADE_AS_CONGRESS_SOURCE` | source congressional trades from App A instead of scrapers |
 | `CONGRESS_WEBHOOK_SECRET` | shared bearer App A presents to the webhook (default-closed when blank) |
 | `CONGRESS_STREAM_ENABLED` | start the outbound SSE consumer |

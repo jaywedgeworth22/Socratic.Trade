@@ -29,8 +29,11 @@ FMP skips consensus only when App A's analyst is fmp-sourced (carries `analystSo
 coverage-trimmed FMP fetch is no longer cached as a full hit. **Codex round 5:** transport errors no longer
 negative-cached (retry next scan); App A reads merge latest-non-null across all fresh rows; FMP also skips
 the price-target call when App A covers all four targets; cascade credits `congress.trade` as a contributor
-only when its analyst entry survives the same-source de-dupe. 1224 tests. **Open Q for owner:** whether to
-split the fundamentals tier onto its own flag vs sharing `CONGRESS_TRADE_READS_ENABLED` (asked).
+only when its analyst entry survives the same-source de-dupe. **Flag split (owner chose):** fundamentals
+tier now gated by its own `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (default off), independent of price reads;
+set on in Infisical. **Codex round 6:** App A positive cache honors `ttlMs()`/`NEWS_CACHE_TTL_MS`; reads
+bounded with `from=today−maxStaleDays`; FMP target-skip only suppresses caching when targets were actually
+going to be fetched. 1224 tests.
 
 ## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
 Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`

@@ -1001,7 +1001,8 @@ describe("CascadingEnrichmentProvider.activeSources (honest source attribution)"
 
 describe("enrichment short-circuit (App A coverage hint → paid providers skip redundant sub-calls)", () => {
   const FLAG = "ENRICHMENT_SHORT_CIRCUIT_ENABLED";
-  const READS = "CONGRESS_TRADE_READS_ENABLED";
+  // The short-circuit now gates on the fundamentals tier flag, not the price-read flag.
+  const READS = "CONGRESS_TRADE_FUNDAMENTALS_ENABLED";
   afterEach(() => {
     delete process.env[FLAG];
     delete process.env[READS];

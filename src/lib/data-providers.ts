@@ -12,6 +12,7 @@
 import { normalizeSymbol } from "./money";
 import {
   congressReadsEnabled,
+  congressFundamentalsEnabled,
   getAppAFundamentals,
   getAppAAnalyst,
   type AppAFundamental,
@@ -195,7 +196,8 @@ function flagEnabled(value: string | undefined): boolean {
  *  set), to eliminate the duplicate paid call. Default OFF — when off the cascade
  *  runs every provider as before. */
 function enrichmentShortCircuitEnabled(): boolean {
-  return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressReadsEnabled();
+  // Needs the fundamentals tier (it supplies the coverage hint), not just price reads.
+  return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressFundamentalsEnabled();
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -406,11 +408,11 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
   readonly name = "congress.trade";
   constructor(private readonly userId?: string) {}
   get configured(): boolean {
-    return congressReadsEnabled();
+    return congressFundamentalsEnabled();
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    if (!congressReadsEnabled()) return {};
+    if (!congressFundamentalsEnabled()) return {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -432,9 +434,12 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         // negative-cached; a transport error is NOT, so a fixed outage/token is retried
         // on the next scan instead of being suppressed for the whole negative TTL.
         let transportError = false;
+        // Bound the pull to the freshness window: rowIsFresh discards anything older than
+        // CONGRESS_TRADE_MAX_STALE_DAYS, so there's no point downloading the full history.
+        const fromDate = new Date(now - congressMaxStaleMs()).toISOString().slice(0, 10);
         const [funds, analysts] = await Promise.all([
-          getAppAFundamentals(symbol).catch(() => { transportError = true; return [] as AppAFundamental[]; }),
-          getAppAAnalyst(symbol).catch(() => { transportError = true; return [] as AppAAnalyst[]; }),
+          getAppAFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAFundamental[]; }),
+          getAppAAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAAnalyst[]; }),
         ]);
         // App A may return multiple fresh rows from different sources; merge the LATEST
         // non-null value per field across all of them (rows are date-ascending), so a
@@ -517,7 +522,9 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         }
         if (Object.keys(e).length > 0) {
           result[symbol] = e;
-          writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, now + DEFAULT_TTL_MS);
+          // Honor the shared, configurable enrichment TTL (NEWS_CACHE_TTL_MS) like the
+          // other slow-moving providers, so lowering/disabling it forces fresher App A reads.
+          writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, now + ttlMs());
         } else if (!transportError) {
           // Negative cache ONLY a genuine "App A had nothing fresh" — never a transport
           // error. Remember the miss briefly so repeated scans don't re-hit both
@@ -561,9 +568,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // fields in exactly the same order they would today.
   if (alpacaData.apiKey && alpacaData.secretKey) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId));
   // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
-  // Default-OFF; when enabled its free, already-stored data wins the fundamentals
-  // fields ahead of the paid providers below.
-  if (congressReadsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
+  // Gated by its OWN flag (CONGRESS_TRADE_FUNDAMENTALS_ENABLED), separate from the
+  // price/history reads, so enabling price cache-aside doesn't silently give App A
+  // precedence over the direct fundamentals providers. Default-OFF.
+  if (congressFundamentalsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
@@ -1795,7 +1803,10 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // with App A off/stale, or with the short-circuit flag off, would otherwise
           // treat the partial as a full FMP hit and never refetch P/E/analyst until TTL.
           // The covered fields come from App A live each scan; FMP refetches its uniques.
-          const trimmed = skipPe || skipConsensus || skipTargets;
+          // A skipped target call only "trims" the result when targets would actually have
+          // been fetched (FMP_PRICE_TARGETS_ENABLED on); otherwise the row is complete and
+          // must still be cached, or FMP's calls would repeat every scan.
+          const trimmed = skipPe || skipConsensus || (skipTargets && fmpPriceTargetsEnabled());
 
           if (allRejected || hasTransientError || isEmpty || trimmed) {
             if (!trimmed) {

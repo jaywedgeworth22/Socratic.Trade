@@ -120,11 +120,23 @@ Four more valid P2s (the stale-thread duplicates for already-fixed items were ve
   `MarketScan.source` could list it with no surviving field. **Fixed**: track the last writer per analyst
   key and credit only the providers whose entry survived the blend. +2 cascade tests.
 
-**Deferred to the owner (not auto-applied):** Codex also flagged that the new fundamentals/analyst tier
-shares the `CONGRESS_TRADE_READS_ENABLED` flag with the existing price/history cache-aside, so enabling
-reads for prices also activates fundamentals (App A gains precedence over direct providers on deploy). This
-is a deliberate documented design (one flag, default-off), but splitting it into a second flag is a
-config-contract change — asked the owner before changing it.
+**Flag split (owner chose to split, 2026-06-25):** the fundamentals/analyst tier now has its OWN flag
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (default off), independent of `CONGRESS_TRADE_READS_ENABLED` (price
+reads). New `congressFundamentalsEnabled()` gates `getAppAFundamentals`/`getAppAAnalyst`, the
+`CongressTradeEnrichmentProvider` registration, and the short-circuit. So enabling price cache-aside no
+longer silently gives App A precedence over the direct fundamentals providers. `.env.example` +
+`congress-trade-consume.md` (§1b heading + config table) updated. Owner set the new flag on in
+agentic-trading Infisical prod.
+
+## Codex review round 6 (PR #160, commit 5cd2cbb)
+- **TTL (line 520)** — positive App A hits used the hard-coded 6h `DEFAULT_TTL_MS`; now use the shared
+  `ttlMs()` (`NEWS_CACHE_TTL_MS`) like the other enrichment providers, so lowering/disabling that TTL forces
+  fresher App A reads. (Negative misses keep their deliberate short 1h TTL.)
+- **Read window (line 437)** — the App A reads omitted `from`, downloading full history only for `rowIsFresh`
+  to discard most of it; now pass `from = today − CONGRESS_TRADE_MAX_STALE_DAYS` to both endpoints.
+- **FMP target-skip caching (line 1798)** — `skipTargets` marked a row `trimmed` (uncached) even when
+  `FMP_PRICE_TARGETS_ENABLED` was off and no target call would have happened, so FMP repeated all calls every
+  scan; now a skipped target only counts as trimmed when targets were actually going to be fetched.
 
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
