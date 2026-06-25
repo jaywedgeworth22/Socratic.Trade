@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Massive flat-file bulk backfill + broad-universe expansion (Phase 4)
+Branch `agent/claude-flatfile-backfill`. Phase 4 of the settings/universe program
+(`docs/settings-and-universe-overhaul-plan.md`). New reusable flat-file bulk source in `massive-s3.ts`
+(`businessDaysBetween`, `pivotDayAggsToSeries`, `fetchGroupedDailyBarsRange`) — one Massive flat file = a
+whole day of the market, so a broad universe backfills with ~one download/day instead of N per-ticker calls.
+Wired into `runCongressDailyShare` as opt-in `flatFile` + `allIndexes` (all static index members + monitored,
+deduped/capped), with per-ticker fallback for misses; admin route + `.env.example` updated. Default backfill
+unchanged. **Verified live** against the paid flat-file bucket (real AAPL/MSFT bars; Juneteenth skipped;
+resolveApiKey resolves the S3 creds — shared-operator-infra tier). The pasted "S3 secret" had a 1-char typo;
+correct secret = the Massive API key (now in prod `.env.local`). Verify: tsc clean · 39 flatfile/congress
+tests + live smoke · full trio via land.sh. **Remaining:** Phase 3 settings overhaul (last phase). Run a
+broad backfill via `POST /api/admin/congress-share {"fullHistory":true,"flatFile":true,"allIndexes":true}`.
+
 ## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
 Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
 opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`

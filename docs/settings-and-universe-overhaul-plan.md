@@ -49,7 +49,7 @@ Make the editor honest: surface what's enforced, label interactions, and prevent
     opening-only. Make both visible.
 - API validation in `app/api/policy/route.ts` for every newly-editable field.
 
-## Phase 4 — Backfill expansion + Massive flat files
+## Phase 4 — Backfill expansion + Massive flat files ✅ (`docs/rollouts/2026-06-25-flatfile-backfill.md`)
 - Expand the share/backfill universe beyond static index members: all index universes + non-index names
   above the `universeFloor`, replacing per-ticker OHLC fetches (which timed out / burn the API cap) with
   **Massive flat files** (bulk daily-aggregate files on S3, or the REST grouped-daily endpoint as the
