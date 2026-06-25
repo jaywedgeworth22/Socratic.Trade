@@ -73,9 +73,10 @@ existing behavior; no phase scope, timeline, or approach changed.
   (3) **Fundamentals/analyst read-back tier** — App A now exposes
   `GET /api/market/fundamentals|analyst/:ticker` (the donated tables finally have readers);
   App B reads them via `getAppAFundamentals`/`getAppAAnalyst` + a
-  `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated
-  `CONGRESS_TRADE_READS_ENABLED` with a `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and 6h
-  caching — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
+  `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated by its OWN
+  `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (separate from the price-read `CONGRESS_TRADE_READS_ENABLED`), with a
+  `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and `NEWS_CACHE_TTL_MS` caching
+  — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
   `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Paid-call elimination is an **opt-in coverage
   hint** (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): the cascade hands paid providers a per-symbol set of the
   fields App A already covers (+ the analyst source) so they skip only the redundant SUB-calls (e.g. FMP's

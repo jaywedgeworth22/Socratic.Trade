@@ -33,7 +33,9 @@ only when its analyst entry survives the same-source de-dupe. **Flag split (owne
 tier now gated by its own `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (default off), independent of price reads;
 set on in Infisical. **Codex round 6:** App A positive cache honors `ttlMs()`/`NEWS_CACHE_TTL_MS`; reads
 bounded with `from=today−maxStaleDays`; FMP target-skip only suppresses caching when targets were actually
-going to be fetched. 1224 tests.
+going to be fetched. **Codex round 7:** positive-value guard on App A price targets; short-circuit awaits
+only the congress.trade tier (paid providers no longer serialized behind unrelated free tiers); PLAN.md
+flag ref fixed. 1224 tests.
 
 ## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
 Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`

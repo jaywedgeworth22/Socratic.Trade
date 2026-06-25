@@ -456,10 +456,13 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           }
           return undefined;
         };
-        const latestAnalyst = <K extends keyof AppAAnalyst>(key: K): NonNullable<AppAAnalyst[K]> | undefined => {
+        const latestAnalyst = <K extends keyof AppAAnalyst>(
+          key: K,
+          valid: (v: NonNullable<AppAAnalyst[K]>) => boolean = () => true
+        ): NonNullable<AppAAnalyst[K]> | undefined => {
           for (let i = freshAnalysts.length - 1; i >= 0; i--) {
             const v = freshAnalysts[i][key];
-            if (v != null) return v as NonNullable<AppAAnalyst[K]>;
+            if (v != null && valid(v as NonNullable<AppAAnalyst[K]>)) return v as NonNullable<AppAAnalyst[K]>;
           }
           return undefined;
         };
@@ -478,11 +481,15 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           const eg = latestFund("epsGrowth"); if (eg !== undefined) e.epsGrowth = eg;
         }
         if (freshAnalysts.length) {
-          // Targets are independent scalars — fill each from the latest fresh row that has it.
-          const tMean = latestAnalyst("targetMean"); if (tMean !== undefined) e.targetMean = tMean;
-          const tHigh = latestAnalyst("targetHigh"); if (tHigh !== undefined) e.targetHigh = tHigh;
-          const tLow = latestAnalyst("targetLow"); if (tLow !== undefined) e.targetLow = tLow;
-          const tMed = latestAnalyst("targetMedian"); if (tMed !== undefined) e.targetMedian = tMed;
+          // Targets are independent scalars — fill each from the latest fresh row that has
+          // a POSITIVE value (App A can carry a 0/negative sentinel; the direct FMP parser
+          // keeps only positives, so a bad App A target must not win first-wins or, under
+          // the short-circuit, suppress FMP's valid target call).
+          const pos = (v: number) => v > 0;
+          const tMean = latestAnalyst("targetMean", pos); if (tMean !== undefined) e.targetMean = tMean;
+          const tHigh = latestAnalyst("targetHigh", pos); if (tHigh !== undefined) e.targetHigh = tHigh;
+          const tLow = latestAnalyst("targetLow", pos); if (tLow !== undefined) e.targetLow = tLow;
+          const tMed = latestAnalyst("targetMedian", pos); if (tMed !== undefined) e.targetMedian = tMed;
           // The rating/counts/source form ONE coherent unit — take them from the latest
           // fresh row that actually yields a score (keeps the source key consistent with
           // the counts it came from), rather than mixing a rating from one source with
@@ -656,19 +663,19 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
 
     let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
     if (enrichmentShortCircuitEnabled()) {
-      // Short-circuit: run the free providers first so we learn what App A
-      // (congress.trade) already covers, then run the PAID providers over the SAME
-      // symbols but hand them a per-symbol coverage hint. A paid provider uses it to
-      // skip only the redundant SUB-calls (e.g. FMP's ratios-ttm + grades-consensus
-      // when App A already has P/E + analyst) while STILL fetching the fields it
-      // uniquely supplies — insider/senate signals, news/sentiment, quote fields, etc.
-      // No whole provider is skipped, so no field is ever lost; only duplicate
-      // upstream calls are eliminated. Providers that ignore the hint behave exactly
-      // as before. Price still comes from the free tier (Alpaca/Yahoo).
-      const freeProviders = this.providers.filter((p) => p.costTier !== "paid");
-      const paidProviders = this.providers.filter((p) => p.costTier === "paid");
-      const freeResults = await Promise.all(freeProviders.map((p) => run(p, normalized)));
-      const appA = freeResults.find((r) => r.name === "congress.trade")?.data ?? {};
+      // Short-circuit: ONLY the Congress.Trade tier feeds the coverage hint, so await
+      // just it first, then run EVERY other provider (free AND paid) in parallel. Paid
+      // providers use the per-symbol hint to skip only the redundant SUB-calls (e.g.
+      // FMP's ratios-ttm + grades-consensus when App A already has P/E + analyst) while
+      // STILL fetching the fields they uniquely supply — insider/senate, news/sentiment,
+      // quotes. No whole provider is skipped, so no field is lost; only duplicate upstream
+      // calls are eliminated. Crucially, paid providers are NOT serialized behind
+      // unrelated free tiers (Yahoo/Alpaca/SEC) — only behind the single App A read.
+      const congressProvider = this.providers.find((p) => p.name === "congress.trade");
+      const appAResult = congressProvider
+        ? await run(congressProvider, normalized)
+        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> };
+      const appA = appAResult.data;
       const coveredFields: Record<string, ReadonlySet<string>> = {};
       const analystSource: Record<string, string> = {};
       for (const s of normalized) {
@@ -683,10 +690,13 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         }
       }
       const context: EnrichmentContext = { coveredFields, analystSource };
-      const paidResults = await Promise.all(paidProviders.map((p) => run(p, normalized, context)));
+      const otherProviders = this.providers.filter((p) => p.name !== "congress.trade");
+      const otherResults = await Promise.all(
+        otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
+      );
       // Reassemble in registration order so the merge precedence is identical.
       const byName = new Map<string, Record<string, SymbolEnrichment>>();
-      for (const r of [...freeResults, ...paidResults]) byName.set(r.name, r.data);
+      for (const r of [appAResult, ...otherResults]) byName.set(r.name, r.data);
       results = this.providers.map((p) => ({ name: p.name, data: byName.get(p.name) ?? {} }));
     } else {
       // Default: run every provider over every symbol in parallel.

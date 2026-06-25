@@ -138,6 +138,20 @@ agentic-trading Infisical prod.
   `FMP_PRICE_TARGETS_ENABLED` was off and no target call would have happened, so FMP repeated all calls every
   scan; now a skipped target only counts as trimmed when targets were actually going to be fetched.
 
+## Codex review round 7 (PR #160, commit 57e4fed)
+Three new valid P2s (the rest of the batch were duplicate/outdated threads for items fixed in rounds 4–6):
+- **Non-positive App A targets (line 485)** — App A can carry a `0`/negative price-target sentinel; the
+  direct FMP parser keeps only positives, and under the short-circuit a covered target also makes FMP skip
+  its target call, so a bad App A target could win first-wins and surface as a $0 target. **Fixed**: added a
+  positive-value guard to the `latestAnalyst` target picks (mirrors the P/E / 52-week guards).
+- **Paid providers serialized behind unrelated free tiers (line 670)** — the short-circuit awaited ALL free
+  providers (Yahoo/Alpaca/Webull/Robinhood/SEC) before any paid provider started, even though only the
+  `congress.trade` result feeds the hint. **Fixed**: await ONLY the Congress.Trade tier first, then run every
+  other provider (free AND paid) in parallel — paid providers are no longer blocked on unrelated free tiers,
+  restoring scan latency. Registration-order reassembly + merge precedence unchanged.
+- **Stale PLAN.md flag (line 77)** — the roadmap still said the tier is gated by `CONGRESS_TRADE_READS_ENABLED`;
+  updated to `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (+ `NEWS_CACHE_TTL_MS` caching).
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
   `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (skip paid for App-A-covered symbols), plus the B→A push flags
