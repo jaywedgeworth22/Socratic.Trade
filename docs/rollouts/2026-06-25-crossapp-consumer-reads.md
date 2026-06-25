@@ -42,16 +42,20 @@ ticker universe and is free to read.
 - **P2 stale rows** — freshness guard `CONGRESS_TRADE_MAX_STALE_DAYS` (default 21): an App A row is used
   only if `updatedAt`/`date` is within the window, else it falls through to fresh paid providers.
 
+## Deeper saving — opt-in short-circuit (NEW)
+Implemented the actual paid-call elimination, opt-in: `ENRICHMENT_SHORT_CIRCUIT_ENABLED` (+
+`CONGRESS_TRADE_READS_ENABLED`). The cascade now runs the **free** providers first, then **skips the paid
+fundamentals providers' fetch for any symbol App A already covered** (`peRatio` + `eps` present). Price
+still comes from the free tier (Alpaca/Yahoo) and App A's row carries the rest, so covered symbols lose
+nothing. Paid providers are tagged `costTier: "paid"`; the merge stays in registration order so field
+precedence is identical. **Default OFF** → existing behavior unchanged (1203 tests pass untouched), +2 new
+tests cover the on/off paths. Also: App A misses are now **negative-cached** for 1h so uncovered symbols
+aren't re-fetched every scan (Codex P2).
+
 ## Follow-ups
-- The cascade runs providers in parallel (first-wins merge): this gives App A's data **precedence** and
-  (via caching) stops re-hitting App A, but does NOT eliminate a paid provider's fetch — each paid
-  provider fetches a mixed price+fundamentals bundle per symbol, so you can't skip it for a symbol without
-  losing the price it also supplies. The real call-elimination lever is operational: drop a redundant
-  *paid fundamentals* provider once App A coverage is trusted.
-- Enabling it in prod is a flag flip (`CONGRESS_TRADE_READS_ENABLED=on`) plus the
-  B→A push flags (`CONGRESS_SHARE_ENABLED` + `INGEST_TOKEN`) so App A's tables fill
-  — owner/infra action.
-- The A→B nightly-push **receiver route already exists** (`app/api/admin/securities/import/route.ts`,
-  built 2026-06-25 — the earlier "missing" finding was a wrong-path search under `src/app`). Activating
-  that direction is config only: `APP_B_IMPORT_URL` + `APP_B_INGEST_TOKEN` on App A, and
-  `APP_B_INGEST_TOKEN` + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED` on App B.
+- Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
+  `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (skip paid for App-A-covered symbols), plus the B→A push flags
+  (`CONGRESS_SHARE_ENABLED` + `CONGRESS_TRADE_TOKEN`) so App A's tables fill — owner/infra action.
+- The A→B nightly-push **receiver route already exists** (`app/api/admin/securities/import/route.ts`).
+  Wiring done 2026-06-25: `APP_B_IMPORT_URL` + `APP_B_INGEST_TOKEN` set on App A (Congress.Trade Worker
+  secrets). App B still needs the **same `APP_B_INGEST_TOKEN`** + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`.

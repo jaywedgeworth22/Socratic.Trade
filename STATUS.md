@@ -13,8 +13,12 @@ of the paid fundamentals providers in `data-providers.ts`, **gated OFF by
 `/api/market/fundamentals/:ticker` + `/api/market/analyst/:ticker` reader routes.
 Supplies only fundamentals/analyst (no price) so quote ordering is unchanged; no new
 `SymbolEnrichment` field. tsc clean, 1184 tests pass, build OK. Next: flag flip to
-enable in prod; the parallel cascade means this is precedence (not yet
-call-elimination) — see rollout note `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`.
+enable in prod. Now includes an **opt-in paid-call short-circuit**
+(`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): when App A covers a symbol's fundamentals (`peRatio`+`eps`), the
+paid fundamentals providers are skipped for it (`costTier:"paid"` tags; default OFF, +2 tests). App A
+misses are negative-cached 1h. A→B push wired: `APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` set as App A
+Worker secrets (App B needs the same token + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`). tsc clean, 1205
+tests, build OK. See `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`.
 ## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
 Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
 opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`

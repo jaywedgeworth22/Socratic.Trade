@@ -972,3 +972,57 @@ describe("CascadingEnrichmentProvider.activeSources (honest source attribution)"
     expect(cascade.activeSources).toEqual([]);
   });
 });
+
+describe("enrichment short-circuit (App A covers fundamentals → skip paid)", () => {
+  const FLAG = "ENRICHMENT_SHORT_CIRCUIT_ENABLED";
+  const READS = "CONGRESS_TRADE_READS_ENABLED";
+  afterEach(() => {
+    delete process.env[FLAG];
+    delete process.env[READS];
+  });
+
+  function appA(fundamentals: Record<string, SymbolEnrichment>): MarketEnrichmentProvider {
+    return { name: "congress.trade", configured: true, costTier: "free", async enrich() { return fundamentals; } };
+  }
+  function paidSpy(calls: string[][]): MarketEnrichmentProvider {
+    return {
+      name: "fmp",
+      configured: true,
+      costTier: "paid",
+      async enrich(syms: string[]) {
+        calls.push(syms);
+        const out: Record<string, SymbolEnrichment> = {};
+        for (const s of syms) out[s] = { peRatio: 99, eps: 9, sector: "Paid" };
+        return out;
+      }
+    };
+  }
+
+  it("skips the paid provider for symbols App A already covered, still calls it for uncovered", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const calls: string[][] = [];
+    const cascade = new CascadingEnrichmentProvider([
+      appA({ AAA: { peRatio: 10, eps: 2, sector: "AppA" } }), // AAA covered; BBB not
+      paidSpy(calls)
+    ]);
+    const out = await cascade.enrich(["AAA", "BBB"]);
+    // Paid provider was called ONLY with the uncovered symbol.
+    expect(calls).toEqual([["BBB"]]);
+    // Covered symbol keeps App A's values; uncovered falls through to paid.
+    expect(out.AAA.sector).toBe("AppA");
+    expect(out.AAA.peRatio).toBe(10);
+    expect(out.BBB.sector).toBe("Paid");
+  });
+
+  it("runs the paid provider for every symbol when the flag is OFF (default)", async () => {
+    process.env[READS] = "on"; // reads on, short-circuit off
+    const calls: string[][] = [];
+    const cascade = new CascadingEnrichmentProvider([
+      appA({ AAA: { peRatio: 10, eps: 2 } }),
+      paidSpy(calls)
+    ]);
+    await cascade.enrich(["AAA", "BBB"]);
+    expect(calls).toEqual([["AAA", "BBB"]]);
+  });
+});

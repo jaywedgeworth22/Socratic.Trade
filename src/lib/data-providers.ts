@@ -166,6 +166,20 @@ export interface MarketEnrichmentProvider {
   enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
   /** Registered providers that supplied ≥1 field in the most recent enrich() run (cascade only). */
   activeSources?: string[];
+  /** Cost classification for the optional short-circuit (default "free" when unset).
+   *  "paid" providers are skipped per-symbol when App A already covered fundamentals. */
+  costTier?: "free" | "paid";
+}
+
+function flagEnabled(value: string | undefined): boolean {
+  const v = (value ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+/** Opt-in: skip a *paid* fundamentals provider's fetch for a symbol that App A
+ *  (congress.trade) already covered (peRatio + eps), to eliminate the duplicate
+ *  paid call. Default OFF — when off the cascade runs every provider as before. */
+function enrichmentShortCircuitEnabled(): boolean {
+  return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressReadsEnabled();
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -341,6 +355,10 @@ const ANALYST_LABEL_SCORE: Record<string, number> = {
 function scoreFromAnalystLabel(label: string): number | undefined {
   return ANALYST_LABEL_SCORE[label.trim().toLowerCase()];
 }
+// Short TTL for a *negative* App A cache entry (a symbol App A had nothing fresh
+// for). Long enough to stop re-hitting both endpoints on back-to-back scans, short
+// enough that a newly-pushed row is picked up the same day.
+const CONGRESS_NEG_TTL_MS = 60 * 60_000; // 1h
 // How stale an App A row may be before we treat it as a cache miss and let the
 // fresh paid providers win instead. Fundamentals move slowly, but a paused
 // cross-app push or an old backfilled-only row should not override current data.
@@ -441,6 +459,12 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         if (Object.keys(e).length > 0) {
           result[symbol] = e;
           writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, now + DEFAULT_TTL_MS);
+        } else {
+          // Negative cache: App A had nothing fresh for this symbol. Remember the
+          // miss briefly so repeated scans don't re-hit both endpoints every time
+          // (the next scan reads {} from cache instead of fetching). Short TTL so a
+          // newly-pushed row is picked up soon.
+          writeEnrichmentCache(this.name, symbol, "shared", this.userId, {}, now + CONGRESS_NEG_TTL_MS);
         }
       })
     );
@@ -555,17 +579,42 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     this.contributingNames = new Set();
-    // Run all providers in parallel; pair each result set with its provider name.
-    const results = await Promise.all(
-      this.providers.map((p) =>
-        p
-          .enrich(symbols)
-          .then((data) => ({ name: p.name, data }))
-          .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }))
-      )
-    );
-    const merged: Record<string, SymbolEnrichment> = {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
+    // Each provider's result set, paired with its name, kept in REGISTRATION order
+    // so the first-wins merge below is unchanged regardless of how we fetched.
+    const run = (p: MarketEnrichmentProvider, syms: string[]) =>
+      p
+        .enrich(syms)
+        .then((data) => ({ name: p.name, data }))
+        .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }));
+
+    let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
+    if (enrichmentShortCircuitEnabled()) {
+      // Short-circuit: run the free providers first; for symbols App A already
+      // covered (peRatio + eps from congress.trade), skip the PAID providers'
+      // fetch entirely — eliminating the duplicate paid call. App A's row carries
+      // the rest of the fundamentals/analyst set, and price comes from the free
+      // tier (Alpaca/Yahoo), so nothing is lost for covered symbols.
+      const freeProviders = this.providers.filter((p) => p.costTier !== "paid");
+      const paidProviders = this.providers.filter((p) => p.costTier === "paid");
+      const freeResults = await Promise.all(freeProviders.map((p) => run(p, normalized)));
+      const appA = freeResults.find((r) => r.name === "congress.trade")?.data ?? {};
+      const covered = new Set(
+        normalized.filter((s) => appA[s] && appA[s].peRatio !== undefined && appA[s].eps !== undefined)
+      );
+      const uncovered = normalized.filter((s) => !covered.has(s));
+      const paidResults = await Promise.all(
+        paidProviders.map((p) => (uncovered.length ? run(p, uncovered) : Promise.resolve({ name: p.name, data: {} })))
+      );
+      // Reassemble in registration order so the merge precedence is identical.
+      const byName = new Map<string, Record<string, SymbolEnrichment>>();
+      for (const r of [...freeResults, ...paidResults]) byName.set(r.name, r.data);
+      results = this.providers.map((p) => ({ name: p.name, data: byName.get(p.name) ?? {} }));
+    } else {
+      // Default: run every provider over every symbol in parallel.
+      results = await Promise.all(this.providers.map((p) => run(p, normalized)));
+    }
+    const merged: Record<string, SymbolEnrichment> = {};
 
     for (const symbol of normalized) {
       const base: SymbolEnrichment = {};
@@ -1330,6 +1379,7 @@ export function isTransientError(error: unknown): boolean {
 
 export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "finnhub";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://finnhub.io/api/v1";
   private readonly scope: CacheScope;
@@ -1501,6 +1551,7 @@ export function fmpPriceTargetsEnabled(): boolean {
 
 export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://financialmodelingprep.com/stable";
   private readonly scope: CacheScope;
@@ -1671,6 +1722,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
 export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpha-vantage";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://www.alphavantage.co/query";
   private readonly scope: CacheScope;
@@ -1837,6 +1889,7 @@ export function clearEnrichmentCache(): void {
 
 export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fintechstudios";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base: string;
   private readonly scope: CacheScope;
@@ -1947,6 +2000,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
 
 export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "intrinio";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://api-v2.intrinio.com";
   private readonly scope: CacheScope;
@@ -2091,6 +2145,7 @@ export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
 
 export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "tiingo";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
@@ -2222,6 +2277,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
 
 export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "twelvedata";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;

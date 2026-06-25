@@ -34,18 +34,22 @@ targetMean/High/Low/Median, analystRating/Score/BySource) — **no new field**, 
 
 - **Caching:** reads go through the same 6h enrichment cache as the other slow-moving providers
   (`readEnrichmentCache`/`writeEnrichmentCache`, prefix `congress.trade`), so repeated scans don't re-hit
-  App A.
+  App A. **Misses are negative-cached** for 1h (an empty entry) so an uncovered symbol isn't re-fetched
+  from both endpoints on every back-to-back scan.
 - **Freshness guard:** an App A row is used only if its `updatedAt`/`date` is within
   `CONGRESS_TRADE_MAX_STALE_DAYS` (default 21). Stale rows fall through so they never override fresh paid data.
 - **Rating-only rows** still surface: when App A has a `rating` label but no buy/sell counts, the provider
   derives a score (`scoreFromAnalystLabel`) and writes `analystBySource`, which is what the cascade blends
   into the displayed rating.
-- **Saving — what it does / doesn't do:** the cascade runs providers in parallel and merges first-wins, so
-  this gives App A's data *precedence* and (via caching) stops re-hitting App A every scan. It does **not**
-  by itself stop a paid provider's fetch, because each paid provider fetches a mixed per-symbol bundle
-  (price + fundamentals together) — you can't skip it for a symbol without losing the price it also supplies.
-  The real call-elimination lever is operational: with App A covering fundamentals, the owner can drop a
-  redundant *paid fundamentals* provider from the cascade.
+- **Deeper saving — the opt-in short-circuit (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`):** when this flag AND
+  `CONGRESS_TRADE_READS_ENABLED` are on, the cascade runs the **free** providers first, then **skips the
+  paid fundamentals providers' fetch for any symbol App A already covered** (App A returned `peRatio` +
+  `eps`). That eliminates the duplicate paid call for covered symbols — price still comes from the free
+  tier (Alpaca/Yahoo) and App A's row carries the rest of the fundamentals/analyst set, so nothing is lost.
+  Paid providers are marked with `costTier: "paid"`; the merge stays in registration order so field
+  precedence is unchanged. **Default OFF** — when off the cascade runs every provider over every symbol
+  exactly as before. (Operational alternative, no flag: with App A trusted, drop a redundant paid
+  fundamentals provider from the cascade entirely.)
 
 ## 2. App A as the congressional source (`CONGRESS_TRADE_AS_CONGRESS_SOURCE`)
 When on, `refreshCongress` (`src/lib/web-sources/congress.ts`) swaps its scraper cascade (Senate eFD /
@@ -107,6 +111,7 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 |---------|---------|
 | `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (history tier) **and** the fundamentals/analyst enrichment tier (§1b) |
 | `CONGRESS_TRADE_MAX_STALE_DAYS` | freshness cap (default 21) for App A fundamentals/analyst rows before they fall through to paid providers |
+| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | skip the paid fundamentals providers' fetch for symbols App A already covered (needs `CONGRESS_TRADE_READS_ENABLED`); default off |
 | `CONGRESS_TRADE_AS_CONGRESS_SOURCE` | source congressional trades from App A instead of scrapers |
 | `CONGRESS_WEBHOOK_SECRET` | shared bearer App A presents to the webhook (default-closed when blank) |
 | `CONGRESS_STREAM_ENABLED` | start the outbound SSE consumer |
