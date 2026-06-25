@@ -176,9 +176,10 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
   );
   const skillScores = await buildMemberSkillScores(clusterFilerIds);
 
-  // Conviction scores keyed by normalized ticker.
+  // Conviction scores keyed by normalized ticker — null-score rows excluded (thin signal,
+  // not usable data; including them could pull no-signal tickers into the scan via netSentiment).
   const convictionByTicker = new Map<string, AppAConvictionTicker>();
-  for (const cv of convictions) {
+  for (const cv of usableConvictions) {
     const sym = normalizeSymbol(cv.ticker);
     if (sym) convictionByTicker.set(sym, cv);
   }

@@ -77,7 +77,8 @@ conflictCount?: number;              // flagged disclosures in the analytics win
 
 ```
 npx tsc --noEmit   # clean
-npm test           # 1203/1203
+npm test           # 1222/1222 (after Codex review follow-up fixes)
+npm run build      # clean — all routes compiled, no type errors in generated .next/types
 ```
 
 ## Follow-ups / deferred items
