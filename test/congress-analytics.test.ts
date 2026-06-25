@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildMemberScores,
+  buildMemberSkillScores,
   getCongressAnalyticsOverlay,
   refreshCongressAnalytics
 } from "../src/lib/web-sources/congress-analytics";
@@ -21,7 +22,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function stubAnalyticsFetch(p: { tickers?: unknown[]; clusters?: unknown[]; members?: unknown[] }): void {
+function stubAnalyticsFetch(p: {
+  tickers?: unknown[];
+  clusters?: unknown[];
+  members?: unknown[];
+  perf?: Record<string, unknown>; // per-member performance keyed by filerId (for /member/:id/performance)
+}): void {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -29,6 +35,11 @@ function stubAnalyticsFetch(p: { tickers?: unknown[]; clusters?: unknown[]; memb
       if (u.includes("ticker-leaderboard")) return new Response(JSON.stringify({ tickers: p.tickers ?? [] }), { status: 200 });
       if (u.includes("cluster-buys")) return new Response(JSON.stringify({ clusters: p.clusters ?? [] }), { status: 200 });
       if (u.includes("member-leaderboard")) return new Response(JSON.stringify({ members: p.members ?? [] }), { status: 200 });
+      const perfMatch = u.match(/\/member\/([^/]+)\/performance/);
+      if (perfMatch) {
+        const id = decodeURIComponent(perfMatch[1]);
+        return new Response(JSON.stringify({ performance: p.perf?.[id] ?? null }), { status: 200 });
+      }
       return new Response("{}", { status: 200 });
     })
   );
@@ -70,6 +81,36 @@ describe("congress analytics overlay", () => {
     expect(res.ok).toBe(false);
     expect(res.warning).toContain("no analytics");
   });
+
+  it("uses real per-member skill (alpha vs S&P) over the activity proxy when scored performance exists", async () => {
+    process.env.CONGRESS_ANALYTICS_ENABLED = "on";
+    stubAnalyticsFetch({
+      tickers: [{ ticker: "nvda", tradeCount: 3, estNetFlowUsd: 100000 }],
+      // Two cluster members: the higher-alpha filer should win even if the other has more activity.
+      clusters: [
+        {
+          ticker: "NVDA",
+          memberCount: 2,
+          topMembers: [
+            { filerId: "house-x-low-alpha", fullName: "Big Volume" },
+            { filerId: "house-y-high-alpha", fullName: "Sharp Trader" }
+          ]
+        }
+      ],
+      members: [
+        { filerId: "house-x-low-alpha", fullName: "Big Volume", estVolumeUsd: 9_000_000 },
+        { filerId: "house-y-high-alpha", fullName: "Sharp Trader", estVolumeUsd: 1_000 }
+      ],
+      perf: {
+        "house-x-low-alpha": { scoredCount: 20, avgExcess: 0.01 },
+        "house-y-high-alpha": { scoredCount: 20, avgExcess: 0.25 } // best alpha → rank-normalized to 100
+      }
+    });
+    const res = await refreshCongressAnalytics(Date.now(), true);
+    expect(res.ok).toBe(true);
+    // topMemberScore is the max skill score across the cluster's members — the high-alpha filer at 100.
+    expect(getCongressAnalyticsOverlay(["NVDA"]).NVDA.topMemberScore).toBe(100);
+  });
 });
 
 describe("buildMemberScores", () => {
@@ -86,6 +127,60 @@ describe("buildMemberScores", () => {
 
   it("is empty when no recognized activity field is present (inert until filer_id resolves on App A)", () => {
     expect(buildMemberScores([{ fullName: "A", buyCount: 5 }]).size).toBe(0);
+  });
+});
+
+describe("buildMemberSkillScores", () => {
+  beforeEach(() => {
+    process.env.CONGRESS_ANALYTICS_ENABLED = "on";
+  });
+
+  it("rank-normalizes realized alpha (avgExcess) to 0–100, keyed by filerId", async () => {
+    stubAnalyticsFetch({
+      perf: {
+        a: { scoredCount: 10, avgExcess: 0.2 },
+        b: { scoredCount: 10, avgExcess: 0.05 },
+        c: { scoredCount: 10, avgExcess: 0.125 }
+      }
+    });
+    const m = await buildMemberSkillScores(["a", "b", "c"]);
+    expect(m.get("a")).toBe(100);
+    expect(m.get("b")).toBe(0);
+    expect(m.get("c")).toBe(50);
+  });
+
+  it("skips members with no scored trades (scoredCount 0 / null perf) and dedupes input", async () => {
+    stubAnalyticsFetch({
+      perf: {
+        scored: { scoredCount: 5, avgExcess: 0.1 },
+        unscored: { scoredCount: 0, avgExcess: null }
+      }
+    });
+    const m = await buildMemberSkillScores(["scored", "scored", "unscored", "missing", ""]);
+    expect(m.has("unscored")).toBe(false);
+    expect(m.has("missing")).toBe(false);
+    expect(m.get("scored")).toBe(100); // sole scored member → top of its (size-1) ranking
+    expect(m.size).toBe(1);
+  });
+
+  it("falls back to medianExcess then avgReturn when avgExcess is absent", async () => {
+    stubAnalyticsFetch({
+      perf: {
+        med: { scoredCount: 3, medianExcess: 0.3 },
+        ret: { scoredCount: 3, avgReturn: 0.1 }
+      }
+    });
+    const m = await buildMemberSkillScores(["med", "ret"]);
+    expect(m.get("med")).toBe(100); // 0.3 > 0.1
+    expect(m.get("ret")).toBe(0);
+  });
+
+  it("is empty (no fetch) when analytics is disabled", async () => {
+    delete process.env.CONGRESS_ANALYTICS_ENABLED;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect((await buildMemberSkillScores(["a"])).size).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -27,7 +27,7 @@ export type LlmReasoningEffort = "low" | "medium" | "high";
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
 export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
+export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn" | "provider_degraded";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
 
@@ -842,6 +842,8 @@ export interface RecentProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  /** Broker or network error message when status is placing_failed. */
+  errorMessage?: string;
 }
 
 export interface StrategyOutcome {

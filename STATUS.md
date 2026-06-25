@@ -25,6 +25,35 @@ to the encrypted-secret inventory. Added a dated `PLAN.md` topology note. Verifi
 the pre-existing `cache-provenance` flake). See
 `docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md`.
 
+## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
+Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
+429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
+capability probe (neither Massive nor FMP exposes a plan endpoint): Massive free is capped ~2yr
+history + 5/min, so a >2yr AAPL aggregate query distinguishes free vs paid; FMP is best-effort
+(premium/limit error → free). On a **lapse or change** it alerts via the in-app feed
+(`provider_degraded`) AND the multi-channel dispatcher (`notify` → push/webhook/**email** via Resend/
+SMS), and **auto-clamps Massive to the free-safe 5/min** (restoring 100 when paid returns) — detection
+can only lower the cap, and biases to "unknown→no-action" so a paid key is never wrongly clamped.
+Cadence-gated (default 24h, anchored overnight ET with a 1.5× catch-up) off the always-on scheduler
+tick. Surfaced in `/api/health` as `checks.dataProviders` (+ `dataProvidersDegraded`) and via exported
+`getProviderTierStatus()` — the integration point for the status/admin/health tool. **Operator (for
+email):** set `RESEND_API_KEY` + `NOTIFY_EMAIL_FROM`, enable the Email channel + address in Settings →
+Notifications. tsc clean · 1146 tests (+17) · build green. See
+`docs/rollouts/2026-06-24-provider-tier-watchdog.md`.
+
+## 2026-06-25 — Member skill-weighting from App A `/member/:filerId/performance` (default-OFF path)
+Branch `agent/claude-member-skill`. App A shipped a per-member performance endpoint (realized
+return / win-rate / **alpha vs S&P**) + confirmed its #46 fundamentals/analyst tables are live in
+prod. The congress-analytics overlay now weights cluster members by **real skill (alpha)** via new
+`getAppAMemberPerformance` + `buildMemberSkillScores` (rank-normalized `avgExcess`, keyed by filerId,
+bounded `MAX_SKILL_LOOKUPS=200`), **falling back** to the activity proxy (`buildMemberScores`) until App
+A has scored a member (`scoredCount>0` — needs the price push to fill in). Only runs under
+`CONGRESS_ANALYTICS_ENABLED`; no perf calls when there are no clusters. Verify: tsc clean ·
+analytics+client tests 22 passed · full trio via land.sh. **Ops next:** flip
+`CONGRESS_SHARE_FUNDAMENTALS_ENABLED=on` (tables now live) + run `{"fullHistory":true}` backfill so alpha
+fills in. Open item unchanged: price-adjustment (raw vs adjusted closes). See
+`docs/rollouts/2026-06-25-member-skill-weighting.md`.
+
 ## 2026-06-25 — Learning-loop honesty (OOS no-op caution + policy-blocked counterfactual)
 Branch `claude/learning-loop-honesty`. First of the clean/additive backlog batches (post #137).
 Both additive + advisory-only (no money path). (1) `applyOosGate` (`strategy-tuning.ts`) now appends
@@ -117,6 +146,23 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
+  New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
+  (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256
+  error fingerprinting. Credential scoping: health rows keyed by `(service, key_source)` so env-key
+  calls and user-key calls are tracked separately — prevents false STOPPED alerts when one user's key
+  fails but the env key is healthy. All 10 provider classes have `private readonly keySource` +
+  `this.keySource = keySource` wired; all fetchWithRetry call sites pass `keySource`/`userId`. ALTER
+  TABLE migrations for existing DBs (adds `key_source` + `user_id` columns, recreates error_patterns
+  table with correct NOT NULL DEFAULT '' key_source + UNIQUE(service,fingerprint,key_source)). Admin
+  client groups cards and detail panels by credential lane, passes `?keySource=` to log API. 429s
+  logged before retry sleep. Alpha Vantage 200-but-error no longer logged as healthy (deferSuccessLog).
+  TwelveData 200-but-error also fixed. Index migration ordering fix (idx_api_health_log_service_key
+  moved after ALTER TABLE). Added `error_message TEXT` column to `trade_proposals` — broker/network
+  errors are now persisted when a trade reaches `placing_failed` status and surfaced in the dashboard
+  proposal card UI. tsc clean; 1 pre-existing test failure (cache-provenance date flake); build green.
+  See `docs/rollouts/2026-06-25-connections-health-panel.md` and
+  `docs/rollouts/2026-06-25-credential-scoped-health-lanes.md`.
 - 2026-06-25 (`claude/alpaca-order-type-pagination`): **Alpaca broker-robustness fixes.** (1) Order
   type mapping — `mapAlpacaOrderType` maps Alpaca's raw `stop`→`stop_market`, `trailing_stop`→
   `stop_market`, unknown→`market` (was leaking raw values via `o.type as OrderType`). (2)
