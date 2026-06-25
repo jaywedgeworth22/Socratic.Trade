@@ -153,9 +153,12 @@ Three new valid P2s (the rest of the batch were duplicate/outdated threads for i
   updated to `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (+ `NEWS_CACHE_TTL_MS` caching).
 
 ## Follow-ups
-- Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
-  `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (skip paid for App-A-covered symbols), plus the B→A push flags
-  (`CONGRESS_SHARE_ENABLED` + `CONGRESS_TRADE_TOKEN`) so App A's tables fill — owner/infra action.
+- Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (price/history cache-aside) **and**
+  `CONGRESS_TRADE_FUNDAMENTALS_ENABLED=on` (the fundamentals/analyst tier — gated SEPARATELY since the
+  flag split), optionally `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (coverage-hint sub-call skips; needs the
+  fundamentals flag), plus the B→A push flags (`CONGRESS_SHARE_ENABLED` + `CONGRESS_TRADE_TOKEN`) so App
+  A's tables fill — owner/infra action. **All of these are now set on in the agentic-trading Infisical
+  prod project (2026-06-25).**
 - The A→B nightly-push **receiver route already exists** (`app/api/admin/securities/import/route.ts`).
   Wiring done 2026-06-25: `APP_B_IMPORT_URL` + `APP_B_INGEST_TOKEN` set on App A (Congress.Trade Worker
   secrets). App B still needs the **same `APP_B_INGEST_TOKEN`** + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`.
