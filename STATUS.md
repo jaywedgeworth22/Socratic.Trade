@@ -49,6 +49,23 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`claude/per-account-isolation`, **COMPLETE / PR #128 ready**): **Per-account state
+  isolation — PR 1 of 3, all slices landed.** Each connected account gets its own isolated state
+  instead of all of a user's accounts sharing one. Owner decision: full isolation, except shareable
+  (fact-tier) learning stays user-wide; `strategy_profiles` is a copyable **library** + each account
+  has its own **live** state. DONE (verified green — tsc clean, 1075/1076 = only the unrelated
+  `cache-provenance` macro-cache flake, build green): (1) schema `account_strategy_state` + nullable
+  `connected_account_id` tags; (2) core policy + system-state isolation in `getPolicy/setPolicy`;
+  (3) run-state/run-lock per account; (4) audit/notification account tagging; (5) performance-learning
+  per account (counterfactuals + watermark PK-rebuilt to `(user_id, connected_account_id)`);
+  (6) scheduler multi-account iteration with `runStrategyOnce(userId,{connectedAccountId})` override
+  + a **safety guard** that seeds non-active accounts `halted` so autonomy never auto-arms a dormant
+  account; (7) deletion purge of all per-account state. Tests in
+  `test/per-account-policy-isolation.test.ts`. See `docs/design/per-account-isolation.md` +
+  `docs/rollouts/2026-06-24-per-account-isolation.md`. NOTE: merge to `main` lands it; **production
+  deploy is a separate manual step on the owner's host** (pull `main` on `~/apps/trading-live`,
+  rebuild, `pm2 restart trading`) — not reachable from the cloud agent env.
+
 - 2026-06-24 (`fix/land-workflow-scope-guard`): **Agents can push `.github/workflows/` changes directly.** Root cause wasn't a permission gap — the gh token already has the `workflow` scope and `git push` uses `gh auth git-credential` — it was a STALE `scripts/land.sh` guard that always `die`d on a workflow diff. Made step 5 **scope-aware**: allow the push when `gh auth status` shows the `workflow` scope (the common case), only block (with `gh auth refresh -h github.com -s workflow` guidance) when it's genuinely missing. Corrected `AGENTS.md` step-7 + the stale `ci-pending/README.md` note. This PR proves it end-to-end — its diff includes a `.github/workflows/ci.yml` header comment (documenting `verify` as the required ruleset check), so the push exercises the workflow-scope path. Also closed PR #84 (bot-identity — owner doesn't want enforced review). See `docs/rollouts/2026-06-24-land-workflow-scope-guard.md`.
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
   Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same

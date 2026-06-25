@@ -17,11 +17,11 @@ export async function sendNotification(
   const webhookUrl = settings.webhookUrl?.trim();
 
   if (!settings.enabledEvents.includes(input.type)) {
-    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId);
+    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
   }
 
   if (!webhookUrl) {
-    return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId);
+    return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId, policy.connectedAccountId);
   }
 
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
@@ -47,12 +47,12 @@ export async function sendNotification(
     });
     clearTimeout(timeout);
     if (!response.ok) {
-      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`, userId);
+      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`, userId, policy.connectedAccountId);
     }
-    return record(input, "sent", webhookUrl, undefined, userId);
+    return record(input, "sent", webhookUrl, undefined, userId, policy.connectedAccountId);
   } catch (error) {
     clearTimeout(timeout);
-    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId);
+    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId, policy.connectedAccountId);
   }
 }
 
@@ -196,10 +196,12 @@ function record(
   status: NotificationEvent["status"],
   webhookUrl?: string,
   error?: string,
-  userId: string = "local"
+  userId: string = "local",
+  connectedAccountId?: string
 ): NotificationEvent {
   const event = insertNotificationEvent({
     userId,
+    connectedAccountId,
     type: input.type,
     title: input.title,
     status,
@@ -207,7 +209,7 @@ function record(
     payload: input.payload,
     error
   });
-  audit("notification", event, userId);
+  audit("notification", event, userId, connectedAccountId);
   return event;
 }
 
