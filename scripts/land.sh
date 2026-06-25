@@ -9,7 +9,8 @@
 #   2. Fetches origin
 #   3. Merges origin/main (fast-forward or real merge; aborts on conflict)
 #   4. Runs tsc, npm test, npm run build — all must pass
-#   5. Refuses if any .github/workflows/ files are in the diff (no workflow scope)
+#   5. Allows .github/workflows/ changes when the gh token has the 'workflow' scope; only
+#      blocks them when the scope is missing (then: gh auth refresh -s workflow, or ci-pending/)
 #   6. Pushes the agent branch and opens a PR via gh
 #
 # Safe to re-run: idempotent.  Re-running after fixing a conflict or test
@@ -156,16 +157,23 @@ else
   ok "  build clean."
 fi
 
-# ── 5. workflow-scope guard ────────────────────────────────────────────────
+# ── 5. workflow-scope guard (scope-aware) ──────────────────────────────────
+# Pushing .github/workflows/ requires the 'workflow' OAuth scope on the token git pushes with.
+# `git push` here goes through `gh auth git-credential`, so the gh token's scopes are what matter.
+# Only block when that scope is genuinely MISSING — when it's present (the common case now), allow
+# the push instead of forcing a needless ci-pending/ detour.
 WORKFLOW_FILES="$(git diff --name-only "origin/main...HEAD" -- '.github/workflows/' 2>/dev/null || true)"
 if [[ -n "$WORKFLOW_FILES" ]]; then
-  die "Your branch modifies .github/workflows/ files:
+  if gh auth status 2>&1 | grep -q "Token scopes:.*'workflow'"; then
+    info "Diff includes .github/workflows/ — gh token has the 'workflow' scope, so the push is allowed:"
+    echo "$WORKFLOW_FILES" | sed 's/^/  /'
+  else
+    die "Your branch modifies .github/workflows/ files:
 $(echo "$WORKFLOW_FILES" | sed 's/^/  /')
-Pushing these requires 'workflow' scope, which the current gh token lacks.
-Instead, place the file(s) in ci-pending/ and note them in your rollout doc.
-The human reviewer can copy them to .github/workflows/ and push with their token,
-or run:  gh auth refresh -s workflow
-Then re-run land.sh.  If you intended ci-pending/ staging, move them there first."
+Pushing these requires the 'workflow' OAuth scope, which the current gh token lacks.
+Add it once with:  gh auth refresh -h github.com -s workflow
+(or stage the file(s) under ci-pending/ for a human to move). Then re-run land.sh."
+  fi
 fi
 
 # ── 6. push branch + open PR ──────────────────────────────────────────────

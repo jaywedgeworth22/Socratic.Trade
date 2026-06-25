@@ -257,6 +257,26 @@ export async function getAppAMemberLeaderboard(opts: { window?: string; limit?: 
   return Array.isArray(json?.members) ? json!.members : [];
 }
 
+/** Per-member realized performance (return / win-rate / alpha vs S&P). `scoredCount`=0 → all nulls. */
+export interface AppAMemberPerformance {
+  tradeCount?: number;
+  scoredCount?: number;
+  winRate?: number | null;
+  medianReturn?: number | null;
+  medianExcess?: number | null; // median return in excess of S&P (alpha)
+  avgReturn?: number | null;
+  avgExcess?: number | null; // average alpha vs S&P
+}
+
+export async function getAppAMemberPerformance(filerId: string): Promise<AppAMemberPerformance | null> {
+  if (!congressAnalyticsEnabled() || !filerId) return null;
+  const json = await getJson<{ performance?: AppAMemberPerformance }>(
+    `/api/analytics/member/${encodeURIComponent(filerId)}/performance`,
+    readToken()
+  );
+  return json?.performance ?? null;
+}
+
 /**
  * Convert App A's {date, close} series to OHLCBars (close-only — open/high/low/volume undefined,
  * which OHLCBar permits). Suitable for close-series consumers (technical/returns); a price chart

@@ -38,13 +38,17 @@ per-member realized performance, or App B to aggregate `/api/analytics/performan
 - **`refSector`/`refMarketCap`/`capGainsOver200`** are on every transactions row — App B can consume
   these next (low priority; sector is already free-sourced locally).
 
-## The one genuinely new App-A build: accept App B's fundamentals push
-`securities_ref` has no columns for `peRatio/eps/beta/dividendYield/52wHi-Lo/fcfYield/debtToEquity/
-epsGrowth` or analyst consensus → needs a migration + new slots in `POST /api/admin/securities/import`
-(mirror `prices[]`). **Recommend: take fundamentals (saves App A's FMP quota), defer macro/news.** Once
-the slots exist, App B pushes them on the nightly batch:
-- `fundamentals: [{ ticker, date, peRatio, eps, beta, dividendYield, fiftyTwoWeekHigh, fiftyTwoWeekLow, fcfYield, debtToEquity, epsGrowth }]`
-- `analyst: [{ ticker, date, rating, score, buy, hold, sell }]`
+## Fundamentals/analyst push — BUILT (App A PR #46)
+App A confirmed the import slots (PR #46, pending merge+migration). App B's after-scan hook now sends
+both, built from `MarketQuote` data the scan already fetched (no extra FMP calls), matching App A's exact
+shapes:
+- `fundamentals: [{ ticker, date, peRatio?, eps?, beta?, dividendYield?, week52High?, week52Low?, fcfYield?, debtToEquity?, epsGrowth? }]`
+- `analyst: [{ ticker, date, rating?, strongBuy?, buy?, hold?, sell?, strongSell? }]` (App B has no price
+  targets → `targetMean/High/Low/Median`/`analystCount` left for App A to fill null)
+Sent in the same idempotent scan-hook POST as `refs`, but **held behind `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`
+(default off)** per App A's note that pushing these rows before #46's migration *errors them* (the rest of
+the import is unaffected; `refs` keep flowing). **App A: ping when #46 is applied** — we flip the flag and
+these start populating `securities_ref`. Macro/news deferred as agreed.
 
 ## FYI
 App B populates App A via the nightly batch + App A's backfill (no per-read push-back). App B reads

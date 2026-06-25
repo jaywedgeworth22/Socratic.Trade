@@ -26,7 +26,7 @@ export const DEFAULT_RISK_RULES: RiskRules = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   webhookUrl: "",
-  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"]
+  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn", "provider_degraded"]
 };
 
 export const DEFAULT_POLICY: TradingPolicy = {
@@ -37,6 +37,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   additionalSymbols: [],
   blocklist: [],
   strategyAuthority: "propose",
+  sellToFundBuy: "off",
   llmModel: "gpt-5.4-mini",
   llmReasoningEffort: "medium",
   holdingHorizon: "swing",

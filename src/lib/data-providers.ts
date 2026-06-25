@@ -108,6 +108,11 @@ export interface SymbolEnrichment {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  // Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED).
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   // Which provider supplied each scalar field (filled by the cascade).
   sources?: Partial<Record<EnrichmentSourcedField, string>>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
@@ -139,7 +144,11 @@ export type EnrichmentSourcedField =
   | "fcfYield"
   | "debtToEquity"
   | "epsGrowth"
-  | "senateTrades";
+  | "senateTrades"
+  | "targetMean"
+  | "targetHigh"
+  | "targetLow"
+  | "targetMedian";
 
 export interface MarketEnrichmentProvider {
   name: string;
@@ -441,6 +450,10 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("debtToEquity", name, r.debtToEquity);
         takeScalar("epsGrowth", name, r.epsGrowth);
         takeScalar("senateTrades", name, r.senateTrades);
+        takeScalar("targetMean", name, r.targetMean);
+        takeScalar("targetHigh", name, r.targetHigh);
+        takeScalar("targetLow", name, r.targetLow);
+        takeScalar("targetMedian", name, r.targetMedian);
         if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
         // Collect every provider's analyst read.
         if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
@@ -499,7 +512,11 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   fcfYield: true,
   debtToEquity: true,
   epsGrowth: true,
-  senateTrades: true
+  senateTrades: true,
+  targetMean: true,
+  targetHigh: true,
+  targetLow: true,
+  targetMedian: true
 };
 
 // ── Webull unofficial quote bridge (opt-in, market-data only) ────────────────
@@ -1304,6 +1321,12 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
 // Supplies P/E (ratios-ttm) and analyst consensus (grades-consensus).
 // Sector/industry/headlines are not available on the free plan.
 
+/** Opt-in: fetch FMP price-target-consensus (an extra call per symbol; not on every key tier). */
+export function fmpPriceTargetsEnabled(): boolean {
+  const v = (process.env.FMP_PRICE_TARGETS_ENABLED ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp";
   readonly configured = true;
@@ -1338,11 +1361,17 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
-          const [peRaw, consensusRaw, insiderRaw, senateRaw] = await Promise.allSettled([
+          // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
+          // and not on every key tier. When off, targets stay undefined and ride null downstream.
+          const wantTargets = fmpPriceTargetsEnabled();
+          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
             this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`)
+            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`),
+            wantTargets
+              ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`)
+              : Promise.resolve(undefined)
           ]);
 
           let peRatio: number | undefined;
@@ -1400,11 +1429,35 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             if (trades.length > 0) senateTrades = net;
           }
 
+          // Price-target-consensus → numeric targets. FMP stable shape:
+          // [{ symbol, targetHigh, targetLow, targetConsensus, targetMedian }]. Only positive values kept.
+          let targetMean: number | undefined;
+          let targetHigh: number | undefined;
+          let targetLow: number | undefined;
+          let targetMedian: number | undefined;
+          if (wantTargets && targetRaw.status === "fulfilled" && Array.isArray(targetRaw.value)) {
+            const row = (targetRaw.value as Array<Record<string, unknown>>)[0];
+            if (row) {
+              const pos = (v: unknown) => {
+                const n = Number(v);
+                return Number.isFinite(n) && n > 0 ? n : undefined;
+              };
+              targetMean = pos(row.targetConsensus);
+              targetHigh = pos(row.targetHigh);
+              targetLow = pos(row.targetLow);
+              targetMedian = pos(row.targetMedian);
+            }
+          }
+
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
             ...(analystBySource !== undefined && { analystBySource }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
-            ...(senateTrades !== undefined && { senateTrades })
+            ...(senateTrades !== undefined && { senateTrades }),
+            ...(targetMean !== undefined && { targetMean }),
+            ...(targetHigh !== undefined && { targetHigh }),
+            ...(targetLow !== undefined && { targetLow }),
+            ...(targetMedian !== undefined && { targetMedian })
           };
 
           const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
