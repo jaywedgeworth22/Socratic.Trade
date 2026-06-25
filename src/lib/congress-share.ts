@@ -588,6 +588,12 @@ export interface RunCongressDailyShareOptions {
   force?: boolean;
   /** Override the universe (admin targeted test). When set, the date marker is NOT advanced. */
   symbols?: string[];
+  /**
+   * Deep-history backfill: send each symbol's FULL available history (skip the per-symbol close cap)
+   * so App A can compute performance back to old trade dates. Still chunked into small bounded POSTs.
+   * Use one-time / on-demand via the admin route; the recurring nightly run leaves this off (light).
+   */
+  fullHistory?: boolean;
 }
 
 export interface CongressDailyShareSummary {
@@ -638,13 +644,13 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   }
 
   const concurrency = Number(process.env.CONGRESS_SHARE_CONCURRENCY ?? 4) || 4;
-  const maxCloses = maxClosesPerTicker();
+  // Deep-history backfill sends each symbol's FULL series (still chunked into small POSTs); the nightly
+  // run caps to the most-recent N closes (App A backfills deeper itself) to keep each POST under the wall.
+  const maxCloses = options.fullHistory ? Number.POSITIVE_INFINITY : maxClosesPerTicker();
   const priceEntries = (
     await mapPool(universe, concurrency, async (symbol) => {
       try {
         const entry = ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now));
-        // Cap each symbol's history to the most-recent N closes — App A backfills deeper itself, and
-        // shipping full multi-year history per symbol is what blew the per-POST timeout in prod.
         if (entry && entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
         return entry;
       } catch {

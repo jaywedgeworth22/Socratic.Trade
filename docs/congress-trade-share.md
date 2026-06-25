@@ -102,9 +102,13 @@ applied** — App A's tables don't exist until then, and pushing those rows earl
 immediately, bypassing the once-per-day cadence. Requires `CONGRESS_TRADE_TOKEN`
 (returns 400 otherwise) but **not** `CONGRESS_SHARE_ENABLED`.
 
-- Body `{}` → share the monitored universe (watchlists + policy universes).
+- Body `{}` → share the monitored universe (watchlists + policy universes), recent-capped.
 - Body `{ "symbols": ["AAPL","MSFT"] }` → share only those tickers (a targeted
   test that does **not** advance the daily marker).
+- Body `{ "fullHistory": true }` (optionally with `symbols`) → **deep-history backfill**: send each
+  symbol's FULL series (uncapped, still chunked into small POSTs) so App A can compute performance back
+  to old trade dates. Run once / after adding symbols; the recurring nightly run stays recent-capped.
+  See `docs/congress-trade-data-plan.md`.
 
 Response echoes a summary: `{ ok, tickers, priced, spxRows, posts, failedPosts,
 sent, responses, autoEnabled }`, where `responses` carries App A's per-POST
