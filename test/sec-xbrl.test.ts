@@ -164,6 +164,20 @@ describe("parseCompanyFacts — debtToEquity (debt-specific concepts)", () => {
     expect(r.debtToEquity).toBe(2.0); // 640M/320M at 2024-Q1, not 600M/300M at 2023-FY
   });
 
+  it("ignores non-periodic 8-K facts so they don't win the latest-period reducer", () => {
+    // A newer 8-K (earnings release) tags equity at 2024-03-31 with no aligned debt. Without filtering it
+    // would win latestEntry and null out enrichment; restricted to periodic forms, the latest PERIODIC
+    // period is the 2023 10-K → 600M/300M = 2.0.
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [
+        { end: "2023-12-31", val: 300_000_000, form: "10-K" },
+        { end: "2024-03-31", val: 320_000_000, form: "8-K" } // non-periodic — must be IGNORED
+      ],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
   it("omits D/E when the latest equity period has no debt fact to align with (falls through to Yahoo)", () => {
     // Latest equity is a 2024-Q1 10-Q, but debt is only tagged at the 2023 10-K — no aligned period → omit.
     const r = parseCompanyFacts(rawFacts({

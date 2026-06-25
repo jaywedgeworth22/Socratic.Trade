@@ -252,6 +252,22 @@ Files: `src/lib/data-providers.ts`, `src/lib/market.ts`, `app/dashboard-client.t
 
 Full trio green: tsc clean · 1178/1179 (only the cache-provenance flake) · build.
 
+## Round 10 (Codex review): restrict SEC facts to periodic reports
+
+Codex flagged (P2, line 2284) that `getEntries` captured each fact's `form` but never filtered on it.
+companyfacts also carries facts from NON-periodic filings (earnings-release 8-K, S-1, pro-forma). A newer
+8-K equity fact would win the latest-period reducer (`latestEntry`) and then either (a) null out
+enrichment — `debtAtEnd(equity.end)` finds no aligned debt at the 8-K date, so `{}` is returned despite a
+valid prior 10-Q — or (b) publish non-periodic/pro-forma leverage into scoring.
+
+Fix: filter `getEntries` to periodic forms only — `SEC_XBRL_PERIODIC_FORMS = {10-K, 10-K/A, 10-Q, 10-Q/A}`
+(consistent with the us-gaap, domestic-filer scope of this provider). Entries without a `form` or with a
+non-periodic form are dropped before any period selection, so 8-K/S-1/pro-forma facts can't win the
+reducer. New test: a newer 8-K equity fact at 2024-03-31 is ignored → D/E resolves from the 2023 10-K
+(600M/300M = 2.0). All existing fixtures already use periodic forms, so none regressed.
+
+Full trio green: tsc clean · 1179/1180 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

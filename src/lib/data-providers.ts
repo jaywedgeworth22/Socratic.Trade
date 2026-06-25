@@ -2228,6 +2228,12 @@ const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
 const SEC_XBRL_FETCH_TIMEOUT_MS = 6_000; // per-symbol fetch cap (kept short — SEC is on the scan path)
 const SEC_XBRL_BUDGET_MS = 8_000; // overall wall-clock budget for the SEC pass during a scan
 
+// Only audited PERIODIC reports carry the balance-sheet facts we want. companyfacts also includes
+// facts from non-periodic filings (earnings-release 8-K, S-1, pro-forma); a newer 8-K equity fact with
+// no aligned debt fact would otherwise win the latest-period reducer and either null out enrichment or
+// publish non-periodic leverage. Restrict to 10-K/10-Q and their amendments.
+const SEC_XBRL_PERIODIC_FORMS = new Set(["10-K", "10-K/A", "10-Q", "10-Q/A"]);
+
 // Symbols whose companyfacts fetch is in progress, shared across concurrent enrich() calls. The SEC pass
 // keeps warming the cache in the background past the per-scan budget; without this guard a second scan
 // that starts before the first's warm finishes would re-fetch the same companyfacts URLs concurrently.
@@ -2261,10 +2267,14 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
         if (e === null || typeof e !== "object") continue;
         const r = e as Record<string, unknown>;
         if (typeof r.end !== "string" || typeof r.val !== "number" || !Number.isFinite(r.val)) continue;
+        // Keep only PERIODIC reports — drop 8-K/S-1/pro-forma so a non-periodic fact can't win the
+        // latest-period reducer (which would null out enrichment or publish non-periodic leverage).
+        const form = typeof r.form === "string" ? r.form : undefined;
+        if (!form || !SEC_XBRL_PERIODIC_FORMS.has(form)) continue;
         out.push({
           end: r.end,
           val: r.val,
-          form: typeof r.form === "string" ? r.form : undefined,
+          form,
           filed: typeof r.filed === "string" ? r.filed : undefined
         });
       }
