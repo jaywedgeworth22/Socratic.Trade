@@ -202,6 +202,13 @@ export interface RiskRules {
   stopLossPct?: number;
   stopLossNotional?: number;
   takeProfitPct?: number;
+  /**
+   * Fraction of the position to sell when take-profit triggers (1–100; 100 = full exit). Default 50 —
+   * take partial profit and let the rest ride. Laddered by take-profit "band"
+   * (floor(returnPct / takeProfitPct)) so it trims once per band, not every run (state in the
+   * `take_profit_trims` table). Undefined → treated as 100 (full exit) for back-compat.
+   */
+  takeProfitTrimPct?: number;
   takeProfitNotional?: number;
   trailingStopPct?: number;
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).

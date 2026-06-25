@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { reconcilePendingFills, generateProactiveRiskProposals, redTeamConvictionThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
+import { reconcilePendingFills, generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity, redTeamConvictionThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
 import { insertFillEvent, listFillEvents } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
@@ -213,7 +213,7 @@ describe("reconcilePendingFills", () => {
 });
 
 describe("generateProactiveRiskProposals", () => {
-  it("proposes sells when stop-loss or take-profit triggers are hit", () => {
+  it("proposes full-position sells when stop-loss triggers (take-profit is handled by planTakeProfitTrims)", () => {
     const policy: TradingPolicy = {
       ...DEFAULT_POLICY,
       riskRules: {
@@ -225,7 +225,7 @@ describe("generateProactiveRiskProposals", () => {
     const positions = [
       { symbol: "AAPL", quantity: 10, averageCost: 200, marketValue: 2000 }, // No breach
       { symbol: "MSFT", quantity: 5, averageCost: 400, marketValue: 1800 }, // Down 10% (breaches 8% stop-loss)
-      { symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1000 }  // Up 25% (breaches 20% take-profit)
+      { symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1000 }  // Up 25% (take-profit → NOT here anymore)
     ];
 
     const currentPrices = {
@@ -236,19 +236,73 @@ describe("generateProactiveRiskProposals", () => {
 
     const proposals = generateProactiveRiskProposals(positions, currentPrices, policy);
 
-    expect(proposals).toHaveLength(2);
-    
+    // Only the stop-loss exit; the take-profit name is no longer emitted by this generator.
+    expect(proposals).toHaveLength(1);
     const msft = proposals.find((p) => p.symbol === "MSFT");
     expect(msft).toBeDefined();
     expect(msft!.side).toBe("sell");
     expect(msft!.quantity).toBe(5);
     expect(msft!.rationale).toContain("stop-loss");
+    expect(proposals.find((p) => p.symbol === "NVDA")).toBeUndefined();
+  });
 
-    const nvda = proposals.find((p) => p.symbol === "NVDA");
-    expect(nvda).toBeDefined();
-    expect(nvda!.side).toBe("sell");
-    expect(nvda!.quantity).toBe(8);
-    expect(nvda!.rationale).toContain("take-profit");
+  describe("planTakeProfitTrims", () => {
+    const positions = [{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1000 }]; // +25% @ 125
+    const prices = { NVDA: 125 };
+
+    it("trims a configurable fraction at the target and lets the rest ride", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      const plan = planTakeProfitTrims(positions, prices, policy);
+      expect(plan.proposals).toHaveLength(1);
+      expect(plan.proposals[0]).toMatchObject({ symbol: "NVDA", side: "sell", quantity: 4 }); // 50% of 8
+      expect(plan.proposals[0].rationale).toContain("take-profit");
+      expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 1 }]); // floor(25/20) = 1
+    });
+
+    it("full-exits when trim pct is undefined (back-compat) or >=100", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20 } }; // undefined trim → 100
+      expect(planTakeProfitTrims(positions, prices, policy).proposals[0].quantity).toBe(8);
+    });
+
+    it("does NOT re-trim the same band (monotonic ratchet)", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Already trimmed band 1; at +25% (still band 1) → no new trim.
+      const plan = planTakeProfitTrims(positions, prices, policy, { NVDA: 1 });
+      expect(plan.proposals).toHaveLength(0);
+      expect(plan.advancedBands).toHaveLength(0);
+    });
+
+    it("trims again only when a higher band is reached", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // +45% = band 2 (floor(45/20)), prior band 1 → trims.
+      const plan = planTakeProfitTrims([{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1160 }], { NVDA: 145 }, policy, { NVDA: 1 });
+      expect(plan.proposals).toHaveLength(1);
+      expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 2 }]);
+    });
+
+    it("emits a COVER trim for a profitable short when shorting is enabled", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, shortSellingEnabled: true, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Short @100, price 75 → +25% profit.
+      const plan = planTakeProfitTrims([{ symbol: "TSLA", quantity: -8, averageCost: 100, marketValue: -600 }], { TSLA: 75 }, policy);
+      expect(plan.proposals[0]).toMatchObject({ symbol: "TSLA", side: "cover", quantity: 4 });
+    });
+
+    it("emits nothing below the target or when takeProfitPct is 0", () => {
+      const below: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      expect(planTakeProfitTrims([{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 900 }], { NVDA: 112 }, below).proposals).toHaveLength(0);
+      const off: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 0, takeProfitTrimPct: 50 } };
+      expect(planTakeProfitTrims(positions, prices, off).proposals).toHaveLength(0);
+    });
+  });
+
+  describe("takeProfitTrimQuantity", () => {
+    it("computes the fraction, full-exits at >=100, and avoids dust", () => {
+      expect(takeProfitTrimQuantity(8, 50)).toBe(4);
+      expect(takeProfitTrimQuantity(8, 100)).toBe(8);
+      expect(takeProfitTrimQuantity(10, 25)).toBe(2.5);
+      // 1-share position trimmed 99% → remainder 0.01 not dust → 0.99; but a tiny remainder full-exits.
+      expect(takeProfitTrimQuantity(1, 99.999)).toBe(1); // remainder < 0.0001 → full
+    });
   });
 
   it("returns nothing if no positions breach any thresholds", () => {

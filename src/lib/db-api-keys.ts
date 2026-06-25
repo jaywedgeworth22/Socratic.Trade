@@ -1115,3 +1115,44 @@ export function touchMemory(id: string, assertedAt: string, confidence: number):
 export function deleteMemory(userId: string, id: string): boolean {
   return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
 }
+
+// ── Take-profit trim ratchet ────────────────────────────────────────────────
+// Monotonic "band" already trimmed per open profitable position, so a partial take-profit trims once
+// per take-profit band instead of laddering out every run. See take_profit_trims (db.ts migrate()).
+
+/** Map of symbol → highest already-trimmed take-profit band for an account (empty when none). */
+export function getTakeProfitTrimBands(accountNumber: string, userId: string = "local"): Record<string, number> {
+  const rows = getDb()
+    .prepare("SELECT symbol, band FROM take_profit_trims WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; band: number }>;
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.symbol] = Number(r.band) || 0;
+  return out;
+}
+
+/** Record (upsert) the highest take-profit band trimmed for a position. */
+export function recordTakeProfitTrimBand(
+  accountNumber: string,
+  symbol: string,
+  band: number,
+  userId: string = "local",
+  now: string = new Date().toISOString()
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO take_profit_trims (user_id, account_number, symbol, band, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol)
+       DO UPDATE SET band = excluded.band, updated_at = excluded.updated_at`
+    )
+    .run(userId, accountNumber, symbol, Math.max(0, Math.floor(band)), now);
+}
+
+/** Clear ratchet state for the given symbols (e.g. positions that have closed). No-op on empty input. */
+export function clearTakeProfitTrimBands(accountNumber: string, symbols: string[], userId: string = "local"): void {
+  if (symbols.length === 0) return;
+  const placeholders = symbols.map(() => "?").join(",");
+  getDb()
+    .prepare(`DELETE FROM take_profit_trims WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
+    .run(userId, accountNumber, ...symbols);
+}
