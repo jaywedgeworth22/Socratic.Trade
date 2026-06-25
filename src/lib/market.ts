@@ -276,7 +276,10 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const enrichedBySymbol = new Map(topCandidates.map((quote) => [quote.symbol, quote]));
     const mergedRanked = ranked.map((quote) => enrichedBySymbol.get(quote.symbol) ?? quote);
 
-    const baseSource = provider.configured ? `${this.name}+${provider.name}` : this.name;
+    // Name only the enrichment providers that ACTUALLY contributed a field this scan (not every enabled
+    // provider) — keeps MarketScan.source honest when a keyless/default-OFF provider returned nothing.
+    const contributedSources = provider.activeSources ?? (provider.configured ? [provider.name] : []);
+    const baseSource = contributedSources.length > 0 ? `${this.name}+${contributedSources.join("+")}` : this.name;
     const source = appendUniqueSources(
       overlaySources.size > 0 ? `${baseSource}+${[...overlaySources].join("+")}` : baseSource,
       [...universeSources]

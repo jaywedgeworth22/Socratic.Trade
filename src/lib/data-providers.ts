@@ -156,6 +156,8 @@ export interface MarketEnrichmentProvider {
   name: string;
   configured: boolean;
   enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
+  /** Registered providers that supplied ≥1 field in the most recent enrich() run (cascade only). */
+  activeSources?: string[];
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -354,15 +356,26 @@ export const noopProvider = mockEnrichmentProvider;
 // rest) and records which provider supplied it. Analyst ratings are NOT first-wins:
 // every provider's read is collected and blended into one 0–100 score + label.
 
-class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
+export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name: string;
   readonly configured = true;
+  // Provider names that supplied ≥1 accepted field during the most recent enrich() run. Reset each run
+  // and exposed via activeSources so MarketScan.source names only providers that ACTUALLY contributed —
+  // a keyless/default-OFF provider that returns nothing for a scan (budget timeout, no CIK, no aligned
+  // fact) must not appear in the source string just because it was registered.
+  private contributingNames = new Set<string>();
 
   constructor(private readonly providers: MarketEnrichmentProvider[]) {
     this.name = providers.map((p) => p.name).join("+");
   }
 
+  /** Registered providers that contributed ≥1 field in the last enrich(), in registration order. */
+  get activeSources(): string[] {
+    return this.providers.map((p) => p.name).filter((n) => this.contributingNames.has(n));
+  }
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    this.contributingNames = new Set();
     // Run all providers in parallel; pair each result set with its provider name.
     const results = await Promise.all(
       this.providers.map((p) =>
@@ -387,6 +400,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       ) => {
         if (base[field] === undefined && value !== undefined) {
           base[field] = value;
+          this.contributingNames.add(sourceName);
           if (field in EMPTY_SOURCED) sources[field as EnrichmentSourcedField] = sourceName;
         }
       };
@@ -422,9 +436,15 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("targetHigh", name, r.targetHigh);
         takeScalar("targetLow", name, r.targetLow);
         takeScalar("targetMedian", name, r.targetMedian);
-        if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
-        // Collect every provider's analyst read.
-        if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
+        if (!base.headlines?.length && r.headlines?.length) {
+          base.headlines = r.headlines;
+          this.contributingNames.add(name);
+        }
+        // Collect every provider's analyst read (an analyst contribution counts as a contribution too).
+        if (r.analystBySource && Object.keys(r.analystBySource).length > 0) {
+          Object.assign(analystBySource, r.analystBySource);
+          this.contributingNames.add(name);
+        }
       }
 
       // Blend analyst scores across all sources that reported one.
@@ -445,6 +465,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (typeof avSentiment === "number") {
         base.sentiment = avSentiment;
         sources.sentiment = "alpha-vantage";
+        this.contributingNames.add("alpha-vantage");
       }
 
       base.sources = sources;

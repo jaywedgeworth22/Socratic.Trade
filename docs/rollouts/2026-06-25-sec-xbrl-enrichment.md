@@ -160,6 +160,30 @@ Three findings current against the round-4 commit, all valid and fixed:
 Four new sec-xbrl tests (cap, combined noncurrent, commercial paper, total-fallback). Full trio green:
 tsc clean · 1172/1173 (only the cache-provenance flake) · build.
 
+## Codex review — round 6 (applied): honest cascade source attribution
+
+One current finding: with SEC enabled but contributing nothing for a scan (budget timeout / no CIK / no
+aligned period), `sec-xbrl` still appeared in `MarketScan.source` because the cascade's `name` is a
+*static* join of every registered provider (`market.ts` used `provider.name` directly). This violated the
+documented convention — source should list "every provider that **actually contributed** data this run."
+
+It was **pre-existing and not SEC-specific** (every registered provider was named whether or not it
+supplied a field); per the owner's direction it was fixed here as a cross-cutting change rather than
+deferred:
+
+- `CascadingEnrichmentProvider` now tracks a per-run `contributingNames` set (added whenever `takeScalar`
+  **accepts** a field, when headlines are taken, on an analyst contribution, and on the AV sentiment
+  override), reset at the start of each `enrich()`, and exposes `activeSources` — the registered providers
+  that contributed ≥1 field, in registration order. Added to the `MarketEnrichmentProvider` interface as
+  an optional accessor.
+- `market.ts` builds `MarketScan.source` from `provider.activeSources` (falling back to the static name)
+  so only contributing providers are named; when none contributed the enrichment segment is omitted.
+- Class exported for tests; 4 new cases in `data-providers.test.ts` (only-contributors + order, first-wins
+  loser excluded, analyst-only counts, reset-between-runs). This makes the implementation finally MATCH
+  the long-documented `MarketScan.source` convention for ALL providers, not just SEC.
+
+Full trio green: tsc clean · 1176/1177 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW
