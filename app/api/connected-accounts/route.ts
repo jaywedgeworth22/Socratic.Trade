@@ -12,6 +12,22 @@ function isAlpacaPaperCredential(input: { accountNumber?: unknown; apiKey?: unkn
   return accountNumber.startsWith("PA") || apiKey.startsWith("PK");
 }
 
+// List the user's connected accounts for the UI (e.g. the copy-strategy-to-account picker).
+// listConnectedAccounts never includes secrets; we still project an explicit safe subset.
+export async function GET(req: Request) {
+  const userId = resolveRequestUserId(req);
+  const accounts = listConnectedAccounts(userId).map((a) => ({
+    id: a.id,
+    broker: a.broker,
+    environment: a.environment,
+    accountNumber: a.accountNumber,
+    label: a.label,
+    taxationType: a.taxationType,
+    isActive: a.isActive
+  }));
+  return NextResponse.json({ accounts });
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
