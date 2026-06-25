@@ -403,6 +403,25 @@ describe("runCongressDailyShare — insider + short-volume on the nightly batch"
     expect(entry.closes.map((c: { date: string }) => c.date)).toEqual(["2026-06-15", "2026-06-16"]);
     expect(entry.currentPrice).toBe(5); // still the latest close
   });
+
+  it("fullHistory backfill bypasses the per-symbol close cap (sends the full series)", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER = "2"; // would cap nightly, but backfill ignores it
+    mockedFetchDailyOHLC.mockResolvedValue([
+      { time: "2026-06-12", close: 1 },
+      { time: "2026-06-13", close: 2 },
+      { time: "2026-06-14", close: 3 },
+      { time: "2026-06-15", close: 4 },
+      { time: "2026-06-16", close: 5 }
+    ]);
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await runCongressDailyShare({ now: Date.UTC(2026, 5, 22), force: true, symbols: ["AAPL"], fullHistory: true });
+    expect(res.ok).toBe(true);
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    const entry = bodies.find((b) => b.prices)?.prices.find((p: { ticker: string }) => p.ticker === "AAPL");
+    expect(entry.closes).toHaveLength(5); // full series, not capped to 2
+  });
 });
 
 describe("marketQuoteToFundamentals / marketQuoteToAnalyst", () => {
