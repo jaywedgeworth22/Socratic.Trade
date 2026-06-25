@@ -26,6 +26,12 @@ Every `.env.local` is a local materialization (cache) of what lives in GCP. To
 change a secret, update it in GCP (add a new secret version) — that is the
 canonical edit; the `.env.local` copies are downstream of it.
 
+The repo also ships an Infisical delivery path (`*:secrets` /
+`scripts/infisical-run.mjs`) using the same wrapper pattern. With GCP designated
+canonical, treat Infisical as an **alternative delivery mechanism, not a second
+source of truth** — rotate secrets in GCP, not in both.
+(`docs/ops-observability-security.md` defers to GCP.)
+
 Run with secrets pulled live from GCP at runtime via the `*:gcp` scripts
 (`scripts/gcp-secrets-run.mjs`):
 
@@ -39,12 +45,20 @@ npm run start:gcp    # next start with GCP secrets injected
   Application Default Credentials — `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json`,
   `gcloud auth application-default login` (local dev), or Workload Identity
   (GCP-hosted).
-- **Mapping:** each GCP secret whose name equals an env-var name is injected
-  under that name (secret `INTRINIO_API_KEY` → env `INTRINIO_API_KEY`). Scope
-  which secrets load with `GCP_SECRET_NAMES=A,B,C` (explicit list) or
+- **Mapping & scoping:** each GCP secret whose name equals an env-var name is
+  injected under that name (secret `INTRINIO_API_KEY` → env `INTRINIO_API_KEY`).
+  Scope which secrets load with `GCP_SECRET_NAMES=A,B,C` (explicit list) or
   `GCP_SECRETS_PREFIX=trading-` (prefix filter — the prefix is stripped to form
-  the env name). Existing env vars win by default; set `GCP_SECRETS_OVERWRITE=true`
-  to let GCP override them.
+  the env name). **On a shared (non-dedicated) GCP project, set one of these** —
+  with neither set, the runner lists and injects *every* secret in the project
+  and logs each name at startup.
+- **Overwrite precedence:** by default GCP does **not** overwrite a variable
+  already present in the wrapper's **exported** environment (shell/PM2 env); set
+  `GCP_SECRETS_OVERWRITE=true` to override those too. This applies to *exported*
+  env vars only — a value that lives solely in a `.env.local` file is read by Next
+  *after* the wrapper has injected GCP's value into `process.env`, so the GCP
+  value wins regardless. To keep a local override under a `*:gcp` wrapper, export
+  it (or use the plain scripts).
 - **When GCP is not configured, use the plain scripts.** If `GCP_PROJECT_ID`
   is unset the runner skips Secret Manager — but its no-project fallback spawns
   the child command and the wrapper process currently returns **immediately
@@ -58,14 +72,24 @@ npm run start:gcp    # next start with GCP secrets injected
 
 | Location | Role | How to refresh |
 |---|---|---|
-| `~/Code/Agentic Trading/.env.local` | Integration/dev **seed**. `scripts/setup-agent-previews.sh` copies it into a new agent worktree **once, only if absent**. | Change a **shared** secret in **GCP** (canonical), then materialize with `dev:gcp`. A local edit here is a local-only override — it won't reach GCP, production, or already-seeded agent worktrees. |
+| `~/Code/Agentic Trading/.env.local` | Integration/dev **seed**. `scripts/setup-agent-previews.sh` copies it into a new agent worktree **once, only if absent**. | Change shared secrets in **GCP** (canonical). A direct edit here is a local-only override — it won't reach GCP, production, or already-seeded agent worktrees, and after a GCP rotation this file keeps seeding **stale** values into new worktrees until you update it. |
 | `~/apps/trading-<agent>/.env.local` | Per-agent preview copy; **diverges** after the one-time seed (editing one never updates the others). | Delete + re-run `setup-agent-previews.sh` to re-seed, or run via `dev:gcp`. |
-| `~/apps/trading-live/.env.local` | **Production.** Preserved across deploys — `git reset --hard FETCH_HEAD` only touches *tracked* files. | Refresh from GCP (or run PM2 `trading` via `start:gcp`); host PM2 wiring lives in `~/apps/README.md`. Don't hand-edit and let it drift. |
+| `~/apps/trading-live/.env.local` | **Production.** Preserved across deploys — `git reset --hard FETCH_HEAD` only touches *tracked* files. | Run PM2 `trading` under `start:gcp` to inject live GCP values at boot (host PM2 wiring lives in `~/apps/README.md`). The wrapper doesn't rewrite the file; don't hand-edit it and let it drift from GCP. |
+
+> Note: the `*:gcp` wrappers inject secrets into the spawned **process** only —
+> there is no step that writes GCP values back into any `.env.local` file. After a
+> rotation, run services under the wrapper to pick up new values; on-disk
+> `.env.local` files keep their last-written contents until you edit them.
 
 Per-user API keys entered through the app's Settings are **not** in `.env.local`
-at all — they are AES-256-GCM encrypted in the SQLite `user_api_keys` table
-(needs a stable `ENCRYPTION_KEY`). `.env.local` carries only the
-operator/primary-user fallback keys.
+— they are AES-256-GCM encrypted in the SQLite `user_api_keys` table. Beyond
+operator/primary-user **provider fallback keys**, `.env.local` (or the exported
+runtime env) also carries **bootstrap/infra secrets** that are not per-user —
+notably the **`ENCRYPTION_KEY`** that decrypts `user_api_keys` (it MUST stay
+stable: if it changes or is unset, a random key is generated per process and
+every stored key becomes undecryptable after a restart — see `.env.example`),
+plus auth/webhook tokens, backup credentials, and provider toggles. Manage these
+in GCP too.
 
 > Status: the `*:gcp` runner exists and is the **designated** source of truth,
 > but it requires `GCP_PROJECT_ID` + ADC configured on each box, and production

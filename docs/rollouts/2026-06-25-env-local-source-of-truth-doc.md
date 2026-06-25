@@ -6,8 +6,10 @@ Documented, in one authoritative place, where `.env.local` lives across the
 multi-worktree/multi-host setup and which copy is authoritative. Added a
 **"Configuration & secrets (`.env.local`) — what's authoritative"** section to
 `docs/deployment.md`. Net new doc content only — no application code changed.
-(A Codex review pass on PR #150 then refined the GCP fallback/refresh wording and
-added a `PLAN.md` topology note — see Follow-ups.)
+(Two Codex review passes on PR #150 then refined the section for technical
+accuracy — GCP-vs-Infisical reconciliation, scoping, overwrite precedence,
+inject-only wrappers, and bootstrap secrets like `ENCRYPTION_KEY` — and added a
+`PLAN.md` topology note; see Files/Follow-ups.)
 
 Key facts now written down:
 
@@ -50,10 +52,18 @@ already note `.env.local` is preserved on the live box.
 ## Files
 
 - `docs/deployment.md` — new "Configuration & secrets (`.env.local`) — what's
-  authoritative" section (inserted after the beta-hostname intro, before
-  "How it deploys (automated)"). Post-review: the fallback bullet now steers to
-  the plain scripts when GCP is unset and flags the `gcp-secrets-run.mjs`
-  premature-exit bug; the seed row's refresh path points to GCP, not local edits.
+  authoritative" section. Refined over two Codex review rounds: steers to plain
+  scripts when GCP is unset (+ flags the `gcp-secrets-run.mjs` premature-exit
+  bug); shared secrets change in GCP (not the seed); scoping required on shared
+  GCP projects; clarified `GCP_SECRETS_OVERWRITE` applies to *exported* env vars
+  (GCP supersedes `.env.local`-only values); `*:gcp` wrappers inject into the
+  process and never rewrite a `.env.local` file; and `.env.local` also holds
+  bootstrap secrets like the stable `ENCRYPTION_KEY`, not just provider fallback
+  keys.
+- `docs/ops-observability-security.md` — Production Notes now name GCP canonical
+  for production secrets and demote the Infisical `*:secrets` path to an
+  alternative delivery mechanism (was "prefer Infisical for all production
+  secrets"), reconciling the two-source-of-truth conflict the review flagged.
 - `PLAN.md` — dated secrets/config-topology note under "Current Status".
 - `STATUS.md` — new top entry for this docs change.
 - `docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md` — this note.

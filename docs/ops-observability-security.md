@@ -63,7 +63,11 @@ The telemetry path treats this as a financial application:
 
 ## Production Notes
 
-- Prefer Infisical for all production secrets instead of hand-edited `.env.local`.
+- **GCP Secret Manager is the canonical store for production secrets** (see
+  `docs/deployment.md` → "Configuration & secrets (`.env.local`)"); deliver them
+  with the `*:gcp` wrappers. The Infisical path (`*:secrets`) remains as an
+  alternative delivery mechanism using the same pattern — rotate secrets in GCP,
+  not in both. Either way, don't rely on hand-edited `.env.local`.
 - Litestream runs under PM2 (`litestream` sidecar) next to production `next start` — see
   `docs/litestream.md`. Periodically verify a restore to a scratch path
   (`scripts/litestream-restore.sh /tmp/app.db.restored`) before treating backups as ready.
