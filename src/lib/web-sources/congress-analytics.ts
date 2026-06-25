@@ -152,7 +152,9 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     getAppAConflicts({ window, limit: CONFLICT_LIMIT })
   ]);
 
-  if (leaders.length === 0 && clusters.length === 0 && convictions.length === 0 && conflicts.length === 0) {
+  // Only count convictions with a real score — null means "thin signal" and is not usable data.
+  const usableConvictions = convictions.filter((c) => c.convictionScore !== null);
+  if (leaders.length === 0 && clusters.length === 0 && usableConvictions.length === 0 && conflicts.length === 0) {
     // App A cold / no recent data — keep any prior dataset rather than wiping to empty.
     const prior = getCongressAnalyticsDataset();
     audit("web_source_refresh", { id: "congress-analytics", ok: false, recordCount: 0, reason: "empty" });

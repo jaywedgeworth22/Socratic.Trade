@@ -263,15 +263,19 @@ async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
     const bars: OHLCBar[] = [];
     for (let i = 0; i < ts.length; i++) {
       const rawC = rawClose[i] ?? null;
-      const adjC = useAdjusted ? (adjCloseArr[i] ?? null) : rawC;
-      if (typeof adjC !== "number" || !Number.isFinite(adjC)) continue; // skip null/holiday gaps
+      // Per-bar fallback: if adjclose entry is null/non-finite use rawC so Yahoo gaps
+      // in adjclose don't cause bars with valid rawclose to be silently dropped.
+      const adjEntry = useAdjusted ? (adjCloseArr[i] ?? null) : null;
+      const usingAdj = typeof adjEntry === "number" && Number.isFinite(adjEntry);
+      const c = usingAdj ? adjEntry : rawC;
+      if (typeof c !== "number" || !Number.isFinite(c)) continue; // skip null/holiday gaps
       // Scale O/H/L by adjclose/rawclose so all four OHLC values stay on the same basis.
       // Candle consistency: close cannot fall outside [low, high] after ex-dividend adjustments.
       let o = numOrUndef(q?.open?.[i]);
       let h = numOrUndef(q?.high?.[i]);
       let l = numOrUndef(q?.low?.[i]);
-      if (useAdjusted && typeof rawC === "number" && Number.isFinite(rawC) && rawC !== 0) {
-        const factor = adjC / rawC;
+      if (usingAdj && typeof rawC === "number" && Number.isFinite(rawC) && rawC !== 0) {
+        const factor = c / rawC;
         if (o !== undefined) o = o * factor;
         if (h !== undefined) h = h * factor;
         if (l !== undefined) l = l * factor;
@@ -279,7 +283,7 @@ async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
       bars.push({
         time: ts[i] * 1000, // seconds → ms epoch
         open: o, high: h, low: l,
-        close: adjC,
+        close: c,
         volume: numOrUndef(q?.volume?.[i])
       });
     }
