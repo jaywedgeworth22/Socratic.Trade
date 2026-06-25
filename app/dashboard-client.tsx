@@ -4842,8 +4842,8 @@ function IntegrationsSection({
     const brokerName = isMCP ? "Alpaca MCP" : "Alpaca";
     const isPaper = acc.environment === "paper";
     return {
-      title: isPaper ? "Paper" : "Brokerage",
-      subtitle: `${brokerName} · ${acc.accountNumber || "No account number"}`,
+      title: acc.label || (isPaper ? "Paper" : "Brokerage"),
+      subtitle: `${brokerName} ${isPaper ? "Paper" : "Brokerage"} · ${acc.accountNumber || "No account number"}`,
       showBadges: true
     };
   };

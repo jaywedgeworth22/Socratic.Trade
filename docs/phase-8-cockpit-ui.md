@@ -181,6 +181,9 @@ across panels, feeds, popovers, or status chips.
 - The Test/Paper/Brokerage execution banner is a safety control, not decoration.
   It may be compacted for density but must remain visible, with `role="status"`
   and reduced-motion-safe animation for Brokerage/live.
+- Accounts rows should distinguish the user label from the execution environment:
+  show the saved account label as the row title and Paper/Brokerage in supporting
+  broker metadata.
 - The cockpit should expose a compact readiness checklist for account, universe,
   risk caps, and selected broker/account readiness so setup blockers are
   actionable before the user clicks Run once or Start.
