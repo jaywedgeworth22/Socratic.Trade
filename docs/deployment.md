@@ -54,10 +54,12 @@ runbook: `docs/secrets.md`; this is the deploy-side summary.
   — run that PM2 process under `infisical run` too (or export its vars) so its R2
   credentials also come from Infisical.
 
-> Production status: the runner, the enforcement guard, and tests are in the repo.
-> Flipping the production box to Infisical — PM2 `trading` → `start:secrets`, with
-> the bootstrap above + `REQUIRE_SECRETS_MANAGER=1` — is a host-side step;
-> `deploy.yml` still launches plain `next start` until that's done. See
+> Production cutover: run `scripts/infisical-prod-cutover.sh` on the box (idempotent;
+> needs your machine-identity `INFISICAL_TOKEN`). It writes the bootstrap to
+> `~/.config/agentic-trading/deploy.env`, imports `.env.local` into Infisical, and
+> switches PM2 `trading` to `start:secrets`. From then on `deploy.yml` sources that
+> bootstrap and builds via Infisical automatically — and falls back to a plain
+> build/restart while the file is absent, so nothing breaks pre-cutover. See
 > `docs/secrets.md`.
 
 ## How it deploys (automated)
