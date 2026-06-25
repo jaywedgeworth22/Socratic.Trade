@@ -67,6 +67,15 @@ phase scope, timeline, or approach changed.
   previously null, are now ALSO fillable via the opt-in FMP `price-target-consensus` provider
   (`FMP_PRICE_TARGETS_ENABLED`) — **BUILT 2026-06-25**; they thread through the enrichment
   surface onto the quote and into `marketQuoteToAnalyst`.
+  (3) **Fundamentals/analyst read-back tier** — App A now exposes
+  `GET /api/market/fundamentals|analyst/:ticker` (the donated tables finally have readers);
+  App B reads them via `getAppAFundamentals`/`getAppAAnalyst` + a
+  `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated
+  `CONGRESS_TRADE_READS_ENABLED` with a `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and 6h
+  caching — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
+  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Note: the parallel cascade means this is
+  precedence + caching, not paid-call elimination (paid providers fetch mixed price+fundamentals
+  bundles); dropping a redundant paid fundamentals provider is the operational saving lever.
 
 ## Build Order
 

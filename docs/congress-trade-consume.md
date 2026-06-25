@@ -18,9 +18,34 @@ flows through the same path via `/api/market/spx`.
   on App A cache hits. Contained to opt-in; default off → existing OHLC behavior unchanged.
 - Self-guarded: disabled / miss / non-2xx / transport error → returns null → the cascade falls through to
   App B's own providers. No exceptions escape into a scan.
-- Deliberately **not** wired into the enrichment cascade: App A's `ref` fields (sector/industry/marketCap)
-  are already free-sourced via Yahoo in App B and don't displace App B's *FMP fundamentals* calls
-  (ratios/grades), so it would be marginal value for the multi-site `SymbolEnrichment` field-plumbing risk.
+- App A's `ref` fields (sector/industry/marketCap) are still **not** wired into the cascade — they're
+  already free-sourced via Yahoo in App B, so they'd be marginal value. (Fundamentals/analyst ARE now
+  wired — see §1b.)
+
+## 1b. Fundamentals / analyst read-back tier (`CONGRESS_TRADE_READS_ENABLED`)
+App A stores fundamentals + analyst consensus (its own enrichment + our donated push) and now serves them
+at **`GET /api/market/fundamentals/:ticker`** and **`GET /api/market/analyst/:ticker`** (date-ascending
+rows; `?from=&to=` like `/market/insider`). App B reads them via `getAppAFundamentals` / `getAppAAnalyst`
+(`congress-trade-client.ts`), surfaced through the **`CongressTradeEnrichmentProvider`** in
+`src/lib/data-providers.ts`, registered ahead of the paid fundamentals providers (Finnhub/FMP/…) so App A's
+free, already-stored values win those fields. Maps onto existing `SymbolEnrichment` fields
+(peRatio, eps, beta, dividendYield, fiftyTwoWeekHigh/Low, fcfYield, debtToEquity, epsGrowth,
+targetMean/High/Low/Median, analystRating/Score/BySource) — **no new field**, so no multi-site plumbing.
+
+- **Caching:** reads go through the same 6h enrichment cache as the other slow-moving providers
+  (`readEnrichmentCache`/`writeEnrichmentCache`, prefix `congress.trade`), so repeated scans don't re-hit
+  App A.
+- **Freshness guard:** an App A row is used only if its `updatedAt`/`date` is within
+  `CONGRESS_TRADE_MAX_STALE_DAYS` (default 21). Stale rows fall through so they never override fresh paid data.
+- **Rating-only rows** still surface: when App A has a `rating` label but no buy/sell counts, the provider
+  derives a score (`scoreFromAnalystLabel`) and writes `analystBySource`, which is what the cascade blends
+  into the displayed rating.
+- **Saving — what it does / doesn't do:** the cascade runs providers in parallel and merges first-wins, so
+  this gives App A's data *precedence* and (via caching) stops re-hitting App A every scan. It does **not**
+  by itself stop a paid provider's fetch, because each paid provider fetches a mixed per-symbol bundle
+  (price + fundamentals together) — you can't skip it for a symbol without losing the price it also supplies.
+  The real call-elimination lever is operational: with App A covering fundamentals, the owner can drop a
+  redundant *paid fundamentals* provider from the cascade.
 
 ## 2. App A as the congressional source (`CONGRESS_TRADE_AS_CONGRESS_SOURCE`)
 When on, `refreshCongress` (`src/lib/web-sources/congress.ts`) swaps its scraper cascade (Senate eFD /
@@ -80,7 +105,8 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 ## Config (all default off)
 | Env var | Purpose |
 |---------|---------|
-| `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (history tier) |
+| `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (history tier) **and** the fundamentals/analyst enrichment tier (§1b) |
+| `CONGRESS_TRADE_MAX_STALE_DAYS` | freshness cap (default 21) for App A fundamentals/analyst rows before they fall through to paid providers |
 | `CONGRESS_TRADE_AS_CONGRESS_SOURCE` | source congressional trades from App A instead of scrapers |
 | `CONGRESS_WEBHOOK_SECRET` | shared bearer App A presents to the webhook (default-closed when blank) |
 | `CONGRESS_STREAM_ENABLED` | start the outbound SSE consumer |

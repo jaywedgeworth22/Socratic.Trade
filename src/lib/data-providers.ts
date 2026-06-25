@@ -319,15 +319,54 @@ async function fetchWithRetry(
   }
 }
 
+// Map a consensus label back to a representative 0–100 score, so App A rows that
+// carry only a `rating` string (no buy/sell counts) still flow through the
+// cascade's analystBySource blend (it builds the displayed rating from scores,
+// not from a raw analystRating scalar).
+const ANALYST_LABEL_SCORE: Record<string, number> = {
+  "strong buy": 90,
+  buy: 70,
+  outperform: 70,
+  overweight: 70,
+  accumulate: 70,
+  hold: 50,
+  neutral: 50,
+  "market perform": 50,
+  underperform: 30,
+  underweight: 30,
+  reduce: 30,
+  sell: 30,
+  "strong sell": 10,
+};
+function scoreFromAnalystLabel(label: string): number | undefined {
+  return ANALYST_LABEL_SCORE[label.trim().toLowerCase()];
+}
+// How stale an App A row may be before we treat it as a cache miss and let the
+// fresh paid providers win instead. Fundamentals move slowly, but a paused
+// cross-app push or an old backfilled-only row should not override current data.
+function congressMaxStaleMs(): number {
+  const days = Number(process.env.CONGRESS_TRADE_MAX_STALE_DAYS ?? 21);
+  return (Number.isFinite(days) && days > 0 ? days : 21) * 86_400_000;
+}
+function rowIsFresh(row: { date?: string | null; updatedAt?: string | null }, now: number): boolean {
+  const stamp = row.updatedAt || row.date;
+  if (!stamp) return false;
+  const t = Date.parse(stamp);
+  return Number.isFinite(t) && now - t <= congressMaxStaleMs();
+}
+
 // ── Congress.Trade (App A) cross-app read tier ───────────────────────────────
 // Reads fundamentals + analyst consensus that App A already stored (it ingests
 // the same providers + receives our donated data), so App B doesn't re-derive
 // numbers App A has. Default-OFF (CONGRESS_TRADE_READS_ENABLED); fills only
 // fundamentals/analyst fields (no price), so it never disturbs real-time quote
 // ordering. Seated ahead of the paid fundamentals providers so its free,
-// congressional-universe data wins those fields when present.
+// congressional-universe data wins those fields when present. Reads go through
+// the same 6h enrichment cache as the other slow-moving providers, and stale App A
+// rows fall through so they don't override fresh paid data.
 export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "congress.trade";
+  constructor(private readonly userId?: string) {}
   get configured(): boolean {
     return congressReadsEnabled();
   }
@@ -336,15 +375,29 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
     if (!congressReadsEnabled()) return {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
+
+    const now = Date.now();
     const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    // Cache hits short-circuit before any HTTP — repeated scans don't re-hit App A.
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, false, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
     await Promise.all(
-      normalized.map(async (symbol) => {
+      misses.map(async (symbol) => {
         const [funds, analysts] = await Promise.all([
           getAppAFundamentals(symbol).catch(() => [] as AppAFundamental[]),
           getAppAAnalyst(symbol).catch(() => [] as AppAAnalyst[]),
         ]);
-        const f = funds.length ? funds[funds.length - 1] : null; // rows are date-ascending
-        const a = analysts.length ? analysts[analysts.length - 1] : null;
+        // rows are date-ascending; only accept the latest if it's fresh enough.
+        const fLatest = funds.length ? funds[funds.length - 1] : null;
+        const aLatest = analysts.length ? analysts[analysts.length - 1] : null;
+        const f = fLatest && rowIsFresh(fLatest, now) ? fLatest : null;
+        const a = aLatest && rowIsFresh(aLatest, now) ? aLatest : null;
         const e: SymbolEnrichment = {};
         if (f) {
           if (f.peRatio != null) e.peRatio = f.peRatio;
@@ -369,16 +422,26 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
             sell: a.sell ?? 0,
             strongSell: a.strongSell ?? 0,
           };
-          const score = analystScoreFromCounts(counts);
+          // Prefer counts; fall back to the label so rating-only rows still surface
+          // (the cascade derives the rating from analystBySource, not analystRating).
+          const score = analystScoreFromCounts(counts) ?? (a.rating ? scoreFromAnalystLabel(a.rating) : undefined);
           if (score !== undefined) {
+            const total = counts.strongBuy + counts.buy + counts.hold + counts.sell + counts.strongSell;
             e.analystRating = a.rating || labelFromAnalystScore(score);
             e.analystScore = Math.round(score);
-            e.analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
-          } else if (a.rating) {
-            e.analystRating = a.rating;
+            e.analystBySource = {
+              [this.name]: {
+                score: Math.round(score),
+                label: a.rating || labelFromAnalystScore(score),
+                ...(total > 0 ? { counts } : {}),
+              },
+            };
           }
         }
-        if (Object.keys(e).length > 0) result[symbol] = e;
+        if (Object.keys(e).length > 0) {
+          result[symbol] = e;
+          writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, now + DEFAULT_TTL_MS);
+        }
       })
     );
     return result;
@@ -418,7 +481,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
   // Default-OFF; when enabled its free, already-stored data wins the fundamentals
   // fields ahead of the paid providers below.
-  if (congressReadsEnabled()) providers.push(new CongressTradeEnrichmentProvider());
+  if (congressReadsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
