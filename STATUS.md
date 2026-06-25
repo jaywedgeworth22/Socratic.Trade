@@ -4,22 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-
-## 2026-06-25 — P0/P1 learning-loop fixes + LLM usage per-model/per-context + masked-key UI
-Branch `claude/magical-faraday-uce1uy`. Five improvements from the expert framework analysis:
-1. **P0 — `getLlmUsageSummary()` per-model/per-context breakdown:** Added `model` + `context` to
-   SELECT/GROUP BY. Updated `LlmUsageRow` interface; `describeUsageKey()` returns new `masked` field
-   (first 8 + "..." + last 4) via `maskApiKey()`. Admin route propagates `keyMasked`.
-2. **P1 — Fire-and-forget `ingestLearned()` in chat:** Semantic gate blocked every chat turn 1-3s.
-   Now fire-and-forget with `.catch(warn)`. Chat hard-cap (risk prose DROPPED) intact inside.
-3. **P1 — Wire `retrieveLearnedContext` into chat:** Orchestrator calls `retrieveLearnedContext()`
-   for symbols from the message; facts injected via `buildSystem(memorySummary, learnedContext)`.
-   Bumped `PROMPT_VERSION` to `agentic-chat@0.6.0`.
-4. **P1 — `strategy.ts` uses `retrieveContextDetailed`:** Replaced back-compat `retrieveContext`
-   wrapper to preserve chunk_id/as_of/score/url provenance.
-5. **P2 — `/admin/llm-usage` page:** New client component showing per-key, per-model, per-context
-   cost breakdown with masked key display, time-window selector, and summary cards.
-Verified: tsc clean · 1198/1198 tests · build green. See `docs/rollouts/2026-06-25-llm-usage-learning-fixes.md`.
+## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
+Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
+opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`
+(`assertSecretsManagerIfRequired`) throws at boot (wired first in `instrumentation.ts` nodejs
+`register()`) when `REQUIRE_SECRETS_MANAGER` is set but `SECRETS_SOURCE` is absent. The runners now
+set the marker: `infisical-run.mjs` → `SECRETS_SOURCE=infisical`; `gcp-secrets-run.mjs` → `=gcp` ONLY
+on a successful fetch (fail-open fallback leaves it unset so the guard trips). Default OFF → no change
+for dev/tests/CI. `.env.example` + new `docs/secrets.md` document the bootstrap-token-only model + the
+operator's one-time `.env.local → Infisical` import (values never pass through an agent). Infisical
+chosen over GCP: genuinely free (unlimited secrets), already wired, no SA-key file. tsc clean ·
+secrets-source tests 5/5 · trio via land.sh. **Operator follow-up:** import secrets to Infisical Cloud
++ machine identity, set bootstrap + `REQUIRE_SECRETS_MANAGER=1`, switch PM2 `trading` to
+`start:secrets`, verify, scrub `.env.local`. See `docs/rollouts/2026-06-25-force-secrets-manager.md`.
 
 ## 2026-06-25 — Harden `gcp-secrets-run.mjs` to fail open on any credential error
 Branch `claude/gcp-secrets-fail-open`. Follow-up to #154. The `*:gcp` wrapper's "fails open" promise

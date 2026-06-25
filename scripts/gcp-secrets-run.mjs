@@ -127,6 +127,10 @@ if (!projectId) {
         }
       })
     );
+    // Mark a successful manager-sourced launch (read by the REQUIRE_SECRETS_MANAGER boot guard). Set
+    // ONLY on success — a fail-open fallback below intentionally leaves it unset so the guard trips
+    // rather than silently running on a local .env.local.
+    injected.SECRETS_SOURCE = "gcp";
   } catch (err) {
     console.error("[gcp-secrets] Failed to access Secret Manager:", err instanceof Error ? err.message : err);
     console.warn("[gcp-secrets] Falling back to running command without GCP secrets.");
