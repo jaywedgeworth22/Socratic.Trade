@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Wire deploy.yml for Infisical + operator cutover script
+Branch `claude/infisical-prod-cutover`. Follow-up to #165. Adds `scripts/infisical-prod-cutover.sh`
+(idempotent, **run on the box**): writes the bootstrap to `~/.config/agentic-trading/deploy.env`,
+imports `.env.local` → Infisical, re-creates PM2 `trading` to `npm run start:secrets`, verifies
+`/api/health`, optional `--scrub` of `.env.local`. `deploy.yml` now sources that bootstrap and builds
+via `build:secrets` when Infisical is configured, else plain build — **safe** (unchanged behaviour
+pre-cutover; `pm2 restart` reuses the existing launch command). Host-side steps 2–3 need the
+machine-identity token + live secret values, so they can't run from the cloud agent — delivered as the
+one-command script. Verify: `bash -n` OK · build ✓ · tsc ✓ clean · 1222/1222. See
+`docs/rollouts/2026-06-25-infisical-prod-cutover-deploy-wiring.md`.
+
 ## 2026-06-25 — Switch all secret delivery to Infisical; remove the GCP path
 Branch `claude/switch-to-infisical`. Operator decision: Infisical is the single secrets source of
 truth; `.env.local` is not a secret source. **Removed** the GCP path — `scripts/gcp-secrets-run.mjs`,

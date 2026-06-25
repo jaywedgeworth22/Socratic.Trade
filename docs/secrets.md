@@ -25,7 +25,14 @@ unless it was launched via `start:secrets`. This guarantees a credential can't s
 be served from a forgotten `.env.local`. Default off → no effect on local dev, tests, or CI.
 
 ## One-time migration from `.env.local` → Infisical (operator)
-Secret values never pass through an agent — run this yourself:
+**TL;DR — run `scripts/infisical-prod-cutover.sh` on the box** (idempotent; needs your
+machine-identity `INFISICAL_TOKEN`). It automates steps 2–3 below: writes the bootstrap to
+`~/.config/agentic-trading/deploy.env`, imports `.env.local` into Infisical, switches PM2 `trading`
+to `start:secrets`, verifies the app boots, and (with `--scrub`) trims `.env.local`. Afterward
+`deploy.yml` sources that bootstrap and builds via Infisical automatically (it falls back to a plain
+build/restart while the file is absent, so nothing breaks pre-cutover).
+
+Secret values never pass through an agent — run the steps it automates yourself if you prefer:
 ```bash
 brew install infisical/get-cli/infisical      # or: npm i -g @infisical/cli
 infisical login                               # → Infisical Cloud
@@ -45,8 +52,9 @@ export INFISICAL_ENV='prod'
 export REQUIRE_SECRETS_MANAGER=1
 ```
 Switch the launch command, verify, then scrub `.env.local`:
-- **PM2 (`trading.config.cjs` on the deploy box):** change the process to run `npm run start:secrets`
-  instead of `next start` (or `infisical run … -- next start`). Then `pm2 restart trading --update-env`.
+- **PM2:** the cutover script re-creates the `trading` process to run `npm run start:secrets`; with
+  the bootstrap in `~/.config/agentic-trading/deploy.env`, `deploy.yml` keeps it on that path (and
+  refreshes the token via `pm2 restart --update-env`) on every deploy.
 - Confirm the app boots and reads its keys (and that, with `REQUIRE_SECRETS_MANAGER=1`, a plain
   `next start` now refuses to boot).
 - Reduce `.env.local` to just the bootstrap above (or nothing) and delete the rest.
