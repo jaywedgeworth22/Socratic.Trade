@@ -73,6 +73,14 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/sell-to-fund-buy`, **PR 3 of 3**): **Sell-to-fund-buy 3-way setting.** Opt-in
+  `policy.sellToFundBuy` (`off`|`suggest`|`propose`|`automated`, **default off**): when a run's intended
+  buys exceed buying power, optionally raise cash by trimming the largest unrealized losers (never the
+  buy targets, longs only). Pure tested planner `src/lib/sell-to-fund.ts`; run-loop integration emits
+  funding sells per mode (suggest=record only, propose=await approval even under decide, automated=ride
+  authority). No same-run sell→fill→buy sequencing (buys retry next cadence). Default-off = zero
+  production change. Verified: tsc clean; 1089/1090 (only cache-provenance flake); build green. See
+  `docs/rollouts/2026-06-25-sell-to-fund-buy.md`. **Completes the 3-PR per-account/strategy roadmap.**
 - 2026-06-25 (`claude/strategy-copy-to-account`, **PR 2 of 3**): **Strategy library copy-to-account.**
   New `applyProfileToAccount(profileId, connectedAccountId, userId)` copies a saved library strategy
   into a CHOSEN account's live `account_strategy_state` (not just the active one), stamping

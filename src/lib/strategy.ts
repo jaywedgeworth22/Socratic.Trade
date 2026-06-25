@@ -35,6 +35,7 @@ import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCount
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
+import { planFundingSells } from "./sell-to-fund";
 import {
   getConfidenceCalibration,
   getFactorScorecard,
@@ -337,8 +338,51 @@ export async function runStrategyOnce(
       debatedProposals.push(proposal);
     }
 
+    // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
+    // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
+    // Default "off" → no-op. "suggest" only records the plan (audit + run summary); "propose" queues
+    // the funding sells for human approval; "automated" lets them ride the account's existing
+    // authority (auto-placed only when already in "decide"). Funding sells carry tradeThesisTag
+    // "Sell-to-Fund" so the execution loop can route propose-mode ones correctly.
+    const sellToFundMode = policy.sellToFundBuy ?? "off";
+    let fundingSells: TradeProposal[] = [];
+    let sellToFundNote = "";
+    if (sellToFundMode !== "off") {
+      const isOpening = (p: TradeProposal) => p.side === "buy" || p.side === "short";
+      const intendedOpeningNotional = debatedProposals.filter(isOpening).reduce((sum, p) => {
+        const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
+        const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
+        return sum + (Number.isFinite(notional) ? notional : 0);
+      }, 0);
+      // Never sell a name we're trading this run (buy targets, or already-proposed exits/trims).
+      const exclude = [
+        ...debatedProposals.filter(isOpening).map((p) => normalizeSymbol(p.symbol)),
+        ...proactiveProposals.map((p) => normalizeSymbol(p.symbol)),
+        ...debatedProposals.filter((p) => p.side === "sell" || p.side === "cover").map((p) => normalizeSymbol(p.symbol))
+      ];
+      const plan = planFundingSells({
+        mode: sellToFundMode,
+        buyingPower: workingPortfolio.buyingPower,
+        intendedOpeningNotional,
+        positions: workingPositions.map((p) => ({ symbol: normalizeSymbol(p.symbol), quantity: p.quantity, marketValue: p.marketValue, averageCost: p.averageCost })),
+        currentPrices,
+        excludeSymbols: exclude
+      });
+      if (plan.sells.length > 0) {
+        audit(
+          "sell_to_fund_plan",
+          { mode: sellToFundMode, shortfall: plan.shortfall, raised: plan.raised, summary: plan.summary, sells: plan.sells.map((s) => ({ symbol: s.symbol, quantity: s.quantity })) },
+          userId,
+          connectedAccountId
+        );
+        sellToFundNote = `Sell-to-fund-buy (${sellToFundMode}): ${plan.summary}`;
+        // suggest = record only; propose/automated = actually emit the sells into the pipeline.
+        if (sellToFundMode === "propose" || sellToFundMode === "automated") fundingSells = plan.sells;
+      }
+    }
+
     const proposals = await applyCorrelationClusterGate(
-      [...proactiveProposals, ...debatedProposals],
+      [...fundingSells, ...proactiveProposals, ...debatedProposals],
       policy,
       workingPositions,
       userId
@@ -400,6 +444,20 @@ export async function runStrategyOnce(
         );
         autoRevertOnCapBreach(decision.reasons, policy, userId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        continue;
+      }
+
+      // Sell-to-fund "propose" mode: funding sells queue for human approval even under "decide"
+      // authority — raising cash by selling is the user's call. (Identified by tradeThesisTag so it's
+      // robust to any reordering by the cluster gate.)
+      if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
+        const proposalId = crypto.randomUUID();
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        await sendNotification(
+          { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         continue;
       }
 
@@ -575,7 +633,8 @@ export async function runStrategyOnce(
       expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
       revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
         ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
-        : ""
+        : "",
+      sellToFundNote
     ]
       .filter(Boolean)
       .join(" ");
