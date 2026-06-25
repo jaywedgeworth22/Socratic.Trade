@@ -16,6 +16,12 @@ export type IndexUniverse =
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
 
+// Sell-to-fund-buy (PR 3): when a run's intended BUYs exceed buying power, how to raise cash by
+// trimming holdings. "off" (default) = never, behavior unchanged. "suggest" = surface the plan only.
+// "propose" = queue the funding sells for human approval. "automated" = let them execute under the
+// account's existing authority (auto-placed only when the account is already in "decide" mode).
+export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
+
 export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
@@ -318,6 +324,8 @@ export interface TradingPolicy {
   additionalSymbols: string[];
   blocklist?: string[];
   strategyAuthority: StrategyAuthority;
+  /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
+  sellToFundBuy?: SellToFundBuyMode;
   /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
    *  fallback. This is the Green Team / Bull proposer model. */
   llmModel?: string;
