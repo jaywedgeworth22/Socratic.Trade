@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Assistant chat across all five LLM providers
+Branch `feat/chat-multi-provider` (throwaway worktree `~/apps/trading-ag13`). The Assistant chat now
+spans **OpenAI · Anthropic · xAI (Grok) · Google Gemini · Mistral**, with a few recommended models
+per provider (cost ↔ capability) selectable from the Assistant header (sticky via `localStorage`,
+sent as a `model` hint — no DB migration). Routing is by model name: `chatProviderForModel` →
+`llmForModel` (`src/lib/chat/llm.ts`). Grok/Gemini/Mistral reuse `OpenAILLM`'s chat/completions tool
+loop with a per-provider base URL + key; Anthropic keeps its Messages loop. Per-provider keys resolve
+via `resolveLlmCredential(...gemini|mistral...)` (per-user-first, operator failover); no
+cross-provider borrowing — a keyless provider degrades to `MockLLM`. Added Anthropic/Gemini/Mistral
+rows to the `Settings → Connections` catalog (`/api/keys`) and ledger pricing. **NB:** the lost PR
+#161 (Gemini/Mistral) was never in `main`; this adds that plumbing from scratch, chat-scoped — the
+strategy loop / Strategy-Studio dropdowns still cover only OpenAI + xAI (separate follow-up). Verify:
+tsc ✓ · 1228/1228 ✓ · build ✓ · live `/api/keys` + `/api/chat` (mock + keyless-gemini) checks.
+See `docs/rollouts/2026-06-25-chat-multi-provider-models.md`.
+
 ## 2026-06-25 — Wire deploy.yml for Infisical + operator cutover script
 Branch `claude/infisical-prod-cutover`. Follow-up to #165. Adds `scripts/infisical-prod-cutover.sh`
 (idempotent, **run on the box**): writes the bootstrap to `~/.config/agentic-trading/deploy.env`,
