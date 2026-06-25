@@ -102,6 +102,30 @@ Three more P2s on the round-3 mechanism, all valid:
 Earlier non-outdated threads (cache App A reads, negative-cache empty misses, P1 roadmap docs) were
 already addressed in rounds 1–2 — verified against current code, no further change.
 
+## Codex review round 5 (PR #160, commit f66f77f) — App A read robustness + more sub-call skips
+Four more valid P2s (the stale-thread duplicates for already-fixed items were verified, no change):
+- **Transport errors negative-cached (line 497)** — `getAppAFundamentals`/`getAppAAnalyst` collapse a
+  timeout/5xx/401 into `[]`, which the empty-result branch was negative-caching for 1h, suppressing retry
+  until TTL even after the outage cleared. **Fixed**: track a `transportError` flag; only negative-cache a
+  genuine "both reads OK, nothing fresh" — errors stay uncached and retry next scan.
+- **Only the last App A row read (line 438)** — App A can return multiple fresh rows from different
+  sources; taking just the last fundamentals/analyst row discarded fields an earlier fresh row supplied.
+  **Fixed**: merge the latest non-null value per field across all fresh rows (`latestFund`/`latestAnalyst`);
+  the rating/counts/source stay a coherent unit (taken from the latest row that yields a score).
+- **FMP price-target call not skipped (line 1640)** — added `skipTargets` (only when App A covers all four
+  target fields, since a partial App A target row must still let FMP fill the rest); folded into the
+  no-cache-on-trim guard.
+- **Contributor double-credit (line 477)** — the cascade credited `congress.trade` as a contributor when it
+  saw App A's `analystBySource`, even if a same-source direct provider later overwrote that key, so
+  `MarketScan.source` could list it with no surviving field. **Fixed**: track the last writer per analyst
+  key and credit only the providers whose entry survived the blend. +2 cascade tests.
+
+**Deferred to the owner (not auto-applied):** Codex also flagged that the new fundamentals/analyst tier
+shares the `CONGRESS_TRADE_READS_ENABLED` flag with the existing price/history cache-aside, so enabling
+reads for prices also activates fundamentals (App A gains precedence over direct providers on deploy). This
+is a deliberate documented design (one flag, default-off), but splitting it into a second flag is a
+config-contract change — asked the owner before changing it.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
   `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (skip paid for App-A-covered symbols), plus the B→A push flags

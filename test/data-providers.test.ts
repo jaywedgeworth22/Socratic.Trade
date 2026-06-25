@@ -972,6 +972,31 @@ describe("CascadingEnrichmentProvider.activeSources (honest source attribution)"
     await cascade.enrich(["MSFT"]); // no data for MSFT this run
     expect(cascade.activeSources).toEqual([]);
   });
+
+  it("does NOT credit a provider whose analyst entry was overwritten by the same source", async () => {
+    // App A surfaces an analyst row keyed under its upstream source ("fmp"); the direct
+    // fmp provider runs later and overwrites that same key, so App A supplied no FINAL
+    // value and must not appear in activeSources.
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { fmp: { score: 80, label: "Buy" } } } }),
+      stub("fmp", { AAPL: { analystBySource: { fmp: { score: 20, label: "Sell" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.analystBySource && Object.keys(out.AAPL.analystBySource)).toEqual(["fmp"]);
+    expect(out.AAPL.analystScore).toBe(20); // fmp's surviving value — a single vote, not a 50 blend
+    expect(cascade.activeSources).toEqual(["fmp"]);
+    expect(cascade.activeSources).not.toContain("congress.trade");
+  });
+
+  it("credits BOTH providers when their analyst entries are distinct sources", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { "yahoo-finance": { score: 80, label: "Buy" } } } }),
+      stub("fmp", { AAPL: { analystBySource: { fmp: { score: 20, label: "Sell" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.analystScore).toBe(50); // two distinct votes (80 + 20) blended
+    expect(cascade.activeSources.sort()).toEqual(["congress.trade", "fmp"]);
+  });
 });
 
 describe("enrichment short-circuit (App A coverage hint → paid providers skip redundant sub-calls)", () => {

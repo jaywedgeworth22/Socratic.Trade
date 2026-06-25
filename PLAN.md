@@ -76,11 +76,14 @@ existing behavior; no phase scope, timeline, or approach changed.
   `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated
   `CONGRESS_TRADE_READS_ENABLED` with a `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and 6h
   caching — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
-  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Paid-call elimination is now an **opt-in
-  short-circuit** (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): when App A covers a symbol's fundamentals, the
-  paid fundamentals providers (`costTier:"paid"`) are skipped for it; default OFF. App A misses are
-  negative-cached 1h. A→B push wired (`APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` on App A; App B needs the
-  same token + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`).
+  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Paid-call elimination is an **opt-in coverage
+  hint** (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): the cascade hands paid providers a per-symbol set of the
+  fields App A already covers (+ the analyst source) so they skip only the redundant SUB-calls (e.g. FMP's
+  ratios-ttm / grades-consensus / price-target calls) while still fetching their unique fields
+  (insider/senate); no whole provider is skipped → no field lost; default OFF. App A reads are merged
+  across all fresh rows, freshness-gated by the data `date`, and negative-cached 1h (transport errors are
+  NOT cached). A→B push wired (`APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` on App A; App B needs the same token
+  + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`).
 
 ## Build Order
 

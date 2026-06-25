@@ -26,7 +26,11 @@ ratios-ttm/grades-consensus when App A has P/E+analyst, still fetches insider/se
 analyst under its upstream source so the cascade doesn't double-count the same consensus. **Codex round 4:**
 freshness now keys off the data `date` (not `updatedAt`) so today's backfill of old data falls through;
 FMP skips consensus only when App A's analyst is fmp-sourced (carries `analystSource` in the hint); a
-coverage-trimmed FMP fetch is no longer cached as a full hit. 1222 tests.
+coverage-trimmed FMP fetch is no longer cached as a full hit. **Codex round 5:** transport errors no longer
+negative-cached (retry next scan); App A reads merge latest-non-null across all fresh rows; FMP also skips
+the price-target call when App A covers all four targets; cascade credits `congress.trade` as a contributor
+only when its analyst entry survives the same-source de-dupe. 1224 tests. **Open Q for owner:** whether to
+split the fundamentals tier onto its own flag vs sharing `CONGRESS_TRADE_READS_ENABLED` (asked).
 
 ## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
 Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`

@@ -427,46 +427,74 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
 
     await Promise.all(
       misses.map(async (symbol) => {
+        // Track whether EITHER read failed at the transport level (timeout/5xx/401 →
+        // []). A genuine "App A has nothing" (both reads OK, no fresh rows) is
+        // negative-cached; a transport error is NOT, so a fixed outage/token is retried
+        // on the next scan instead of being suppressed for the whole negative TTL.
+        let transportError = false;
         const [funds, analysts] = await Promise.all([
-          getAppAFundamentals(symbol).catch(() => [] as AppAFundamental[]),
-          getAppAAnalyst(symbol).catch(() => [] as AppAAnalyst[]),
+          getAppAFundamentals(symbol).catch(() => { transportError = true; return [] as AppAFundamental[]; }),
+          getAppAAnalyst(symbol).catch(() => { transportError = true; return [] as AppAAnalyst[]; }),
         ]);
-        // rows are date-ascending; only accept the latest if it's fresh enough.
-        const fLatest = funds.length ? funds[funds.length - 1] : null;
-        const aLatest = analysts.length ? analysts[analysts.length - 1] : null;
-        const f = fLatest && rowIsFresh(fLatest, now) ? fLatest : null;
-        const a = aLatest && rowIsFresh(aLatest, now) ? aLatest : null;
+        // App A may return multiple fresh rows from different sources; merge the LATEST
+        // non-null value per field across all of them (rows are date-ascending), so a
+        // partial latest row doesn't discard a field an earlier fresh row supplied.
+        const freshFunds = funds.filter((r) => rowIsFresh(r, now));
+        const freshAnalysts = analysts.filter((r) => rowIsFresh(r, now));
+        const latestFund = <K extends keyof AppAFundamental>(
+          key: K,
+          valid: (v: NonNullable<AppAFundamental[K]>) => boolean = () => true
+        ): NonNullable<AppAFundamental[K]> | undefined => {
+          for (let i = freshFunds.length - 1; i >= 0; i--) {
+            const v = freshFunds[i][key];
+            if (v != null && valid(v as NonNullable<AppAFundamental[K]>)) return v as NonNullable<AppAFundamental[K]>;
+          }
+          return undefined;
+        };
+        const latestAnalyst = <K extends keyof AppAAnalyst>(key: K): NonNullable<AppAAnalyst[K]> | undefined => {
+          for (let i = freshAnalysts.length - 1; i >= 0; i--) {
+            const v = freshAnalysts[i][key];
+            if (v != null) return v as NonNullable<AppAAnalyst[K]>;
+          }
+          return undefined;
+        };
         const e: SymbolEnrichment = {};
-        if (f) {
-          // Validity filters: a non-positive P/E or 52-week high/low is a sentinel
-          // for "no real value" in App A's stored rows, not a usable number — drop
-          // those so they never override a real value from a paid provider.
-          if (f.peRatio != null && f.peRatio > 0) e.peRatio = f.peRatio;
-          if (f.eps != null) e.eps = f.eps;
-          if (f.beta != null) e.beta = f.beta;
-          if (f.dividendYield != null) e.dividendYield = f.dividendYield;
-          if (f.week52High != null && f.week52High > 0) e.fiftyTwoWeekHigh = f.week52High;
-          if (f.week52Low != null && f.week52Low > 0) e.fiftyTwoWeekLow = f.week52Low;
-          if (f.fcfYield != null) e.fcfYield = f.fcfYield;
-          if (f.debtToEquity != null) e.debtToEquity = f.debtToEquity;
-          if (f.epsGrowth != null) e.epsGrowth = f.epsGrowth;
+        if (freshFunds.length) {
+          // Validity filters: a non-positive P/E or 52-week high/low is a sentinel for
+          // "no real value", not a usable number — drop so they never win first-wins.
+          const pe = latestFund("peRatio", (v) => v > 0); if (pe !== undefined) e.peRatio = pe;
+          const eps = latestFund("eps"); if (eps !== undefined) e.eps = eps;
+          const beta = latestFund("beta"); if (beta !== undefined) e.beta = beta;
+          const dy = latestFund("dividendYield"); if (dy !== undefined) e.dividendYield = dy;
+          const hi = latestFund("week52High", (v) => v > 0); if (hi !== undefined) e.fiftyTwoWeekHigh = hi;
+          const lo = latestFund("week52Low", (v) => v > 0); if (lo !== undefined) e.fiftyTwoWeekLow = lo;
+          const fcf = latestFund("fcfYield"); if (fcf !== undefined) e.fcfYield = fcf;
+          const de = latestFund("debtToEquity"); if (de !== undefined) e.debtToEquity = de;
+          const eg = latestFund("epsGrowth"); if (eg !== undefined) e.epsGrowth = eg;
         }
-        if (a) {
-          if (a.targetMean != null) e.targetMean = a.targetMean;
-          if (a.targetHigh != null) e.targetHigh = a.targetHigh;
-          if (a.targetLow != null) e.targetLow = a.targetLow;
-          if (a.targetMedian != null) e.targetMedian = a.targetMedian;
-          const counts = {
-            strongBuy: a.strongBuy ?? 0,
-            buy: a.buy ?? 0,
-            hold: a.hold ?? 0,
-            sell: a.sell ?? 0,
-            strongSell: a.strongSell ?? 0,
-          };
-          // Prefer counts; fall back to the label so rating-only rows still surface
-          // (the cascade derives the rating from analystBySource, not analystRating).
-          const score = analystScoreFromCounts(counts) ?? (a.rating ? scoreFromAnalystLabel(a.rating) : undefined);
-          if (score !== undefined) {
+        if (freshAnalysts.length) {
+          // Targets are independent scalars — fill each from the latest fresh row that has it.
+          const tMean = latestAnalyst("targetMean"); if (tMean !== undefined) e.targetMean = tMean;
+          const tHigh = latestAnalyst("targetHigh"); if (tHigh !== undefined) e.targetHigh = tHigh;
+          const tLow = latestAnalyst("targetLow"); if (tLow !== undefined) e.targetLow = tLow;
+          const tMed = latestAnalyst("targetMedian"); if (tMed !== undefined) e.targetMedian = tMed;
+          // The rating/counts/source form ONE coherent unit — take them from the latest
+          // fresh row that actually yields a score (keeps the source key consistent with
+          // the counts it came from), rather than mixing a rating from one source with
+          // counts from another.
+          for (let i = freshAnalysts.length - 1; i >= 0; i--) {
+            const a = freshAnalysts[i];
+            const counts = {
+              strongBuy: a.strongBuy ?? 0,
+              buy: a.buy ?? 0,
+              hold: a.hold ?? 0,
+              sell: a.sell ?? 0,
+              strongSell: a.strongSell ?? 0,
+            };
+            // Prefer counts; fall back to the label so rating-only rows still surface
+            // (the cascade derives the rating from analystBySource, not analystRating).
+            const score = analystScoreFromCounts(counts) ?? (a.rating ? scoreFromAnalystLabel(a.rating) : undefined);
+            if (score === undefined) continue;
             const total = counts.strongBuy + counts.buy + counts.hold + counts.sell + counts.strongSell;
             // Key the analyst entry under the UPSTREAM provider App A got it from (e.g.
             // "fmp"/"finnhub"/"yahoo-finance"), not "congress.trade". The cascade blends
@@ -484,16 +512,16 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
                 ...(total > 0 ? { counts } : {}),
               },
             };
+            break;
           }
         }
         if (Object.keys(e).length > 0) {
           result[symbol] = e;
           writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, now + DEFAULT_TTL_MS);
-        } else {
-          // Negative cache: App A had nothing fresh for this symbol. Remember the
-          // miss briefly so repeated scans don't re-hit both endpoints every time
-          // (the next scan reads {} from cache instead of fetching). Short TTL so a
-          // newly-pushed row is picked up soon.
+        } else if (!transportError) {
+          // Negative cache ONLY a genuine "App A had nothing fresh" — never a transport
+          // error. Remember the miss briefly so repeated scans don't re-hit both
+          // endpoints every time; short TTL so a newly-pushed row is picked up soon.
           writeEnrichmentCache(this.name, symbol, "shared", this.userId, {}, now + CONGRESS_NEG_TTL_MS);
         }
       })
@@ -662,6 +690,11 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const base: SymbolEnrichment = {};
       const sources: Partial<Record<EnrichmentSourcedField, string>> = {};
       const analystBySource: Record<string, AnalystRatingDetail> = {};
+      // Which provider supplied the SURVIVING entry for each analyst source-key (last
+      // writer wins, mirroring Object.assign). Used to credit contributors only after
+      // de-dupe — a provider whose entry is overwritten by a same-source provider
+      // supplied no final value and must not appear in MarketScan.source.
+      const analystKeyOwner: Record<string, string> = {};
 
       const takeScalar = <K extends keyof SymbolEnrichment>(
         field: K,
@@ -710,10 +743,14 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           base.headlines = r.headlines;
           this.contributingNames.add(name);
         }
-        // Collect every provider's analyst read (an analyst contribution counts as a contribution too).
+        // Collect every provider's analyst read. Defer crediting it as a contributor:
+        // if its entry is overwritten by a same-source provider that runs later (same
+        // analystBySource key), it supplied no FINAL value. Track the last writer per key.
         if (r.analystBySource && Object.keys(r.analystBySource).length > 0) {
-          Object.assign(analystBySource, r.analystBySource);
-          this.contributingNames.add(name);
+          for (const [k, v] of Object.entries(r.analystBySource)) {
+            analystBySource[k] = v;
+            analystKeyOwner[k] = name;
+          }
         }
       }
 
@@ -725,6 +762,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         base.analystRating = labelFromAnalystScore(blended);
         base.analystBySource = analystBySource;
         sources.analystRating = Object.keys(analystBySource).length > 1 ? "blended" : Object.keys(analystBySource)[0];
+        // Credit only the providers whose analyst entry SURVIVED the de-dupe.
+        for (const owner of new Set(Object.values(analystKeyOwner))) this.contributingNames.add(owner);
       }
 
       // Prefer a REAL model sentiment (Alpha Vantage NEWS_SENTIMENT) over the keyword-proxy
@@ -1627,9 +1666,9 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       await Promise.all(
         chunk.map(async (symbol) => {
           // Coverage hint (short-circuit only): when a free upstream (App A) already
-          // supplied P/E or analyst consensus for this symbol, skip the matching FMP
-          // SUB-call — but always keep fetching insider/senate (and targets), which
-          // App A never supplies, so nothing FMP uniquely provides is lost.
+          // supplied P/E, analyst consensus, or price targets for this symbol, skip the
+          // matching FMP SUB-call — but always keep fetching insider/senate, which App A
+          // never supplies, so nothing FMP uniquely provides is lost.
           const covered = context?.coveredFields?.[symbol];
           // P/E is a first-wins scalar: if App A has any valid P/E, FMP's would lose the
           // merge anyway, so skipping ratios-ttm is safe regardless of App A's source.
@@ -1638,9 +1677,13 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // App A's analyst actually came from FMP (else FMP's distinct vote must still be
           // fetched and blended — App A holding a Yahoo/Finnhub consensus doesn't cover it).
           const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[symbol] === this.name;
+          // Targets are first-wins scalars: skip the price-target call only when App A
+          // covers ALL FOUR (a partial App A target row would still let FMP fill the rest).
+          const skipTargets =
+            ["targetMean", "targetHigh", "targetLow", "targetMedian"].every((k) => covered?.has(k));
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
-          const wantTargets = fmpPriceTargetsEnabled();
+          const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;
           const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
             skipPe
               ? Promise.resolve(undefined)
@@ -1752,7 +1795,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // with App A off/stale, or with the short-circuit flag off, would otherwise
           // treat the partial as a full FMP hit and never refetch P/E/analyst until TTL.
           // The covered fields come from App A live each scan; FMP refetches its uniques.
-          const trimmed = skipPe || skipConsensus;
+          const trimmed = skipPe || skipConsensus || skipTargets;
 
           if (allRejected || hasTransientError || isEmpty || trimmed) {
             if (!trimmed) {
