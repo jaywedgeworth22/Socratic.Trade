@@ -4,9 +4,8 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-06-24 — Intrinio / Tiingo / TwelveData + GCP Secret Manager wired
-Three new data enrichment providers integrated into the cascade (Intrinio, Tiingo, TwelveData).
-GCP Secret Manager runner script added. API keys loaded into .env.local.
+## 2026-06-25 — API Connections Health Admin Panel
+Full-stack health monitoring for all API provider connections.
 Branch: claude/magical-faraday-uce1uy
 
 ## Current State
@@ -28,6 +27,17 @@ Branch: claude/magical-faraday-uce1uy
   breadth/macro-sparkline work and RAG hardening may be in the local worktree.
 
 ## Active Focus
+
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel.**
+  New `/admin/connections` page showing health status for all 11 API providers (alpaca-news,
+  alpaca-snapshot, yahoo-finance, finnhub, fmp, alpha-vantage, fintechstudios, intrinio,
+  tiingo, twelvedata, congress.trade). Two new SQLite tables (`api_health_log` + 
+  `api_health_error_patterns`) with FIFO 500-row cap, SHA-256 error fingerprinting. 
+  fetchWithRetry patched with `service?` option; all call sites wired. 30s auto-refresh 
+  client, service cards with health dots, detail drawer (raw log + error patterns), STOPPED 
+  chip when last 5 consecutive calls fail or no success in 60min. Link in Settings → 
+  Connections tab. tsc clean; 1 pre-existing test failure (cache-provenance date flake, 
+  unrelated); build green. See `docs/rollouts/2026-06-25-connections-health-panel.md`.
 
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
   Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same
