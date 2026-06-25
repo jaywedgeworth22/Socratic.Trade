@@ -47,7 +47,13 @@ export async function POST(req: Request) {
     // Robinhood MCP to already be connected (OAuth complete).
     if (broker === "robinhood") {
       const accounts = await getRobinhoodGateway(userId).getAccounts();
-      const agentic = accounts.find((a) => a.agenticAllowed);
+      // Prefer the account with "agentic" in its label/nickname when multiple eligible
+      // accounts exist (e.g. a regular Investing account + the Agentic account). If none
+      // has that label, falls back to the first agenticAllowed account.
+      const agenticAccounts = accounts.filter((a) => a.agenticAllowed);
+      const agentic =
+        agenticAccounts.find((a) => a.label.toLowerCase().includes("agentic")) ??
+        agenticAccounts[0];
       if (!agentic) {
         return new NextResponse(
           "No agentic-enabled Robinhood account found. Connect your Robinhood agentic account first.",

@@ -40,9 +40,19 @@ This means:
 - IRA/Roth accounts with no explicit field → `false` (correctly excluded)
 - Any account with an explicit `agentic_allowed: false` → still `false` (override respected)
 
+
+## Account selection improvement
+
+`app/api/connected-accounts/route.ts` was also updated: when multiple eligible
+accounts exist, prefer the one with "agentic" in its label (e.g. `nickname: "Agentic"`)
+before falling back to the first agenticAllowed account. This prevents a read-only
+Investing account from being selected over a labelled Agentic account in edge cases
+where a user has multiple non-IRA brokerage accounts.
+
 ## Files
 
-- `src/lib/robinhood.ts` — line 103, `agenticAllowed` computation
+- `src/lib/robinhood.ts` — `agenticAllowed` computation
+- `app/api/connected-accounts/route.ts` — prefer "agentic"-labelled account in selection
 - `STATUS.md` — added entry
 - `docs/rollouts/2026-06-25-robinhood-agentic-default.md` — this file
 
@@ -51,6 +61,7 @@ This means:
 ```bash
 npx tsc --noEmit   # clean
 npm test           # 1150/1151 (cache-provenance date flake is pre-existing, unrelated)
+npm run build      # clean — all routes compile and bundle successfully
 ```
 
 ## Follow-ups
