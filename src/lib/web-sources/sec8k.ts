@@ -147,14 +147,29 @@ export function isEightKRefreshDue(now: number = Date.now()): boolean {
   return now - Date.parse(ds.fetchedAt) >= eightKTtlMs();
 }
 
+// Shared in-flight promises for the cold company_tickers.json fetch. Both maps derive from the SAME
+// SEC file; without these guards, concurrent scans (or repeated dashboard refreshes) that all miss the
+// weekly cache would each fire a duplicate request and defeat SEC fair-access throttling. A pending load
+// is shared across callers and cleared once settled, so a later cache expiry re-fetches.
+let cikMapInFlight: Promise<Record<string, string>> | null = null;
+let tickerCikMapInFlight: Promise<Record<string, string>> | null = null;
+
 /** Load the CIK→ticker map, cached weekly in the settings KV. */
 export async function loadCikMap(now: number): Promise<Record<string, string>> {
   const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(CIK_KEY);
   if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
-  const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
-  const map = parseCikTickerMap(json);
-  if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
-  return map;
+  if (cikMapInFlight) return cikMapInFlight;
+  cikMapInFlight = (async () => {
+    const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+    const map = parseCikTickerMap(json);
+    if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+    return map;
+  })();
+  try {
+    return await cikMapInFlight;
+  } finally {
+    cikMapInFlight = null;
+  }
 }
 
 const TICKER_CIK_KEY = "webSource:sec:tickerCikMap";
@@ -163,10 +178,18 @@ const TICKER_CIK_KEY = "webSource:sec:tickerCikMap";
 export async function loadTickerCikMap(now: number): Promise<Record<string, string>> {
   const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(TICKER_CIK_KEY);
   if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
-  const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
-  const map = parseTickerCikMap(json);
-  if (Object.keys(map).length > 0) setInternalSetting(TICKER_CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
-  return map;
+  if (tickerCikMapInFlight) return tickerCikMapInFlight;
+  tickerCikMapInFlight = (async () => {
+    const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+    const map = parseTickerCikMap(json);
+    if (Object.keys(map).length > 0) setInternalSetting(TICKER_CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+    return map;
+  })();
+  try {
+    return await tickerCikMapInFlight;
+  } finally {
+    tickerCikMapInFlight = null;
+  }
 }
 
 export function mergeEightK(existing: EightKEvent[], fresh: EightKEvent[], now: number, window = windowDays()): EightKEvent[] {

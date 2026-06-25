@@ -2022,6 +2022,16 @@ function vwapDeltaPct(q: MarketQuote): number | undefined {
   return ((q.price - q.vwap) / q.vwap) * 100;
 }
 
+// Debt/equity normalized to a true RATIO. Providers report D/E as a ratio (1.5) or a percentage (150);
+// the `>10 → ÷100` heuristic converts the percentage form, but is SOURCE-AWARE — sec-xbrl always emits a
+// true ratio (a genuine 12x must stay 12, not become 0.12). Used by BOTH the renderer and the column
+// sort so clicking the header orders by the visible value (a Yahoo 150 → 1.50 must not sort above a SEC
+// 12 → 12.00). Mirrors the same normalization in market.ts qualityScore.
+function normalizedDebtToEquity(q: MarketQuote): number | undefined {
+  if (typeof q.debtToEquity !== "number") return undefined;
+  return q.sources?.debtToEquity !== "sec-xbrl" && q.debtToEquity > 10 ? q.debtToEquity / 100 : q.debtToEquity;
+}
+
 /**
  * Shared "what is this data point, where did it come from, and when did it arrive?" tooltip.
  * Returns the label on its own, then `Source: <pretty provider>` when a source is known, then
@@ -2101,8 +2111,8 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => <span className="tnum text-muted">{q.peRatio && q.peRatio > 0 ? q.peRatio.toFixed(1) : typeof q.eps === "number" && q.eps <= 0 ? "n/a" : "—"}</span>, cellTitle: (q) => dataPointTitle("P/E ratio", q.sources?.peRatio, q.asOf) },
   { id: "fcfYield", label: "FCF%", title: "Free-cash-flow yield = trailing free cash flow ÷ market cap; higher means more cash generated per dollar of value. Source: Yahoo Finance.", align: "right", sortKey: "fcfYield",
     render: (q) => (typeof q.fcfYield === "number" ? <span className="tnum text-muted">{q.fcfYield.toFixed(1)}%</span> : DASH), cellTitle: (q) => dataPointTitle("Free-cash-flow yield", q.sources?.fcfYield, q.asOf) },
-  { id: "debtToEquity", label: "D/E", title: "Debt-to-Equity = total debt ÷ shareholder equity; lower means less leverage. Source: Yahoo Finance.", align: "right", sortKey: "debtToEquity",
-    render: (q) => (typeof q.debtToEquity === "number" ? <span className="tnum text-muted">{(q.sources?.debtToEquity !== "sec-xbrl" && q.debtToEquity > 10 ? q.debtToEquity / 100 : q.debtToEquity).toFixed(2)}</span> : DASH), cellTitle: (q) => dataPointTitle("Debt / equity", q.sources?.debtToEquity, q.asOf) },
+  { id: "debtToEquity", label: "D/E", title: "Debt-to-Equity = total debt ÷ shareholder equity; lower means less leverage. Source: Yahoo Finance.", align: "right", sortValue: normalizedDebtToEquity,
+    render: (q) => { const de = normalizedDebtToEquity(q); return de !== undefined ? <span className="tnum text-muted">{de.toFixed(2)}</span> : DASH; }, cellTitle: (q) => dataPointTitle("Debt / equity", q.sources?.debtToEquity, q.asOf) },
   { id: "epsGrowth", label: "EPS gr", title: "Earnings-per-share growth, year over year (e.g. +15%). Source: Yahoo Finance.", align: "right", sortKey: "epsGrowth",
     render: (q) => (typeof q.epsGrowth === "number" ? <span className="tnum">{(q.epsGrowth * 100).toFixed(0)}%</span> : DASH), cellClass: (q) => (typeof q.epsGrowth === "number" ? (q.epsGrowth >= 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => dataPointTitle("EPS growth (YoY)", q.sources?.epsGrowth, q.asOf) },
   { id: "dividendYield", label: "Div", title: "Annual dividend yield = trailing dividends per share ÷ price. Source: Yahoo / Finnhub.", align: "right", sortKey: "dividendYield",

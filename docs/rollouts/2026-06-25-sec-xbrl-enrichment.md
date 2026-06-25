@@ -285,6 +285,36 @@ same period → uses parent-only 300M (D/E 2.0), not the inclusive 400M (1.5).
 
 Full trio green: tsc clean · 1181/1182 (only the cache-provenance flake) · build.
 
+## Round 12 (Codex review): three follow-on findings (two from earlier rounds)
+
+Three P2 findings on commit `cba599a`; two are direct consequences of earlier rounds in this PR.
+
+**1. D/E column sorted by raw value, not the displayed normalized one (`dashboard-client.tsx:2105`).**
+Consequence of round 9's source-aware display: the column rendered the normalized value (SEC raw, Yahoo
+`>10 ÷100`) but still sorted by raw `debtToEquity`, so a Yahoo `150` (shows 1.50) sorted above a SEC `12`
+(shows 12.00) — header click contradicted the visible order. Extracted a `normalizedDebtToEquity(q)` helper
+(same source-aware rule as the renderer and `market.ts` qualityScore) and used it for BOTH `render` and a
+new `sortValue`.
+
+**2. Quote-only Yahoo fallback wasn't recorded in `MarketScan.source` (`market.ts`).** Consequence of
+round 6's honest-source work: when a custom symbol misses the NASDAQ screener, the quote-only fallback
+fetches+displays a Yahoo quote; if enrichment then accepts no field for that row, `activeSources` is empty
+and the scan was reported as screener-only despite a Yahoo-sourced quote. Now each quote-only quote's
+`provider` is added to `universeSources`. New regression test: chart endpoint succeeds but crumb/quoteSummary
+404 (no enrichment) → `scan.source` still contains `yahoo-finance`.
+
+**3. Cold SEC ticker→CIK map fetch wasn't in-flight-deduped (`web-sources/sec8k.ts`).** Unlike the
+per-symbol companyfacts guard (`secXbrlInFlight`), `loadTickerCikMap`/`loadCikMap` had no shared in-flight
+promise, so concurrent cold loads (repeated dashboard refreshes) each fired a duplicate
+`company_tickers.json` request, defeating SEC fair-access throttling. Added a module-level shared promise to
+both loaders (cleared once settled, so a later expiry re-fetches). New test: two concurrent
+`loadTickerCikMap` calls → a single fetch.
+
+Files: `app/dashboard-client.tsx`, `src/lib/market.ts`, `src/lib/web-sources/sec8k.ts`,
+`test/market-custom-symbol.test.ts`, `test/web-sources-sec8k.test.ts`.
+
+Full trio green: tsc clean · 1183/1184 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

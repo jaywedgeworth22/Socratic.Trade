@@ -144,6 +144,9 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         const quoteOnly = await fetchQuoteOnlyMarketQuotes(customSymbolsMissingFromScreener, positions);
         quotes = [...quotes, ...quoteOnly.quotes];
         warnings.push(...quoteOnly.warnings);
+        // The quote-only fallback DISPLAYS these Yahoo quotes; record its provider so MarketScan.source
+        // still lists Yahoo even if enrichment later contributes no accepted field for those rows.
+        for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
       }
       // Market breadth: % of the full screener that's advancing today — a free,
       // market-wide risk-on/risk-off gauge (computed from data we already fetched).
