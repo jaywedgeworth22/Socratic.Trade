@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Fix: `gcp-secrets-run.mjs` no-project fallback waits on the child
+Branch `claude/gcp-secrets-wait-on-child`. The `*:gcp` wrapper's no-`GCP_PROJECT_ID` fallback called
+`process.exit(0)` right after spawning the child, so `build:gcp` could report success before
+`next build` finished (a chained restart/deploy could run against an unfinished build). Restructured
+so the command runs once at the end in BOTH paths and `runCommand`'s child-exit handler owns process
+exit (waits + propagates the code); dropped an unused `spawnSync` import. Configured path unchanged.
+Resolves the follow-up from the #150 docs PR. Verified by direct runtime tests (no-project child →
+exit code propagated incl. 7; old version returned 0 immediately, orphaning the child) + trio: build ✓ ·
+tsc ✓ clean · 1189/1189 tests. Updated `docs/deployment.md` (premature-exit caveat now describes the
+fix; refined the fail-open note re: a missing `GOOGLE_APPLICATION_CREDENTIALS` path). See
+`docs/rollouts/2026-06-25-gcp-secrets-wait-on-child.md`.
+
 ## 2026-06-25 — Fix: risk-exit blocked by MAX_SAFE_INTEGER notional sentinel
 Branch `agent/claude-exit-notional`. A SELL "Risk-Exit" (no live quote) was Blocked with "Projected net
 exposure $-9,007,199,254,740,800 exceeds net cap" and shown as "~$9,007,199,254,740,991.00" —
