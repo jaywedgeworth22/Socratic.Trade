@@ -512,7 +512,7 @@ export interface TradeProposal {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
     string
   >
 >;
@@ -563,6 +563,11 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED). */
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   /** Cross-sectional: this name's intraday % move minus the average move of its sector among
    *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
   sectorRelStrength?: number;
@@ -672,6 +677,10 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   evidenceBulletins?: string[];
   sources?: EnrichmentSources;
 }

@@ -4,6 +4,30 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
+Built the inbound half of the App A return-path plus the price-target provider that fills the
+analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
+already landed on main (`marketQuoteToFundamentals`/`marketQuoteToAnalyst`) — did NOT duplicate it.
+- **Receiver (`feat/securities-import-receiver`):** new `POST /api/admin/securities/import`
+  (bearer `APP_B_INGEST_TOKEN`, constant-time, default-closed) + new local writable EOD cache
+  (`imported_securities_ref`/`imported_price_eod`/`imported_spx_eod` in `db.ts`,
+  `db-securities-import.ts`, `securities-import-auth.ts`), wired as an OPT-IN, density-guarded
+  `fetchDailyOHLC` tier (`SECURITIES_IMPORT_HISTORY_TIER_ENABLED`, `SECURITIES_IMPORT_MIN_BARS=200`).
+  No-echo guard: outbound `congress-share` pushes are tagged `origin: app-b` and the receiver skips
+  that origin. Receiver ignores insider/shortVolume/fundamentals/analyst on inbound (gap-fills are
+  prices/spx/refs only).
+- **Numeric analyst price targets:** opt-in FMP `price-target-consensus` (`FMP_PRICE_TARGETS_ENABLED`)
+  threads `targetMean/High/Low/Median` through the whole enrichment surface (`SymbolEnrichment`,
+  `EnrichmentSourcedField`, `takeScalar`, `EMPTY_SOURCED`, `MarketQuote`, `MarketQuoteSummary`,
+  `EnrichmentSources`, `market.ts` merge) and into `marketQuoteToAnalyst`, so the analyst[] push fills
+  those columns instead of null. Default-off → no behavior change.
+- Verify: tsc clean · full vitest green except the pre-existing cache-provenance date flake · build
+  green (`/api/admin/securities/import` registered). Operator: set `APP_B_INGEST_TOKEN`, hand App A
+  the token + import URL out-of-band; flip the consume/targets flags when ready. A discovery sweep's
+  off-theme backlog (chat tools, learning-loop wiring, money-path items, spend-gated caps) is listed in
+  the rollout note — deferred, needs its own branches / owner sign-off.
+  See `docs/rollouts/2026-06-25-app-b-securities-import-fundamentals-price-targets.md`.
+
 ## 2026-06-24 — App B reply to App A: return-path + analytics ownership
 Authored App B's coordination reply to App A (congress.trade) on the two open
 questions: the A→B price/spx/ref **return-path** and **composite-analytics

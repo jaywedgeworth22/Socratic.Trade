@@ -47,13 +47,19 @@ ingress, DNS, or Access configuration.
   `docs/congress-trade-app-b-reply.md`): accepted App A's analytics ownership split
   (they own congressional-trade analytics, App B owns market/price analytics) with a
   **pull/pull** transport (no aggregate pushing either way); specified the inbound
-  return-path contract App A is waiting on. Two scoped follow-up PRs:
+  return-path contract App A is waiting on. Both follow-up PRs are now **BUILT**
+  (additive + default-OFF):
   (1) `feat/securities-import-receiver` — `POST /api/admin/securities/import`
-  (bearer `APP_B_INGEST_TOKEN`, default-closed) + a local EOD cache table wired as a
-  `fetchDailyOHLC` tier, to land App A's price/spx/ref gap-fills; (2) extend
-  `congress-share.ts` with `fundamentals[]`/`analyst[]` for App A's PR #46 import
-  slots (fundamentals + analyst grade-counts/rating fillable; numeric price targets
-  null until a provider is added). Neither built yet.
+  (bearer `APP_B_INGEST_TOKEN`, default-closed) + a local EOD cache
+  (`imported_*` tables, `db-securities-import.ts`) wired as an opt-in, density-guarded
+  `fetchDailyOHLC` tier, to land App A's price/spx/ref gap-fills — **BUILT 2026-06-25**
+  (`docs/rollouts/2026-06-25-app-b-securities-import-fundamentals-price-targets.md`).
+  (2) `congress-share.ts` `fundamentals[]`/`analyst[]` push for App A's PR #46 slots —
+  built earlier via `marketQuoteToFundamentals`/`marketQuoteToAnalyst` (sourced from the
+  scan's `MarketQuote`, gated `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`). Numeric price targets,
+  previously null, are now ALSO fillable via the opt-in FMP `price-target-consensus` provider
+  (`FMP_PRICE_TARGETS_ENABLED`) — **BUILT 2026-06-25**; they thread through the enrichment
+  surface onto the quote and into `marketQuoteToAnalyst`.
 
 ## Build Order
 
