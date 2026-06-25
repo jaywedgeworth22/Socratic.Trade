@@ -176,8 +176,9 @@ function flagEnabled(value: string | undefined): boolean {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 /** Opt-in: skip a *paid* fundamentals provider's fetch for a symbol that App A
- *  (congress.trade) already covered (peRatio + eps), to eliminate the duplicate
- *  paid call. Default OFF — when off the cascade runs every provider as before. */
+ *  (congress.trade) already FULLY covered (the complete fundamentals + analyst
+ *  set), to eliminate the duplicate paid call. Default OFF — when off the cascade
+ *  runs every provider as before. */
 function enrichmentShortCircuitEnabled(): boolean {
   return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressReadsEnabled();
 }
@@ -418,12 +419,15 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         const a = aLatest && rowIsFresh(aLatest, now) ? aLatest : null;
         const e: SymbolEnrichment = {};
         if (f) {
-          if (f.peRatio != null) e.peRatio = f.peRatio;
+          // Validity filters: a non-positive P/E or 52-week high/low is a sentinel
+          // for "no real value" in App A's stored rows, not a usable number — drop
+          // those so they never override a real value from a paid provider.
+          if (f.peRatio != null && f.peRatio > 0) e.peRatio = f.peRatio;
           if (f.eps != null) e.eps = f.eps;
           if (f.beta != null) e.beta = f.beta;
           if (f.dividendYield != null) e.dividendYield = f.dividendYield;
-          if (f.week52High != null) e.fiftyTwoWeekHigh = f.week52High;
-          if (f.week52Low != null) e.fiftyTwoWeekLow = f.week52Low;
+          if (f.week52High != null && f.week52High > 0) e.fiftyTwoWeekHigh = f.week52High;
+          if (f.week52Low != null && f.week52Low > 0) e.fiftyTwoWeekLow = f.week52Low;
           if (f.fcfYield != null) e.fcfYield = f.fcfYield;
           if (f.debtToEquity != null) e.debtToEquity = f.debtToEquity;
           if (f.epsGrowth != null) e.epsGrowth = f.epsGrowth;
@@ -590,17 +594,33 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
 
     let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
     if (enrichmentShortCircuitEnabled()) {
-      // Short-circuit: run the free providers first; for symbols App A already
-      // covered (peRatio + eps from congress.trade), skip the PAID providers'
-      // fetch entirely — eliminating the duplicate paid call. App A's row carries
-      // the rest of the fundamentals/analyst set, and price comes from the free
+      // Short-circuit: run the free providers first; for symbols App A FULLY
+      // covered (the complete fundamentals + analyst set from congress.trade),
+      // skip the PAID providers' fetch entirely — eliminating the duplicate paid
+      // call. App A's row carries that whole set, and price comes from the free
       // tier (Alpaca/Yahoo), so nothing is lost for covered symbols.
       const freeProviders = this.providers.filter((p) => p.costTier !== "paid");
       const paidProviders = this.providers.filter((p) => p.costTier === "paid");
       const freeResults = await Promise.all(freeProviders.map((p) => run(p, normalized)));
       const appA = freeResults.find((r) => r.name === "congress.trade")?.data ?? {};
+      // A symbol is only "covered" — and thus safe to skip ALL paid providers for —
+      // when App A supplied the FULL set of fields those paid providers would have
+      // contributed. A partial App A row (e.g. peRatio+eps but no beta/analyst) must
+      // still fall through to the paid tier, or we'd silently drop those fields.
       const covered = new Set(
-        normalized.filter((s) => appA[s] && appA[s].peRatio !== undefined && appA[s].eps !== undefined)
+        normalized.filter((s) => {
+          const e = appA[s];
+          if (!e) return false;
+          const hasFundamentals =
+            e.peRatio !== undefined &&
+            e.eps !== undefined &&
+            e.beta !== undefined &&
+            e.fcfYield !== undefined &&
+            e.debtToEquity !== undefined &&
+            e.epsGrowth !== undefined;
+          const hasAnalyst = e.analystRating !== undefined || e.targetMean !== undefined;
+          return hasFundamentals && hasAnalyst;
+        })
       );
       const uncovered = normalized.filter((s) => !covered.has(s));
       const paidResults = await Promise.all(

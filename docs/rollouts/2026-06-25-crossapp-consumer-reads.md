@@ -45,12 +45,21 @@ ticker universe and is free to read.
 ## Deeper saving — opt-in short-circuit (NEW)
 Implemented the actual paid-call elimination, opt-in: `ENRICHMENT_SHORT_CIRCUIT_ENABLED` (+
 `CONGRESS_TRADE_READS_ENABLED`). The cascade now runs the **free** providers first, then **skips the paid
-fundamentals providers' fetch for any symbol App A already covered** (`peRatio` + `eps` present). Price
-still comes from the free tier (Alpaca/Yahoo) and App A's row carries the rest, so covered symbols lose
-nothing. Paid providers are tagged `costTier: "paid"`; the merge stays in registration order so field
-precedence is identical. **Default OFF** → existing behavior unchanged (1203 tests pass untouched), +2 new
-tests cover the on/off paths. Also: App A misses are now **negative-cached** for 1h so uncovered symbols
-aren't re-fetched every scan (Codex P2).
+fundamentals providers' fetch for any symbol App A FULLY covered**. Price still comes from the free tier
+(Alpaca/Yahoo) and App A's row carries the rest, so covered symbols lose nothing. Paid providers are tagged
+`costTier: "paid"`; the merge stays in registration order so field precedence is identical. **Default OFF**
+→ existing behavior unchanged, +3 tests cover the covered/partial/off paths. Also: App A misses are now
+**negative-cached** for 1h so uncovered symbols aren't re-fetched every scan (Codex P2).
+
+## Codex review round 2 (PR #160, commit fcf7db9)
+- **P2 invalid App A numerics (line 425)** — App A stores `0`/negative as a "no value" sentinel for P/E and
+  52-week high/low. The mapping now drops them (`peRatio > 0`, `week52High/Low > 0`) so a sentinel never
+  overrides a real paid-provider value. Other scalars (eps, beta, etc.) keep the plain null check.
+- **P2 too-weak coverage criterion (line 607)** — the short-circuit `covered` predicate required only
+  `peRatio` + `eps`, so a symbol with a partial App A row would skip the paid tier and silently lose
+  `beta`/`fcfYield`/`debtToEquity`/`epsGrowth`/analyst. Strengthened to require the **full** set those paid
+  providers supply (the six fundamentals + `analystRating` or `targetMean`) before excluding a symbol;
+  partial rows fall through to paid. Docs (`congress-trade-consume.md` §1b + config table) updated to match.
 
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally

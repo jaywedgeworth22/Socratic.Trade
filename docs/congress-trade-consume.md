@@ -43,9 +43,12 @@ targetMean/High/Low/Median, analystRating/Score/BySource) — **no new field**, 
   into the displayed rating.
 - **Deeper saving — the opt-in short-circuit (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`):** when this flag AND
   `CONGRESS_TRADE_READS_ENABLED` are on, the cascade runs the **free** providers first, then **skips the
-  paid fundamentals providers' fetch for any symbol App A already covered** (App A returned `peRatio` +
-  `eps`). That eliminates the duplicate paid call for covered symbols — price still comes from the free
-  tier (Alpaca/Yahoo) and App A's row carries the rest of the fundamentals/analyst set, so nothing is lost.
+  paid fundamentals providers' fetch for any symbol App A FULLY covered**. "Fully covered" means App A
+  supplied the whole set those paid providers would have contributed: `peRatio`, `eps`, `beta`, `fcfYield`,
+  `debtToEquity`, `epsGrowth` **and** analyst consensus (`analystRating` or `targetMean`). A partial App A
+  row (e.g. `peRatio`+`eps` only) still falls through to the paid tier so no field is silently dropped.
+  For covered symbols that eliminates the duplicate paid call — price still comes from the free tier
+  (Alpaca/Yahoo) and App A's row carries the rest of the fundamentals/analyst set, so nothing is lost.
   Paid providers are marked with `costTier: "paid"`; the merge stays in registration order so field
   precedence is unchanged. **Default OFF** — when off the cascade runs every provider over every symbol
   exactly as before. (Operational alternative, no flag: with App A trusted, drop a redundant paid
@@ -111,7 +114,7 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 |---------|---------|
 | `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (history tier) **and** the fundamentals/analyst enrichment tier (§1b) |
 | `CONGRESS_TRADE_MAX_STALE_DAYS` | freshness cap (default 21) for App A fundamentals/analyst rows before they fall through to paid providers |
-| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | skip the paid fundamentals providers' fetch for symbols App A already covered (needs `CONGRESS_TRADE_READS_ENABLED`); default off |
+| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | skip the paid fundamentals providers' fetch for symbols App A FULLY covered — full fundamentals (peRatio/eps/beta/fcfYield/debtToEquity/epsGrowth) + analyst (rating or targetMean); partial rows still hit paid (needs `CONGRESS_TRADE_READS_ENABLED`); default off |
 | `CONGRESS_TRADE_AS_CONGRESS_SOURCE` | source congressional trades from App A instead of scrapers |
 | `CONGRESS_WEBHOOK_SECRET` | shared bearer App A presents to the webhook (default-closed when blank) |
 | `CONGRESS_STREAM_ENABLED` | start the outbound SSE consumer |

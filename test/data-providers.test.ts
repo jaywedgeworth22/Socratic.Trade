@@ -1003,7 +1003,19 @@ describe("enrichment short-circuit (App A covers fundamentals → skip paid)", (
     process.env[READS] = "on";
     const calls: string[][] = [];
     const cascade = new CascadingEnrichmentProvider([
-      appA({ AAA: { peRatio: 10, eps: 2, sector: "AppA" } }), // AAA covered; BBB not
+      // AAA has the FULL fundamentals + analyst set → covered; BBB does not.
+      appA({
+        AAA: {
+          peRatio: 10,
+          eps: 2,
+          beta: 1.1,
+          fcfYield: 0.05,
+          debtToEquity: 0.4,
+          epsGrowth: 0.12,
+          analystRating: "Buy",
+          sector: "AppA",
+        },
+      }),
       paidSpy(calls)
     ]);
     const out = await cascade.enrich(["AAA", "BBB"]);
@@ -1013,6 +1025,19 @@ describe("enrichment short-circuit (App A covers fundamentals → skip paid)", (
     expect(out.AAA.sector).toBe("AppA");
     expect(out.AAA.peRatio).toBe(10);
     expect(out.BBB.sector).toBe("Paid");
+  });
+
+  it("does NOT skip paid for a PARTIAL App A row (missing analyst/other fundamentals)", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const calls: string[][] = [];
+    const cascade = new CascadingEnrichmentProvider([
+      // peRatio + eps only — not the full set, so the paid tier must still run.
+      appA({ AAA: { peRatio: 10, eps: 2, sector: "AppA" } }),
+      paidSpy(calls)
+    ]);
+    await cascade.enrich(["AAA"]);
+    expect(calls).toEqual([["AAA"]]);
   });
 
   it("runs the paid provider for every symbol when the flag is OFF (default)", async () => {
