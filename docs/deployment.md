@@ -13,113 +13,52 @@ Cloudflare DNS, Tunnel ingress, Access apps, redirect-rule exclusions, and
 documentation should use `trading-beta.jays.services` for the 4001 beta lane.
 Do not create a second dev/beta hostname for this preview.
 
-## Configuration & secrets (`.env.local`) — what's authoritative
+## Configuration & secrets — Infisical is the source of truth
 
-`.env.local` is **git-ignored** (`.gitignore`: `.env`, `.env*.local`) and is
-**never committed** — only the secret-free template `.env.example` is tracked.
-Git is therefore **not** the source of truth for secret *values*, and there is
-no single canonical `.env.local` file: each machine/worktree has its own
-independent copy that does not sync with the others.
+**Every secret lives in [Infisical](https://infisical.com) (Cloud, free tier),
+and the app launches through the Infisical runner, which injects them as env vars
+at startup.** `.env.local` is **not** a secret source — it is git-ignored
+(`.gitignore`: `.env`, `.env*.local`), never committed, and in production the app
+is configured to **refuse to boot** off it (see *Enforcement* below). Full
+runbook: `docs/secrets.md`; this is the deploy-side summary.
 
-**The authoritative upstream for secret values is Google Cloud Secret Manager.**
-Every `.env.local` is a local materialization (cache) of what lives in GCP. To
-change a secret, update it in GCP (add a new secret version) — that is the
-canonical edit; the `.env.local` copies are downstream of it.
+- **Run it:** `npm run start:secrets` (also `dev:secrets` / `build:secrets`) →
+  `scripts/infisical-run.mjs` → `infisical run --env $INFISICAL_ENV --path
+  $INFISICAL_PATH [--projectId …] -- next start`. The CLI authenticates, pulls the
+  project's secrets, injects them into `process.env` **before** Next boots, and
+  sets `SECRETS_SOURCE=infisical`. Injected values land before Next reads
+  `.env.local`, and Next never overrides an already-set var, so Infisical always
+  wins.
+- **Projects** (slugs/IDs are identifiers, not secrets):
+  - App secrets → **`agentic-trading`** (`agentic-trading-s-xn-n`,
+    `39d93bb7-76f9-498c-8b50-a7def52e072f`), machine identity `agentic-trading`.
+  - Shared App-A/B (congress-trade) secrets → **`shared-at-ct`**
+    (`shared-at-ct-tg-v7`, `18f563a3-9c88-454c-96eb-28fc9678f3ba`), machine
+    identity `shared-at-ct`. Reference these into the app project (Infisical
+    cross-project references) or pull them in a second pass.
+- **Bootstrap** (the only secrets-related values on the box — *exported* in the
+  shell/PM2 env, never in a file): `INFISICAL_TOKEN` (machine-identity
+  universal-auth token — the client **secret** never goes in the repo),
+  `INFISICAL_PROJECT_ID`, `INFISICAL_ENV=prod`.
+- **Enforcement (ignore `.env.local`):** set `REQUIRE_SECRETS_MANAGER=1` on the
+  box. At boot (`instrumentation.ts` → `assertSecretsManagerIfRequired`,
+  `src/lib/secrets-source.ts`) the app **throws unless `SECRETS_SOURCE` is set** —
+  i.e. unless it was launched via `start:secrets` — so a credential can never be
+  silently served from a forgotten `.env.local`. Default off → no effect on local
+  dev, tests, or CI.
+- **`ENCRYPTION_KEY`** (decrypts the per-user `user_api_keys` and
+  `connected_accounts` tables) is itself an Infisical secret and MUST stay stable
+  — if it changes, every stored key becomes undecryptable after a restart.
+- **Litestream sidecar** (`scripts/run-litestream.sh` / `litestream-restore.sh`)
+  reads `LITESTREAM_*` from its **own** environment, not through the app's runner
+  — run that PM2 process under `infisical run` too (or export its vars) so its R2
+  credentials also come from Infisical.
 
-The repo also ships an Infisical delivery path (`*:secrets` /
-`scripts/infisical-run.mjs`, which just runs `infisical run -- …`). With GCP
-designated canonical, treat the Infisical path as **legacy**: there is **no
-GCP→Infisical sync**, so `*:secrets` serves whatever is stored in Infisical and
-goes **stale** after a GCP-only rotation. Prefer the `*:gcp` wrappers; only use
-`*:secrets` if you keep its Infisical store mirrored from GCP.
-(`docs/ops-observability-security.md` defers to GCP.)
-
-Run with secrets pulled live from GCP at runtime via the `*:gcp` scripts
-(`scripts/gcp-secrets-run.mjs`):
-
-```bash
-npm run dev:gcp      # next dev   with GCP secrets injected
-npm run build:gcp    # next build with GCP secrets injected
-npm run start:gcp    # next start with GCP secrets injected
-```
-
-- **Auth — must be *exported*, not in `.env.local`:** set `GCP_PROJECT_ID` (or
-  `GOOGLE_CLOUD_PROJECT`) and provide Application Default Credentials —
-  `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json`,
-  `gcloud auth application-default login` (local dev), or Workload Identity
-  (GCP-hosted). The wrapper reads these from its **own `process.env` before
-  spawning Next** and never parses `.env.local` (and `npm`/PM2 don't load
-  `.env.local` for it either), so set them in the shell/PM2/runner environment.
-  If `GCP_PROJECT_ID` isn't exported, the wrapper silently takes the no-project
-  fallback (plain run, no GCP secrets).
-- **Mapping & scoping:** each GCP secret whose name equals an env-var name is
-  injected under that name (secret `INTRINIO_API_KEY` → env `INTRINIO_API_KEY`).
-  Scope which secrets load with `GCP_SECRET_NAMES=A,B,C` (explicit list) or
-  `GCP_SECRETS_PREFIX=trading-` (prefix filter — the prefix is stripped to form
-  the env name). **On a shared (non-dedicated) GCP project, set one of these** —
-  with neither set, the runner lists and injects *every* secret in the project
-  and logs each name at startup.
-- **Overwrite precedence:** by default GCP does **not** overwrite a variable
-  already present in the wrapper's **exported** environment (shell/PM2 env); set
-  `GCP_SECRETS_OVERWRITE=true` to override those too. This applies to *exported*
-  env vars only — a value that lives solely in a `.env.local` file is read by Next
-  *after* the wrapper has injected GCP's value into `process.env`, so the GCP
-  value wins regardless. To keep a local override under a `*:gcp` wrapper, export
-  it (or use the plain scripts).
-- **Fails open — check the logs:** any Secret Manager error (missing/invalid
-  `GOOGLE_APPLICATION_CREDENTIALS`, no ADC, IAM/permission/network failure) is
-  logged (`Falling back to running command without GCP secrets`) and the app
-  starts with the **existing** environment; per-secret fetch errors are warnings
-  only. A process-level guard catches even errors the SDK throws uncaught from
-  deep in its auth chain, so the wrapper never crashes the start. A clean start is
-  therefore **not** proof that live GCP values loaded — after a rotation a restart
-  can silently keep serving stale `.env.local`/exported values, so check the
-  `[gcp-secrets]` startup logs.
-- **When GCP is not configured.** If `GCP_PROJECT_ID` is unset the runner skips
-  Secret Manager and runs the command directly. This path now **waits for the
-  child and propagates its exit code**, same as the configured path (a fixed bug
-  — it previously called `process.exit(0)` right after spawning, so `build:gcp`
-  could report success before `next build` finished and let a chained
-  restart/deploy run against an unfinished build). Either way, the plain
-  `npm run dev`/`build`/`start` remain the simplest choice when GCP isn't
-  configured.
-
-**How each `.env.local` relates (none is canonical over GCP):**
-
-| Location | Role | How to refresh |
-|---|---|---|
-| `~/Code/Agentic Trading/.env.local` | Integration/dev **seed**. `scripts/setup-agent-previews.sh` copies it into a new agent worktree **once, only if absent**. | Change shared secrets in **GCP** (canonical). A direct edit here is a local-only override — it won't reach GCP, production, or already-seeded agent worktrees, and after a GCP rotation this file keeps seeding **stale** values into new worktrees until you update it. |
-| `~/apps/trading-<agent>/.env.local` | Per-agent preview copy; **diverges** after the one-time seed (editing one never updates the others). | Delete + re-run `setup-agent-previews.sh` to re-seed, or run via `dev:gcp`. |
-| `~/apps/trading-live/.env.local` | **Production.** Preserved across deploys — `git reset --hard FETCH_HEAD` only touches *tracked* files. | Run PM2 `trading` under `start:gcp` to inject live GCP values at boot (host PM2 wiring lives in `~/apps/README.md`). The wrapper doesn't rewrite the file; don't hand-edit it and let it drift from GCP. |
-
-> Note: the `*:gcp` wrappers inject secrets into the spawned **process** only —
-> there is no step that writes GCP values back into any `.env.local` file. After a
-> rotation, run services under the wrapper to pick up new values; on-disk
-> `.env.local` files keep their last-written contents until you edit them.
-
-Per-user secrets entered through the app's Settings are **not** in `.env.local`
-— they are AES-256-GCM encrypted (under `ENCRYPTION_KEY`) in SQLite: provider API
-keys in `user_api_keys`, and broker `api_key`/`api_secret` in `connected_accounts`
-(`upsertConnectedAccount`/`getActiveConnectedAccount`, `db-api-keys.ts`).
-Backup/rotation/deletion runbooks must cover **both** tables. Beyond
-operator/primary-user **provider fallback keys**, `.env.local` (or the exported
-runtime env) also carries **bootstrap/infra secrets** that are not per-user —
-notably the **`ENCRYPTION_KEY`** that decrypts `user_api_keys` (it MUST stay
-stable: if it changes or is unset, a random key is generated per process and
-every stored key becomes undecryptable after a restart — see `.env.example`),
-plus auth/webhook tokens, backup credentials, and provider toggles. These can
-live in GCP and reach the **app** via the `*:gcp` wrappers — but rotate each on
-the path the process that reads it actually uses. In particular, the Litestream
-backup sidecar (`scripts/run-litestream.sh` / `litestream-restore.sh`) reads
-`LITESTREAM_*` from the live `~/apps/trading-live/.env.local` (or the exported
-env), **not** through the app's `*:gcp` wrapper, so rotate its R2 credentials
-there (or wrap that sidecar separately).
-
-> Status: the `*:gcp` runner exists and is the **designated** source of truth,
-> but it requires `GCP_PROJECT_ID` + ADC configured on each box, and production
-> auto-pull (PM2 `trading` via `start:gcp`) must be wired into the host PM2
-> ecosystem before live deploys read from GCP. See
-> `docs/rollouts/2026-06-24-intrinio-tiingo-twelvedata-gcp-secrets.md`.
+> Production status: the runner, the enforcement guard, and tests are in the repo.
+> Flipping the production box to Infisical — PM2 `trading` → `start:secrets`, with
+> the bootstrap above + `REQUIRE_SECRETS_MANAGER=1` — is a host-side step;
+> `deploy.yml` still launches plain `next start` until that's done. See
+> `docs/secrets.md`.
 
 ## How it deploys (automated)
 

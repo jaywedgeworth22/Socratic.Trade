@@ -7,15 +7,13 @@ else — no API keys, no `ENCRYPTION_KEY`, no broker tokens — lives in `.env.l
 
 Infisical Cloud is the managed SaaS (`infisical login` → their cloud, free tier: 5 identities / 3
 projects / 3 envs / unlimited secrets). It's open-source, so you can self-host later with no app
-change. GCP Secret Manager is also supported (`start:gcp`) but isn't strictly free past 6 secrets and
-needs a service-account key file on the box.
+change. Infisical is the **only** secrets-manager path the app supports.
 
 ## How it works
 `npm run start:secrets` → `scripts/infisical-run.mjs` → `infisical run --env <INFISICAL_ENV> --path
 <INFISICAL_PATH> [--projectId …] -- next start`. The Infisical CLI authenticates, pulls the project's
 secrets, and injects them into the process env **before** Next boots. The runner also sets
-`SECRETS_SOURCE=infisical`. (`gcp-secrets-run.mjs` is the GCP equivalent and sets `SECRETS_SOURCE=gcp`
-only on a successful fetch.)
+`SECRETS_SOURCE=infisical`.
 
 Precedence: injected secrets are in `process.env` before Next loads `.env.local`, and Next never
 overrides an already-set var — so the manager always wins over any leftover `.env.local`.
@@ -23,7 +21,7 @@ overrides an already-set var — so the manager always wins over any leftover `.
 ## Enforcement (forcing the manager)
 Set `REQUIRE_SECRETS_MANAGER=1` on the box. At startup (`instrumentation.ts` →
 `assertSecretsManagerIfRequired`) the app **refuses to boot** unless `SECRETS_SOURCE` is set — i.e.
-unless it was launched via `start:secrets` / `start:gcp`. This guarantees a credential can't silently
+unless it was launched via `start:secrets`. This guarantees a credential can't silently
 be served from a forgotten `.env.local`. Default off → no effect on local dev, tests, or CI.
 
 ## One-time migration from `.env.local` → Infisical (operator)
@@ -36,10 +34,13 @@ infisical init                                # link a project + env
 infisical secrets set --env=prod --path=/ $(grep -vE '^\s*#|^\s*$' .env.local | xargs)
 #   …or: Infisical dashboard → project → Secrets → "Import .env" → upload .env.local
 ```
-Then create a **Machine Identity** (Project → Access Control), and on the box set the bootstrap:
+Then create a **Machine Identity** (Project → Access Control) and on the box set the bootstrap. App
+secrets live in the **`agentic-trading`** project; shared App-A/B (congress-trade) secrets live in
+**`shared-at-ct`** (`18f563a3-9c88-454c-96eb-28fc9678f3ba`) — reference them into the app project
+(Infisical cross-project references) or pull them in a second pass.
 ```bash
-export INFISICAL_TOKEN='<machine-identity token>'
-export INFISICAL_PROJECT_ID='<project id>'
+export INFISICAL_TOKEN='<machine-identity universal-auth token>'   # the client SECRET, never committed
+export INFISICAL_PROJECT_ID='39d93bb7-76f9-498c-8b50-a7def52e072f' # agentic-trading (agentic-trading-s-xn-n)
 export INFISICAL_ENV='prod'
 export REQUIRE_SECRETS_MANAGER=1
 ```
@@ -49,12 +50,3 @@ Switch the launch command, verify, then scrub `.env.local`:
 - Confirm the app boots and reads its keys (and that, with `REQUIRE_SECRETS_MANAGER=1`, a plain
   `next start` now refuses to boot).
 - Reduce `.env.local` to just the bootstrap above (or nothing) and delete the rest.
-
-## If some secrets are already in GCP
-Export them to Infisical (run it yourself; values stay in your shell):
-```bash
-for s in $(gcloud secrets list --format='value(name)'); do
-  v=$(gcloud secrets versions access latest --secret="$s")
-  infisical secrets set "$s=$v" --env=prod --path=/
-done
-```
