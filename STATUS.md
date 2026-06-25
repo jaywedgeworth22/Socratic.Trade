@@ -4,6 +4,22 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
+Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
+429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
+capability probe (neither Massive nor FMP exposes a plan endpoint): Massive free is capped ~2yr
+history + 5/min, so a >2yr AAPL aggregate query distinguishes free vs paid; FMP is best-effort
+(premium/limit error → free). On a **lapse or change** it alerts via the in-app feed
+(`provider_degraded`) AND the multi-channel dispatcher (`notify` → push/webhook/**email** via Resend/
+SMS), and **auto-clamps Massive to the free-safe 5/min** (restoring 100 when paid returns) — detection
+can only lower the cap, and biases to "unknown→no-action" so a paid key is never wrongly clamped.
+Cadence-gated (default 24h, anchored overnight ET with a 1.5× catch-up) off the always-on scheduler
+tick. Surfaced in `/api/health` as `checks.dataProviders` (+ `dataProvidersDegraded`) and via exported
+`getProviderTierStatus()` — the integration point for the status/admin/health tool. **Operator (for
+email):** set `RESEND_API_KEY` + `NOTIFY_EMAIL_FROM`, enable the Email channel + address in Settings →
+Notifications. tsc clean · 1146 tests (+17) · build green. See
+`docs/rollouts/2026-06-24-provider-tier-watchdog.md`.
+
 ## 2026-06-25 — Learning-loop honesty (OOS no-op caution + policy-blocked counterfactual)
 Branch `claude/learning-loop-honesty`. First of the clean/additive backlog batches (post #137).
 Both additive + advisory-only (no money path). (1) `applyOosGate` (`strategy-tuning.ts`) now appends

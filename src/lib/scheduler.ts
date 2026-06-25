@@ -8,6 +8,7 @@ import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getActiveConnectedAccount, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
+import { runProviderTierCheckIfDue } from "./provider-tier";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
@@ -113,6 +114,11 @@ async function tick(): Promise<void> {
   // keep the dashboard + agent context fresh even while autonomous trading is paused.
   // Skipped instantly when not yet due; fully self-guarded so it can't break a tick.
   void refreshDueWebSources().catch((err) => console.error("[scheduler] web-source refresh error:", err));
+
+  // Nightly (cadence-gated) market-data paid-tier watchdog: probes the Massive/FMP keys' actual tier
+  // and, on a confident "free" detection (e.g. a lapsed sub), notifies + auto-clamps Massive to the
+  // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
+  void runProviderTierCheckIfDue().catch((err) => console.error("[scheduler] provider-tier check error:", err));
 
   // 10-K/10-Q body ingest (weekly cadence, gated on paid Voyage key signal).
   // Collects the union of all user watchlists + policy universes so the shared

@@ -1,4 +1,5 @@
 import { getInternalSetting } from "@/lib/db";
+import { getProviderTierStatus } from "@/lib/provider-tier";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,19 @@ export function GET() {
     if (ageMs > 5 * 60_000) checks.schedulerStale = true;
   } else {
     checks.schedulerLastTick = null;
+  }
+
+  // Market-data paid-tier watchdog status (per the nightly provider-tier check). Surfaced here so the
+  // status/admin/health tool can show whether the Massive/FMP subscriptions are live; a key detected
+  // as "free" (lapsed sub) marks the section degraded but does NOT fail the liveness probe.
+  try {
+    const tiers = getProviderTierStatus();
+    if (Object.keys(tiers).length > 0) {
+      checks.dataProviders = tiers;
+      if (Object.values(tiers).some((t) => t?.tier === "free")) checks.dataProvidersDegraded = true;
+    }
+  } catch {
+    // never let provider-tier reporting break the health probe
   }
 
   return Response.json({ ok, checks }, { status: ok ? 200 : 503 });
