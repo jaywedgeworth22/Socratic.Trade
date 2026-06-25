@@ -2038,7 +2038,9 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         const timeout = setTimeout(() => controller.abort(), 10000);
         let raw: unknown;
         try {
-          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
+          // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
+        // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           raw = await response.json();
         } finally {
@@ -2052,6 +2054,14 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         // Multiple symbols → { AAPL: { symbol: "AAPL", ... }, MSFT: { ... } }
         const quoteMap: Record<string, Record<string, unknown>> = {};
         const rawObj = raw as Record<string, unknown>;
+
+        // Check for a top-level API error (invalid key, quota exhausted, etc.)
+        if (rawObj.status === "error" || (rawObj.message && !rawObj.symbol && !rawObj.data)) {
+          const msg = typeof rawObj.message === "string" ? rawObj.message : "TwelveData API error";
+          logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
+          continue;
+        }
+        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         if (typeof rawObj.symbol === "string") {
           // Single-symbol response
           quoteMap[rawObj.symbol as string] = rawObj;

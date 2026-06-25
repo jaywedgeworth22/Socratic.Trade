@@ -607,7 +607,6 @@ function migrate(database: Database.Database): void {
       user_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_api_health_log_service_ts ON api_health_log (service, ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC);
 
     CREATE TABLE IF NOT EXISTS api_health_error_patterns (
       id TEXT PRIMARY KEY,
@@ -696,12 +695,16 @@ function migrate(database: Database.Database): void {
   if (healthLogCols.length > 0) {
     if (!healthLogCols.some((c) => c.name === "key_source")) {
       database.exec("ALTER TABLE api_health_log ADD COLUMN key_source TEXT");
-      database.exec("CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC)");
     }
     if (!healthLogCols.some((c) => c.name === "user_id")) {
       database.exec("ALTER TABLE api_health_log ADD COLUMN user_id TEXT");
     }
   }
+  // Create the composite index unconditionally here — after the column is guaranteed to exist
+  // (either from CREATE TABLE on fresh DBs, or from ALTER TABLE above on upgrades).
+  // Removed from the main exec block because CREATE TABLE is a no-op on existing tables,
+  // so the index ran before ALTER TABLE added the column, causing "no such column: key_source".
+  database.exec("CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC)");
   // api_health_error_patterns: recreate with correct schema when the table predates credential
   // scoping. Two things can be wrong on an existing DB:
   //   (a) key_source column missing entirely, or is TEXT (nullable) instead of TEXT NOT NULL DEFAULT ''
