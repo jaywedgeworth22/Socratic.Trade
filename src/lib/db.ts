@@ -616,6 +616,43 @@ function migrate(database: Database.Database): void {
       resolved_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
+
+    -- congress.trade (App A) return-path receiver: a local, writable EOD cache that App A's
+    -- gap-fill push lands in (POST /api/admin/securities/import). App B's own price history is the
+    -- live fetchDailyOHLC cascade, NOT a writable store — these three tables ARE that writable store
+    -- so imported closes can warm a cache-aside tier and displace a re-fetch. Keyed ticker+date,
+    -- idempotent upsert. 'origin' records who supplied the row (default 'app-a') so a round-trip of
+    -- App B's own outbound push is never re-stored. See src/lib/db-securities-import.ts.
+    CREATE TABLE IF NOT EXISTS imported_securities_ref (
+      ticker TEXT PRIMARY KEY,
+      company_name TEXT,
+      sector TEXT,
+      industry TEXT,
+      asset_class TEXT,
+      exchange TEXT,
+      currency TEXT,
+      market_cap REAL,
+      cik TEXT,
+      origin TEXT NOT NULL DEFAULT 'app-a',
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS imported_price_eod (
+      ticker TEXT NOT NULL,
+      date TEXT NOT NULL,
+      close REAL NOT NULL,
+      volume REAL,
+      origin TEXT NOT NULL DEFAULT 'app-a',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (ticker, date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_imported_price_eod_ticker ON imported_price_eod (ticker, date);
+    CREATE TABLE IF NOT EXISTS imported_spx_eod (
+      date TEXT PRIMARY KEY,
+      close REAL NOT NULL,
+      volume REAL,
+      origin TEXT NOT NULL DEFAULT 'app-a',
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Migrate tables to include user_id
@@ -922,3 +959,4 @@ export * from "./db-proposals";
 export * from "./db-fills";
 export * from "./db-notifications";
 export * from "./db-api-keys";
+export * from "./db-securities-import";

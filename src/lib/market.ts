@@ -662,6 +662,10 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     debtToEquity: extra.debtToEquity ?? quote.debtToEquity,
     epsGrowth: extra.epsGrowth ?? quote.epsGrowth,
     senateTrades: extra.senateTrades ?? quote.senateTrades,
+    targetMean: extra.targetMean ?? quote.targetMean,
+    targetHigh: extra.targetHigh ?? quote.targetHigh,
+    targetLow: extra.targetLow ?? quote.targetLow,
+    targetMedian: extra.targetMedian ?? quote.targetMedian,
     sources: mergeSources(quote, extra)
   };
 }
@@ -881,6 +885,10 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         debtToEquity: quote.debtToEquity,
         epsGrowth: quote.epsGrowth,
         senateTrades: quote.senateTrades,
+        targetMean: quote.targetMean,
+        targetHigh: quote.targetHigh,
+        targetLow: quote.targetLow,
+        targetMedian: quote.targetMedian,
         evidenceBulletins: quote.evidenceBulletins,
         sources: quote.sources
       }
