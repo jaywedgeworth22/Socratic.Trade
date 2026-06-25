@@ -51,6 +51,25 @@ module `cache` map + `runRateLimited(items, delayMs, fn)` signatures match.
 Set `SEC_XBRL_ENRICHMENT_ENABLED=on` to enable. Optionally set `SEC_EDGAR_USER_AGENT` to a
 real contact string (SEC fair-access). No key, no cost.
 
+## Codex review fixes (applied before merge)
+
+Four P2 findings from the automated Codex review on PR #145 were valid and fixed in
+`parseCompanyFacts` + the provider:
+1. **debtToEquity now uses DEBT-specific concepts** (`LongTermDebtNoncurrent`/`LongTermDebt`
+   + `LongTermDebtCurrent`/`DebtCurrent`/`ShortTermBorrowings`), not total `Liabilities`
+   (which includes operating payables/leases and would over-state leverage for the
+   bear-veto/quality score). Omitted when no debt concept is present (no liabilities fallback).
+2. **Debt and equity are aligned on the same reporting period** (`valueAtEnd` reads debt at
+   equity's latest `end`), instead of picking each concept's latest entry independently.
+3. **EPS picks the latest reporting period across diluted+basic**, preferring diluted *within
+   that period* and falling back to basic when diluted is stale/absent there (previously it
+   chose the diluted array up-front and could return a stale diluted value).
+4. **The SEC fetch pass is now budget-bounded** (`SEC_XBRL_BUDGET_MS` = 8 s, per-fetch timeout
+   6 s): `enrich()` returns within budget with partial SEC data while the rate-limited loop
+   keeps warming the cache in the background — a slow/timing-out SEC endpoint can no longer hang
+   an interactive market scan. Test count rose to 57 (sec-xbrl + data-providers) with the new
+   debt-concept/period-alignment/EPS-staleness cases.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

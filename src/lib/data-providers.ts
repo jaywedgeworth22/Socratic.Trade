@@ -2130,6 +2130,8 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 
 const SEC_XBRL_TTL_MS = 24 * 60 * 60_000; // 24h — filings move slowly
 const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
+const SEC_XBRL_FETCH_TIMEOUT_MS = 6_000; // per-symbol fetch cap (kept short — SEC is on the scan path)
+const SEC_XBRL_BUDGET_MS = 8_000; // overall wall-clock budget for the SEC pass during a scan
 
 /** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity and eps.
  *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
@@ -2169,30 +2171,53 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?:
       return pool.reduce((best, e) => (e.end > best.end ? e : best), pool[0]);
     }
 
-    // ── debtToEquity: Liabilities / StockholdersEquity (both USD, latest 10-K) ──
-    let debtToEquity: number | undefined;
-    const liabEntries = getEntries("Liabilities", "USD");
-    const equityEntries = getEntries("StockholdersEquity", "USD");
-    const liab = latestEntry(liabEntries);
-    const equity = latestEntry(equityEntries);
-    if (
-      liab !== undefined &&
-      equity !== undefined &&
-      equity.val > 0 &&
-      Number.isFinite(liab.val) &&
-      Number.isFinite(equity.val)
-    ) {
-      debtToEquity = Math.round((liab.val / equity.val) * 100) / 100;
+    // Helper: the value of a concept AT a specific reporting-period end date (prefer 10-K at that end),
+    // so debt + equity facts are aligned on the same period rather than picked independently.
+    function valueAtEnd(entries: Array<{ end: string; val: number; form?: string }>, end: string): number | undefined {
+      const atEnd = entries.filter((e) => e.end === end);
+      if (atEnd.length === 0) return undefined;
+      const annual = atEnd.find((e) => e.form === "10-K");
+      return (annual ?? atEnd[0]).val;
     }
 
-    // ── eps: EarningsPerShareDiluted (preferred) or EarningsPerShareBasic ──
+    // Sum of whatever DEBT-specific entries exist at a given period end. Returns undefined when NONE of
+    // the debt concepts are present (so we omit debtToEquity rather than fabricate it from total liabilities).
+    function debtAtEnd(end: string): number | undefined {
+      const longTerm =
+        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebt", "USD"), end);
+      const current =
+        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end) ??
+        valueAtEnd(getEntries("DebtCurrent", "USD"), end) ??
+        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end);
+      if (longTerm === undefined && current === undefined) return undefined;
+      return (longTerm ?? 0) + (current ?? 0);
+    }
+
+    // ── debtToEquity: DEBT-specific concepts ÷ StockholdersEquity, aligned on equity's latest period ──
+    // The app treats `debtToEquity` as debt/equity for quality scoring + the bear-veto, so total
+    // Liabilities (which includes operating payables/leases/deferred revenue) would over-state leverage.
+    // Compute from debt concepts at the SAME period as equity; omit when no debt concept exists there.
+    let debtToEquity: number | undefined;
+    const equity = latestEntry(getEntries("StockholdersEquity", "USD"));
+    if (equity !== undefined && equity.val > 0) {
+      const totalDebt = debtAtEnd(equity.end);
+      if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
+        debtToEquity = Math.round((totalDebt / equity.val) * 100) / 100;
+      }
+    }
+
+    // ── eps: choose the latest reporting period across diluted+basic, prefer diluted within it ──
+    // (Picking the diluted array up-front would return a stale diluted value when only basic has a newer fact.)
     let eps: number | undefined;
     const dilutedEntries = getEntries("EarningsPerShareDiluted", "USD/shares");
     const basicEntries = getEntries("EarningsPerShareBasic", "USD/shares");
-    const epsSource = dilutedEntries.length > 0 ? dilutedEntries : basicEntries;
-    const epsEntry = latestEntry(epsSource);
-    if (epsEntry !== undefined && Number.isFinite(epsEntry.val)) {
-      eps = epsEntry.val;
+    const dilutedLatest = latestEntry(dilutedEntries);
+    const basicLatest = latestEntry(basicEntries);
+    const targetEpsEnd = [dilutedLatest?.end, basicLatest?.end].filter((e): e is string => typeof e === "string").sort().pop();
+    if (targetEpsEnd) {
+      const epsVal = valueAtEnd(dilutedEntries, targetEpsEnd) ?? valueAtEnd(basicEntries, targetEpsEnd);
+      if (epsVal !== undefined && Number.isFinite(epsVal)) eps = epsVal;
     }
 
     return {
@@ -2240,25 +2265,30 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     }
 
     const ua = secUserAgent();
+    const deadline = now + SEC_XBRL_BUDGET_MS;
 
-    await runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
+    // Bound the SEC pass on the interactive market-scan critical path: the rate-limited loop keeps
+    // running in the BACKGROUND to warm the cache, but enrich() returns within SEC_XBRL_BUDGET_MS with
+    // whatever SEC data completed. Symbols not yet fetched simply fall through to FMP/Yahoo this pass
+    // and resolve from the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
+    const work = runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
       try {
+        if (Date.now() > deadline) return; // over budget — leave as a cache miss; the next scan retries
         const cik = tickerToCik.get(symbol);
-        if (!cik) {
-          result[symbol] = {};
-          return;
-        }
+        if (!cik) return;
         const paddedCik = padCik(cik);
         const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`;
-        const text = await politeFetchText(url, { headers: { "user-agent": ua }, timeoutMs: 12_000 });
+        const text = await politeFetchText(url, { headers: { "user-agent": ua }, timeoutMs: SEC_XBRL_FETCH_TIMEOUT_MS });
         const json = JSON.parse(text) as unknown;
         const data = parseCompanyFacts(json);
         cache.set(`sec-xbrl:${symbol}`, { expiresAt: now + SEC_XBRL_TTL_MS, data });
         result[symbol] = data;
       } catch {
-        result[symbol] = {};
+        // best-effort — this symbol falls through to the next provider
       }
     });
+    work.catch(() => {}); // the background continuation must never surface as an unhandled rejection
+    await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, SEC_XBRL_BUDGET_MS))]);
 
     return result;
   }
