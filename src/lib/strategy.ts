@@ -443,6 +443,25 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         autoRevertOnCapBreach(decision.reasons, policy, userId);
+        // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
+        // rejection) so its post-block return matures into missed-opportunity analytics — closing the
+        // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
+        // exit is not a missed opportunity); best-effort + non-fatal.
+        if (normalizedProposal.side === "buy" || normalizedProposal.side === "short") {
+          try {
+            recordRejectedProposalCounterfactual({
+              userId,
+              connectedAccountId,
+              runId,
+              symbol: normalizedProposal.symbol,
+              refPrice: normalizedProposal.referencePrice,
+              createdAt: new Date().toISOString(),
+              regime: normalizedProposal.entryMarketRegime
+            });
+          } catch (err) {
+            console.warn("[strategy] policy-blocked counterfactual failed:", err instanceof Error ? err.message : String(err));
+          }
+        }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
