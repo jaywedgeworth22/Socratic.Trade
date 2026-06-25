@@ -45,15 +45,20 @@ npm run start:gcp    # next start with GCP secrets injected
   `GCP_SECRETS_PREFIX=trading-` (prefix filter — the prefix is stripped to form
   the env name). Existing env vars win by default; set `GCP_SECRETS_OVERWRITE=true`
   to let GCP override them.
-- **Graceful fallback:** if `GCP_PROJECT_ID` is unset, the runner skips Secret
-  Manager and runs the command directly, so the plain `npm run dev`/`build`/`start`
-  still work off a hand-written `.env.local`.
+- **When GCP is not configured, use the plain scripts.** If `GCP_PROJECT_ID`
+  is unset the runner skips Secret Manager — but its no-project fallback spawns
+  the child command and the wrapper process currently returns **immediately
+  without waiting for it** (known bug in `gcp-secrets-run.mjs`; see the rollout
+  follow-up). So a chained step like `build:gcp && <restart/deploy>` could
+  proceed before `next build` finishes. When GCP is unconfigured, run the plain
+  `npm run dev`/`build`/`start` directly; use the `*:gcp` variants **only when
+  GCP is actually configured** (that path correctly waits on the child).
 
 **How each `.env.local` relates (none is canonical over GCP):**
 
 | Location | Role | How to refresh |
 |---|---|---|
-| `~/Code/Agentic Trading/.env.local` | Integration/dev **seed**. `scripts/setup-agent-previews.sh` copies it into a new agent worktree **once, only if absent**. | Edit locally, or pull live with `dev:gcp`. |
+| `~/Code/Agentic Trading/.env.local` | Integration/dev **seed**. `scripts/setup-agent-previews.sh` copies it into a new agent worktree **once, only if absent**. | Change a **shared** secret in **GCP** (canonical), then materialize with `dev:gcp`. A local edit here is a local-only override — it won't reach GCP, production, or already-seeded agent worktrees. |
 | `~/apps/trading-<agent>/.env.local` | Per-agent preview copy; **diverges** after the one-time seed (editing one never updates the others). | Delete + re-run `setup-agent-previews.sh` to re-seed, or run via `dev:gcp`. |
 | `~/apps/trading-live/.env.local` | **Production.** Preserved across deploys — `git reset --hard FETCH_HEAD` only touches *tracked* files. | Refresh from GCP (or run PM2 `trading` via `start:gcp`); host PM2 wiring lives in `~/apps/README.md`. Don't hand-edit and let it drift. |
 

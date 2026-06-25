@@ -5,7 +5,9 @@
 Documented, in one authoritative place, where `.env.local` lives across the
 multi-worktree/multi-host setup and which copy is authoritative. Added a
 **"Configuration & secrets (`.env.local`) — what's authoritative"** section to
-`docs/deployment.md`. Net new doc content only — no code changed.
+`docs/deployment.md`. Net new doc content only — no application code changed.
+(A Codex review pass on PR #150 then refined the GCP fallback/refresh wording and
+added a `PLAN.md` topology note — see Follow-ups.)
 
 Key facts now written down:
 
@@ -49,29 +51,54 @@ already note `.env.local` is preserved on the live box.
 
 - `docs/deployment.md` — new "Configuration & secrets (`.env.local`) — what's
   authoritative" section (inserted after the beta-hostname intro, before
-  "How it deploys (automated)").
+  "How it deploys (automated)"). Post-review: the fallback bullet now steers to
+  the plain scripts when GCP is unset and flags the `gcp-secrets-run.mjs`
+  premature-exit bug; the seed row's refresh path points to GCP, not local edits.
+- `PLAN.md` — dated secrets/config-topology note under "Current Status".
 - `STATUS.md` — new top entry for this docs change.
 - `docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md` — this note.
 
 ## Verification
 
-Docs-only change (Markdown). The tsc/test/build trio is unaffected by Markdown
-edits and was **not** re-run locally; the required `verify` CI check
-(`tsc --noEmit` → `npm test` → `npm run build`) runs on the PR and gates merge.
+Ran the full trio in the cloud checkout (fresh clone — `node_modules` had to be
+installed first):
 
-- `git status` — only the three files above changed.
+```
+npm ci            # exit 0
+npm run build     # exit 0 — production build compiled
+npx tsc --noEmit  # exit 0 — clean
+npm test          # 1128/1129 passed (vitest run)
+```
+
+The single test failure is `test/cache-provenance.test.ts` ("user-keyed result
+is NOT returned for a different userId") — the known, pre-existing,
+date-sensitive cache-provenance flake (see `STATUS.md` and the 2026-06-24
+rollouts), unrelated to this docs-only change. tsc and build are fully clean.
+
+- `git status` — only Markdown/doc files changed (`docs/deployment.md`,
+  `PLAN.md`, `STATUS.md`, this note).
 - Cross-checked every claim against source: `scripts/gcp-secrets-run.mjs`
-  (env-var names, prefix-strip, overwrite, fallback), `package.json`
-  (`dev:gcp`/`build:gcp`/`start:gcp`), `scripts/setup-agent-previews.sh:52-53`
-  (one-time `.env.local` seed), `docs/deployment.md:32-33` (deploy preserves
+  (env-var mapping, prefix-strip, overwrite, and the no-project fallback's
+  premature `process.exit(0)`), `package.json` (`dev:gcp`/`build:gcp`/`start:gcp`,
+  `test` = `vitest run`), `scripts/setup-agent-previews.sh:52-53` (one-time
+  `.env.local` seed), `docs/deployment.md` deploy section (deploy preserves
   `.env.local`), `.gitignore:6-7` (ignore patterns).
 
 ## Follow-ups
 
+- **Bug — `scripts/gcp-secrets-run.mjs` no-project fallback exits early.** In the
+  `if (!projectId)` branch it calls `runCommand(...)` then `process.exit(0)`
+  synchronously, so the wrapper returns before the spawned child finishes (the
+  non-fallback path correctly lets the child's `exit` handler own the exit). A
+  chained `build:gcp && <deploy>` could proceed before `next build` completes.
+  Fix in a separate code PR — e.g. guard the GCP block in `if (projectId)` and let
+  the single tail `runCommand` own process exit. Documented here as an operator
+  caveat (use the plain scripts when GCP is unconfigured). Surfaced by the Codex
+  review on PR #150.
 - The GCP path is the *designated* source of truth but still needs
   `GCP_PROJECT_ID` + ADC configured on each box, and production auto-pull (PM2
   `trading` launched via `start:gcp`) wired into the host PM2 ecosystem
-  (`~/apps/README.md`) before live deploys actually read from GCP. Tracked as a
-  follow-up from the 2026-06-24 GCP-secrets rollout; not changed here.
-- No `PLAN.md` change needed — this is documentation of existing behavior, not a
-  scope/approach change.
+  (`~/apps/README.md`) before live deploys actually read from GCP. Tracked from
+  the 2026-06-24 GCP-secrets rollout; not changed here.
+- `PLAN.md` updated with a dated secrets/config-topology note under "Current
+  Status" (no phase scope, timeline, or approach changed).
