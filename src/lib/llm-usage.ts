@@ -113,6 +113,10 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
 export interface LlmUsageRow {
   userId: string;
   provider: string;
+  /** LLM model name; null for rows recorded before model tracking. */
+  model: string | null;
+  /** Where in the app this call originated (chat, strategy, red-team, etc.). */
+  context: string | null;
   keySource: LlmKeySource;
   /** Per-attached-key fingerprint (see keyFingerprint); null for legacy rows without one. */
   keyRef: string | null;
@@ -143,20 +147,22 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = getDb()
     .prepare(
-      `SELECT user_id, provider, key_source, key_ref,
+      `SELECT user_id, provider, model, context, key_source, key_ref,
               COUNT(*) AS calls,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
               COALESCE(SUM(completion_tokens),0) AS completion_tokens,
               COALESCE(SUM(total_tokens),0) AS total_tokens,
               COALESCE(SUM(cost_usd),0) AS cost_usd
        FROM llm_usage ${clause}
-       GROUP BY user_id, provider, key_source, key_ref
+       GROUP BY user_id, provider, model, context, key_source, key_ref
        ORDER BY cost_usd DESC, calls DESC`
     )
     .all(...params) as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     userId: String(r.user_id),
     provider: String(r.provider),
+    model: r.model == null ? null : String(r.model),
+    context: r.context == null ? null : String(r.context),
     keySource: r.key_source as LlmKeySource,
     keyRef: r.key_ref == null ? null : String(r.key_ref),
     calls: Number(r.calls),
@@ -170,8 +176,16 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
 export interface KeyDescriptor {
   /** Last 4 chars of the key — a safe display convention (computed at read time, never persisted). */
   last4: string;
+  /** Display-safe mask: first 8 chars + "..." + last 4 chars (e.g. "sk-proj-...abcd"). */
+  masked: string;
   /** Human label, e.g. "operator (openai)", "u_abc (anthropic)", "operator env (openai)". */
   label: string;
+}
+
+/** Produce a display-safe masked representation of a raw API key. */
+export function maskApiKey(rawKey: string): string {
+  if (rawKey.length <= 12) return `${rawKey.slice(0, 4)}...`;
+  return `${rawKey.slice(0, 8)}...${rawKey.slice(-4)}`;
 }
 
 /**
@@ -186,13 +200,13 @@ export function describeUsageKey(row: { keyRef: string | null; userId: string; p
   const own = getUserApiKey(row.userId, row.provider)?.apiKey;
   if (own && keyFingerprint(own) === row.keyRef) {
     const label = row.userId === LOCAL_USER ? `operator (${row.provider})` : `${row.userId} (${row.provider})`;
-    return { last4: own.slice(-4), label };
+    return { last4: own.slice(-4), masked: maskApiKey(own), label };
   }
   // The operator's env key (the failover that served a tenant).
   const envVar = apiKeyEnvVarForService(row.provider);
   const envKey = envVar ? process.env[envVar]?.trim() : undefined;
   if (envKey && keyFingerprint(envKey) === row.keyRef) {
-    return { last4: envKey.slice(-4), label: `operator env (${row.provider})` };
+    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `operator env (${row.provider})` };
   }
   return undefined;
 }

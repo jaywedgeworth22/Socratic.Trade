@@ -276,14 +276,14 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     try {
-      const { retrieveContext } = await import("./vector-db");
+      const { retrieveContextDetailed } = await import("./vector-db");
       const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
       const contexts = await Promise.all(topSymbols.map(sym =>
-        retrieveContext(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
+        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
       ));
       const validContexts = contexts.flat().filter(Boolean);
       if (validContexts.length > 0) {
-        ragContext = validContexts.join("\n\n");
+        ragContext = validContexts.map(c => c.text).join("\n\n");
       }
     } catch (e) {
       console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");

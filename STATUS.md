@@ -4,6 +4,23 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+
+## 2026-06-25 — P0/P1 learning-loop fixes + LLM usage per-model/per-context + masked-key UI
+Branch `claude/magical-faraday-uce1uy`. Five improvements from the expert framework analysis:
+1. **P0 — `getLlmUsageSummary()` per-model/per-context breakdown:** Added `model` + `context` to
+   SELECT/GROUP BY. Updated `LlmUsageRow` interface; `describeUsageKey()` returns new `masked` field
+   (first 8 + "..." + last 4) via `maskApiKey()`. Admin route propagates `keyMasked`.
+2. **P1 — Fire-and-forget `ingestLearned()` in chat:** Semantic gate blocked every chat turn 1-3s.
+   Now fire-and-forget with `.catch(warn)`. Chat hard-cap (risk prose DROPPED) intact inside.
+3. **P1 — Wire `retrieveLearnedContext` into chat:** Orchestrator calls `retrieveLearnedContext()`
+   for symbols from the message; facts injected via `buildSystem(memorySummary, learnedContext)`.
+   Bumped `PROMPT_VERSION` to `agentic-chat@0.6.0`.
+4. **P1 — `strategy.ts` uses `retrieveContextDetailed`:** Replaced back-compat `retrieveContext`
+   wrapper to preserve chunk_id/as_of/score/url provenance.
+5. **P2 — `/admin/llm-usage` page:** New client component showing per-key, per-model, per-context
+   cost breakdown with masked key display, time-window selector, and summary cards.
+Verified: tsc clean · 1198/1198 tests · build green. See `docs/rollouts/2026-06-25-llm-usage-learning-fixes.md`.
+
 ## 2026-06-25 — Harden `gcp-secrets-run.mjs` to fail open on any credential error
 Branch `claude/gcp-secrets-fail-open`. Follow-up to #154. The `*:gcp` wrapper's "fails open" promise
 was incomplete — three credential failure modes (missing/invalid `GOOGLE_APPLICATION_CREDENTIALS` path,
