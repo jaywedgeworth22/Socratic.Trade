@@ -1,18 +1,18 @@
 // Secrets-source marker + boot guard.
 //
-// The secrets-manager runners (scripts/infisical-run.mjs, scripts/gcp-secrets-run.mjs) inject
-// `SECRETS_SOURCE` into the process env when they launch the app, recording that secrets came from a
-// manager rather than a plain `.env.local`. When `REQUIRE_SECRETS_MANAGER` is set, the app refuses to
-// boot unless that marker is present — so a credential can never silently be served from a
-// committed/forgotten `.env.local` in a deployment that's supposed to source everything from
-// Infisical (or GCP). Default OFF → zero behavior change for local dev, tests, and CI.
+// The secrets-manager runner (scripts/infisical-run.mjs) injects `SECRETS_SOURCE` into the process
+// env when it launches the app, recording that secrets came from a manager rather than a plain
+// `.env.local`. When `REQUIRE_SECRETS_MANAGER` is set, the app refuses to boot unless that marker is
+// present — so a credential can never silently be served from a committed/forgotten `.env.local` in a
+// deployment that's supposed to source everything from Infisical. Default OFF → zero behavior change
+// for local dev, tests, and CI.
 
-export type SecretsSource = "infisical" | "gcp" | "doppler" | "env";
+export type SecretsSource = "infisical" | "env";
 
 /** Which runner launched the app, or "env" when started plainly (no secrets manager). */
 export function secretsSource(): SecretsSource {
   const raw = (process.env.SECRETS_SOURCE ?? "").trim().toLowerCase();
-  if (raw === "infisical" || raw === "gcp" || raw === "doppler") return raw;
+  if (raw === "infisical") return raw;
   return "env";
 }
 
@@ -30,7 +30,7 @@ export function secretsManagerProblem(): string | null {
   if (secretsSource() === "env") {
     return (
       "REQUIRE_SECRETS_MANAGER is set, but the app was NOT launched through a secrets-manager runner " +
-      "(SECRETS_SOURCE is unset). Start it via `npm run start:secrets` (Infisical) or `npm run start:gcp`, " +
+      "(SECRETS_SOURCE is unset). Start it via `npm run start:secrets` (Infisical), " +
       "so secrets come from the manager and not a local .env.local. To intentionally disable this guard, " +
       "unset REQUIRE_SECRETS_MANAGER."
     );
