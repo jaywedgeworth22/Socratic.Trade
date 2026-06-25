@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
+Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
+opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`
+(`assertSecretsManagerIfRequired`) throws at boot (wired first in `instrumentation.ts` nodejs
+`register()`) when `REQUIRE_SECRETS_MANAGER` is set but `SECRETS_SOURCE` is absent. The runners now
+set the marker: `infisical-run.mjs` → `SECRETS_SOURCE=infisical`; `gcp-secrets-run.mjs` → `=gcp` ONLY
+on a successful fetch (fail-open fallback leaves it unset so the guard trips). Default OFF → no change
+for dev/tests/CI. `.env.example` + new `docs/secrets.md` document the bootstrap-token-only model + the
+operator's one-time `.env.local → Infisical` import (values never pass through an agent). Infisical
+chosen over GCP: genuinely free (unlimited secrets), already wired, no SA-key file. tsc clean ·
+secrets-source tests 5/5 · trio via land.sh. **Operator follow-up:** import secrets to Infisical Cloud
++ machine identity, set bootstrap + `REQUIRE_SECRETS_MANAGER=1`, switch PM2 `trading` to
+`start:secrets`, verify, scrub `.env.local`. See `docs/rollouts/2026-06-25-force-secrets-manager.md`.
+
 ## 2026-06-25 — Harden `gcp-secrets-run.mjs` to fail open on any credential error
 Branch `claude/gcp-secrets-fail-open`. Follow-up to #154. The `*:gcp` wrapper's "fails open" promise
 was incomplete — three credential failure modes (missing/invalid `GOOGLE_APPLICATION_CREDENTIALS` path,
