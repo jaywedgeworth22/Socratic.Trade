@@ -66,15 +66,15 @@ npm run start:gcp    # next start with GCP secrets injected
   *after* the wrapper has injected GCP's value into `process.env`, so the GCP
   value wins regardless. To keep a local override under a `*:gcp` wrapper, export
   it (or use the plain scripts).
-- **Fails open (mostly) — check the logs:** if Secret Manager is unreachable at
-  the API level (IAM/permission/network) the wrapper logs `Falling back to
-  running command without GCP secrets` and starts the app with the **existing**
-  environment; per-secret fetch errors are warnings only. A clean start is
+- **Fails open — check the logs:** any Secret Manager error (missing/invalid
+  `GOOGLE_APPLICATION_CREDENTIALS`, no ADC, IAM/permission/network failure) is
+  logged (`Falling back to running command without GCP secrets`) and the app
+  starts with the **existing** environment; per-secret fetch errors are warnings
+  only. A process-level guard catches even errors the SDK throws uncaught from
+  deep in its auth chain, so the wrapper never crashes the start. A clean start is
   therefore **not** proof that live GCP values loaded — after a rotation a restart
-  can silently keep serving stale `.env.local`/exported values. Check the
-  `[gcp-secrets]` startup logs. (Exception: a missing/invalid
-  `GOOGLE_APPLICATION_CREDENTIALS` *file path* currently throws uncaught and exits
-  non-zero rather than failing open — a separate hardening follow-up.)
+  can silently keep serving stale `.env.local`/exported values, so check the
+  `[gcp-secrets]` startup logs.
 - **When GCP is not configured.** If `GCP_PROJECT_ID` is unset the runner skips
   Secret Manager and runs the command directly. This path now **waits for the
   child and propagates its exit code**, same as the configured path (a fixed bug

@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Harden `gcp-secrets-run.mjs` to fail open on any credential error
+Branch `claude/gcp-secrets-fail-open`. Follow-up to #154. The `*:gcp` wrapper's "fails open" promise
+was incomplete — three credential failure modes (missing/invalid `GOOGLE_APPLICATION_CREDENTIALS` path,
+no ADC, malformed JSON key) crashed it (uncaught, exit 1) instead of running the command with the
+existing env. Added process-level `uncaughtException`/`unhandledRejection` fail-open guards funneling to
+an idempotent single `runCommand()` (`started` flag → no double-spawn) + `child.on("error")` for
+command-not-found; always propagates the child's exit code. Verified by direct runtime tests (T2/T3/T4
+went from crash-exit-1 to clean fail-open with the child's code; T1 premature-exit fix intact; T5 clean
+exit 1) + trio (build ✓ · tsc ✓ clean · 1198/1198 tests). Updated `docs/deployment.md` (removed the #154
+fail-open exception). See `docs/rollouts/2026-06-25-gcp-secrets-fail-open.md`.
+
 ## 2026-06-25 — Universe floor (Phase 1 of settings/universe overhaul)
 Branch `agent/claude-settings-overhaul`. First phase of a 4-phase program (see
 `docs/settings-and-universe-overhaul-plan.md`): owner approved a full settings overhaul + take-profit→real
