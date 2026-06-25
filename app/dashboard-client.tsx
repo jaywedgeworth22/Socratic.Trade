@@ -910,6 +910,25 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
+  async function copyProfileToAccount(profileId: string, connectedAccountId: string) {
+    if (!profileId || !connectedAccountId) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/profiles/${profileId}/copy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectedAccountId })
+      });
+      if (!response.ok) throw await responseError(response, "Copy to account failed");
+      toast.success("Strategy copied to account.");
+      await load({ quiet: true });
+    } catch (copyError) {
+      toast.error(copyError instanceof Error ? copyError.message : "Copy to account failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function requestStrategyTuning() {
     setTuningBusy(true);
     setTuningError("");
@@ -1315,6 +1334,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 onEdit={() => setStudioOpen(true)}
                 onOpenFlow={() => setNodeEditorOpen(true)}
                 activateProfile={activateProfile}
+                copyProfileToAccount={copyProfileToAccount}
                 newProfileName={newProfileName}
                 setNewProfileName={setNewProfileName}
                 createProfile={createProfile}
@@ -2708,6 +2728,7 @@ function StrategyView({
   onEdit,
   onOpenFlow,
   activateProfile,
+  copyProfileToAccount,
   newProfileName,
   setNewProfileName,
   createProfile,
@@ -2723,6 +2744,7 @@ function StrategyView({
   onEdit: () => void;
   onOpenFlow: () => void;
   activateProfile: (id: string) => void;
+  copyProfileToAccount: (profileId: string, connectedAccountId: string) => void;
   newProfileName: string;
   setNewProfileName: (v: string) => void;
   createProfile: () => void;
@@ -2732,6 +2754,11 @@ function StrategyView({
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
 }) {
+  // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
+  const [copyTarget, setCopyTarget] = useState("");
+  const activeAccountId = snapshot.policy.connectedAccountId;
+  const copyTargets = (snapshot.connectedAccounts ?? []).filter((a) => a.id !== activeAccountId);
+  const selectedProfileId = snapshot.activeProfile?.id ?? "";
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
@@ -2758,6 +2785,27 @@ function StrategyView({
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+            {copyTargets.length > 0 && selectedProfileId && (
+              <div className="mt-2">
+                <span className="mb-1.5 block text-xs font-medium text-muted">Copy this strategy to another account</span>
+                <div className="flex items-center gap-2">
+                  <select className={inputClass} value={copyTarget} onChange={(e) => setCopyTarget(e.target.value)}>
+                    <option value="">Select account…</option>
+                    {copyTargets.map((a) => (
+                      <option key={a.id} value={a.id}>{a.label}</option>
+                    ))}
+                  </select>
+                  <Button
+                    variant="ghost"
+                    disabled={!copyTarget}
+                    onClick={() => copyProfileToAccount(selectedProfileId, copyTarget)}
+                    title="Apply this saved strategy to the selected account's live state (does not change its run-state)."
+                  >
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Save current as a named strategy</span>

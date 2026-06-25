@@ -81,6 +81,14 @@ Branch: claude/magical-faraday-uce1uy
   authority). No same-run sell→fill→buy sequencing (buys retry next cadence). Default-off = zero
   production change. Verified: tsc clean; 1089/1090 (only cache-provenance flake); build green. See
   `docs/rollouts/2026-06-25-sell-to-fund-buy.md`. **Completes the 3-PR per-account/strategy roadmap.**
+- 2026-06-25 (`claude/strategy-copy-to-account`, **PR 2 of 3**): **Strategy library copy-to-account.**
+  New `applyProfileToAccount(profileId, connectedAccountId, userId)` copies a saved library strategy
+  into a CHOSEN account's live `account_strategy_state` (not just the active one), stamping
+  `derived_from_profile_id` and **preserving the target's run-state** (copying never arms/disarms
+  autonomy). New `POST /api/profiles/[id]/copy`, `GET /api/connected-accounts` (safe list), and a
+  "Copy this strategy to another account" control in the Strategy tab. Verified: tsc clean;
+  1084/1085 (only the cache-provenance env flake); build green. See
+  `docs/rollouts/2026-06-25-strategy-copy-to-account.md`. PR 1 (#128) deployed to production.
 - 2026-06-24 (`claude/per-account-isolation`, **COMPLETE / PR #128 ready**): **Per-account state
   isolation — PR 1 of 3, all slices landed.** Each connected account gets its own isolated state
   instead of all of a user's accounts sharing one. Owner decision: full isolation, except shareable

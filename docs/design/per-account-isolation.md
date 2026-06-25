@@ -1,6 +1,8 @@
 # Design: Per-account state isolation
 
-Status: PROPOSED (design only — no schema changes made yet)
+Status: PR 1 IMPLEMENTED + DEPLOYED (#128); PR 2 (copy-to-account) IMPLEMENTED —
+see `docs/rollouts/2026-06-24-per-account-isolation.md` +
+`docs/rollouts/2026-06-25-strategy-copy-to-account.md`. PR 3 (sell-to-fund-buy) pending.
 Owner decision captured 2026-06-24: **full isolation**, with the explicit
 exception that *shareable-type* learning (the kind a user can opt to pool
 globally) always flows across that one user's own accounts rather than being
