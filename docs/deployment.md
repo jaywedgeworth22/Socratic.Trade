@@ -43,10 +43,15 @@ npm run build:gcp    # next build with GCP secrets injected
 npm run start:gcp    # next start with GCP secrets injected
 ```
 
-- **Auth:** set `GCP_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) and provide
-  Application Default Credentials — `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json`,
+- **Auth — must be *exported*, not in `.env.local`:** set `GCP_PROJECT_ID` (or
+  `GOOGLE_CLOUD_PROJECT`) and provide Application Default Credentials —
+  `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json`,
   `gcloud auth application-default login` (local dev), or Workload Identity
-  (GCP-hosted).
+  (GCP-hosted). The wrapper reads these from its **own `process.env` before
+  spawning Next** and never parses `.env.local` (and `npm`/PM2 don't load
+  `.env.local` for it either), so set them in the shell/PM2/runner environment.
+  If `GCP_PROJECT_ID` isn't exported, the wrapper silently takes the no-project
+  fallback (plain run, no GCP secrets).
 - **Mapping & scoping:** each GCP secret whose name equals an env-var name is
   injected under that name (secret `INTRINIO_API_KEY` → env `INTRINIO_API_KEY`).
   Scope which secrets load with `GCP_SECRET_NAMES=A,B,C` (explicit list) or
@@ -61,6 +66,13 @@ npm run start:gcp    # next start with GCP secrets injected
   *after* the wrapper has injected GCP's value into `process.env`, so the GCP
   value wins regardless. To keep a local override under a `*:gcp` wrapper, export
   it (or use the plain scripts).
+- **Fails open — check the logs:** if Secret Manager is unreachable (ADC/IAM/
+  network) the wrapper logs `Falling back to running command without GCP secrets`
+  and starts the app with the **existing** environment; individual secret-fetch
+  errors are warnings only. A clean start is therefore **not** proof that live
+  GCP values loaded — after a rotation a restart can silently keep serving stale
+  `.env.local`/exported values. Check the `[gcp-secrets]` startup logs (or harden
+  the script to fail closed).
 - **When GCP is not configured, use the plain scripts.** If `GCP_PROJECT_ID`
   is unset the runner skips Secret Manager — but its no-project fallback spawns
   the child command and the wrapper process currently returns **immediately
@@ -83,8 +95,11 @@ npm run start:gcp    # next start with GCP secrets injected
 > rotation, run services under the wrapper to pick up new values; on-disk
 > `.env.local` files keep their last-written contents until you edit them.
 
-Per-user API keys entered through the app's Settings are **not** in `.env.local`
-— they are AES-256-GCM encrypted in the SQLite `user_api_keys` table. Beyond
+Per-user secrets entered through the app's Settings are **not** in `.env.local`
+— they are AES-256-GCM encrypted (under `ENCRYPTION_KEY`) in SQLite: provider API
+keys in `user_api_keys`, and broker `api_key`/`api_secret` in `connected_accounts`
+(`upsertConnectedAccount`/`getActiveConnectedAccount`, `db-api-keys.ts`).
+Backup/rotation/deletion runbooks must cover **both** tables. Beyond
 operator/primary-user **provider fallback keys**, `.env.local` (or the exported
 runtime env) also carries **bootstrap/infra secrets** that are not per-user —
 notably the **`ENCRYPTION_KEY`** that decrypts `user_api_keys` (it MUST stay

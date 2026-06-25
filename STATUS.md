@@ -12,14 +12,16 @@ Secret Manager is the authoritative upstream for secret values** — every `.env
 local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
 `GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
 across the integration/agent/production copies, and that per-user keys live encrypted in
-`user_api_keys`, not `.env.local`. Addressed three Codex review rounds on PR #150: steer to
+`user_api_keys`, not `.env.local`. Addressed four Codex review rounds on PR #150: steer to
 plain scripts when GCP is unset + flag a `gcp-secrets-run.mjs` premature-exit bug (follow-up
 code fix); shared secrets change in GCP not the seed; require scoping on shared GCP projects;
 clarify `GCP_SECRETS_OVERWRITE`/`.env.local` precedence; note `*:gcp` wrappers inject-only
 (never rewrite the file); call out bootstrap secrets like the stable `ENCRYPTION_KEY`;
 reconcile `docs/ops-observability-security.md` to name GCP (not Infisical) canonical, marking
 Infisical `*:secrets` legacy (no GCP→Infisical sync); and note the Litestream sidecar reads
-creds from the live `.env.local`, not `*:gcp`. Added a dated `PLAN.md` topology note. Verified locally: build ✓, tsc ✓ clean, tests 1128/1129 (only
+creds from the live `.env.local`, not `*:gcp`; document the wrapper's fail-open behavior and
+that `GCP_PROJECT_ID`/ADC must be exported (not in `.env.local`); and add `connected_accounts`
+to the encrypted-secret inventory. Added a dated `PLAN.md` topology note. Verified locally: build ✓, tsc ✓ clean, tests 1128/1129 (only
 the pre-existing `cache-provenance` flake). See
 `docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md`.
 

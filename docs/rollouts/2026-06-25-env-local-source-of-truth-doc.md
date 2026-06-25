@@ -6,11 +6,13 @@ Documented, in one authoritative place, where `.env.local` lives across the
 multi-worktree/multi-host setup and which copy is authoritative. Added a
 **"Configuration & secrets (`.env.local`) — what's authoritative"** section to
 `docs/deployment.md`. Net new doc content only — no application code changed.
-(Three Codex review passes on PR #150 then refined the section for technical
+(Four Codex review passes on PR #150 then refined the section for technical
 accuracy — GCP-vs-Infisical reconciliation (Infisical is legacy/no-sync),
 scoping, overwrite precedence, inject-only wrappers, bootstrap secrets like
-`ENCRYPTION_KEY`, and the Litestream sidecar credential path — and added a
-`PLAN.md` topology note; see Files/Follow-ups.)
+`ENCRYPTION_KEY`, the Litestream sidecar credential path, the wrapper's
+**fail-open** behavior + **export-not-`.env.local`** bootstrap-var requirement,
+and the `connected_accounts` broker-secret table — and added a `PLAN.md` topology
+note; see Files/Follow-ups.)
 
 Key facts now written down:
 
@@ -53,7 +55,7 @@ already note `.env.local` is preserved on the live box.
 ## Files
 
 - `docs/deployment.md` — new "Configuration & secrets (`.env.local`) — what's
-  authoritative" section. Refined over two Codex review rounds: steers to plain
+  authoritative" section. Refined over several Codex review rounds: steers to plain
   scripts when GCP is unset (+ flags the `gcp-secrets-run.mjs` premature-exit
   bug); shared secrets change in GCP (not the seed); scoping required on shared
   GCP projects; clarified `GCP_SECRETS_OVERWRITE` applies to *exported* env vars
@@ -63,7 +65,11 @@ already note `.env.local` is preserved on the live box.
   keys. Round 3 added: the Infisical `*:secrets` path is legacy (no GCP→Infisical
   sync → stale after a GCP rotation), and the Litestream sidecar
   (`run-litestream.sh`) reads `LITESTREAM_*` from the live `.env.local`, not via
-  `*:gcp`, so its R2 creds rotate on that file/export.
+  `*:gcp`, so its R2 creds rotate on that file/export. Round 4 added: the wrapper
+  **fails open** (Secret Manager errors → runs with existing env; a clean start ≠
+  live values loaded — check `[gcp-secrets]` logs); `GCP_PROJECT_ID`/ADC must be
+  **exported**, not in `.env.local`, or the wrapper drops to the no-GCP fallback;
+  and broker creds live encrypted in `connected_accounts`, not only `user_api_keys`.
 - `docs/ops-observability-security.md` — Production Notes now name GCP canonical
   for production secrets and mark the Infisical `*:secrets` path **legacy**
   (no GCP→Infisical sync; was "prefer Infisical for all production secrets"),
