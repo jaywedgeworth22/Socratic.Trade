@@ -65,9 +65,11 @@ The telemetry path treats this as a financial application:
 
 - **GCP Secret Manager is the canonical store for production secrets** (see
   `docs/deployment.md` → "Configuration & secrets (`.env.local`)"); deliver them
-  with the `*:gcp` wrappers. The Infisical path (`*:secrets`) remains as an
-  alternative delivery mechanism using the same pattern — rotate secrets in GCP,
-  not in both. Either way, don't rely on hand-edited `.env.local`.
+  with the `*:gcp` wrappers. The Infisical path (`*:secrets`) is **legacy** —
+  there is no GCP→Infisical sync, so it goes stale after a GCP-only rotation
+  unless its store is mirrored. Note the Litestream sidecar reads `LITESTREAM_*`
+  from the live `.env.local`/exported env, not via the app's wrapper. Either way,
+  don't rely on hand-edited `.env.local`.
 - Litestream runs under PM2 (`litestream` sidecar) next to production `next start` — see
   `docs/litestream.md`. Periodically verify a restore to a scratch path
   (`scripts/litestream-restore.sh /tmp/app.db.restored`) before treating backups as ready.

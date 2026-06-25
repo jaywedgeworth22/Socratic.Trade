@@ -27,9 +27,11 @@ change a secret, update it in GCP (add a new secret version) — that is the
 canonical edit; the `.env.local` copies are downstream of it.
 
 The repo also ships an Infisical delivery path (`*:secrets` /
-`scripts/infisical-run.mjs`) using the same wrapper pattern. With GCP designated
-canonical, treat Infisical as an **alternative delivery mechanism, not a second
-source of truth** — rotate secrets in GCP, not in both.
+`scripts/infisical-run.mjs`, which just runs `infisical run -- …`). With GCP
+designated canonical, treat the Infisical path as **legacy**: there is **no
+GCP→Infisical sync**, so `*:secrets` serves whatever is stored in Infisical and
+goes **stale** after a GCP-only rotation. Prefer the `*:gcp` wrappers; only use
+`*:secrets` if you keep its Infisical store mirrored from GCP.
 (`docs/ops-observability-security.md` defers to GCP.)
 
 Run with secrets pulled live from GCP at runtime via the `*:gcp` scripts
@@ -88,8 +90,13 @@ runtime env) also carries **bootstrap/infra secrets** that are not per-user —
 notably the **`ENCRYPTION_KEY`** that decrypts `user_api_keys` (it MUST stay
 stable: if it changes or is unset, a random key is generated per process and
 every stored key becomes undecryptable after a restart — see `.env.example`),
-plus auth/webhook tokens, backup credentials, and provider toggles. Manage these
-in GCP too.
+plus auth/webhook tokens, backup credentials, and provider toggles. These can
+live in GCP and reach the **app** via the `*:gcp` wrappers — but rotate each on
+the path the process that reads it actually uses. In particular, the Litestream
+backup sidecar (`scripts/run-litestream.sh` / `litestream-restore.sh`) reads
+`LITESTREAM_*` from the live `~/apps/trading-live/.env.local` (or the exported
+env), **not** through the app's `*:gcp` wrapper, so rotate its R2 credentials
+there (or wrap that sidecar separately).
 
 > Status: the `*:gcp` runner exists and is the **designated** source of truth,
 > but it requires `GCP_PROJECT_ID` + ADC configured on each box, and production

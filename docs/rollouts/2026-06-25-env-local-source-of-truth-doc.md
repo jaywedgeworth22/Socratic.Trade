@@ -6,9 +6,10 @@ Documented, in one authoritative place, where `.env.local` lives across the
 multi-worktree/multi-host setup and which copy is authoritative. Added a
 **"Configuration & secrets (`.env.local`) — what's authoritative"** section to
 `docs/deployment.md`. Net new doc content only — no application code changed.
-(Two Codex review passes on PR #150 then refined the section for technical
-accuracy — GCP-vs-Infisical reconciliation, scoping, overwrite precedence,
-inject-only wrappers, and bootstrap secrets like `ENCRYPTION_KEY` — and added a
+(Three Codex review passes on PR #150 then refined the section for technical
+accuracy — GCP-vs-Infisical reconciliation (Infisical is legacy/no-sync),
+scoping, overwrite precedence, inject-only wrappers, bootstrap secrets like
+`ENCRYPTION_KEY`, and the Litestream sidecar credential path — and added a
 `PLAN.md` topology note; see Files/Follow-ups.)
 
 Key facts now written down:
@@ -59,11 +60,14 @@ already note `.env.local` is preserved on the live box.
   (GCP supersedes `.env.local`-only values); `*:gcp` wrappers inject into the
   process and never rewrite a `.env.local` file; and `.env.local` also holds
   bootstrap secrets like the stable `ENCRYPTION_KEY`, not just provider fallback
-  keys.
+  keys. Round 3 added: the Infisical `*:secrets` path is legacy (no GCP→Infisical
+  sync → stale after a GCP rotation), and the Litestream sidecar
+  (`run-litestream.sh`) reads `LITESTREAM_*` from the live `.env.local`, not via
+  `*:gcp`, so its R2 creds rotate on that file/export.
 - `docs/ops-observability-security.md` — Production Notes now name GCP canonical
-  for production secrets and demote the Infisical `*:secrets` path to an
-  alternative delivery mechanism (was "prefer Infisical for all production
-  secrets"), reconciling the two-source-of-truth conflict the review flagged.
+  for production secrets and mark the Infisical `*:secrets` path **legacy**
+  (no GCP→Infisical sync; was "prefer Infisical for all production secrets"),
+  reconciling the two-source-of-truth conflict the review flagged.
 - `PLAN.md` — dated secrets/config-topology note under "Current Status".
 - `STATUS.md` — new top entry for this docs change.
 - `docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md` — this note.
