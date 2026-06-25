@@ -4,8 +4,76 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Harden `gcp-secrets-run.mjs` to fail open on any credential error
+Branch `claude/gcp-secrets-fail-open`. Follow-up to #154. The `*:gcp` wrapper's "fails open" promise
+was incomplete — three credential failure modes (missing/invalid `GOOGLE_APPLICATION_CREDENTIALS` path,
+no ADC, malformed JSON key) crashed it (uncaught, exit 1) instead of running the command with the
+existing env. Added process-level `uncaughtException`/`unhandledRejection` fail-open guards funneling to
+an idempotent single `runCommand()` (`started` flag → no double-spawn) + `child.on("error")` for
+command-not-found; always propagates the child's exit code. Verified by direct runtime tests (T2/T3/T4
+went from crash-exit-1 to clean fail-open with the child's code; T1 premature-exit fix intact; T5 clean
+exit 1) + trio (build ✓ · tsc ✓ clean · 1198/1198 tests). Updated `docs/deployment.md` (removed the #154
+fail-open exception). See `docs/rollouts/2026-06-25-gcp-secrets-fail-open.md`.
+
+## 2026-06-25 — Universe floor (Phase 1 of settings/universe overhaul)
+Branch `agent/claude-settings-overhaul`. First phase of a 4-phase program (see
+`docs/settings-and-universe-overhaul-plan.md`): owner approved a full settings overhaul + take-profit→real
+trim + universe floor + backfill expansion. **This PR = the universe floor**: new `UniverseFloor`
+(`minPrice`/`minMarketCapUsd`/`minDollarVolume`) on `TradingPolicy`, default `{5, $100M, $1M}`, applied in
+the market scan before ranking via `applyUniverseFloor` (`market.ts`) — excludes penny/illiquid names from
+the candidate set. Explicit `additionalSymbols` + held positions are exempt; exits unaffected; missing
+cap/volume data never excludes (price floor is the penny gate). No-op for the default S&P-500 universe.
+Verify: tsc clean · universe-floor + market tests 24 passed · full trio via land.sh. **Next:** Phase 2
+take-profit trim (ratchet), Phase 3 settings UI overhaul, Phase 4 flat-file backfill (needs Massive
+flat-file access confirmed). Audit reference: `docs/rollouts/2026-06-25-sell-stops-settings-audit.md`.
+
+## 2026-06-25 — Fix: `gcp-secrets-run.mjs` no-project fallback waits on the child
+Branch `claude/gcp-secrets-wait-on-child`. The `*:gcp` wrapper's no-`GCP_PROJECT_ID` fallback called
+`process.exit(0)` right after spawning the child, so `build:gcp` could report success before
+`next build` finished (a chained restart/deploy could run against an unfinished build). Restructured
+so the command runs once at the end in BOTH paths and `runCommand`'s child-exit handler owns process
+exit (waits + propagates the code); dropped an unused `spawnSync` import. Configured path unchanged.
+Resolves the follow-up from the #150 docs PR. Verified by direct runtime tests (no-project child →
+exit code propagated incl. 7; old version returned 0 immediately, orphaning the child) + trio: build ✓ ·
+tsc ✓ clean · 1189/1189 tests. Updated `docs/deployment.md` (premature-exit caveat now describes the
+fix; refined the fail-open note re: a missing `GOOGLE_APPLICATION_CREDENTIALS` path). See
+`docs/rollouts/2026-06-25-gcp-secrets-wait-on-child.md`.
+
+## 2026-06-25 — Fix: risk-exit blocked by MAX_SAFE_INTEGER notional sentinel
+Branch `agent/claude-exit-notional`. A SELL "Risk-Exit" (no live quote) was Blocked with "Projected net
+exposure $-9,007,199,254,740,800 exceeds net cap" and shown as "~$9,007,199,254,740,991.00" —
+`Number.MAX_SAFE_INTEGER`. Root cause: `estimateReviewNotional` (`alpaca.ts`) used that "price-unavailable
+→ over-cap" sentinel regardless of side; for an exit it corrupted the displayed notional AND the
+net-exposure projection (`netDelta=-MAX` overshot net through zero, tripping the cap). Fix: (1) `alpaca.ts`
+now side-aware — exits fall back to `referencePrice` then `0` (never the sentinel); opening orders keep it;
+(2) `policy.ts` gross/net exposure block gated on `isOpening` (closes structurally exempt — the documented
+invariant); (3) `dashboard-client.tsx` `proposalSize()` never renders a sentinel/non-finite value. Verify:
+tsc clean · policy+persistence tests 56 passed · full trio via land.sh. See
+`docs/rollouts/2026-06-25-exit-notional-sentinel-fix.md`.
+
 ## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
 Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
+
+## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
+Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
+(`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
+git-ignored (only `.env.example` tracked), each worktree's copy is independent, and **GCP
+Secret Manager is the authoritative upstream for secret values** — every `.env.local` is a
+local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
+`GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
+across the integration/agent/production copies, and that per-user keys live encrypted in
+`user_api_keys`, not `.env.local`. Addressed four Codex review rounds on PR #150: steer to
+plain scripts when GCP is unset + flag a `gcp-secrets-run.mjs` premature-exit bug (follow-up
+code fix); shared secrets change in GCP not the seed; require scoping on shared GCP projects;
+clarify `GCP_SECRETS_OVERWRITE`/`.env.local` precedence; note `*:gcp` wrappers inject-only
+(never rewrite the file); call out bootstrap secrets like the stable `ENCRYPTION_KEY`;
+reconcile `docs/ops-observability-security.md` to name GCP (not Infisical) canonical, marking
+Infisical `*:secrets` legacy (no GCP→Infisical sync); and note the Litestream sidecar reads
+creds from the live `.env.local`, not `*:gcp`; document the wrapper's fail-open behavior and
+that `GCP_PROJECT_ID`/ADC must be exported (not in `.env.local`); and add `connected_accounts`
+to the encrypted-secret inventory. Added a dated `PLAN.md` topology note. Verified locally: build ✓, tsc ✓ clean, tests 1128/1129 (only
+the pre-existing `cache-provenance` flake). See
+`docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md`.
 
 ## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
 Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
@@ -47,6 +115,32 @@ only) so they mature into missed-opportunity analytics like user rejections do. 
 1113/1114 tests (+2; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-learning-loop-honesty.md`.
 
+## 2026-06-25 — SEC EDGAR XBRL company-facts enrichment provider (keyless, default-OFF)
+Branch `claude/sec-xbrl-enrichment` (PR #145). Keyless, default-OFF enrichment provider filling the
+EXISTING `debtToEquity` field from authoritative SEC filings (companyfacts API). No new field threading
+(stays within existing fields). Reuses `secUserAgent`/`politeFetchText`/`runRateLimited`/
+`loadTickerCikMap`/`padCik`; cascade order after FMP, before Yahoo. Pure tested `parseCompanyFacts`
+(debt-specific concepts ÷ equity at the LATEST balance-sheet period — annual or 10-Q — amended-10-K/A-aware,
+budget-bounded, dedup'd background warms, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was
+dropped in Codex review round 3** — annual 10-K EPS isn't the TTM that `SymbolEnrichment.eps` documents,
+so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Twelve Codex review rounds
+applied — incl. round 6 (honest `MarketScan.source`: cascade now names only providers that actually
+contributed a field, app-wide), round 7 (dropped the per-symbol budget guard so the background loop keeps
+warming the 24 h cache after the interactive 8 s budget elapses; the outer race alone caps latency), round
+8 (debt aggregation: use the complete `LongTermDebt` total — not just noncurrent — when only short-term
+debt is separately tagged, so D/E isn't understated), round 9 (publish the RAW D/E ratio so the
+bear-veto/analytics see true leverage, with the `>10 → ÷100` percentage heuristic now SOURCE-AWARE in
+market.ts/dashboard so a true 12x isn't misread as 0.12; plus `enrich()` returns a snapshot so background
+cache-warming can't retroactively flip a symbol's source), round 10 (restrict parsed facts to periodic
+10-K/10-Q forms so a non-periodic 8-K/pro-forma fact can't win the latest-period reducer), round 11
+(anchor equity on the latest period under EITHER `StockholdersEquity` or the
+`…IncludingPortionAttributableToNoncontrollingInterest` total, preferring parent-only, so filers that tag
+only the inclusive total for the current period don't get stale leverage), and round 12 (three follow-ons:
+D/E column now sorts by the source-aware normalized value; the quote-only Yahoo fallback is recorded in
+`MarketScan.source`; and the cold SEC ticker→CIK map fetch is in-flight-deduped). Verified by the
+main agent (tsc clean · 1183/1184 tests; only the cache-provenance flake · build green). See
+`docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
+
 ## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
 Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When
 `policy.atrStops` is on, the protective stop DISTANCE = `atrStopMultiple × ATR(atrStopPeriod)` as a
@@ -58,6 +152,14 @@ unprotected); ATR > beta when both on. New canonical reference `docs/stop-loss-a
 covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS validation are live).
 Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
+
+## 2026-06-25 — Surface avgDaysHeld / shortTermPct in scorecard tooltips
+Branch `claude/scorecard-turnover-ui`. Clean/additive backlog batch — display-only, no trading-logic
+change. The thesis/regime scorecards already computed `avgDaysHeld`/`shortTermPct` and shipped them in
+the snapshot; the client dropped them when mapping into `ScorecardBars`. Now the bar tooltip appends
+"<N>d avg hold - <M>% short-term" when present (omitted otherwise). Verify: tsc clean · 1111/1112 tests
+(only the cache-provenance flake) · build green. See `docs/rollouts/2026-06-25-scorecard-turnover-ui.md`.
+
 
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the

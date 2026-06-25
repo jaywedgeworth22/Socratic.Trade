@@ -88,7 +88,7 @@ export function ScorecardBars({
   data,
   height = 150
 }: {
-  data: Array<{ label: string; pnl: number; winRate: number; trades: number }>;
+  data: Array<{ label: string; pnl: number; winRate: number; trades: number; avgDaysHeld?: number; shortTermPct?: number }>;
   height?: number;
 }) {
   if (data.length === 0) {
@@ -102,6 +102,14 @@ export function ScorecardBars({
       {rows.map((row) => {
         const width = Math.max(6, (Math.abs(row.pnl) / maxAbs) * 100);
         const positive = row.pnl >= 0;
+        // Turnover/tax-lot context (avg holding days + % of lots closed short-term) — surfaced in the
+        // tooltip only when present, so it never adds noise for sources that don't compute it.
+        const turnover = [
+          typeof row.avgDaysHeld === "number" ? `${row.avgDaysHeld.toFixed(0)}d avg hold` : null,
+          typeof row.shortTermPct === "number" ? `${row.shortTermPct.toFixed(0)}% short-term` : null
+        ]
+          .filter(Boolean)
+          .join(" - ");
         return (
           <div key={row.label} className="grid grid-cols-[112px_minmax(0,1fr)_88px] items-center gap-2 text-xs">
             <div className="truncate text-muted" title={row.label}>{row.label}</div>
@@ -109,7 +117,7 @@ export function ScorecardBars({
               <div
                 className={positive ? "h-full rounded-full bg-up" : "h-full rounded-full bg-down"}
                 style={{ width: `${width}%` }}
-                title={`${signedMoney(row.pnl)} - ${formatPct(row.winRate)} win - ${row.trades} trades`}
+                title={`${signedMoney(row.pnl)} - ${formatPct(row.winRate)} win - ${row.trades} trades${turnover ? ` - ${turnover}` : ""}`}
               />
             </div>
             <div className={positive ? "tnum text-right text-up" : "tnum text-right text-down"}>{signedMoney(row.pnl)}</div>

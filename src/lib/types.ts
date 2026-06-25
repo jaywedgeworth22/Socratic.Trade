@@ -322,6 +322,23 @@ export interface BrokerQuote {
   provider?: string;
 }
 
+/**
+ * Universe eligibility floor — excludes penny / illiquid micro-cap names from the SCANNED candidate set
+ * (index + dynamic-universe sources). It is an opening-eligibility filter only: explicitly listed
+ * `additionalSymbols` and currently-held positions are ALWAYS exempt (deliberate user intent / never trap
+ * an exit), and exits are never affected. Each bound is applied only when set (`> 0`) and, for market cap /
+ * dollar-volume, only when that datum is known for the name — missing data never excludes (the price floor
+ * is the reliable penny gate). Surfaced in settings; see passesUniverseFloor/applyUniverseFloor in market.ts.
+ */
+export interface UniverseFloor {
+  /** Minimum share price in USD (the primary penny-stock gate). */
+  minPrice?: number;
+  /** Minimum market capitalization in USD. Applied only when market cap is known for the name. */
+  minMarketCapUsd?: number;
+  /** Minimum recent daily dollar-volume (latest price × volume) — a liquidity floor. Applied only when volume is known. */
+  minDollarVolume?: number;
+}
+
 export interface TradingPolicy {
   systemState: SystemState;
   paperMode: boolean;
@@ -331,6 +348,8 @@ export interface TradingPolicy {
   includedIndices: IndexUniverse[];
   additionalSymbols: string[];
   blocklist?: string[];
+  /** Penny/illiquid exclusion for the scanned candidate universe (explicit symbols + positions exempt). */
+  universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
@@ -718,6 +737,8 @@ export interface MarketDataProviderOptions {
   dynamicUniverses?: IndexUniverse[];
   candidateLimit?: number;
   outlierReserve?: number;
+  /** Penny/illiquid exclusion for index + dynamic-universe candidates (explicit symbols + positions exempt). */
+  universeFloor?: UniverseFloor;
 }
 
 export interface MarketDataProvider {

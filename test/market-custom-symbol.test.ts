@@ -30,6 +30,38 @@ describe("market scan custom symbols", () => {
     expect(scan.warnings).toEqual([]);
   });
 
+  it("lists yahoo-finance as a source from the quote-only fallback even when enrichment contributes nothing", async () => {
+    delete process.env.FINNHUB_API_KEY;
+    delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
+    delete process.env.ALPACA_DATA_API_KEY;
+    delete process.env.ALPACA_DATA_SECRET_KEY;
+    // The chart endpoint (quote-only price) succeeds, but the Yahoo crumb/quoteSummary enrichment path
+    // 404s — so enrichment contributes no accepted field. The displayed quote still came from Yahoo, so
+    // MarketScan.source must still name yahoo-finance (regression: it was reported as screener-only).
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("api.nasdaq.com")) return nasdaqRows([]);
+      if (url.includes("/v8/finance/chart/SPCX")) {
+        return new Response(
+          JSON.stringify({
+            chart: { result: [{ meta: { regularMarketPrice: 161.84, chartPreviousClose: 154.6, regularMarketVolume: 2500000 }, indicators: { quote: [{ volume: [2500000] }] } }] }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 }); // crumb + quoteSummary fail → no enrichment
+    });
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const scan = await scanMarket(["SPCX"], []);
+
+    expect(scan.returnedQuotes).toBe(1);
+    expect(scan.quotesBySymbol.SPCX?.price).toBe(161.84);
+    expect(scan.source).toContain("yahoo-finance");
+  });
+
   it("shows a concrete warning when a custom ticker cannot be priced", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);
