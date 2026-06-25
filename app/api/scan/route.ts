@@ -30,7 +30,8 @@ export async function GET(request: Request) {
     }
     const base = await scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor
     });
     // Merge live broker bid/ask quotes for the top candidates, matching the strategy
     // run path (mergeQuoteData) so the table's Bid/Ask and freshest prices are populated.

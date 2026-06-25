@@ -36,6 +36,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   includedIndices: ["sp500"],
   additionalSymbols: [],
   blocklist: [],
+  // Penny/illiquid exclusion for the SCANNED universe (explicit symbols + held positions always exempt).
+  // No-op for the default S&P-500 universe (every member clears it); it bites only when the universe is
+  // broadened to other indexes / the wider screener. Tunable in settings.
+  universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
   sellToFundBuy: "off",
   llmModel: "gpt-5.4-mini",

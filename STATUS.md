@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Universe floor (Phase 1 of settings/universe overhaul)
+Branch `agent/claude-settings-overhaul`. First phase of a 4-phase program (see
+`docs/settings-and-universe-overhaul-plan.md`): owner approved a full settings overhaul + take-profit→real
+trim + universe floor + backfill expansion. **This PR = the universe floor**: new `UniverseFloor`
+(`minPrice`/`minMarketCapUsd`/`minDollarVolume`) on `TradingPolicy`, default `{5, $100M, $1M}`, applied in
+the market scan before ranking via `applyUniverseFloor` (`market.ts`) — excludes penny/illiquid names from
+the candidate set. Explicit `additionalSymbols` + held positions are exempt; exits unaffected; missing
+cap/volume data never excludes (price floor is the penny gate). No-op for the default S&P-500 universe.
+Verify: tsc clean · universe-floor + market tests 24 passed · full trio via land.sh. **Next:** Phase 2
+take-profit trim (ratchet), Phase 3 settings UI overhaul, Phase 4 flat-file backfill (needs Massive
+flat-file access confirmed). Audit reference: `docs/rollouts/2026-06-25-sell-stops-settings-audit.md`.
+
 ## 2026-06-25 — Fix: `gcp-secrets-run.mjs` no-project fallback waits on the child
 Branch `claude/gcp-secrets-wait-on-child`. The `*:gcp` wrapper's no-`GCP_PROJECT_ID` fallback called
 `process.exit(0)` right after spawning the child, so `build:gcp` could report success before

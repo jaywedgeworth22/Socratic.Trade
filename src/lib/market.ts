@@ -68,7 +68,8 @@ import type {
   MarketQuote,
   MarketQuoteSummary,
   MarketScan,
-  ScoringWeights
+  ScoringWeights,
+  UniverseFloor
 } from "./types";
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
@@ -81,13 +82,62 @@ type NasdaqExchange = "nasdaq" | "nyse";
 // consumed, so this single shared cache is safe to serve to all users.
 let screenerCache = new Map<string, { expiresAt: number; rows: RawNasdaqRow[]; asOf?: string }>();
 
+/**
+ * True if a quote clears the universe floor. Each bound applies only when set (`> 0`); market-cap and
+ * dollar-volume are checked only when that datum is known (missing data never excludes — the price floor
+ * is the reliable penny gate). Pure; exported for testing and reuse by the share/backfill universe.
+ */
+export function passesUniverseFloor(
+  quote: Pick<MarketQuote, "price" | "volume" | "marketCap">,
+  floor?: UniverseFloor
+): boolean {
+  if (!floor) return true;
+  const { minPrice, minMarketCapUsd, minDollarVolume } = floor;
+  if (minPrice != null && minPrice > 0 && !(quote.price >= minPrice)) return false;
+  if (
+    minMarketCapUsd != null &&
+    minMarketCapUsd > 0 &&
+    typeof quote.marketCap === "number" &&
+    quote.marketCap > 0 &&
+    quote.marketCap < minMarketCapUsd
+  ) {
+    return false;
+  }
+  if (minDollarVolume != null && minDollarVolume > 0 && quote.volume > 0) {
+    const dollarVolume = (quote.price > 0 ? quote.price : 0) * quote.volume;
+    if (dollarVolume < minDollarVolume) return false;
+  }
+  return true;
+}
+
+/** True if the floor has at least one active (`> 0`) bound. */
+export function universeFloorActive(floor?: UniverseFloor): boolean {
+  return (
+    !!floor &&
+    ((floor.minPrice ?? 0) > 0 || (floor.minMarketCapUsd ?? 0) > 0 || (floor.minDollarVolume ?? 0) > 0)
+  );
+}
+
+/**
+ * Drop sub-floor names from the scanned candidate set, EXEMPTING `exempt` (explicitly-listed symbols +
+ * held positions) — those are deliberate and an exit must never be trapped. No-op when the floor is empty.
+ */
+export function applyUniverseFloor(
+  quotes: MarketQuote[],
+  exempt: Set<string>,
+  floor?: UniverseFloor
+): MarketQuote[] {
+  if (!universeFloorActive(floor)) return quotes;
+  return quotes.filter((q) => exempt.has(q.symbol) || passesUniverseFloor(q, floor));
+}
+
 export async function scanMarket(
   symbols: string[],
   positions: EquityPosition[],
   scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
   userId?: string,
   dynamicUniverses: IndexUniverse[] = [],
-  scanOptions: { candidateLimit?: number; outlierReserve?: number } = {}
+  scanOptions: { candidateLimit?: number; outlierReserve?: number; universeFloor?: UniverseFloor } = {}
 ): Promise<MarketScan> {
   const scan = await nasdaqDelayedProvider.scan(symbols, positions, {
     scoringWeights,
@@ -95,7 +145,8 @@ export async function scanMarket(
     userId,
     dynamicUniverses,
     candidateLimit: scanOptions.candidateLimit,
-    outlierReserve: scanOptions.outlierReserve
+    outlierReserve: scanOptions.outlierReserve,
+    universeFloor: scanOptions.universeFloor
   });
   // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
   // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
@@ -157,6 +208,10 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : "Market data request failed.");
     }
+
+    // Universe floor: drop penny/illiquid index + dynamic-universe candidates before ranking. `allowed`
+    // (explicit symbols + held positions) is exempt — never hide a name the user listed or a position to exit.
+    quotes = applyUniverseFloor(quotes, allowed, options?.universeFloor);
 
     const ranked = rankMarketQuotes(quotes, weights).map((quote) => ({ ...quote, cached }));
     const candidateLimit = normalizeMarketScanCandidateLimit(options?.candidateLimit, envNumber("MARKET_SCAN_LIMIT", DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT));

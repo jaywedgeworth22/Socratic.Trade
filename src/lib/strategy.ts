@@ -160,7 +160,8 @@ export async function runStrategyOnce(
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor
     });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
@@ -1256,7 +1257,8 @@ export async function executeProposal(
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor
     });
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
