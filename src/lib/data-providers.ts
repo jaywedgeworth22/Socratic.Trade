@@ -12,6 +12,9 @@
 import { normalizeSymbol } from "./money";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { getStreamedHeadlines } from "./streams/news-store";
+import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
+import { loadCikMap } from "./web-sources/sec8k";
+import { padCik } from "./web-sources/sec-filings";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -316,6 +319,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
+  // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity + eps from authoritative SEC filings.
+  // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
+  // data supersedes Yahoo's scraped values when enabled.
+  if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
   providers.push(new YahooFinanceEnrichmentProvider());
   // Always wrap in the cascade — even for a single provider — so per-field source
   // stamping and analyst blending happen uniformly.
@@ -490,6 +497,10 @@ const DEFAULT_WEBULL_UNOFFICIAL_MAX = 20;
 
 export function webullUnofficialEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(String(process.env.WEBULL_UNOFFICIAL_ENABLED ?? "").trim().toLowerCase());
+}
+
+export function secXbrlEnrichmentEnabled(): boolean {
+  return ["1", "true", "on", "yes"].includes(String(process.env.SEC_XBRL_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
 }
 
 function webullUnofficialMaxSymbols(): number {
@@ -2106,6 +2117,148 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         }
       }
     }
+
+    return result;
+  }
+}
+
+// ── SEC EDGAR XBRL company-facts provider (keyless, default-OFF) ─────────────
+// Fills debtToEquity and eps from authoritative SEC 10-K filings via the public
+// companyfacts API (https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json).
+// Polite 300 ms inter-symbol delay per SEC fair-access guidance.
+// Enable with: SEC_XBRL_ENRICHMENT_ENABLED=on
+
+const SEC_XBRL_TTL_MS = 24 * 60 * 60_000; // 24h — filings move slowly
+const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
+
+/** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity and eps.
+ *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?: number } {
+  try {
+    if (!json || typeof json !== "object") return {};
+    const root = json as Record<string, unknown>;
+    const facts = root.facts;
+    if (!facts || typeof facts !== "object") return {};
+    const gaap = (facts as Record<string, unknown>)["us-gaap"];
+    if (!gaap || typeof gaap !== "object") return {};
+    const concepts = gaap as Record<string, unknown>;
+
+    // Helper: extract entries array for a concept + unit.
+    function getEntries(concept: string, unit: string): Array<{ end: string; val: number; form?: string }> {
+      const c = concepts[concept];
+      if (!c || typeof c !== "object") return [];
+      const units = (c as Record<string, unknown>).units;
+      if (!units || typeof units !== "object") return [];
+      const arr = (units as Record<string, unknown>)[unit];
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(
+        (e): e is { end: string; val: number; form?: string } =>
+          e !== null &&
+          typeof e === "object" &&
+          typeof e.end === "string" &&
+          typeof e.val === "number" &&
+          Number.isFinite(e.val)
+      );
+    }
+
+    // Helper: pick the latest entry — prefer 10-K, fall back to any form.
+    function latestEntry(entries: Array<{ end: string; val: number; form?: string }>): { end: string; val: number; form?: string } | undefined {
+      if (entries.length === 0) return undefined;
+      const annuals = entries.filter((e) => e.form === "10-K");
+      const pool = annuals.length > 0 ? annuals : entries;
+      return pool.reduce((best, e) => (e.end > best.end ? e : best), pool[0]);
+    }
+
+    // ── debtToEquity: Liabilities / StockholdersEquity (both USD, latest 10-K) ──
+    let debtToEquity: number | undefined;
+    const liabEntries = getEntries("Liabilities", "USD");
+    const equityEntries = getEntries("StockholdersEquity", "USD");
+    const liab = latestEntry(liabEntries);
+    const equity = latestEntry(equityEntries);
+    if (
+      liab !== undefined &&
+      equity !== undefined &&
+      equity.val > 0 &&
+      Number.isFinite(liab.val) &&
+      Number.isFinite(equity.val)
+    ) {
+      debtToEquity = Math.round((liab.val / equity.val) * 100) / 100;
+    }
+
+    // ── eps: EarningsPerShareDiluted (preferred) or EarningsPerShareBasic ──
+    let eps: number | undefined;
+    const dilutedEntries = getEntries("EarningsPerShareDiluted", "USD/shares");
+    const basicEntries = getEntries("EarningsPerShareBasic", "USD/shares");
+    const epsSource = dilutedEntries.length > 0 ? dilutedEntries : basicEntries;
+    const epsEntry = latestEntry(epsSource);
+    if (epsEntry !== undefined && Number.isFinite(epsEntry.val)) {
+      eps = epsEntry.val;
+    }
+
+    return {
+      ...(debtToEquity !== undefined && { debtToEquity }),
+      ...(eps !== undefined && { eps })
+    };
+  } catch {
+    return {};
+  }
+}
+
+export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "sec-xbrl";
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = cache.get(`sec-xbrl:${symbol}`);
+      if (cached && cached.expiresAt > now) {
+        result[symbol] = cached.data;
+      } else {
+        misses.push(symbol);
+      }
+    }
+    if (misses.length === 0) return result;
+
+    // Build ticker→CIK map (cached weekly in the settings KV by loadCikMap).
+    let tickerToCik: Map<string, string>;
+    try {
+      const cikMap = await loadCikMap(now); // CIK(string) → ticker
+      tickerToCik = new Map<string, string>();
+      for (const [cik, ticker] of Object.entries(cikMap)) {
+        tickerToCik.set(ticker, cik);
+      }
+    } catch {
+      for (const symbol of misses) result[symbol] = {};
+      return result;
+    }
+
+    const ua = secUserAgent();
+
+    await runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
+      try {
+        const cik = tickerToCik.get(symbol);
+        if (!cik) {
+          result[symbol] = {};
+          return;
+        }
+        const paddedCik = padCik(cik);
+        const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`;
+        const text = await politeFetchText(url, { headers: { "user-agent": ua }, timeoutMs: 12_000 });
+        const json = JSON.parse(text) as unknown;
+        const data = parseCompanyFacts(json);
+        cache.set(`sec-xbrl:${symbol}`, { expiresAt: now + SEC_XBRL_TTL_MS, data });
+        result[symbol] = data;
+      } catch {
+        result[symbol] = {};
+      }
+    });
 
     return result;
   }

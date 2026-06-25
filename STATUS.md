@@ -15,6 +15,15 @@ only) so they mature into missed-opportunity analytics like user rejections do. 
 1113/1114 tests (+2; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-learning-loop-honesty.md`.
 
+## 2026-06-25 — SEC EDGAR XBRL company-facts enrichment provider (keyless, default-OFF)
+Branch `claude/sec-xbrl-enrichment`. Keyless, default-OFF enrichment provider filling EXISTING
+`debtToEquity` + `eps` from authoritative SEC filings (companyfacts API). No new field threading
+(stays within existing fields). Reuses `secUserAgent`/`politeFetchText`/`runRateLimited`/`loadCikMap`/
+`padCik`; cascade order after FMP, before Yahoo. Pure tested `parseCompanyFacts` (latest 10-K, diluted
+EPS preferred, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. Built by a Sonnet subagent to a tight
+spec, verified by the main agent (tsc clean · 1136/1137 tests, +23; only the cache-provenance flake ·
+build green). See `docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
+
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
 analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
