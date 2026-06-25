@@ -95,6 +95,12 @@ describe("coerceCongressTrade — App A /api/transactions confirmed shape", () =
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "not-a-date" })).toBeNull();
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-13-45" })).toBeNull();
   });
+
+  it("skips option trades and very-low-confidence rows (App B is equity-only)", () => {
+    expect(coerceCongressTrade({ ticker: "AAPL", txType: "P", txDate: "2026-06-01", isOption: true })).toBeNull();
+    expect(coerceCongressTrade({ ticker: "AAPL", txType: "P", txDate: "2026-06-01", confidence: 0.1 })).toBeNull();
+    expect(coerceCongressTrade({ ticker: "AAPL", txType: "P", txDate: "2026-06-01", confidence: 0.9 })?.symbol).toBe("AAPL");
+  });
 });
 
 describe("applyCongressEvent — insider.update", () => {

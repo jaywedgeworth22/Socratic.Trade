@@ -1,3 +1,6 @@
+# The `verify` job below is the REQUIRED status check gating every merge to `main`
+# (enforced by the `main-protection` ruleset, not classic branch protection). It must be
+# green before a PR can merge; `gh pr merge <n> --squash --auto` lands the PR once it passes.
 name: CI
 
 on:

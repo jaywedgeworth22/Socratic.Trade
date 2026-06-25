@@ -4,26 +4,28 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-06-25 — App B return-path BUILT: securities-import receiver + fundamentals/analyst + price targets
-Implemented the two follow-up PRs scoped by the 2026-06-24 reply, plus the extra that
-fills the analyst payload's null numeric price targets. All additive + default-OFF.
+## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
+Built the inbound half of the App A return-path plus the price-target provider that fills the
+analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
+already landed on main (`marketQuoteToFundamentals`/`marketQuoteToAnalyst`) — did NOT duplicate it.
 - **Receiver (`feat/securities-import-receiver`):** new `POST /api/admin/securities/import`
-  (bearer `APP_B_INGEST_TOKEN`, constant-time, default-closed) + new local EOD cache
+  (bearer `APP_B_INGEST_TOKEN`, constant-time, default-closed) + new local writable EOD cache
   (`imported_securities_ref`/`imported_price_eod`/`imported_spx_eod` in `db.ts`,
-  `db-securities-import.ts`), wired as an OPT-IN, density-guarded `fetchDailyOHLC` tier
-  (`SECURITIES_IMPORT_HISTORY_TIER_ENABLED`, `SECURITIES_IMPORT_MIN_BARS=200`). No-echo
-  guard: outbound pushes are tagged `origin: app-b` and the receiver skips them.
-- **Fundamentals/analyst push:** `buildFundamentalsAnalystImport` (default-off
-  `CONGRESS_SHARE_FUNDAMENTALS`, capped by `CONGRESS_SHARE_FUNDAMENTALS_MAX`) rides the
-  nightly `congress-share` batch; sources from the FMP enrichment cascade.
-- **Numeric price targets:** opt-in FMP `price-target-consensus` (`FMP_PRICE_TARGETS_ENABLED`)
-  threads `targetMean/High/Low/Median` through the whole enrichment surface, so analyst[]
-  fills those columns instead of null.
-- Verify: tsc clean · 1088/1089 tests (+28; only the pre-existing cache-provenance date
-  flake fails) · build green (`/api/admin/securities/import` registered). Operator: set
-  `APP_B_INGEST_TOKEN`, hand App A the token + import URL out-of-band; flip the consume/
-  fundamentals/targets flags when ready. Off-theme backlog from the discovery sweep is
-  listed in the rollout note (not built — needs its own branches / owner sign-off).
+  `db-securities-import.ts`, `securities-import-auth.ts`), wired as an OPT-IN, density-guarded
+  `fetchDailyOHLC` tier (`SECURITIES_IMPORT_HISTORY_TIER_ENABLED`, `SECURITIES_IMPORT_MIN_BARS=200`).
+  No-echo guard: outbound `congress-share` pushes are tagged `origin: app-b` and the receiver skips
+  that origin. Receiver ignores insider/shortVolume/fundamentals/analyst on inbound (gap-fills are
+  prices/spx/refs only).
+- **Numeric analyst price targets:** opt-in FMP `price-target-consensus` (`FMP_PRICE_TARGETS_ENABLED`)
+  threads `targetMean/High/Low/Median` through the whole enrichment surface (`SymbolEnrichment`,
+  `EnrichmentSourcedField`, `takeScalar`, `EMPTY_SOURCED`, `MarketQuote`, `MarketQuoteSummary`,
+  `EnrichmentSources`, `market.ts` merge) and into `marketQuoteToAnalyst`, so the analyst[] push fills
+  those columns instead of null. Default-off → no behavior change.
+- Verify: tsc clean · full vitest green except the pre-existing cache-provenance date flake · build
+  green (`/api/admin/securities/import` registered). Operator: set `APP_B_INGEST_TOKEN`, hand App A
+  the token + import URL out-of-band; flip the consume/targets flags when ready. A discovery sweep's
+  off-theme backlog (chat tools, learning-loop wiring, money-path items, spend-gated caps) is listed in
+  the rollout note — deferred, needs its own branches / owner sign-off.
   See `docs/rollouts/2026-06-25-app-b-securities-import-fundamentals-price-targets.md`.
 
 ## 2026-06-24 — App B reply to App A: return-path + analytics ownership
@@ -71,6 +73,35 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-24 (`claude/per-account-isolation`, **COMPLETE / PR #128 ready**): **Per-account state
+  isolation — PR 1 of 3, all slices landed.** Each connected account gets its own isolated state
+  instead of all of a user's accounts sharing one. Owner decision: full isolation, except shareable
+  (fact-tier) learning stays user-wide; `strategy_profiles` is a copyable **library** + each account
+  has its own **live** state. DONE (verified green — tsc clean, 1075/1076 = only the unrelated
+  `cache-provenance` macro-cache flake, build green): (1) schema `account_strategy_state` + nullable
+  `connected_account_id` tags; (2) core policy + system-state isolation in `getPolicy/setPolicy`;
+  (3) run-state/run-lock per account; (4) audit/notification account tagging; (5) performance-learning
+  per account (counterfactuals + watermark PK-rebuilt to `(user_id, connected_account_id)`);
+  (6) scheduler multi-account iteration with `runStrategyOnce(userId,{connectedAccountId})` override
+  + a **safety guard** that seeds non-active accounts `halted` so autonomy never auto-arms a dormant
+  account; (7) deletion purge of all per-account state. Tests in
+  `test/per-account-policy-isolation.test.ts`. See `docs/design/per-account-isolation.md` +
+  `docs/rollouts/2026-06-24-per-account-isolation.md`. NOTE: merge to `main` lands it; **production
+  deploy is a separate manual step on the owner's host** (pull `main` on `~/apps/trading-live`,
+  rebuild, `pm2 restart trading`) — not reachable from the cloud agent env.
+
+- 2026-06-24 (`fix/land-workflow-scope-guard`): **Agents can push `.github/workflows/` changes directly.** Root cause wasn't a permission gap — the gh token already has the `workflow` scope and `git push` uses `gh auth git-credential` — it was a STALE `scripts/land.sh` guard that always `die`d on a workflow diff. Made step 5 **scope-aware**: allow the push when `gh auth status` shows the `workflow` scope (the common case), only block (with `gh auth refresh -h github.com -s workflow` guidance) when it's genuinely missing. Corrected `AGENTS.md` step-7 + the stale `ci-pending/README.md` note. This PR proves it end-to-end — its diff includes a `.github/workflows/ci.yml` header comment (documenting `verify` as the required ruleset check), so the push exercises the workflow-scope path. Also closed PR #84 (bot-identity — owner doesn't want enforced review). See `docs/rollouts/2026-06-24-land-workflow-scope-guard.md`.
+- 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
+  Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same
+  hover/click treatment and open symbol drilldown, with ticker-logo display passed through. Simplified
+  Add Alpaca Account by removing the top Paper/Brokerage endpoint explanation, inferred Paper from
+  either account number `PA...` or API key `PK...` in the client and server route, changed the live
+  Alpaca default endpoint to `https://api.alpaca.markets` (no `/v2`), and added best-effort Alpaca
+  IRA account-type parsing when broker payloads expose `account_type`/`account_sub_type`. Verification:
+  `npx tsc --noEmit`; focused `npx vitest run test/connected-accounts-route.test.ts
+  test/alpaca-account-type.test.ts`; full `npm test` (123 files / 1066 tests); `npm run build`;
+  `git diff --check`. Production update requested after landing; see
+  `docs/rollouts/2026-06-24-ticker-alpaca-production-update.md`.
 - 2026-06-24 (`chore/paid-data-tier-limits`): **Captured the paid Polygon/Massive + FMP "Starter" tiers.** Owner upgraded both (already wired via `MASSIVE_API_KEY`/`FMP_API_KEY`). Raised `DEFAULT_REST_MAX_CALLS_PER_MINUTE` 5→100 in `market-signals/massive.ts` (Starter = unlimited; 5/min was the free-tier cap that throttled breadth/news and forced Massive history to fall through to rate-limited Yahoo) and fixed stale `.env.example` (`MASSIVE_REST_MAX_CALLS_PER_MINUTE` 5→100, `FMP_MAX_SYMBOLS` 15→30; FMP code default was already 30). Paid FMP auto-restores the sector/industry/news fields the free tier dropped. No schema/new providers. **Operator action:** set the paid keys + `FMP_MAX_SYMBOLS=30` in the live `.env.local`, `pm2 restart trading --update-env`. tsc clean · history tests 13/13 · trio via land.sh. See `docs/rollouts/2026-06-24-paid-data-tier-limits.md`. (From the paid-tier value survey: these two were the high-value in-budget picks; everything else stays free.)
 - 2026-06-24 (`claude/fix-evaluator-cadence-dead-field`): **Removed dead `evaluatorCadenceHours`
   policy field.** It was declared on `TradingPolicy` (`types.ts`) and accepted in the tuner

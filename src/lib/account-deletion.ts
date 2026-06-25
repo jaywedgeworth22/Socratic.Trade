@@ -9,6 +9,7 @@ const DELETE_TABLES_BY_USER_ID = [
   "user_api_keys",
   "connected_accounts",
   "strategy_profiles",
+  "account_strategy_state",
   "strategy_runs",
   "trade_proposals",
   "portfolio_snapshots",
@@ -261,7 +262,8 @@ export function confirmAndDeleteAccount(input: {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(input.userId);
     }
     db.prepare("DELETE FROM learned_context WHERE user_id = ? OR contributor_user_id = ?").run(input.userId, input.userId);
-    db.prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${input.userId}`);
+    // Remove the user's run lock AND every per-account run lock (strategy_run_lock:<user>:<account>).
+    db.prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?").run(`strategy_run_lock:${input.userId}`, `strategy_run_lock:${input.userId}:%`);
     db.prepare("DELETE FROM account_deletion_requests WHERE user_id = ?").run(input.userId);
   })();
 

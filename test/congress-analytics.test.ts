@@ -50,10 +50,10 @@ describe("congress analytics overlay", () => {
       tickers: [
         { ticker: "aapl", tradeCount: 5, buyCount: 4, sellCount: 1, memberCount: 3, estNetFlowUsd: 250000, estVolumeUsd: 400000, netSentiment: 0.6 }
       ],
-      clusters: [{ ticker: "AAPL", memberCount: 3, topMembers: [{ memberName: "Jane Doe" }] }],
+      clusters: [{ ticker: "AAPL", memberCount: 3, topMembers: [{ fullName: "Jane Doe" }] }],
       members: [
-        { memberName: "Jane Doe", returnPct: 30 },
-        { memberName: "John Roe", returnPct: 10 }
+        { fullName: "Jane Doe", estVolumeUsd: 500000 },
+        { fullName: "John Roe", estVolumeUsd: 100000 }
       ]
     });
     const res = await refreshCongressAnalytics(Date.now(), true);
@@ -73,19 +73,19 @@ describe("congress analytics overlay", () => {
 });
 
 describe("buildMemberScores", () => {
-  it("rank-normalizes a performance field to 0–100", () => {
+  it("rank-normalizes App A's activity metric (estVolumeUsd) to 0–100, keyed by fullName", () => {
     const m = buildMemberScores([
-      { memberName: "A", returnPct: 50 },
-      { memberName: "B", returnPct: 10 },
-      { memberName: "C", returnPct: 30 }
+      { fullName: "A", estVolumeUsd: 50 },
+      { fullName: "B", estVolumeUsd: 10 },
+      { fullName: "C", estVolumeUsd: 30 }
     ]);
     expect(m.get("a")).toBe(100);
     expect(m.get("b")).toBe(0);
     expect(m.get("c")).toBe(50);
   });
 
-  it("is empty when no performance field is present (inert until App A exposes one)", () => {
-    expect(buildMemberScores([{ memberName: "A", trades: 5 }]).size).toBe(0);
+  it("is empty when no recognized activity field is present (inert until filer_id resolves on App A)", () => {
+    expect(buildMemberScores([{ fullName: "A", buyCount: 5 }]).size).toBe(0);
   });
 });
 

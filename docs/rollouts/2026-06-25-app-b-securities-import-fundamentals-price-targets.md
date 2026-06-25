@@ -4,33 +4,35 @@ Branch: `claude/app-b-analytics-return-path-a50as4`
 
 ## Summary
 
-Implemented the two follow-up PRs scoped by the 2026-06-24 App B → App A reply
-(`docs/congress-trade-app-b-reply.md`), plus the one directly-enabling extra that
-fills the analyst payload's previously-null numeric price targets. All three are
-**additive and default-OFF** — no behavior change until explicitly enabled.
+Built the inbound half of the App A return-path plus the price-target provider that
+fills the analyst push's previously-null target columns. **Reconciliation note:** the
+`fundamentals[]`/`analyst[]` push (PR2 from the reply) had ALREADY landed on `main`
+(via `marketQuoteToFundamentals`/`marketQuoteToAnalyst`, gated
+`CONGRESS_SHARE_FUNDAMENTALS_ENABLED`, sourced from the scan's `MarketQuote`). This
+branch did NOT duplicate it — an earlier draft did, and was dropped in favor of main's
+design during the merge. All changes here are **additive and default-OFF**.
 
 1. **`feat/securities-import-receiver` — inbound `POST /api/admin/securities/import`
-   + local EOD cache tier.** App A independently fetches price/spx/ref data and can
-   now POST those gap-fills back to App B (symmetric with the body App B already
-   POSTs to App A). Lands in a new local, writable EOD cache; an opt-in,
-   density-guarded `fetchDailyOHLC` tier can serve it so an imported series
-   displaces a re-fetch. Unblocks App A's previously-404 return path.
+   + local EOD cache tier (net-new; main has no receiver).** App A independently
+   fetches price/spx/ref data and can now POST those gap-fills back to App B
+   (symmetric with the body App B already POSTs to App A). Lands in a new local,
+   writable EOD cache; an opt-in, density-guarded `fetchDailyOHLC` tier can serve it
+   so an imported series displaces a re-fetch. Unblocks App A's previously-404 path.
 
-2. **`fundamentals[]` / `analyst[]` on the nightly batch (App A PR #46 slots).**
-   Two new builders source from App B's FMP enrichment cascade and ride the
-   existing default-off `congress-share.ts` nightly batch.
-
-3. **Numeric analyst price targets (FMP price-target-consensus).** New opt-in FMP
-   call threads `targetMean/High/Low/Median` through the full enrichment surface,
-   so the `analyst[]` push fills those columns instead of sending `null`.
+2. **Numeric analyst price targets (FMP price-target-consensus; net-new).** New
+   opt-in FMP call threads `targetMean/High/Low/Median` through the full enrichment
+   surface onto the quote, and `marketQuoteToAnalyst` (main's builder) now emits them
+   — so the existing `analyst[]` push fills those columns instead of sending `null`.
 
 ## Why
 
-The reply doc committed App B to (1) and (2) and explicitly deferred numeric price
-targets "until we wire a price-target provider." (3) wires that provider so the
-analytics return-path is complete rather than shipping permanently-null columns.
-Scoped to this one on-theme branch (analytics return-path); off-theme backlog
-items from the discovery sweep are listed under Follow-ups, not built here.
+The reply doc committed App B to a receiver + a fundamentals/analyst push and
+explicitly deferred numeric price targets "until we wire a price-target provider."
+The fundamentals/analyst push already shipped on main; this branch adds the missing
+receiver and wires the price-target provider so the analytics return-path is complete
+rather than shipping permanently-null columns. Scoped to this one on-theme branch
+(analytics return-path); off-theme backlog items from the discovery sweep are listed
+under Follow-ups, not built here.
 
 ## Files
 
@@ -55,14 +57,13 @@ items from the discovery sweep are listed under Follow-ups, not built here.
 - `src/lib/congress-share.ts` — `APP_B_ORIGIN` constant + `origin?` on
   `CongressSharePayload`; outbound POST now stamps `origin` (no-echo-loop tag).
 
-**PR2 — fundamentals[]/analyst[] push**
-- `src/lib/congress-share.ts` — `CongressFundamentals`/`CongressAnalyst` types;
-  `pickAnalystCounts`, `enrichmentToFundamentals`, `enrichmentToAnalyst`,
-  `buildFundamentalsAnalystImport` (default-off `CONGRESS_SHARE_FUNDAMENTALS`,
-  capped by `CONGRESS_SHARE_FUNDAMENTALS_MAX` with the cap logged, never silent);
-  wired into `runCongressDailyShare` head payload + sent/summary/audit accounting.
+**congress-share.ts (origin tagging + targets on main's builder)**
+- `src/lib/congress-share.ts` — `APP_B_ORIGIN` constant + `origin?` on
+  `CongressSharePayload`; outbound POST stamps `origin` (no-echo-loop tag);
+  `CongressAnalyst` gains optional `targetMean/High/Low/Median` and
+  `marketQuoteToAnalyst` (main's builder) now emits them from the quote.
 
-**Price targets (enables PR2's targets)**
+**Price targets (the net-new provider)**
 - `src/lib/data-providers.ts` — `fmpPriceTargetsEnabled()` + opt-in 5th
   `Promise.allSettled` call to `price-target-consensus` in `FmpEnrichmentProvider`;
   `targetMean/High/Low/Median` added to `SymbolEnrichment`, `EnrichmentSourcedField`,
@@ -73,9 +74,9 @@ items from the discovery sweep are listed under Follow-ups, not built here.
   (the documented cross-file enrichment trap — all sites updated).
 
 **Tests / config / docs**
-- `test/securities-import.test.ts` (new, 17 cases), `test/congress-share-fundamentals.test.ts`
-  (new, 11 cases), `test/congress-share.test.ts` (updated 1 body assertion for the
-  new `origin` tag).
+- `test/securities-import.test.ts` (new, 17 cases), `test/congress-share-price-targets.test.ts`
+  (new, 5 cases — targets flow into `marketQuoteToAnalyst`), `test/congress-share.test.ts`
+  (merged with main; the body assertion already expects the new `origin` tag).
 - `.env.example` — `APP_B_INGEST_TOKEN`, `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`,
   `SECURITIES_IMPORT_MIN_BARS`, `CONGRESS_SHARE_FUNDAMENTALS`,
   `CONGRESS_SHARE_FUNDAMENTALS_MAX`, `FMP_PRICE_TARGETS_ENABLED`.

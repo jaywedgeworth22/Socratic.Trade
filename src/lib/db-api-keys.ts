@@ -113,7 +113,9 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   powerintell: "FINTECH_STUDIOS_API_KEY",
   tiingo: "TIINGO_API_KEY",
   intrinio: "INTRINIO_API_KEY",
-  twelvedata: "TWELVEDATA_API_KEY"
+  twelvedata: "TWELVEDATA_API_KEY",
+  logodev: "LOGO_DEV_TOKEN",
+  logodev_secret: "LOGO_DEV_SECRET_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -147,7 +149,13 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   intrinio_api_key: "intrinio",
   twelve_data: "twelvedata",
   twelve_data_api_key: "twelvedata",
-  twelvedata_api_key: "twelvedata"
+  twelvedata_api_key: "twelvedata",
+  logo_dev: "logodev",
+  logo_dev_token: "logodev",
+  logodev_token: "logodev",
+  logo_dev_secret: "logodev_secret",
+  logo_dev_secret_key: "logodev_secret",
+  logodev_secret_key: "logodev_secret"
 };
 
 function keyRowToApiKey(row: {
@@ -277,7 +285,9 @@ const API_KEY_TIER: Record<string, CredTier> = {
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
   intrinio: "shared-operator-infra",
-  twelvedata: "shared-operator-infra"
+  twelvedata: "shared-operator-infra",
+  logodev: "shared-operator-infra",
+  logodev_secret: "shared-operator-infra"
 };
 
 export function credTierForService(service: string): CredTier {
@@ -482,6 +492,31 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
   };
 }
 
+// Fetch a specific connected account by id (scoped to the owning user), with decrypted
+// keys — used by the scheduler to run a non-active account autonomously.
+export function getConnectedAccount(id: string, userId: string = "local"): ConnectedAccount | undefined {
+  const row = getDb()
+    .prepare("SELECT * FROM connected_accounts WHERE id = ? AND user_id = ? LIMIT 1")
+    .get(id, userId) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    broker: String(row.broker) as "alpaca" | "robinhood" | "test",
+    environment: String(row.environment) as "live" | "paper",
+    accountNumber: row.account_number != null ? String(row.account_number) : undefined,
+    label: String(row.label),
+    taxationType: row.taxation_type != null ? (String(row.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
+    apiKey: row.api_key ? decryptValue(String(row.api_key)) : undefined,
+    apiSecret: row.api_secret ? decryptValue(String(row.api_secret)) : undefined,
+    baseUrl: row.base_url != null ? String(row.base_url) : undefined,
+    capabilities: parseCapabilities(row.capabilities),
+    isActive: row.is_active === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
 // Insert or update a connected account. The `ON CONFLICT(id) DO UPDATE ... WHERE user_id = excluded.user_id`
 // guard makes the UPDATE branch a no-op when the existing row belongs to a DIFFERENT user, so a caller
 // who supplies someone else's account `id` (e.g. the deterministic `test-<userId>` id, derivable from a
@@ -562,6 +597,20 @@ export function deleteConnectedAccount(id: string, userId: string = "local"): bo
         database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
       }
     }
+    // Purge the account's per-account isolated state, keyed by connected_account_id (= this id):
+    // live strategy state, run history, performance-learning rows, audit/notification trail.
+    for (const table of [
+      "account_strategy_state",
+      "strategy_runs",
+      "skipped_candidate_counterfactuals",
+      "counterfactual_learning_watermarks",
+      "audit_events",
+      "notification_events"
+    ]) {
+      database.prepare(`DELETE FROM ${table} WHERE connected_account_id = ? AND user_id = ?`).run(id, userId);
+    }
+    // Release this account's run lock if held (in-memory scheduler state clears on next restart).
+    database.prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${userId}:${id}`);
     return result.changes > 0;
   });
   return run();

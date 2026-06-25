@@ -243,10 +243,10 @@ export function assertEncryptionKeyAvailable(
   }
 }
 
-export function audit(kind: string, payload: unknown, userId: string = "local"): void {
+export function audit(kind: string, payload: unknown, userId: string = "local", connectedAccountId?: string): void {
   getDb()
-    .prepare("INSERT INTO audit_events (id, user_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?)")
-    .run(crypto.randomUUID(), userId, new Date().toISOString(), kind, JSON.stringify(payload));
+    .prepare("INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(crypto.randomUUID(), userId, connectedAccountId ?? null, new Date().toISOString(), kind, JSON.stringify(payload));
 }
 
 function migrate(database: Database.Database): void {
@@ -297,6 +297,25 @@ function migrate(database: Database.Database): void {
       active INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    -- Per-account LIVE strategy state (policy + system_state), keyed by the stable
+    -- connected_accounts.id. strategy_profiles is the user-level copyable LIBRARY;
+    -- this is what an account is actually running. Seeded lazily on first read
+    -- (migration-on-read in db-profiles.getPolicy) so existing single-account users
+    -- are byte-identical day one. No hard FK — deletion is handled in code
+    -- (deleteConnectedAccount / account-deletion purge), matching the per-account
+    -- execution tables above.
+    CREATE TABLE IF NOT EXISTS account_strategy_state (
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL,
+      policy TEXT NOT NULL,
+      prompt TEXT,
+      scoring_weights TEXT,
+      system_state TEXT NOT NULL DEFAULT 'halted',
+      derived_from_profile_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, connected_account_id)
     );
 
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
@@ -455,11 +474,13 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_skipped_counterfactuals_user_return ON skipped_candidate_counterfactuals (user_id, return_pct);
 
     CREATE TABLE IF NOT EXISTS counterfactual_learning_watermarks (
-      user_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL DEFAULT '',
       last_audit_rowid INTEGER,
       last_audit_created_at TEXT,
       last_audit_id TEXT,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, connected_account_id)
     );
 
     CREATE TABLE IF NOT EXISTS market_data_demands (
@@ -697,6 +718,58 @@ function migrate(database: Database.Database): void {
   }
   if (!connectedAccountColumns.some((column) => column.name === "capabilities")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN capabilities TEXT");
+  }
+
+  // Per-account state isolation: tag user-level state tables with the connected
+  // account they belong to (nullable — account-agnostic rows keep NULL). New per-account
+  // state (policy/system_state) lives in account_strategy_state above; these columns let
+  // run-state, performance-derived learning, audit and notifications be filtered per account.
+  const addAccountColumn = (table: string) => {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "connected_account_id")) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN connected_account_id TEXT`);
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_account ON ${table} (user_id, connected_account_id)`);
+    }
+  };
+  for (const table of [
+    "strategy_runs",
+    "skipped_candidate_counterfactuals",
+    "counterfactual_learning_watermarks",
+    "audit_events",
+    "notification_events"
+  ]) {
+    addAccountColumn(table);
+  }
+
+  // Per-account watermarks need (user_id, connected_account_id) as the PK, but the original table
+  // was created with user_id as the SOLE primary key — a nullable column alone can't express
+  // per-account rows. Rebuild it once: the account-agnostic watermark becomes connected_account_id=''
+  // (empty string, never NULL, so the composite PK upsert is well-defined). Idempotent — guarded on
+  // whether connected_account_id is already part of the PK (pk flag > 0).
+  {
+    const wmCols = database
+      .prepare("PRAGMA table_info(counterfactual_learning_watermarks)")
+      .all() as Array<{ name: string; pk: number }>;
+    const accountInPk = wmCols.some((c) => c.name === "connected_account_id" && c.pk > 0);
+    if (!accountInPk) {
+      database.exec(`
+        CREATE TABLE counterfactual_learning_watermarks_new (
+          user_id TEXT NOT NULL,
+          connected_account_id TEXT NOT NULL DEFAULT '',
+          last_audit_rowid INTEGER,
+          last_audit_created_at TEXT,
+          last_audit_id TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, connected_account_id)
+        );
+        INSERT OR IGNORE INTO counterfactual_learning_watermarks_new
+          (user_id, connected_account_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at)
+          SELECT user_id, COALESCE(connected_account_id, ''), last_audit_rowid, last_audit_created_at, last_audit_id, updated_at
+          FROM counterfactual_learning_watermarks;
+        DROP TABLE counterfactual_learning_watermarks;
+        ALTER TABLE counterfactual_learning_watermarks_new RENAME TO counterfactual_learning_watermarks;
+      `);
+    }
   }
 
   // Rename: legacy "dry_run" proposal status is now "paper".

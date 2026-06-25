@@ -6,6 +6,12 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
+function isAlpacaPaperCredential(input: { accountNumber?: unknown; apiKey?: unknown }): boolean {
+  const accountNumber = typeof input.accountNumber === "string" ? input.accountNumber.trim().toUpperCase() : "";
+  const apiKey = typeof input.apiKey === "string" ? input.apiKey.trim().toUpperCase() : "";
+  return accountNumber.startsWith("PA") || apiKey.startsWith("PK");
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -53,9 +59,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
     }
 
-    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, the environment
-    // is differentiated strictly by the first 2 letters of the account number:
-    // "PA..." (case-insensitive) represents Paper, otherwise it is Brokerage (live).
+    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, Paper is
+    // inferred from either the account number ("PA...") or API key ("PK...").
     if ((broker === "alpaca" || broker === "alpaca-mcp") && (!body.accountNumber || !body.accountNumber.trim())) {
       return new NextResponse("Account number is required for Alpaca", { status: 400 });
     }
@@ -63,8 +68,7 @@ export async function POST(req: Request) {
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
     let environment: "paper" | "live" = "paper";
     if (broker === "alpaca" || broker === "alpaca-mcp") {
-      const accNum = body.accountNumber.trim();
-      environment = accNum.toUpperCase().startsWith("PA") ? "paper" : "live";
+      environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
     } else if (broker === "test") {
       environment = "paper";
     } else {
@@ -92,7 +96,7 @@ export async function POST(req: Request) {
         : (broker === "alpaca" || broker === "alpaca-mcp")
           ? environment === "paper"
             ? "https://paper-api.alpaca.markets/v2"
-            : "https://api.alpaca.markets/v2"
+            : "https://api.alpaca.markets"
           : undefined,
       taxationType,
       isActive: body.isActive ?? false

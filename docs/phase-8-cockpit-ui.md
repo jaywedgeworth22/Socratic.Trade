@@ -146,6 +146,9 @@ across panels, feeds, popovers, or status chips.
   Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Standalone ticker text should use the shared clickable ticker treatment so
+  hover/click styling and symbol drilldown are consistent in Market Scan,
+  Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.
 - Settings → Data includes Market Scan candidate controls. `Candidate cap`
   controls how many ranked/enriched rows reach `marketScan.topCandidates` and
   the LLM prompt; `Outlier reserve` controls how many below-cutoff names with
