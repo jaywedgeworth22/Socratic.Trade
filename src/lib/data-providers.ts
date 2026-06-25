@@ -977,7 +977,10 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     if (misses.length === 0) return result;
 
     let creds: YfCreds;
-    try { creds = await this.getCreds(); } catch { return result; }
+    try { creds = await this.getCreds(); } catch (err) {
+      logApiHealth({ service: this.name, ok: false, errorText: err instanceof Error ? err.message : String(err) });
+      return result;
+    }
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
@@ -1460,6 +1463,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               
               if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
                 const msg = String(payload.Note || payload.Information || payload["Error Message"]);
+                logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}` });
                 throw new Error(`Alpha Vantage API warning/error: ${msg}`);
               }
             } finally {

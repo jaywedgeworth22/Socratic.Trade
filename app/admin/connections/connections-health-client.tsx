@@ -120,9 +120,11 @@ type DrawerTab = "log" | "errors";
 function ServiceDetail({
   summary,
   errorPatterns,
+  asOf,
 }: {
   summary: ServiceHealthSummary;
   errorPatterns: ErrorPatternRow[];
+  asOf: string;
 }) {
   const [tab, setTab] = useState<DrawerTab>("log");
   const [log, setLog] = useState<HealthLogRow[]>([]);
@@ -136,7 +138,7 @@ function ServiceDetail({
       .then((data) => setLog(data.log ?? []))
       .catch(() => setLog([]))
       .finally(() => setLoadingLog(false));
-  }, [summary.service, tab]);
+  }, [summary.service, tab, asOf]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -327,6 +329,7 @@ export function ConnectionsHealthClient() {
               <ServiceDetail
                 summary={selectedSummary}
                 errorPatterns={data.errorPatterns[selectedSummary.service] ?? []}
+                asOf={data.asOf}
               />
             </Card>
           )}
