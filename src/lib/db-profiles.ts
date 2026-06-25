@@ -4,7 +4,7 @@
 import crypto from "crypto";
 import { getDb, audit } from "./db";
 import { getUserSetting, setUserSetting } from "./db-settings";
-import { getActiveConnectedAccount, listConnectedAccounts } from "./db-api-keys";
+import { getActiveConnectedAccount, getConnectedAccount, listConnectedAccounts } from "./db-api-keys";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
 import type {
   ScoringWeights,
@@ -343,6 +343,50 @@ export function activateStrategyProfile(id: string, userId: string = "local"): S
   mirrorPolicyToActiveAccount(userId, mergePolicy({ ...profile.policy, activeProfileId: id }), profile.prompt, profile.policy.scoringWeights, id);
   audit("profile_change", { action: "activate", id, name: profile.name }, userId);
   return getStrategyProfile(id, userId)!;
+}
+
+/**
+ * PR 2 — copy a saved library strategy into a CHOSEN account's live state (not just the active one,
+ * which is what `activateStrategyProfile` does). The library profile and which account is active are
+ * left untouched: this only writes the target account's `account_strategy_state` row, stamping
+ * `derived_from_profile_id` so the provenance is recorded. Copy, not link — later edits to the
+ * library profile do not retro-mutate the account.
+ *
+ * SAFETY: the target account's current run-state (`systemState`) is preserved. Applying a strategy
+ * is a config change; it must never arm autonomy on a halted account (nor disarm an active one),
+ * mirroring the per-account autonomy-opt-in guard from PR 1.
+ */
+export function applyProfileToAccount(
+  profileId: string,
+  connectedAccountId: string,
+  userId: string = "local"
+): { profileId: string; connectedAccountId: string } {
+  const profile = getStrategyProfile(profileId, userId);
+  if (!profile) throw new Error("Strategy profile not found.");
+  const account = getConnectedAccount(connectedAccountId, userId);
+  if (!account) throw new Error("Connected account not found.");
+
+  const currentState = getPolicy(userId, connectedAccountId).systemState;
+  const scoringWeights = normalizeScoringWeights(profile.policy.scoringWeights);
+  const policy = mergePolicy({
+    ...profile.policy,
+    scoringWeights,
+    systemState: currentState,
+    activeProfileId: profile.id
+  });
+  writeAccountStrategyState(userId, connectedAccountId, {
+    policy,
+    prompt: profile.prompt,
+    scoringWeights,
+    derivedFromProfileId: profile.id
+  });
+  audit(
+    "profile_change",
+    { action: "copy_to_account", id: profileId, name: profile.name, connectedAccountId },
+    userId,
+    connectedAccountId
+  );
+  return { profileId, connectedAccountId };
 }
 
 /**
