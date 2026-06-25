@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
+Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
+(`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
+git-ignored (only `.env.example` tracked), each worktree's copy is independent, and **GCP
+Secret Manager is the authoritative upstream for secret values** — every `.env.local` is a
+local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
+`GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
+across the integration/agent/production copies, and that per-user keys live encrypted in
+`user_api_keys`, not `.env.local`. No code touched; CI `verify` covers tsc/test/build. See
+`docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md`.
+
 ## 2026-06-25 — Learning-loop honesty (OOS no-op caution + policy-blocked counterfactual)
 Branch `claude/learning-loop-honesty`. First of the clean/additive backlog batches (post #137).
 Both additive + advisory-only (no money path). (1) `applyOosGate` (`strategy-tuning.ts`) now appends

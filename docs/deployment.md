@@ -13,6 +13,61 @@ Cloudflare DNS, Tunnel ingress, Access apps, redirect-rule exclusions, and
 documentation should use `trading-beta.jays.services` for the 4001 beta lane.
 Do not create a second dev/beta hostname for this preview.
 
+## Configuration & secrets (`.env.local`) — what's authoritative
+
+`.env.local` is **git-ignored** (`.gitignore`: `.env`, `.env*.local`) and is
+**never committed** — only the secret-free template `.env.example` is tracked.
+Git is therefore **not** the source of truth for secret *values*, and there is
+no single canonical `.env.local` file: each machine/worktree has its own
+independent copy that does not sync with the others.
+
+**The authoritative upstream for secret values is Google Cloud Secret Manager.**
+Every `.env.local` is a local materialization (cache) of what lives in GCP. To
+change a secret, update it in GCP (add a new secret version) — that is the
+canonical edit; the `.env.local` copies are downstream of it.
+
+Run with secrets pulled live from GCP at runtime via the `*:gcp` scripts
+(`scripts/gcp-secrets-run.mjs`):
+
+```bash
+npm run dev:gcp      # next dev   with GCP secrets injected
+npm run build:gcp    # next build with GCP secrets injected
+npm run start:gcp    # next start with GCP secrets injected
+```
+
+- **Auth:** set `GCP_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`) and provide
+  Application Default Credentials — `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json`,
+  `gcloud auth application-default login` (local dev), or Workload Identity
+  (GCP-hosted).
+- **Mapping:** each GCP secret whose name equals an env-var name is injected
+  under that name (secret `INTRINIO_API_KEY` → env `INTRINIO_API_KEY`). Scope
+  which secrets load with `GCP_SECRET_NAMES=A,B,C` (explicit list) or
+  `GCP_SECRETS_PREFIX=trading-` (prefix filter — the prefix is stripped to form
+  the env name). Existing env vars win by default; set `GCP_SECRETS_OVERWRITE=true`
+  to let GCP override them.
+- **Graceful fallback:** if `GCP_PROJECT_ID` is unset, the runner skips Secret
+  Manager and runs the command directly, so the plain `npm run dev`/`build`/`start`
+  still work off a hand-written `.env.local`.
+
+**How each `.env.local` relates (none is canonical over GCP):**
+
+| Location | Role | How to refresh |
+|---|---|---|
+| `~/Code/Agentic Trading/.env.local` | Integration/dev **seed**. `scripts/setup-agent-previews.sh` copies it into a new agent worktree **once, only if absent**. | Edit locally, or pull live with `dev:gcp`. |
+| `~/apps/trading-<agent>/.env.local` | Per-agent preview copy; **diverges** after the one-time seed (editing one never updates the others). | Delete + re-run `setup-agent-previews.sh` to re-seed, or run via `dev:gcp`. |
+| `~/apps/trading-live/.env.local` | **Production.** Preserved across deploys — `git reset --hard FETCH_HEAD` only touches *tracked* files. | Refresh from GCP (or run PM2 `trading` via `start:gcp`); host PM2 wiring lives in `~/apps/README.md`. Don't hand-edit and let it drift. |
+
+Per-user API keys entered through the app's Settings are **not** in `.env.local`
+at all — they are AES-256-GCM encrypted in the SQLite `user_api_keys` table
+(needs a stable `ENCRYPTION_KEY`). `.env.local` carries only the
+operator/primary-user fallback keys.
+
+> Status: the `*:gcp` runner exists and is the **designated** source of truth,
+> but it requires `GCP_PROJECT_ID` + ADC configured on each box, and production
+> auto-pull (PM2 `trading` via `start:gcp`) must be wired into the host PM2
+> ecosystem before live deploys read from GCP. See
+> `docs/rollouts/2026-06-24-intrinio-tiingo-twelvedata-gcp-secrets.md`.
+
 ## How it deploys (automated)
 
 `.github/workflows/deploy.yml` deploys on **every push to `main`** (i.e. every
