@@ -473,7 +473,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
         const message = placeError instanceof Error ? placeError.message : String(placeError);
         // The broker may or may not have accepted the order. Keep the durable intent row and
         // flag it loudly for reconciliation rather than aborting the whole run.
-        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
@@ -1290,7 +1290,7 @@ export async function executeProposal(
       execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
     } catch (placeError) {
       const message = placeError instanceof Error ? placeError.message : String(placeError);
-      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
       audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
       await sendNotification(
         { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
@@ -2294,7 +2294,7 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
       }
       audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId);
     } else {
-      updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId);
+      updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
       audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId);
     }
   }

@@ -64,11 +64,15 @@ Yahoo Finance (public API, no key) intentionally left without keySource — logs
 - Sort is stable: stopped-first → alphabetical by service → alphabetical by keySource
 
 ## Files touched
-- `src/lib/db.ts` — ALTER TABLE migrations for key_source/user_id
+- `src/lib/db.ts` — ALTER TABLE migrations for key_source/user_id; error_message column on trade_proposals
 - `src/lib/db-health.ts` — keySource threading throughout
-- `src/lib/data-providers.ts` — 8 constructors + 9 call sites
+- `src/lib/db-proposals.ts` — updateProposalStatus error_message param; listRecentProposals includes error_message
+- `src/lib/data-providers.ts` — 8 constructors + 9 call sites; TwelveData 200-but-error fix
+- `src/lib/types.ts` — RecentProposal.errorMessage field
+- `src/lib/strategy.ts` — 3 placing_failed sites pass error message
 - `app/api/admin/connections-health/route.ts` — keySource param
 - `app/admin/connections/connections-health-client.tsx` — lane-aware UI
+- `app/dashboard-client.tsx` — error message banner in proposal cards
 - `STATUS.md` — updated
 - `docs/rollouts/2026-06-25-credential-scoped-health-lanes.md` — this file
 
@@ -94,13 +98,27 @@ npm run build       # clean
 When `api_health_error_patterns` exists but has NO `key_source` column (pre-credential DB),
 `COALESCE(key_source, '')` raises "no such column". Fixed: `const ksExpr = ksCol ? "COALESCE(key_source, '')" : "''"`.
 
-### commit (HEAD) — AlphaVantage 200-but-error logged as healthy
+### commit e6d2429 — AlphaVantage 200-but-error logged as healthy
 Alpha Vantage returns HTTP 200 with error payloads (`Note`/`Information`/`Error Message`). Previously
 `fetchWithRetry` auto-logged `ok: true` at HTTP 200, then AlphaVantage wrote a second `ok: false` row —
 net effect: false-positive success row before the error. Fixed: added `deferSuccessLog?: boolean` option
 to `fetchWithRetry`; when set, the success log is deferred to the caller. AlphaVantage passes
 `deferSuccessLog: true` and logs success explicitly after body validates (no Note/Information/ErrorMessage
 fields present). HTTP errors and network errors still auto-logged in `fetchWithRetry` regardless of flag.
+
+### commit f323f95 — Index migration ordering + TwelveData 200-but-error
+Two fixes:
+1. `idx_api_health_log_service_key` moved out of the main `database.exec(...)` block (where `CREATE TABLE IF NOT EXISTS` is a no-op on existing DBs so the index ran before ALTER TABLE added `key_source`) and placed unconditionally AFTER the ALTER TABLE migration block. `IF NOT EXISTS` keeps it idempotent.
+2. TwelveData returns HTTP 200 with `status: "error"` / `message` for invalid key / quota exhaustion. Applied `deferSuccessLog: true`; added top-level `rawObj.status === "error"` guard that logs failure and continues.
+
+### commit (HEAD) — Trade placement error persistence
+Broker and network errors on failed order placement are now persisted and surfaced.
+- `trade_proposals` schema: added `error_message TEXT` column (CREATE TABLE + ALTER TABLE migration for existing DBs).
+- `db-proposals.ts` `updateProposalStatus`: added `errorMessage?: string` parameter; stored via `COALESCE(?, error_message)` so the first error message is preserved (subsequent status updates without an error don't overwrite).
+- `db-proposals.ts` `listRecentProposals`: SELECT and map include `error_message`.
+- `types.ts` `RecentProposal`: added `errorMessage?: string` field.
+- `strategy.ts`: all three `placing_failed` call sites pass the caught error message (two broker-error catch blocks, one stale-placing reconciliation path with a fixed descriptive note).
+- `dashboard-client.tsx`: `DecisionLedgerItem` carries `errorMessage`; proposal cards render an amber "Order error: ..." banner when the field is set.
 
 ## Known deferred items
 - **Per-user lane isolation**: `key_source` values are `"env" | "user"` (not per-user-ID). Multiple tenants

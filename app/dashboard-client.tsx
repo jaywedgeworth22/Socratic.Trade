@@ -1851,6 +1851,11 @@ function DecisionView({
                       {hypothetical && <p className="rounded-md border border-info/20 bg-info/10 px-2 py-1 text-muted">{hypothetical}</p>}
                     </div>
                   )}
+                  {item.errorMessage && (
+                    <p className="mt-2 rounded-md border border-warn/30 bg-warn/10 px-2 py-1 text-[11px] text-muted">
+                      <span className="font-semibold">Order error: </span>{item.errorMessage}
+                    </p>
+                  )}
                 </div>
               );
             })}
@@ -1876,6 +1881,7 @@ type DecisionLedgerItem = {
   performanceSinceProposalPct?: number;
   proposalReferencePrice?: number;
   proposalCurrentPrice?: number;
+  errorMessage?: string;
 };
 
 function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
@@ -1893,7 +1899,8 @@ function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] 
       review: item.review,
       performanceSinceProposalPct: item.performanceSinceProposalPct,
       proposalReferencePrice: item.proposalReferencePrice,
-      proposalCurrentPrice: item.proposalCurrentPrice
+      proposalCurrentPrice: item.proposalCurrentPrice,
+      errorMessage: item.errorMessage
     }));
   }
   const decision = snapshot.latestStrategyRun;

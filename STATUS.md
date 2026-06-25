@@ -28,7 +28,7 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
-- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes).**
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
   New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
   (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256
   error fingerprinting. Credential scoping: health rows keyed by `(service, key_source)` so env-key
@@ -39,8 +39,11 @@ Branch: claude/magical-faraday-uce1uy
   table with correct NOT NULL DEFAULT '' key_source + UNIQUE(service,fingerprint,key_source)). Admin
   client groups cards and detail panels by credential lane, passes `?keySource=` to log API. 429s
   logged before retry sleep. Alpha Vantage 200-but-error no longer logged as healthy (deferSuccessLog).
-  tsc clean; 1 pre-existing test failure (cache-provenance date flake); build green. See
-  `docs/rollouts/2026-06-25-connections-health-panel.md` and
+  TwelveData 200-but-error also fixed. Index migration ordering fix (idx_api_health_log_service_key
+  moved after ALTER TABLE). Added `error_message TEXT` column to `trade_proposals` — broker/network
+  errors are now persisted when a trade reaches `placing_failed` status and surfaced in the dashboard
+  proposal card UI. tsc clean; 1 pre-existing test failure (cache-provenance date flake); build green.
+  See `docs/rollouts/2026-06-25-connections-health-panel.md` and
   `docs/rollouts/2026-06-25-credential-scoped-health-lanes.md`.
 
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**

@@ -285,7 +285,8 @@ function migrate(database: Database.Database): void {
       status TEXT NOT NULL,
       trade_thesis_tag TEXT,
       entry_market_regime TEXT,
-      execution_mode TEXT
+      execution_mode TEXT,
+      error_message TEXT
     );
 
     CREATE TABLE IF NOT EXISTS strategy_profiles (
@@ -665,6 +666,9 @@ function migrate(database: Database.Database): void {
   if (!columns.some((column) => column.name === "last_revalidated_at")) {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN last_revalidated_at TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN revalidation_note TEXT");
+  }
+  if (!columns.some((column) => column.name === "error_message")) {
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN error_message TEXT");
   }
   // MAE/MFE persistence: add excursion columns to fill_events (additive, guarded).
   const fillEventColumns = database.prepare("PRAGMA table_info(fill_events)").all() as Array<{ name: string }>;
