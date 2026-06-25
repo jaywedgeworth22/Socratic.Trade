@@ -19,6 +19,12 @@ export async function register() {
 
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  // Fail fast if this deployment requires a secrets manager but wasn't launched through one
+  // (REQUIRE_SECRETS_MANAGER set, but not started via start:secrets / start:gcp). Default off →
+  // no effect on local dev / tests / CI. Runs before anything reads a credential.
+  const { assertSecretsManagerIfRequired } = await import("./src/lib/secrets-source");
+  assertSecretsManagerIfRequired();
+
   if (process.env.SENTRY_DSN) {
     await import("./sentry.server.config");
   }

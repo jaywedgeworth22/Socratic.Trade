@@ -15,6 +15,66 @@ Supplies only fundamentals/analyst (no price) so quote ordering is unchanged; no
 `SymbolEnrichment` field. tsc clean, 1184 tests pass, build OK. Next: flag flip to
 enable in prod; the parallel cascade means this is precedence (not yet
 call-elimination) — see rollout note `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`.
+## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
+Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
+opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`
+(`assertSecretsManagerIfRequired`) throws at boot (wired first in `instrumentation.ts` nodejs
+`register()`) when `REQUIRE_SECRETS_MANAGER` is set but `SECRETS_SOURCE` is absent. The runners now
+set the marker: `infisical-run.mjs` → `SECRETS_SOURCE=infisical`; `gcp-secrets-run.mjs` → `=gcp` ONLY
+on a successful fetch (fail-open fallback leaves it unset so the guard trips). Default OFF → no change
+for dev/tests/CI. `.env.example` + new `docs/secrets.md` document the bootstrap-token-only model + the
+operator's one-time `.env.local → Infisical` import (values never pass through an agent). Infisical
+chosen over GCP: genuinely free (unlimited secrets), already wired, no SA-key file. tsc clean ·
+secrets-source tests 5/5 · trio via land.sh. **Operator follow-up:** import secrets to Infisical Cloud
++ machine identity, set bootstrap + `REQUIRE_SECRETS_MANAGER=1`, switch PM2 `trading` to
+`start:secrets`, verify, scrub `.env.local`. See `docs/rollouts/2026-06-25-force-secrets-manager.md`.
+
+## 2026-06-25 — Harden `gcp-secrets-run.mjs` to fail open on any credential error
+Branch `claude/gcp-secrets-fail-open`. Follow-up to #154. The `*:gcp` wrapper's "fails open" promise
+was incomplete — three credential failure modes (missing/invalid `GOOGLE_APPLICATION_CREDENTIALS` path,
+no ADC, malformed JSON key) crashed it (uncaught, exit 1) instead of running the command with the
+existing env. Added process-level `uncaughtException`/`unhandledRejection` fail-open guards funneling to
+an idempotent single `runCommand()` (`started` flag → no double-spawn) + `child.on("error")` for
+command-not-found; always propagates the child's exit code. Verified by direct runtime tests (T2/T3/T4
+went from crash-exit-1 to clean fail-open with the child's code; T1 premature-exit fix intact; T5 clean
+exit 1) + trio (build ✓ · tsc ✓ clean · 1198/1198 tests). Updated `docs/deployment.md` (removed the #154
+fail-open exception). See `docs/rollouts/2026-06-25-gcp-secrets-fail-open.md`.
+
+## 2026-06-25 — Universe floor (Phase 1 of settings/universe overhaul)
+Branch `agent/claude-settings-overhaul`. First phase of a 4-phase program (see
+`docs/settings-and-universe-overhaul-plan.md`): owner approved a full settings overhaul + take-profit→real
+trim + universe floor + backfill expansion. **This PR = the universe floor**: new `UniverseFloor`
+(`minPrice`/`minMarketCapUsd`/`minDollarVolume`) on `TradingPolicy`, default `{5, $100M, $1M}`, applied in
+the market scan before ranking via `applyUniverseFloor` (`market.ts`) — excludes penny/illiquid names from
+the candidate set. Explicit `additionalSymbols` + held positions are exempt; exits unaffected; missing
+cap/volume data never excludes (price floor is the penny gate). No-op for the default S&P-500 universe.
+Verify: tsc clean · universe-floor + market tests 24 passed · full trio via land.sh. **Next:** Phase 2
+take-profit trim (ratchet), Phase 3 settings UI overhaul, Phase 4 flat-file backfill (needs Massive
+flat-file access confirmed). Audit reference: `docs/rollouts/2026-06-25-sell-stops-settings-audit.md`.
+
+## 2026-06-25 — Fix: `gcp-secrets-run.mjs` no-project fallback waits on the child
+Branch `claude/gcp-secrets-wait-on-child`. The `*:gcp` wrapper's no-`GCP_PROJECT_ID` fallback called
+`process.exit(0)` right after spawning the child, so `build:gcp` could report success before
+`next build` finished (a chained restart/deploy could run against an unfinished build). Restructured
+so the command runs once at the end in BOTH paths and `runCommand`'s child-exit handler owns process
+exit (waits + propagates the code); dropped an unused `spawnSync` import. Configured path unchanged.
+Resolves the follow-up from the #150 docs PR. Verified by direct runtime tests (no-project child →
+exit code propagated incl. 7; old version returned 0 immediately, orphaning the child) + trio: build ✓ ·
+tsc ✓ clean · 1189/1189 tests. Updated `docs/deployment.md` (premature-exit caveat now describes the
+fix; refined the fail-open note re: a missing `GOOGLE_APPLICATION_CREDENTIALS` path). See
+`docs/rollouts/2026-06-25-gcp-secrets-wait-on-child.md`.
+
+## 2026-06-25 — Fix: risk-exit blocked by MAX_SAFE_INTEGER notional sentinel
+Branch `agent/claude-exit-notional`. A SELL "Risk-Exit" (no live quote) was Blocked with "Projected net
+exposure $-9,007,199,254,740,800 exceeds net cap" and shown as "~$9,007,199,254,740,991.00" —
+`Number.MAX_SAFE_INTEGER`. Root cause: `estimateReviewNotional` (`alpaca.ts`) used that "price-unavailable
+→ over-cap" sentinel regardless of side; for an exit it corrupted the displayed notional AND the
+net-exposure projection (`netDelta=-MAX` overshot net through zero, tripping the cap). Fix: (1) `alpaca.ts`
+now side-aware — exits fall back to `referencePrice` then `0` (never the sentinel); opening orders keep it;
+(2) `policy.ts` gross/net exposure block gated on `isOpening` (closes structurally exempt — the documented
+invariant); (3) `dashboard-client.tsx` `proposalSize()` never renders a sentinel/non-finite value. Verify:
+tsc clean · policy+persistence tests 56 passed · full trio via land.sh. See
+`docs/rollouts/2026-06-25-exit-notional-sentinel-fix.md`.
 
 ## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
 Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.

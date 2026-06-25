@@ -162,16 +162,19 @@ describe("LLM usage ledger", () => {
     // A tenant's own key → labeled by user + last-4.
     expect(describeUsageKey({ keyRef: keyFingerprint("tenant-own-key-WXYZ")!, userId: "u_tenant", provider: "openai" })).toEqual({
       last4: "WXYZ",
+      masked: "tenant-o...WXYZ",
       label: "u_tenant (openai)"
     });
     // The `local` primary user → "operator" label.
     expect(describeUsageKey({ keyRef: keyFingerprint("local-key-7788")!, userId: "local", provider: "openai" })).toEqual({
       last4: "7788",
+      masked: "local-ke...7788",
       label: "operator (openai)"
     });
     // A tenant served by the operator's env failover → "operator env" label, env key's last-4.
     expect(describeUsageKey({ keyRef: keyFingerprint("env-operator-key-ABCD")!, userId: "u_other", provider: "openai" })).toEqual({
       last4: "ABCD",
+      masked: "env-oper...ABCD",
       label: "operator env (openai)"
     });
     // A detached/unknown key (no longer in the store) → no label, fingerprint still in the ledger.

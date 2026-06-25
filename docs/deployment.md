@@ -66,21 +66,23 @@ npm run start:gcp    # next start with GCP secrets injected
   *after* the wrapper has injected GCP's value into `process.env`, so the GCP
   value wins regardless. To keep a local override under a `*:gcp` wrapper, export
   it (or use the plain scripts).
-- **Fails open — check the logs:** if Secret Manager is unreachable (ADC/IAM/
-  network) the wrapper logs `Falling back to running command without GCP secrets`
-  and starts the app with the **existing** environment; individual secret-fetch
-  errors are warnings only. A clean start is therefore **not** proof that live
-  GCP values loaded — after a rotation a restart can silently keep serving stale
-  `.env.local`/exported values. Check the `[gcp-secrets]` startup logs (or harden
-  the script to fail closed).
-- **When GCP is not configured, use the plain scripts.** If `GCP_PROJECT_ID`
-  is unset the runner skips Secret Manager — but its no-project fallback spawns
-  the child command and the wrapper process currently returns **immediately
-  without waiting for it** (known bug in `gcp-secrets-run.mjs`; see the rollout
-  follow-up). So a chained step like `build:gcp && <restart/deploy>` could
-  proceed before `next build` finishes. When GCP is unconfigured, run the plain
-  `npm run dev`/`build`/`start` directly; use the `*:gcp` variants **only when
-  GCP is actually configured** (that path correctly waits on the child).
+- **Fails open — check the logs:** any Secret Manager error (missing/invalid
+  `GOOGLE_APPLICATION_CREDENTIALS`, no ADC, IAM/permission/network failure) is
+  logged (`Falling back to running command without GCP secrets`) and the app
+  starts with the **existing** environment; per-secret fetch errors are warnings
+  only. A process-level guard catches even errors the SDK throws uncaught from
+  deep in its auth chain, so the wrapper never crashes the start. A clean start is
+  therefore **not** proof that live GCP values loaded — after a rotation a restart
+  can silently keep serving stale `.env.local`/exported values, so check the
+  `[gcp-secrets]` startup logs.
+- **When GCP is not configured.** If `GCP_PROJECT_ID` is unset the runner skips
+  Secret Manager and runs the command directly. This path now **waits for the
+  child and propagates its exit code**, same as the configured path (a fixed bug
+  — it previously called `process.exit(0)` right after spawning, so `build:gcp`
+  could report success before `next build` finished and let a chained
+  restart/deploy run against an unfinished build). Either way, the plain
+  `npm run dev`/`build`/`start` remain the simplest choice when GCP isn't
+  configured.
 
 **How each `.env.local` relates (none is canonical over GCP):**
 

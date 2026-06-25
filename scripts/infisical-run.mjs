@@ -34,7 +34,9 @@ const child = spawn("infisical", infisicalArgs, {
   stdio: "inherit",
   env: {
     ...process.env,
-    INFISICAL_DISABLE_UPDATE_CHECK: process.env.INFISICAL_DISABLE_UPDATE_CHECK || "true"
+    INFISICAL_DISABLE_UPDATE_CHECK: process.env.INFISICAL_DISABLE_UPDATE_CHECK || "true",
+    // Marks that secrets came from a manager (read by the REQUIRE_SECRETS_MANAGER boot guard).
+    SECRETS_SOURCE: "infisical"
   }
 });
 

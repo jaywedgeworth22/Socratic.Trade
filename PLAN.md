@@ -18,8 +18,11 @@ Secrets/config topology (2026-06-25): `.env.local` is git-ignored and
 per-worktree (never committed; only `.env.example` is tracked), and **GCP Secret
 Manager is the authoritative upstream for secret values** — each `.env.local` is
 a local cache. See `docs/deployment.md` → "Configuration & secrets
-(`.env.local`) — what's authoritative". This documents existing behavior; no
-phase scope, timeline, or approach changed.
+(`.env.local`) — what's authoritative". The `*:gcp` wrapper
+(`gcp-secrets-run.mjs`) was also hardened: its no-`GCP_PROJECT_ID` fallback waits
+for the child process (it previously returned before `next build` finished), and
+it now fails open on any credential error instead of crashing. This documents
+existing behavior; no phase scope, timeline, or approach changed.
 
 | # | Phase | Spec | Status |
 |---|-------|------|--------|
