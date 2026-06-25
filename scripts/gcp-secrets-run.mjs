@@ -2,6 +2,12 @@
 // Fetches secrets from Google Cloud Secret Manager and injects them as env vars,
 // then exec's the given command. Mirrors the infisical-run.mjs pattern.
 //
+// Fail-open by design: any error in the Secret Manager path (missing/invalid
+// GOOGLE_APPLICATION_CREDENTIALS, no ADC, IAM/permission/network failure, …)
+// logs a warning and still runs the command with the existing environment,
+// rather than crashing. The command runs exactly once and the wrapper always
+// propagates the child's exit code.
+//
 // Prerequisites:
 //   npm install @google-cloud/secret-manager
 //   Set GCP_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) to your GCP project.
@@ -34,6 +40,43 @@ if (command.length === 0) {
 const projectId = process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
 const injected = { ...process.env };
 
+// Run the wrapped command exactly once. Both the normal path and the fail-open
+// error handlers below funnel through here, so the child can never be spawned
+// twice, and the wrapper always exits with the child's exit code.
+let started = false;
+function runCommand() {
+  if (started) return;
+  started = true;
+  const child = spawn(command[0], command.slice(1), {
+    stdio: "inherit",
+    env: { ...injected, GCP_SECRETS_DISABLE_UPDATE_CHECK: "true" },
+    shell: false,
+  });
+  child.on("error", (err) => {
+    console.error("[gcp-secrets] Failed to start command:", err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) { process.kill(process.pid, signal); return; }
+    process.exit(code ?? 1);
+  });
+}
+
+// Fail open: a credential/SDK error in the Secret Manager path must never crash
+// the wrapper. Some auth failures (bad GOOGLE_APPLICATION_CREDENTIALS, missing
+// ADC, malformed key file) surface as an uncaught exception / unhandled
+// rejection from deep inside the client, so guard at the process level and fall
+// back to running the command with the existing environment. The `started`
+// guard makes this a no-op once the command is already running.
+function failOpen(err) {
+  if (started) return;
+  console.error("[gcp-secrets] Secret Manager unavailable:", err instanceof Error ? err.message : err);
+  console.warn("[gcp-secrets] Falling back to running command without GCP secrets.");
+  runCommand();
+}
+process.on("uncaughtException", failOpen);
+process.on("unhandledRejection", failOpen);
+
 if (!projectId) {
   console.warn("[gcp-secrets] GCP_PROJECT_ID not set — skipping Secret Manager, running command directly.");
 } else {
@@ -49,9 +92,8 @@ if (!projectId) {
   const overwrite = ["1", "true", "yes", "on"].includes(String(process.env.GCP_SECRETS_OVERWRITE ?? "").toLowerCase());
   const prefix = process.env.GCP_SECRETS_PREFIX ?? "";
 
-  const client = new SecretManagerServiceClient();
-
   try {
+    const client = new SecretManagerServiceClient();
     let secretNames;
 
     if (process.env.GCP_SECRET_NAMES) {
@@ -91,23 +133,5 @@ if (!projectId) {
   }
 }
 
-// Run the command exactly once, for BOTH the configured and the skip/fallback
-// paths. runCommand keeps this process alive until the child exits and then
-// propagates the child's exit code via the "exit" handler. (The no-project path
-// previously called process.exit(0) immediately after spawning, so the wrapper
-// returned success before the child finished — e.g. `build:gcp` could report
-// success before `next build` completed, letting a chained restart/deploy run
-// against an unfinished build.)
-runCommand(command, injected);
-
-function runCommand(cmd, env) {
-  const child = spawn(cmd[0], cmd.slice(1), {
-    stdio: "inherit",
-    env: { ...env, GCP_SECRETS_DISABLE_UPDATE_CHECK: "true" },
-    shell: false,
-  });
-  child.on("exit", (code, signal) => {
-    if (signal) { process.kill(process.pid, signal); return; }
-    process.exit(code ?? 1);
-  });
-}
+// Run the command once, for every path above (configured, skip, or fail-open).
+runCommand();
