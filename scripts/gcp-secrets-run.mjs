@@ -21,7 +21,7 @@
 //   node scripts/gcp-secrets-run.mjs -- npm run build
 //   node scripts/gcp-secrets-run.mjs -- npm run start
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 const separatorIndex = process.argv.indexOf("--");
 const command = separatorIndex >= 0 ? process.argv.slice(separatorIndex + 1) : process.argv.slice(2);
@@ -32,66 +32,72 @@ if (command.length === 0) {
 }
 
 const projectId = process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
-if (!projectId) {
-  console.warn("[gcp-secrets] GCP_PROJECT_ID not set — skipping Secret Manager, running command directly.");
-  runCommand(command, process.env);
-  process.exit(0);  // exit handled inside runCommand via event
-}
-
-// Check @google-cloud/secret-manager is installed
-let SecretManagerServiceClient;
-try {
-  ({ SecretManagerServiceClient } = await import("@google-cloud/secret-manager"));
-} catch {
-  console.error("[gcp-secrets] @google-cloud/secret-manager is not installed. Run: npm install @google-cloud/secret-manager");
-  process.exit(1);
-}
-
-const overwrite = ["1", "true", "yes", "on"].includes(String(process.env.GCP_SECRETS_OVERWRITE ?? "").toLowerCase());
-const prefix = process.env.GCP_SECRETS_PREFIX ?? "";
-
-const client = new SecretManagerServiceClient();
 const injected = { ...process.env };
 
-try {
-  let secretNames;
-
-  if (process.env.GCP_SECRET_NAMES) {
-    // Explicit list: GCP_SECRET_NAMES=INTRINIO_API_KEY,TIINGO_API_KEY,...
-    secretNames = process.env.GCP_SECRET_NAMES.split(",").map((s) => s.trim()).filter(Boolean);
-  } else {
-    // List all secrets in the project (optionally filtered by prefix).
-    const [secrets] = await client.listSecrets({ parent: `projects/${projectId}` });
-    secretNames = secrets
-      .map((s) => s.name?.split("/").pop() ?? "")
-      .filter((name) => name && name.startsWith(prefix));
+if (!projectId) {
+  console.warn("[gcp-secrets] GCP_PROJECT_ID not set — skipping Secret Manager, running command directly.");
+} else {
+  // Check @google-cloud/secret-manager is installed
+  let SecretManagerServiceClient;
+  try {
+    ({ SecretManagerServiceClient } = await import("@google-cloud/secret-manager"));
+  } catch {
+    console.error("[gcp-secrets] @google-cloud/secret-manager is not installed. Run: npm install @google-cloud/secret-manager");
+    process.exit(1);
   }
 
-  console.log(`[gcp-secrets] Fetching ${secretNames.length} secret(s) from project ${projectId}`);
+  const overwrite = ["1", "true", "yes", "on"].includes(String(process.env.GCP_SECRETS_OVERWRITE ?? "").toLowerCase());
+  const prefix = process.env.GCP_SECRETS_PREFIX ?? "";
 
-  await Promise.all(
-    secretNames.map(async (secretName) => {
-      const envKey = secretName.startsWith(prefix) ? secretName.slice(prefix.length) : secretName;
-      if (!overwrite && injected[envKey]) return; // already set in environment
-      try {
-        const [version] = await client.accessSecretVersion({
-          name: `projects/${projectId}/secrets/${secretName}/versions/latest`,
-        });
-        const value = version.payload?.data?.toString("utf8");
-        if (value) {
-          injected[envKey] = value;
-          console.log(`[gcp-secrets] Loaded ${secretName} → ${envKey}`);
+  const client = new SecretManagerServiceClient();
+
+  try {
+    let secretNames;
+
+    if (process.env.GCP_SECRET_NAMES) {
+      // Explicit list: GCP_SECRET_NAMES=INTRINIO_API_KEY,TIINGO_API_KEY,...
+      secretNames = process.env.GCP_SECRET_NAMES.split(",").map((s) => s.trim()).filter(Boolean);
+    } else {
+      // List all secrets in the project (optionally filtered by prefix).
+      const [secrets] = await client.listSecrets({ parent: `projects/${projectId}` });
+      secretNames = secrets
+        .map((s) => s.name?.split("/").pop() ?? "")
+        .filter((name) => name && name.startsWith(prefix));
+    }
+
+    console.log(`[gcp-secrets] Fetching ${secretNames.length} secret(s) from project ${projectId}`);
+
+    await Promise.all(
+      secretNames.map(async (secretName) => {
+        const envKey = secretName.startsWith(prefix) ? secretName.slice(prefix.length) : secretName;
+        if (!overwrite && injected[envKey]) return; // already set in environment
+        try {
+          const [version] = await client.accessSecretVersion({
+            name: `projects/${projectId}/secrets/${secretName}/versions/latest`,
+          });
+          const value = version.payload?.data?.toString("utf8");
+          if (value) {
+            injected[envKey] = value;
+            console.log(`[gcp-secrets] Loaded ${secretName} → ${envKey}`);
+          }
+        } catch (err) {
+          console.warn(`[gcp-secrets] Could not fetch ${secretName}:`, err instanceof Error ? err.message : err);
         }
-      } catch (err) {
-        console.warn(`[gcp-secrets] Could not fetch ${secretName}:`, err instanceof Error ? err.message : err);
-      }
-    })
-  );
-} catch (err) {
-  console.error("[gcp-secrets] Failed to access Secret Manager:", err instanceof Error ? err.message : err);
-  console.warn("[gcp-secrets] Falling back to running command without GCP secrets.");
+      })
+    );
+  } catch (err) {
+    console.error("[gcp-secrets] Failed to access Secret Manager:", err instanceof Error ? err.message : err);
+    console.warn("[gcp-secrets] Falling back to running command without GCP secrets.");
+  }
 }
 
+// Run the command exactly once, for BOTH the configured and the skip/fallback
+// paths. runCommand keeps this process alive until the child exits and then
+// propagates the child's exit code via the "exit" handler. (The no-project path
+// previously called process.exit(0) immediately after spawning, so the wrapper
+// returned success before the child finished — e.g. `build:gcp` could report
+// success before `next build` completed, letting a chained restart/deploy run
+// against an unfinished build.)
 runCommand(command, injected);
 
 function runCommand(cmd, env) {
