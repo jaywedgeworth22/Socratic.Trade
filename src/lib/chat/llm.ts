@@ -60,7 +60,8 @@ export function classifyIntent(message: string): Intent {
     const m =
       String(message).match(/\b(?:price\s+of|how\s+much\s+(?:is|for)|quote\s+for|what'?s)\s+\$?([A-Za-z.]{1,10})\b/i) ??
       String(message).match(/\b\$?([A-Za-z.]{2,10})\s+(?:price|quote|stock)\b/i);
-    return m ? canonicalTicker(m[1]!) : undefined;
+    const ticker = m ? canonicalTicker(m[1]!) : undefined;
+    return ticker && !EXCLUDE.includes(ticker) ? ticker : undefined;
   })();
 
   if (
