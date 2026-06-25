@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Cross-app consumer reads (fundamentals/analyst from Congress.Trade)
+Branch `claude/crossapp-consumer-reads-y8ojii`. Added the App B half of the
+fundamentals/analyst data-sharing: `getAppAFundamentals()` / `getAppAAnalyst()` in
+`congress-trade-client.ts` and a `CongressTradeEnrichmentProvider` registered ahead
+of the paid fundamentals providers in `data-providers.ts`, **gated OFF by
+`CONGRESS_TRADE_READS_ENABLED`**. Congress.Trade now serves the matching
+`/api/market/fundamentals/:ticker` + `/api/market/analyst/:ticker` reader routes.
+Supplies only fundamentals/analyst (no price) so quote ordering is unchanged; no new
+`SymbolEnrichment` field. tsc clean, 1184 tests pass, build OK. Next: flag flip to
+enable in prod; the parallel cascade means this is precedence (not yet
+call-elimination) — see rollout note `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`.
+
 ## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
 Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
 

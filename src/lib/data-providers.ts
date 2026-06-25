@@ -10,6 +10,13 @@
 // the final real tier — no API key required, uses session crumb auth.
 
 import { normalizeSymbol } from "./money";
+import {
+  congressReadsEnabled,
+  getAppAFundamentals,
+  getAppAAnalyst,
+  type AppAFundamental,
+  type AppAAnalyst,
+} from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
 import { getStreamedHeadlines } from "./streams/news-store";
@@ -312,6 +319,72 @@ async function fetchWithRetry(
   }
 }
 
+// ── Congress.Trade (App A) cross-app read tier ───────────────────────────────
+// Reads fundamentals + analyst consensus that App A already stored (it ingests
+// the same providers + receives our donated data), so App B doesn't re-derive
+// numbers App A has. Default-OFF (CONGRESS_TRADE_READS_ENABLED); fills only
+// fundamentals/analyst fields (no price), so it never disturbs real-time quote
+// ordering. Seated ahead of the paid fundamentals providers so its free,
+// congressional-universe data wins those fields when present.
+export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "congress.trade";
+  get configured(): boolean {
+    return congressReadsEnabled();
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    if (!congressReadsEnabled()) return {};
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+    const result: Record<string, SymbolEnrichment> = {};
+    await Promise.all(
+      normalized.map(async (symbol) => {
+        const [funds, analysts] = await Promise.all([
+          getAppAFundamentals(symbol).catch(() => [] as AppAFundamental[]),
+          getAppAAnalyst(symbol).catch(() => [] as AppAAnalyst[]),
+        ]);
+        const f = funds.length ? funds[funds.length - 1] : null; // rows are date-ascending
+        const a = analysts.length ? analysts[analysts.length - 1] : null;
+        const e: SymbolEnrichment = {};
+        if (f) {
+          if (f.peRatio != null) e.peRatio = f.peRatio;
+          if (f.eps != null) e.eps = f.eps;
+          if (f.beta != null) e.beta = f.beta;
+          if (f.dividendYield != null) e.dividendYield = f.dividendYield;
+          if (f.week52High != null) e.fiftyTwoWeekHigh = f.week52High;
+          if (f.week52Low != null) e.fiftyTwoWeekLow = f.week52Low;
+          if (f.fcfYield != null) e.fcfYield = f.fcfYield;
+          if (f.debtToEquity != null) e.debtToEquity = f.debtToEquity;
+          if (f.epsGrowth != null) e.epsGrowth = f.epsGrowth;
+        }
+        if (a) {
+          if (a.targetMean != null) e.targetMean = a.targetMean;
+          if (a.targetHigh != null) e.targetHigh = a.targetHigh;
+          if (a.targetLow != null) e.targetLow = a.targetLow;
+          if (a.targetMedian != null) e.targetMedian = a.targetMedian;
+          const counts = {
+            strongBuy: a.strongBuy ?? 0,
+            buy: a.buy ?? 0,
+            hold: a.hold ?? 0,
+            sell: a.sell ?? 0,
+            strongSell: a.strongSell ?? 0,
+          };
+          const score = analystScoreFromCounts(counts);
+          if (score !== undefined) {
+            e.analystRating = a.rating || labelFromAnalystScore(score);
+            e.analystScore = Math.round(score);
+            e.analystBySource = { [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), counts } };
+          } else if (a.rating) {
+            e.analystRating = a.rating;
+          }
+        }
+        if (Object.keys(e).length > 0) result[symbol] = e;
+      })
+    );
+    return result;
+  }
+}
+
 // ── Provider factory ────────────────────────────────────────────────────────
 // Builds a cascade: [Finnhub?, FMP?] → Yahoo Finance.
 // Yahoo Finance requires no API key and is always the final real tier.
@@ -342,6 +415,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
   if (alpacaData.apiKey && alpacaData.secretKey) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId));
+  // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
+  // Default-OFF; when enabled its free, already-stored data wins the fundamentals
+  // fields ahead of the paid providers below.
+  if (congressReadsEnabled()) providers.push(new CongressTradeEnrichmentProvider());
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)

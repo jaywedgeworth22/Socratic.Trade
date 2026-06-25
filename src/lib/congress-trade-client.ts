@@ -164,6 +164,65 @@ export async function getAppASpx(opts?: { from?: string; to?: string }): Promise
   return Array.isArray(json?.closes) ? json!.closes : [];
 }
 
+/** One cached fundamentals row from App A (rows are date-ascending; newest last). */
+export interface AppAFundamental {
+  date: string;
+  peRatio: number | null;
+  eps: number | null;
+  beta: number | null;
+  dividendYield: number | null;
+  week52High: number | null;
+  week52Low: number | null;
+  fcfYield: number | null;
+  debtToEquity: number | null;
+  epsGrowth: number | null;
+  source: string | null;
+  updatedAt: string;
+}
+
+/** One cached analyst-consensus row from App A (date-ascending; newest last). */
+export interface AppAAnalyst {
+  date: string;
+  rating: string | null;
+  targetMean: number | null;
+  targetHigh: number | null;
+  targetLow: number | null;
+  targetMedian: number | null;
+  analystCount: number | null;
+  strongBuy: number | null;
+  buy: number | null;
+  hold: number | null;
+  sell: number | null;
+  strongSell: number | null;
+  source: string | null;
+  updatedAt: string;
+}
+
+/** Read App A's cached fundamentals (P/E, EPS, beta, 52w, FCF, debt/equity…) so App B
+ *  doesn't re-pay a provider for data App A already stored. [] when the gate is off / on error. */
+export async function getAppAFundamentals(ticker: string, opts?: { from?: string; to?: string }): Promise<AppAFundamental[]> {
+  if (!congressReadsEnabled()) return [];
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return [];
+  const json = await getJson<{ rows?: AppAFundamental[] }>(
+    `/api/market/fundamentals/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+    readToken()
+  );
+  return Array.isArray(json?.rows) ? json!.rows : [];
+}
+
+/** Read App A's cached analyst consensus + price targets. [] when off / on error. */
+export async function getAppAAnalyst(ticker: string, opts?: { from?: string; to?: string }): Promise<AppAAnalyst[]> {
+  if (!congressReadsEnabled()) return [];
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return [];
+  const json = await getJson<{ rows?: AppAAnalyst[] }>(
+    `/api/market/analyst/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+    readToken()
+  );
+  return Array.isArray(json?.rows) ? json!.rows : [];
+}
+
 /** Pull a page of congressional transactions. Null when the congress-source gate is off / on error. */
 export async function getAppATransactions(query: AppATransactionsQuery = {}): Promise<AppATransactionsPage | null> {
   if (!congressAsCongressSourceEnabled()) return null;
