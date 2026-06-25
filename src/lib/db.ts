@@ -714,6 +714,9 @@ function migrate(database: Database.Database): void {
     const ksCol = healthPatternCols.find((c) => c.name === "key_source");
     const needsRebuild = !ksCol || ksCol.notnull === 0; // missing or nullable
     if (needsRebuild) {
+      // When key_source column is absent, SELECT '''' literal; when nullable column exists use COALESCE.
+      // Using COALESCE(key_source, '') on a table without that column raises "no such column".
+      const ksExpr = ksCol ? "COALESCE(key_source, '')" : "''";
       database.exec(`
         CREATE TABLE api_health_error_patterns_v2 (
           id TEXT PRIMARY KEY,
@@ -727,7 +730,7 @@ function migrate(database: Database.Database): void {
           UNIQUE(service, fingerprint, key_source)
         );
         INSERT OR IGNORE INTO api_health_error_patterns_v2
-          SELECT id, service, fingerprint, error_text, first_seen, last_seen, count, COALESCE(key_source, '')
+          SELECT id, service, fingerprint, error_text, first_seen, last_seen, count, ${ksExpr}
           FROM api_health_error_patterns;
         DROP TABLE api_health_error_patterns;
         ALTER TABLE api_health_error_patterns_v2 RENAME TO api_health_error_patterns;
