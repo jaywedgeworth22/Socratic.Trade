@@ -246,7 +246,7 @@ function maxSymbols(): number {
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  options: { retries?: number; backoffMs?: number; service?: string; keySource?: string; userId?: string } = {}
+  options: { retries?: number; backoffMs?: number; service?: string; keySource?: string; userId?: string; deferSuccessLog?: boolean } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
@@ -268,7 +268,10 @@ async function fetchWithRetry(
         await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
         continue;
       }
-      if (options.service) {
+      // When deferSuccessLog is set, skip the auto-success row so the caller can log
+      // after validating the response body (e.g. providers that embed errors in HTTP 200).
+      // HTTP failure rows are still written here regardless of the flag.
+      if (options.service && !(response.ok && options.deferSuccessLog)) {
         logApiHealth({
           service: options.service,
           ok: response.ok,
@@ -1481,7 +1484,9 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             const timeout = setTimeout(() => controller.abort(), 6000);
             let payload: Record<string, unknown>;
             try {
-              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
+              // deferSuccessLog: true — don't mark 200 healthy until body validates;
+              // Alpha Vantage embeds quota/error messages in HTTP 200 responses.
+              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               payload = await response.json() as Record<string, unknown>;
 
@@ -1490,6 +1495,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
                 logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
                 throw new Error(`Alpha Vantage API warning/error: ${msg}`);
               }
+              logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
             } finally {
               clearTimeout(timeout);
             }

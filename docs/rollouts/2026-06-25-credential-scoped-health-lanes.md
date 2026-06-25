@@ -79,10 +79,32 @@ npm test            # 1066/1067 (1 pre-existing cache-provenance date flake)
 npm run build       # clean
 ```
 
-## Follow-ups / known gaps
-- `api_health_error_patterns` UNIQUE constraint on existing DBs is still `(service, fingerprint)`
-  (not the new `(service, fingerprint, key_source)`). Changing SQLite constraints requires table
-  recreation. Since `logApiHealth` swallows all errors, constraint mismatch would silently drop
-  error pattern upserts (not a crash). Deferred until it causes a visible issue.
-- `robinhood-fundamentals` provider still not instrumented (uses internal cache layer, not
-  fetchWithRetry).
+## Codex P2 fixes (follow-up commits)
+
+### commit 88c6aa7 — four findings from Codex P2 first pass
+1. **Empty keySource → null lane** — route.ts mapped `?keySource=` to `""` which matched `key_source IS ''`
+   instead of `IS NULL`. Fixed: `ks === "" ? null : ks`.
+2. **NULL dedup in error patterns** — SQLite NULLs don't collide in UNIQUE. Fixed: `api_health_error_patterns.key_source`
+   uses `""` sentinel (NOT NULL DEFAULT ''). Schema + logApiHealth updated to use `keySource ?? ""`.
+3. **Old UNIQUE constraint not rebuilt** — ALTER TABLE only added column; old `UNIQUE(service, fingerprint)` remained.
+   Fixed: table recreation via INSERT-SELECT-DROP-RENAME when `notnull === 0`.
+4. **429s not logged before retry** — Added `logApiHealth(ok: false, "HTTP 429 (rate limited, retrying)")` before sleep.
+
+### commit 5aeb840 — COALESCE crash on missing column
+When `api_health_error_patterns` exists but has NO `key_source` column (pre-credential DB),
+`COALESCE(key_source, '')` raises "no such column". Fixed: `const ksExpr = ksCol ? "COALESCE(key_source, '')" : "''"`.
+
+### commit (HEAD) — AlphaVantage 200-but-error logged as healthy
+Alpha Vantage returns HTTP 200 with error payloads (`Note`/`Information`/`Error Message`). Previously
+`fetchWithRetry` auto-logged `ok: true` at HTTP 200, then AlphaVantage wrote a second `ok: false` row —
+net effect: false-positive success row before the error. Fixed: added `deferSuccessLog?: boolean` option
+to `fetchWithRetry`; when set, the success log is deferred to the caller. AlphaVantage passes
+`deferSuccessLog: true` and logs success explicitly after body validates (no Note/Information/ErrorMessage
+fields present). HTTP errors and network errors still auto-logged in `fetchWithRetry` regardless of flag.
+
+## Known deferred items
+- **Per-user lane isolation**: `key_source` values are `"env" | "user"` (not per-user-ID). Multiple tenants
+  sharing `key_source = "user"` are merged into one lane — one user's bad key can mark all user-key calls
+  stopped. `user_id` is stored in the log; full per-user lanes would require including user_id in the lane
+  key and UI. Deferred — env/user split is the biggest operational win.
+- `robinhood-fundamentals` provider still not instrumented (uses internal cache layer, not fetchWithRetry).

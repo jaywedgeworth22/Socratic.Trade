@@ -28,16 +28,18 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
-- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes.**
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes).**
   New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
   (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256
   error fingerprinting. Credential scoping: health rows keyed by `(service, key_source)` so env-key
   calls and user-key calls are tracked separately — prevents false STOPPED alerts when one user's key
   fails but the env key is healthy. All 10 provider classes have `private readonly keySource` +
   `this.keySource = keySource` wired; all fetchWithRetry call sites pass `keySource`/`userId`. ALTER
-  TABLE migrations for existing DBs (adds `key_source` + `user_id` columns). Admin client groups
-  cards and detail panels by credential lane, passes `?keySource=` to log API. tsc clean; 1 pre-existing
-  test failure (cache-provenance date flake); build green. See
+  TABLE migrations for existing DBs (adds `key_source` + `user_id` columns, recreates error_patterns
+  table with correct NOT NULL DEFAULT '' key_source + UNIQUE(service,fingerprint,key_source)). Admin
+  client groups cards and detail panels by credential lane, passes `?keySource=` to log API. 429s
+  logged before retry sleep. Alpha Vantage 200-but-error no longer logged as healthy (deferSuccessLog).
+  tsc clean; 1 pre-existing test failure (cache-provenance date flake); build green. See
   `docs/rollouts/2026-06-25-connections-health-panel.md` and
   `docs/rollouts/2026-06-25-credential-scoped-health-lanes.md`.
 
