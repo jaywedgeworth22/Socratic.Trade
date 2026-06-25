@@ -96,6 +96,14 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/alpaca-order-type-pagination`): **Alpaca broker-robustness fixes.** (1) Order
+  type mapping — `mapAlpacaOrderType` maps Alpaca's raw `stop`→`stop_market`, `trailing_stop`→
+  `stop_market`, unknown→`market` (was leaking raw values via `o.type as OrderType`). (2)
+  `getEquityOrders` now paginates the REST fallback via `until` (pages of 500, deduped, bounded) so
+  history isn't silently capped; also fixed an incidental double-map that set `state:"undefined"` on
+  the REST path. Shared `mapAlpacaOrder` helper. +`test/alpaca-order-mapping.test.ts`. Verified: tsc
+  clean; 1128/1129 (only cache-provenance flake); build green. See
+  `docs/rollouts/2026-06-25-alpaca-order-type-pagination.md`.
 - 2026-06-25 (`claude/sell-to-fund-buy`, **PR 3 of 3**): **Sell-to-fund-buy 3-way setting.** Opt-in
   `policy.sellToFundBuy` (`off`|`suggest`|`propose`|`automated`, **default off**): when a run's intended
   buys exceed buying power, optionally raise cash by trimming the largest unrealized losers (never the
