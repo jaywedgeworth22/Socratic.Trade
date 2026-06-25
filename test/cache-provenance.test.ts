@@ -103,8 +103,10 @@ describe("macro.ts cache-provenance", () => {
     const callsAfterA = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
 
     // userB fetches without any FRED key — should get the "unavailable" default,
-    // NOT userA's private result.
-    vi.unstubAllGlobals(); // reset fetch so userB's call doesn't hit the stub
+    // NOT userA's private result. Stub fetch to fail so that fetchVixFromYahoo()
+    // also returns null (otherwise a live Yahoo Finance call can succeed in CI
+    // and set asOf to today's date instead of "unavailable").
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in test")));
     const resultB = await fetchMacroData(userB);
 
     // Assert: userA got live data; userB got the no-key fallback.
