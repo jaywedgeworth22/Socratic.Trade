@@ -236,43 +236,40 @@ class AlpacaBrokerGateway implements BrokerGateway {
   }
 
   async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
-    return this.callMcp<any>("get_orders", { status: "all" }, async () => {
-      const orders = await this.alpaca.getOrders({ status: "all" } as Parameters<typeof this.alpaca.getOrders>[0]);
-      return orders.map((o: Record<string, unknown>) => ({
-        id: String(o.id),
-        symbol: normalizeSymbol(String(o.symbol)),
-        side: o.side as OrderSide,
-        type: o.type as OrderType,
-        state: String(o.status),
-        quantity: optionalNumber(o.qty),
-        dollarAmount: optionalNumber(o.notional),
-        filledQuantity: optionalNumber(o.filled_qty),
-        averagePrice: optionalNumber(o.filled_avg_price),
-        createdAt: String(o.created_at),
-        updatedAt: o.updated_at ? String(o.updated_at) : undefined,
-        clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
-        placedAgent: "alpaca"
-      }));
-    }).then((res: any) => {
-      if (Array.isArray(res)) {
-        return res.map((o: any) => ({
-          id: String(o.id),
-          symbol: normalizeSymbol(String(o.symbol)),
-          side: o.side as OrderSide,
-          type: o.type as OrderType,
-          state: String(o.status),
-          quantity: optionalNumber(o.qty),
-          dollarAmount: optionalNumber(o.notional),
-          filledQuantity: optionalNumber(o.filled_qty),
-          averagePrice: optionalNumber(o.filled_avg_price),
-          createdAt: String(o.created_at),
-          updatedAt: o.updated_at ? String(o.updated_at) : undefined,
-          clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
-          placedAgent: "alpaca"
-        }));
+    return this.callMcp<any>("get_orders", { status: "all", limit: 500 }, async () => {
+      // Paginate: Alpaca returns at most `limit` (max 500) per call, newest-first. Walk backwards via
+      // `until` (the oldest created_at seen) until a short page signals the end. Without this the
+      // default page silently capped history and missed older orders. Dedupe by id at page edges.
+      const all: Record<string, unknown>[] = [];
+      const seen = new Set<string>();
+      const PAGE = 500;
+      let until: string | undefined;
+      for (let guard = 0; guard < 50; guard++) {
+        const page = (await this.alpaca.getOrders({
+          status: "all",
+          limit: PAGE,
+          direction: "desc",
+          ...(until ? { until } : {})
+        } as Parameters<typeof this.alpaca.getOrders>[0])) as Record<string, unknown>[];
+        if (!Array.isArray(page) || page.length === 0) break;
+        let added = 0;
+        let oldest: string | undefined;
+        for (const o of page) {
+          const id = String(o.id);
+          const createdAt = String(o.created_at);
+          if (!seen.has(id)) {
+            seen.add(id);
+            all.push(o);
+            added += 1;
+          }
+          if (!oldest || createdAt < oldest) oldest = createdAt;
+        }
+        // Stop on a short page, no forward progress, or a stuck boundary.
+        if (page.length < PAGE || added === 0 || !oldest || oldest === until) break;
+        until = oldest;
       }
-      return res;
-    });
+      return all;
+    }).then((res: any) => (Array.isArray(res) ? res.map((o: any) => mapAlpacaOrder(o as Record<string, unknown>)) : res));
   }
 
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
@@ -459,6 +456,44 @@ function optionalNumber(value: unknown): number | undefined {
 
 function number(value: unknown): number {
   return optionalNumber(value) ?? 0;
+}
+
+// Map Alpaca's raw order `type` to our OrderType union. Alpaca uses "stop" (not "stop_market") and
+// "trailing_stop"; a raw `as OrderType` cast silently leaked those non-union values downstream.
+export function mapAlpacaOrderType(raw: unknown): OrderType {
+  switch (String(raw)) {
+    case "market":
+      return "market";
+    case "limit":
+      return "limit";
+    case "stop":
+      return "stop_market";
+    case "stop_limit":
+      return "stop_limit";
+    case "trailing_stop":
+      return "stop_market"; // closest representation in our union (a stop-triggered exit)
+    default:
+      return "market"; // unknown/absent → safe default rather than leaking an invalid value
+  }
+}
+
+// Map a raw Alpaca order object (REST or MCP shape — same field names) to our EquityOrder.
+export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
+  return {
+    id: String(o.id),
+    symbol: normalizeSymbol(String(o.symbol)),
+    side: o.side as OrderSide,
+    type: mapAlpacaOrderType(o.type),
+    state: String(o.status),
+    quantity: optionalNumber(o.qty),
+    dollarAmount: optionalNumber(o.notional),
+    filledQuantity: optionalNumber(o.filled_qty),
+    averagePrice: optionalNumber(o.filled_avg_price),
+    createdAt: String(o.created_at),
+    updatedAt: o.updated_at ? String(o.updated_at) : undefined,
+    clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
+    placedAgent: "alpaca"
+  };
 }
 
 export function parseAlpacaPosition(p: Record<string, unknown>): EquityPosition {

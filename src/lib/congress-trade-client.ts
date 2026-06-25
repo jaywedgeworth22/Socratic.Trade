@@ -22,6 +22,7 @@
 import type { CongressClose, CongressPrice, CongressRef } from "./congress-share";
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
+import { logApiHealth } from "./db-health";
 
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -91,6 +92,7 @@ function timeoutMs(): number {
 async function getJson<T>(path: string, token?: string): Promise<T | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs());
+  const start = Date.now();
   try {
     const res = await fetch(`${baseUrl()}${path}`, {
       headers: {
@@ -100,9 +102,11 @@ async function getJson<T>(path: string, token?: string): Promise<T | null> {
       signal: controller.signal,
       cache: "no-store"
     });
+    logApiHealth({ service: "congress.trade", ok: res.ok, latencyMs: Date.now() - start, errorText: res.ok ? undefined : `HTTP ${res.status}` });
     if (!res.ok) return null;
     return (await res.json()) as T;
-  } catch {
+  } catch (err) {
+    logApiHealth({ service: "congress.trade", ok: false, latencyMs: Date.now() - start, errorText: err instanceof Error ? err.message : String(err) });
     return null; // fall through to App B's own providers
   } finally {
     clearTimeout(timer);
@@ -251,6 +255,26 @@ export async function getAppAMemberLeaderboard(opts: { window?: string; limit?: 
   if (!congressAnalyticsEnabled()) return [];
   const json = await getJson<{ members?: AppAMemberRow[] }>(`/api/analytics/member-leaderboard${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.members) ? json!.members : [];
+}
+
+/** Per-member realized performance (return / win-rate / alpha vs S&P). `scoredCount`=0 → all nulls. */
+export interface AppAMemberPerformance {
+  tradeCount?: number;
+  scoredCount?: number;
+  winRate?: number | null;
+  medianReturn?: number | null;
+  medianExcess?: number | null; // median return in excess of S&P (alpha)
+  avgReturn?: number | null;
+  avgExcess?: number | null; // average alpha vs S&P
+}
+
+export async function getAppAMemberPerformance(filerId: string): Promise<AppAMemberPerformance | null> {
+  if (!congressAnalyticsEnabled() || !filerId) return null;
+  const json = await getJson<{ performance?: AppAMemberPerformance }>(
+    `/api/analytics/member/${encodeURIComponent(filerId)}/performance`,
+    readToken()
+  );
+  return json?.performance ?? null;
 }
 
 /**

@@ -483,6 +483,50 @@ describe("OOS walk-forward gate (Task 1)", () => {
     const cautions = proposal.cautions.join(" ");
     expect(cautions).toMatch(/OOS-validated|improved OOS IC over the current/i);
   });
+
+  it("keeps proposed weights but flags them NOT out-of-sample validated when OOS has insufficient snapshots", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("OOS NULL TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-NULL", paperMode: true, scoringWeights: customWeights });
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `N${i}`;
+      insertFillEvent({ accountNumber: "OOS-NULL", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "OOS-NULL", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+    mockRunWalkForwardOOS.mockResolvedValueOnce(null); // insufficient snapshot history
+
+    const proposal = await proposeStrategyTuning();
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined(); // weights kept (gate could not run)
+    const cautions = proposal.cautions.join(" ");
+    expect(cautions).toMatch(/NOT out-of-sample validated/i);
+    expect(cautions).toMatch(/insufficient snapshot history/i);
+  });
+
+  it("flags NOT out-of-sample validated when the OOS run throws", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("OOS THROW TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-THROW", paperMode: true, scoringWeights: customWeights });
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `E${i}`;
+      insertFillEvent({ accountNumber: "OOS-THROW", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "OOS-THROW", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+    mockRunWalkForwardOOS.mockRejectedValueOnce(new Error("network down"));
+
+    const proposal = await proposeStrategyTuning();
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined();
+    expect(proposal.cautions.join(" ")).toMatch(/NOT out-of-sample validated.*data fetch failed/i);
+  });
 });
 
 describe("regime-segmented tuning evidence (Task 2)", () => {

@@ -43,6 +43,7 @@ export interface DashboardSnapshot {
   currentUser?: {
     userId: string;
     email?: string;
+    isAdmin: boolean;
   };
   policy: TradingPolicy;
   strategyPrompt: string;

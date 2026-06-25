@@ -979,6 +979,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
+  const isAdmin = snapshot.currentUser?.isAdmin ?? false;
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
   // fetched live scan, falling back to the captured run's scan if it's still loading.
@@ -1871,6 +1872,11 @@ function DecisionView({
                       {hypothetical && <p className="rounded-md border border-info/20 bg-info/10 px-2 py-1 text-muted">{hypothetical}</p>}
                     </div>
                   )}
+                  {item.errorMessage && (
+                    <p className="mt-2 rounded-md border border-warn/30 bg-warn/10 px-2 py-1 text-[11px] text-muted">
+                      <span className="font-semibold">Order error: </span>{item.errorMessage}
+                    </p>
+                  )}
                 </div>
               );
             })}
@@ -1896,6 +1902,7 @@ type DecisionLedgerItem = {
   performanceSinceProposalPct?: number;
   proposalReferencePrice?: number;
   proposalCurrentPrice?: number;
+  errorMessage?: string;
 };
 
 function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
@@ -1913,7 +1920,8 @@ function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] 
       review: item.review,
       performanceSinceProposalPct: item.performanceSinceProposalPct,
       proposalReferencePrice: item.proposalReferencePrice,
-      proposalCurrentPrice: item.proposalCurrentPrice
+      proposalCurrentPrice: item.proposalCurrentPrice,
+      errorMessage: item.errorMessage
     }));
   }
   const decision = snapshot.latestStrategyRun;
@@ -3391,6 +3399,7 @@ function SettingsContent({
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  const isAdmin = snapshot.currentUser?.isAdmin ?? false;
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   useEffect(() => setSection(initialSection), [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
@@ -3714,6 +3723,20 @@ function SettingsContent({
               </div>
             </div>
             <ApiKeysSection />
+            {isAdmin && (
+              <div className="rounded-lg border border-line bg-surface-2/45 p-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-fg">Connection Health</div>
+                  <p className="mt-0.5 text-xs text-muted">Monitor API status, latency, error patterns, and stopped keys.</p>
+                </div>
+                <a
+                  href="/admin/connections"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-2 transition-colors"
+                >
+                  View Status →
+                </a>
+              </div>
+            )}
           </div>
         )}
 
@@ -4013,7 +4036,7 @@ function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-2 gap-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "provider_degraded"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
@@ -4842,8 +4865,8 @@ function IntegrationsSection({
     const brokerName = isMCP ? "Alpaca MCP" : "Alpaca";
     const isPaper = acc.environment === "paper";
     return {
-      title: isPaper ? "Paper" : "Brokerage",
-      subtitle: `${brokerName} · ${acc.accountNumber || "No account number"}`,
+      title: acc.label || (isPaper ? "Paper" : "Brokerage"),
+      subtitle: `${brokerName} ${isPaper ? "Paper" : "Brokerage"} · ${acc.accountNumber || "No account number"}`,
       showBadges: true
     };
   };

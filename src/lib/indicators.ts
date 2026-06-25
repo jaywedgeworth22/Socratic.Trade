@@ -56,6 +56,52 @@ export function sma(values: number[], len: number): number | undefined {
   return sum / len;
 }
 
+/** True range for one bar given the prior close: max(H−L, |H−prevClose|, |L−prevClose|). */
+export function trueRange(high: number, low: number, prevClose: number): number {
+  return Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+}
+
+/**
+ * Average True Range over the last `period` bars (Wilder's range, simple-averaged). Each true range
+ * needs a prior close, so ≥ period+1 bars are required. high/low fall back to close when a source
+ * supplies close-only bars (true range degrades, never throws). Returns undefined when there are too
+ * few bars or any value is non-finite — callers degrade to the fixed/beta stop, never to a fake number.
+ */
+export function atr(bars: OHLCBar[], period = 14): number | undefined {
+  if (!Number.isInteger(period) || period <= 0 || !Array.isArray(bars) || bars.length < period + 1) return undefined;
+  let sum = 0;
+  for (let i = bars.length - period; i < bars.length; i++) {
+    const cur = bars[i];
+    const prev = bars[i - 1];
+    const high = typeof cur.high === "number" ? cur.high : cur.close;
+    const low = typeof cur.low === "number" ? cur.low : cur.close;
+    const prevClose = prev.close;
+    if (![high, low, prevClose].every((v) => typeof v === "number" && Number.isFinite(v))) return undefined;
+    sum += trueRange(high, low, prevClose);
+  }
+  return sum / period;
+}
+
+/**
+ * Convert an ATR value to a stop-loss DISTANCE as a percent of entryPrice: (multiple × ATR ÷ entry) × 100.
+ * Clamped to [floorPct, capPct] so a near-zero or huge ATR can't produce a degenerate stop (e.g. a 0.1%
+ * hair-trigger or a 90% no-op). Returns undefined for invalid inputs so the caller keeps the fixed/beta stop.
+ */
+export function atrStopPct(
+  atrValue: number | undefined,
+  entryPrice: number,
+  multiple: number,
+  floorPct = 1,
+  capPct = 50
+): number | undefined {
+  if (atrValue == null || !Number.isFinite(atrValue) || atrValue <= 0) return undefined;
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return undefined;
+  if (!Number.isFinite(multiple) || multiple <= 0) return undefined;
+  const pct = ((multiple * atrValue) / entryPrice) * 100;
+  if (!Number.isFinite(pct) || pct <= 0) return undefined;
+  return Math.max(floorPct, Math.min(capPct, pct));
+}
+
 /** Full EMA series (aligned to `values`); entries before the seed index are undefined. */
 export function emaSeries(values: number[], len: number): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(values.length).fill(undefined);

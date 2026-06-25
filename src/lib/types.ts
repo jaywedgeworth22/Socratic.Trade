@@ -27,7 +27,7 @@ export type LlmReasoningEffort = "low" | "medium" | "high";
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
 export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
+export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn" | "provider_degraded";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
 
@@ -207,6 +207,14 @@ export interface RiskRules {
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
+  /**
+   * ATR-based stop tuning (only used when policy.atrStops is on). The protective stop DISTANCE becomes
+   * atrStopMultiple × ATR(atrStopPeriod) expressed as a % of entry, instead of the fixed stopLossPct —
+   * a volatility-aware stop driven by the name's own realized daily range. Falls back to the fixed/beta
+   * stop when bars are unavailable. atrStopPeriod default 14, atrStopMultiple default 2.0.
+   */
+  atrStopPeriod?: number;
+  atrStopMultiple?: number;
   /**
    * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
    * before the system auto-halts new entries (systemState → "close_only") and fires a
@@ -450,6 +458,16 @@ export interface TradingPolicy {
    * scan; names without a beta are unaffected (factor 1.0).
    */
   betaScaledStops?: boolean;
+  /**
+   * ATR-based stops (opt-in, default false). When on, the per-position protective stop DISTANCE is
+   * computed from the name's Average True Range — atrStopMultiple × ATR(atrStopPeriod) as a % of entry
+   * (see riskRules.atrStopPeriod/atrStopMultiple) — instead of the fixed riskRules.stopLossPct. This is
+   * a volatility-aware stop driven by the name's own realized daily range; it adapts per-symbol without
+   * needing a beta. Takes precedence over betaScaledStops for the stop distance when both are on. Only
+   * applies when stopLossPct > 0 (it sets the DISTANCE of the configured stop), and falls back to the
+   * fixed/beta stop whenever recent bars are unavailable — a position is never left unprotected.
+   */
+  atrStops?: boolean;
   /**
    * Convert deterministic OPENING market orders into marketable-limit orders (priced through the
    * quote by tuning.marketableLimitBufferBps) so a fast-regime entry can't fill arbitrarily far past
@@ -824,6 +842,8 @@ export interface RecentProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  /** Broker or network error message when status is placing_failed. */
+  errorMessage?: string;
 }
 
 export interface StrategyOutcome {

@@ -48,8 +48,19 @@ App A computes aggregate congressional analytics App B can't derive from raw tra
 (`market.ts`) then folds it into scan candidate selection via `congressAnalyticsScore`: a strong
 **dollar net buy flow** + **cluster buy** + **multiple high-track-record members** can surface a name
 even when the scraped per-member `netSignal` is thin. Net-selling/neutral contributes 0 (long-side
-only). Member quality rank-normalizes whatever numeric performance field App A's member-leaderboard
-exposes (tolerant; inert until App A ships one). Additive + default-off → no behavior change when off.
+only). Additive + default-off → no behavior change when off.
+
+**Member quality — real skill, with an activity fallback (2026-06-25).** App A now exposes
+`GET /api/analytics/member/:filerId/performance` → `{performance:{tradeCount, scoredCount, winRate,
+medianReturn, medianExcess, avgReturn, avgExcess}}`, where `avgExcess`/`medianExcess` are realized
+return **in excess of the S&P** (alpha). `buildMemberSkillScores` (in `congress-analytics.ts`) fetches
+this for the filerIds surfaced in cluster `topMembers` (bounded by `MAX_SKILL_LOOKUPS=200`,
+`getAppAMemberPerformance` in the read client) and rank-normalizes by alpha (→ 0–100, keyed by
+**filerId**), ranking only members with `scoredCount > 0`. The cluster `topMemberScore` prefers this
+real skill score and **falls back** to `buildMemberScores` (activity prominence — `estVolumeUsd`/
+`tradeCount`, keyed by name) when a member has no scored performance yet. App A returns nulls until a
+member's trades are scored (which needs the price push to fill in), so this lights up gradually — until
+then the activity proxy carries it. No extra calls when there are no clusters.
 
 ## 4. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,

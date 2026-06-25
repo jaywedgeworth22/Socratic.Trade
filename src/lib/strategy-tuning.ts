@@ -266,6 +266,19 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
  * Returns the proposal unchanged when no scoring-weight changes are proposed, or when OOS
  * data is insufficient (< 4 snapshot dates → runWalkForwardOOS returns null).
  */
+/** Keep the proposal (weights intact) but append a caution that the patch was NOT OOS-validated, so
+ *  the operator never reads a silent gate-skip as an out-of-sample pass. */
+function withOosUnvalidatedCaution(proposal: StrategyTuningProposal, reason: string): StrategyTuningProposal {
+  if (!proposal.proposedPatch.scoringWeights || Object.keys(proposal.proposedPatch.scoringWeights).length === 0) return proposal;
+  return {
+    ...proposal,
+    cautions: [
+      ...proposal.cautions,
+      `Proposed factor-weight changes were NOT out-of-sample validated (${reason}) — they are kept as proposed, so apply with extra care.`
+    ]
+  };
+}
+
 async function applyOosGate(proposal: StrategyTuningProposal, userId: string): Promise<StrategyTuningProposal> {
   const proposedWeights = proposal.proposedPatch.scoringWeights;
   if (!proposedWeights || Object.keys(proposedWeights).length === 0) return proposal;
@@ -282,13 +295,13 @@ async function applyOosGate(proposal: StrategyTuningProposal, userId: string): P
     // data-derived IC weights, which answer a different question.
     oosResult = await runWalkForwardOOS(userId, { candidateWeights, baselineWeights });
   } catch {
-    // OOS fetch failed (e.g. network error in test); skip the gate gracefully.
-    return proposal;
+    // OOS fetch failed (e.g. network error in test); skip the gate gracefully — but flag non-validation.
+    return withOosUnvalidatedCaution(proposal, "the OOS data fetch failed");
   }
 
   if (!oosResult) {
-    // Insufficient snapshot history (< 4 dates) to run OOS — skip the gate.
-    return proposal;
+    // Insufficient snapshot history (< 4 dates) to run OOS — skip the gate, but flag non-validation.
+    return withOosUnvalidatedCaution(proposal, "insufficient snapshot history — need ≥4 distinct snapshot dates");
   }
 
   // Gate on the CANDIDATE weights vs the CURRENT weights — "does what's proposed beat what's
@@ -298,7 +311,7 @@ async function applyOosGate(proposal: StrategyTuningProposal, userId: string): P
   // proposed weights — the exact bug this fix removes.
   const candidateIC = oosResult.oosICCandidate;
   const baselineIC = oosResult.oosICBaseline;
-  if (candidateIC == null || baselineIC == null) return proposal;
+  if (candidateIC == null || baselineIC == null) return withOosUnvalidatedCaution(proposal, "the OOS run returned no composite IC");
   const improves = candidateIC > baselineIC;
   const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}.`;
 
