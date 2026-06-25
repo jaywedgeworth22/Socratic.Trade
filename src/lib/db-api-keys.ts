@@ -1115,3 +1115,52 @@ export function touchMemory(id: string, assertedAt: string, confidence: number):
 export function deleteMemory(userId: string, id: string): boolean {
   return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
 }
+
+// ── Take-profit trim ratchet ────────────────────────────────────────────────
+// Monotonic "band" already trimmed per open profitable position, so a partial take-profit trims once
+// per take-profit band instead of laddering out every run. See take_profit_trims (db.ts migrate()).
+
+export interface TakeProfitTrimBand {
+  /** Highest take-profit band already trimmed for the lot. */
+  band: number;
+  /** Position cost basis when the band was recorded — ratchet resets when the live basis differs (rebuy). */
+  avgCost: number;
+}
+
+/** Map of symbol → {band, avgCost} of the highest already-trimmed take-profit band (empty when none). */
+export function getTakeProfitTrimBands(accountNumber: string, userId: string = "local"): Record<string, TakeProfitTrimBand> {
+  const rows = getDb()
+    .prepare("SELECT symbol, band, avg_cost FROM take_profit_trims WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; band: number; avg_cost: number }>;
+  const out: Record<string, TakeProfitTrimBand> = {};
+  for (const r of rows) out[r.symbol] = { band: Number(r.band) || 0, avgCost: Number(r.avg_cost) || 0 };
+  return out;
+}
+
+/** Record (upsert) the highest take-profit band trimmed for a position lot (band + its cost basis). */
+export function recordTakeProfitTrimBand(
+  accountNumber: string,
+  symbol: string,
+  band: number,
+  avgCost: number,
+  userId: string = "local",
+  now: string = new Date().toISOString()
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO take_profit_trims (user_id, account_number, symbol, band, avg_cost, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol)
+       DO UPDATE SET band = excluded.band, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at`
+    )
+    .run(userId, accountNumber, symbol, Math.max(0, Math.floor(band)), Number.isFinite(avgCost) ? avgCost : 0, now);
+}
+
+/** Clear ratchet state for the given symbols (e.g. positions that have closed). No-op on empty input. */
+export function clearTakeProfitTrimBands(accountNumber: string, symbols: string[], userId: string = "local"): void {
+  if (symbols.length === 0) return;
+  const placeholders = symbols.map(() => "?").join(",");
+  getDb()
+    .prepare(`DELETE FROM take_profit_trims WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
+    .run(userId, accountNumber, ...symbols);
+}

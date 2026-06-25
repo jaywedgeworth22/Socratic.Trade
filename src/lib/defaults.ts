@@ -21,6 +21,8 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
 export const DEFAULT_RISK_RULES: RiskRules = {
   stopLossPct: 8,
   takeProfitPct: 20,
+  // Take partial profit at the target and let the rest ride (laddered per take-profit band).
+  takeProfitTrimPct: 50,
   trailingStopPct: 0
 };
 
