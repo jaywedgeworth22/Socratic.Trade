@@ -4,6 +4,23 @@
 `src/lib/congress-share.ts`, `app/api/admin/congress-share/route.ts`, and the
 hooks in `src/lib/market.ts` (after-scan) and `src/lib/scheduler.ts` (nightly).
 
+**2026-06-25 additions (all default-OFF):**
+- **Numeric analyst price targets** — `fundamentals[]`/`analyst[]` already ride the
+  push via `marketQuoteToFundamentals`/`marketQuoteToAnalyst` (sourced from the scan's
+  `MarketQuote`, gated `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`). Their analyst numeric
+  price targets (`targetMean/High/Low/Median`) were `null`; they are now filled when
+  the opt-in FMP price-target provider is on (`FMP_PRICE_TARGETS_ENABLED`) — the targets
+  thread through the enrichment surface onto the quote and `marketQuoteToAnalyst` emits
+  them. Off → they stay `null` (App A's columns are nullable).
+- **Inbound return-path receiver** — `POST /api/admin/securities/import`
+  (`src/lib/securities-import-auth.ts`, `app/api/admin/securities/import/route.ts`,
+  `src/lib/db-securities-import.ts`). Lands App A's gap-fill push into a local EOD
+  cache; bearer `APP_B_INGEST_TOKEN`, constant-time, default-closed. Outbound pushes
+  now carry `origin: app-b` so the receiver can skip a round-trip of our own rows
+  (no-echo guard). The local cache feeds an opt-in `fetchDailyOHLC` tier
+  (`SECURITIES_IMPORT_HISTORY_TIER_ENABLED`, density-guarded by
+  `SECURITIES_IMPORT_MIN_BARS`). See the 2026-06-25 rollout note.
+
 ## Why
 
 This app ("App B") and `congress.trade` ("App A", a Cloudflare Worker backed by a

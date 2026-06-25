@@ -187,7 +187,8 @@ describe("shareWithCongressTrade", () => {
     expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
     expect(JSON.parse(init.body as string)).toEqual({
       refs: [{ ticker: "AAPL" }],
-      spx: [{ date: "2026-06-15", close: 5400 }]
+      spx: [{ date: "2026-06-15", close: 5400 }],
+      origin: "app-b" // no-echo-loop provenance tag stamped on every outbound payload
     });
     expect(res).toMatchObject({ ok: true, status: 200, response: { ok: true, refs: 1 }, sent: { refs: 1, spx: 1 } });
   });

@@ -10,7 +10,7 @@
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { fulfillMarketDataDemand, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
@@ -81,6 +81,12 @@ export async function fetchDailyOHLC(rawSymbol: string, now: number = Date.now()
   // Keyed providers first (brokerage-grade, generous limits, reliable from datacenter IPs),
   // then the free fallbacks. Keyed sources self-skip when their env key is unset.
   const sources: Array<{ scope: CacheScope; fetch: () => Promise<OHLCBar[] | null> }> = [
+    // Local imported-EOD cache tier (congress.trade return-path): App A POSTs gap-fill closes to
+    // /api/admin/securities/import; they land in imported_price_eod/imported_spx_eod. Reading the local
+    // table first (ahead of the App A HTTP read and our keyed providers) lets an imported series displace
+    // a re-fetch entirely. DEFAULT OFF + density-guarded inside fetchImportedHistory so a sparse gap-fill
+    // never short-circuits with an incomplete series. Close-only bars.
+    { scope: "shared", fetch: async () => fetchImportedHistory(symbol) },
     // congress.trade (App A) cache-aside tier: App A also pulls FMP, so reuse its EOD closes first
     // to spend the shared quota once and save App B's own (keyed) history calls. Returns close-only
     // bars (no OHLC), so an enabled price chart renders a line, not candles, on App A hits. No-op
@@ -329,6 +335,32 @@ export function clearHistoryCache(): void {
  */
 async function fetchAppAHistory(symbol: string): Promise<OHLCBar[] | null> {
   const closes = symbol === "^GSPC" ? await getAppASpx() : (await getAppAPrices(symbol))?.closes ?? [];
+  const bars = appAClosesToBars(closes);
+  return bars.length >= 2 ? bars : null;
+}
+
+function importedHistoryTierEnabled(): boolean {
+  const v = (process.env.SECURITIES_IMPORT_HISTORY_TIER_ENABLED ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+/** Minimum imported closes before the local tier may short-circuit the cascade (avoids sparse gap-fills). */
+function importedHistoryMinBars(): number {
+  const v = Number(process.env.SECURITIES_IMPORT_MIN_BARS ?? 200);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 200;
+}
+
+/**
+ * Local imported-EOD cache tier (congress.trade return-path). Serves App A's gap-fill closes that were
+ * POSTed to /api/admin/securities/import (persisted in imported_price_eod / imported_spx_eod). DEFAULT
+ * OFF (SECURITIES_IMPORT_HISTORY_TIER_ENABLED) and density-guarded (SECURITIES_IMPORT_MIN_BARS, default
+ * 200 ≈ ~10 months) so a sparse gap-fill never displaces a full fetch with an incomplete series.
+ * Close-only bars (no OHLC), like the App A HTTP tier — an enabled price chart renders a line on hits.
+ */
+function fetchImportedHistory(symbol: string): OHLCBar[] | null {
+  if (!importedHistoryTierEnabled()) return null;
+  const closes = symbol === "^GSPC" ? getImportedSpxCloses() : getImportedPriceCloses(symbol);
+  if (closes.length < importedHistoryMinBars()) return null;
   const bars = appAClosesToBars(closes);
   return bars.length >= 2 ? bars : null;
 }

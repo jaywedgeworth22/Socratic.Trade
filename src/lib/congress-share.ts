@@ -29,6 +29,13 @@ const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
 
+/**
+ * Origin tag stamped on every outbound payload so the counterpart's receiver can recognize App B's
+ * own rows and never echo them back into our store (the no-echo-loop guard). Our OWN inbound receiver
+ * (POST /api/admin/securities/import) skips any payload carrying this origin. See docs/congress-trade-app-b-reply.md §1.3.
+ */
+export const APP_B_ORIGIN = "app-b";
+
 // Per-POST sizing. The endpoint accepts up to ~2,000 tickers / ~20,000 closes, but App A's per-call
 // work (row upserts + per-trade performance recompute) made big chunks blow the timeout in prod, so we
 // keep each POST small and bounded — many small POSTs beat one timing-out megabatch.
@@ -172,7 +179,10 @@ export interface CongressFundamental {
   epsGrowth?: number;
 }
 
-/** Analyst-consensus row in App A's import shape (PR #46). App B has no price targets → omitted. */
+/**
+ * Analyst-consensus row in App A's import shape (PR #46). Numeric price targets ride `null` unless the
+ * opt-in FMP price-target provider (FMP_PRICE_TARGETS_ENABLED) is on — then they're filled from the scan.
+ */
 export interface CongressAnalyst {
   ticker: string;
   date: string; // YYYY-MM-DD (as-of)
@@ -182,6 +192,10 @@ export interface CongressAnalyst {
   hold?: number;
   sell?: number;
   strongSell?: number;
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
 }
 
 export interface CongressSharePayload {
@@ -192,6 +206,8 @@ export interface CongressSharePayload {
   shortVolume?: CongressShortVol[];
   fundamentals?: CongressFundamental[];
   analyst?: CongressAnalyst[];
+  /** Provenance tag (defaults to APP_B_ORIGIN on send). Lets a receiver skip rows it originated. */
+  origin?: string;
 }
 
 export interface CongressShareResult {
@@ -268,10 +284,11 @@ export function marketQuoteToFundamentals(
 
 /**
  * Map a scanned MarketQuote's analyst consensus to App A's import row (PR #46). Blends the per-source
- * rating counts App B holds; App B has no price targets, so those are omitted (App A fills null).
+ * rating counts App B holds. Numeric price targets are included only when the opt-in FMP price-target
+ * provider populated them on the quote (FMP_PRICE_TARGETS_ENABLED); otherwise omitted (App A fills null).
  */
 export function marketQuoteToAnalyst(
-  q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource">,
+  q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian">,
   date: string
 ): CongressAnalyst | null {
   const ticker = normalizeSymbol(q.symbol);
@@ -287,10 +304,19 @@ export function marketQuoteToAnalyst(
     counts.sell += detail.counts.sell ?? 0;
     counts.strongSell += detail.counts.strongSell ?? 0;
   }
-  if (!q.analystRating && !haveCounts) return null;
+  const tMean = numOrUndef(q.targetMean);
+  const tHigh = numOrUndef(q.targetHigh);
+  const tLow = numOrUndef(q.targetLow);
+  const tMedian = numOrUndef(q.targetMedian);
+  const haveTargets = tMean !== undefined || tHigh !== undefined || tLow !== undefined || tMedian !== undefined;
+  if (!q.analystRating && !haveCounts && !haveTargets) return null;
   const row: CongressAnalyst = { ticker, date };
   if (q.analystRating) row.rating = q.analystRating;
   if (haveCounts) Object.assign(row, counts);
+  if (tMean !== undefined) row.targetMean = tMean;
+  if (tHigh !== undefined) row.targetHigh = tHigh;
+  if (tLow !== undefined) row.targetLow = tLow;
+  if (tMedian !== undefined) row.targetMedian = tMedian;
   return row;
 }
 
@@ -408,10 +434,12 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Stamp our origin so the counterpart never echoes our own rows back to us (no-echo-loop guard).
+    const body = { ...payload, origin: payload.origin ?? APP_B_ORIGIN };
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
       signal: controller.signal,
       cache: "no-store"
     });
