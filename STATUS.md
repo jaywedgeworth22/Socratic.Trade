@@ -4,6 +4,28 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — App B return-path BUILT: securities-import receiver + fundamentals/analyst + price targets
+Implemented the two follow-up PRs scoped by the 2026-06-24 reply, plus the extra that
+fills the analyst payload's null numeric price targets. All additive + default-OFF.
+- **Receiver (`feat/securities-import-receiver`):** new `POST /api/admin/securities/import`
+  (bearer `APP_B_INGEST_TOKEN`, constant-time, default-closed) + new local EOD cache
+  (`imported_securities_ref`/`imported_price_eod`/`imported_spx_eod` in `db.ts`,
+  `db-securities-import.ts`), wired as an OPT-IN, density-guarded `fetchDailyOHLC` tier
+  (`SECURITIES_IMPORT_HISTORY_TIER_ENABLED`, `SECURITIES_IMPORT_MIN_BARS=200`). No-echo
+  guard: outbound pushes are tagged `origin: app-b` and the receiver skips them.
+- **Fundamentals/analyst push:** `buildFundamentalsAnalystImport` (default-off
+  `CONGRESS_SHARE_FUNDAMENTALS`, capped by `CONGRESS_SHARE_FUNDAMENTALS_MAX`) rides the
+  nightly `congress-share` batch; sources from the FMP enrichment cascade.
+- **Numeric price targets:** opt-in FMP `price-target-consensus` (`FMP_PRICE_TARGETS_ENABLED`)
+  threads `targetMean/High/Low/Median` through the whole enrichment surface, so analyst[]
+  fills those columns instead of null.
+- Verify: tsc clean · 1088/1089 tests (+28; only the pre-existing cache-provenance date
+  flake fails) · build green (`/api/admin/securities/import` registered). Operator: set
+  `APP_B_INGEST_TOKEN`, hand App A the token + import URL out-of-band; flip the consume/
+  fundamentals/targets flags when ready. Off-theme backlog from the discovery sweep is
+  listed in the rollout note (not built — needs its own branches / owner sign-off).
+  See `docs/rollouts/2026-06-25-app-b-securities-import-fundamentals-price-targets.md`.
+
 ## 2026-06-24 — App B reply to App A: return-path + analytics ownership
 Authored App B's coordination reply to App A (congress.trade) on the two open
 questions: the A→B price/spx/ref **return-path** and **composite-analytics

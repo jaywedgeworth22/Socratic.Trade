@@ -152,11 +152,18 @@ macro/news deferred as agreed.
 - **From you:** nothing blocking. Confirm when PR #46's migration is applied
   (we'll flip the fundamentals/analyst push on the next nightly), and set
   `APP_B_IMPORT_URL` + `APP_B_INGEST_TOKEN` once we hand you the token.
-- **From us (App B), in order):**
+- **From us (App B), in order): ✅ BOTH BUILT 2026-06-25 (default-OFF until configured).**
   1. `feat/securities-import-receiver` — the inbound `/securities/import` + local
-     EOD cache tier (unblocks your return-path).
-  2. extend `congress-share.ts` with `fundamentals[]`/`analyst[]` (rides the
-     existing nightly batch; ready before your migration lands).
+     EOD cache tier (unblocks your return-path). **Live contract:**
+     `POST /api/admin/securities/import`, bearer `APP_B_INGEST_TOKEN`,
+     default-closed. We tag our outbound push `origin: app-b` and our receiver skips
+     that origin, so the round-trip is a guaranteed no-op on our side too.
+  2. extended `congress-share.ts` with `fundamentals[]`/`analyst[]` (rides the
+     existing nightly batch; gate `CONGRESS_SHARE_FUNDAMENTALS`). **Update:** numeric
+     price targets are no longer permanently null — we wired the opt-in FMP
+     `price-target-consensus` provider (`FMP_PRICE_TARGETS_ENABLED`), so
+     `targetMean/High/Low/Median` fill when that key tier supports it (graceful null
+     otherwise). Your nullable target columns are still correct.
 - **No re-fetch overlap:** pull/pull analytics + the two-way price cache means each
   symbol is fetched once across both apps.
 </content>

@@ -17,6 +17,7 @@
 // manual run with just the token. The token is a server-only secret — never exposed to the browser.
 
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
+import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
@@ -26,6 +27,13 @@ import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSi
 
 const IMPORT_PATH = "/api/admin/securities/import";
 const DEFAULT_BASE_URL = "https://congress.trade";
+
+/**
+ * Origin tag stamped on every outbound payload so the counterpart's receiver can recognize App B's
+ * own rows and never echo them back into our store (the no-echo-loop guard). Our OWN inbound receiver
+ * (POST /api/admin/securities/import) skips any payload carrying this origin. See docs/congress-trade-app-b-reply.md §1.3.
+ */
+export const APP_B_ORIGIN = "app-b";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
 
@@ -129,12 +137,55 @@ export interface CongressShortVol {
   elevated: boolean;
 }
 
+/**
+ * Fundamentals row in App A's import shape (App A PR #46 slots), filled from App B's FMP enrichment
+ * cascade. Sends the `week52High/Low` spelling. Only finite fields are included (missing → omitted).
+ */
+export interface CongressFundamentals {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  peRatio?: number;
+  eps?: number;
+  dividendYield?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+  week52High?: number;
+  week52Low?: number;
+  beta?: number;
+}
+
+/**
+ * Analyst row in App A's import shape (App A PR #46 slots). Rating + grade-counts come from the FMP
+ * grades-consensus enrichment; numeric price targets ride `null` until App B wires a price-target
+ * provider (FMP price-target-consensus, opt-in via FMP_PRICE_TARGETS_ENABLED).
+ */
+export interface CongressAnalyst {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  rating?: string;
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+  analystCount: number;
+  targetMean: number | null;
+  targetHigh: number | null;
+  targetLow: number | null;
+  targetMedian: number | null;
+}
+
 export interface CongressSharePayload {
   refs?: CongressRef[];
   spx?: CongressClose[];
   prices?: CongressPrice[];
   insider?: CongressInsider[];
   shortVolume?: CongressShortVol[];
+  fundamentals?: CongressFundamentals[];
+  analyst?: CongressAnalyst[];
+  /** Provenance tag (defaults to APP_B_ORIGIN on send). Lets a receiver skip rows it originated. */
+  origin?: string;
 }
 
 export interface CongressShareResult {
@@ -145,7 +196,7 @@ export interface CongressShareResult {
   response?: unknown;
   error?: string;
   /** Counts actually transmitted across all POSTs in this call. */
-  sent: { refs: number; spx: number; prices: number; closes: number; insider: number; shortVolume: number };
+  sent: { refs: number; spx: number; prices: number; closes: number; insider: number; shortVolume: number; fundamentals: number; analyst: number };
 }
 
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
@@ -250,6 +301,148 @@ export function buildShortVolumeImport(): CongressShortVol[] {
   return out.slice(0, maxDailyTickers());
 }
 
+// ── Fundamentals / analyst import builders (App A PR #46 slots) ──────────────────
+
+/**
+ * Whether the nightly batch ALSO sends fundamentals[]/analyst[]. Default OFF even when sharing is on:
+ * unlike insider/short-volume (read from already-cached datasets), this enriches a capped slice of the
+ * universe via the cascade, which can spend provider quota — so it's a separate explicit opt-in.
+ */
+export function isCongressFundamentalsShareEnabled(): boolean {
+  return flagOn(process.env.CONGRESS_SHARE_FUNDAMENTALS);
+}
+
+/** Cap on how many symbols get enriched for fundamentals/analyst per run (bounds provider spend). */
+function maxFundamentalsTickers(): number {
+  const v = Number(process.env.CONGRESS_SHARE_FUNDAMENTALS_MAX ?? 100);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 100;
+}
+
+function numOrUndef(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Pick the analyst source whose grade counts are most complete (largest total), so we send ONE
+ * source's counts rather than summing across providers (which would double-count analysts). Null when
+ * no source reports counts.
+ */
+export function pickAnalystCounts(
+  enr: Pick<SymbolEnrichment, "analystBySource">
+): { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number } | null {
+  const sources = enr.analystBySource ? Object.values(enr.analystBySource) : [];
+  let best: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number } | null = null;
+  let bestTotal = 0;
+  for (const s of sources) {
+    const c = s.counts;
+    if (!c) continue;
+    const total = c.strongBuy + c.buy + c.hold + c.sell + c.strongSell;
+    if (total > bestTotal) {
+      bestTotal = total;
+      best = { strongBuy: c.strongBuy, buy: c.buy, hold: c.hold, sell: c.sell, strongSell: c.strongSell };
+    }
+  }
+  return best;
+}
+
+/** Map a SymbolEnrichment to a CongressFundamentals row (null when no fundamentals at all). */
+export function enrichmentToFundamentals(ticker: string, date: string, e: SymbolEnrichment): CongressFundamentals | null {
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return null;
+  const row: CongressFundamentals = { ticker: sym, date };
+  if (numOrUndef(e.peRatio) !== undefined) row.peRatio = e.peRatio;
+  if (numOrUndef(e.eps) !== undefined) row.eps = e.eps;
+  if (numOrUndef(e.dividendYield) !== undefined) row.dividendYield = e.dividendYield;
+  if (numOrUndef(e.fcfYield) !== undefined) row.fcfYield = e.fcfYield;
+  if (numOrUndef(e.debtToEquity) !== undefined) row.debtToEquity = e.debtToEquity;
+  if (numOrUndef(e.epsGrowth) !== undefined) row.epsGrowth = e.epsGrowth;
+  if (numOrUndef(e.fiftyTwoWeekHigh) !== undefined) row.week52High = e.fiftyTwoWeekHigh;
+  if (numOrUndef(e.fiftyTwoWeekLow) !== undefined) row.week52Low = e.fiftyTwoWeekLow;
+  if (numOrUndef(e.beta) !== undefined) row.beta = e.beta;
+  const hasAny =
+    row.peRatio !== undefined || row.eps !== undefined || row.dividendYield !== undefined ||
+    row.fcfYield !== undefined || row.debtToEquity !== undefined || row.epsGrowth !== undefined ||
+    row.week52High !== undefined || row.week52Low !== undefined || row.beta !== undefined;
+  return hasAny ? row : null;
+}
+
+/** Map a SymbolEnrichment to a CongressAnalyst row (null when neither counts nor a rating exist). */
+export function enrichmentToAnalyst(ticker: string, date: string, e: SymbolEnrichment): CongressAnalyst | null {
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return null;
+  const counts = pickAnalystCounts(e);
+  const rating = e.analystRating;
+  if (!counts && !rating) return null;
+  const c = counts ?? { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
+  return {
+    ticker: sym,
+    date,
+    rating,
+    strongBuy: c.strongBuy,
+    buy: c.buy,
+    hold: c.hold,
+    sell: c.sell,
+    strongSell: c.strongSell,
+    analystCount: c.strongBuy + c.buy + c.hold + c.sell + c.strongSell,
+    // Numeric price targets are not sourced by the grade-consensus path — ride null. The opt-in
+    // FMP price-target-consensus provider (FMP_PRICE_TARGETS_ENABLED) fills these when configured.
+    targetMean: numOrUndef(e.targetMean) ?? null,
+    targetHigh: numOrUndef(e.targetHigh) ?? null,
+    targetLow: numOrUndef(e.targetLow) ?? null,
+    targetMedian: numOrUndef(e.targetMedian) ?? null
+  };
+}
+
+export interface FundamentalsAnalystImport {
+  fundamentals: CongressFundamentals[];
+  analyst: CongressAnalyst[];
+  /** Symbols actually enriched (after the cap). */
+  enriched: number;
+  /** Original universe size when the cap truncated it (0 when not capped) — logged, never silent. */
+  cappedFrom: number;
+}
+
+/**
+ * Build fundamentals[] + analyst[] for App A by enriching a CAPPED slice of `symbols` via the cascade
+ * (self-caching, so names scanned earlier today are free). DEFAULT OFF — returns empty unless
+ * CONGRESS_SHARE_FUNDAMENTALS is set. The cap (CONGRESS_SHARE_FUNDAMENTALS_MAX) is logged when it
+ * truncates, never silently dropped.
+ */
+export async function buildFundamentalsAnalystImport(symbols: string[], now: number = Date.now()): Promise<FundamentalsAnalystImport> {
+  const empty: FundamentalsAnalystImport = { fundamentals: [], analyst: [], enriched: 0, cappedFrom: 0 };
+  if (!isCongressFundamentalsShareEnabled()) return empty;
+  const all = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+  const cap = maxFundamentalsTickers();
+  const capped = all.slice(0, cap);
+  const cappedFrom = capped.length < all.length ? all.length : 0;
+  if (cappedFrom > 0) {
+    console.warn(`[congress-share] fundamentals/analyst capped at ${cap}/${all.length} symbols (CONGRESS_SHARE_FUNDAMENTALS_MAX)`);
+  }
+  if (capped.length === 0) return empty;
+
+  let enrichment: Record<string, SymbolEnrichment> = {};
+  try {
+    enrichment = await getEnrichmentProvider().enrich(capped);
+  } catch (err) {
+    console.error("[congress-share] fundamentals/analyst enrich failed:", err);
+    return { ...empty, cappedFrom };
+  }
+
+  const fallbackDate = utcDate(now);
+  const fundamentals: CongressFundamentals[] = [];
+  const analyst: CongressAnalyst[] = [];
+  for (const sym of capped) {
+    const e = enrichment[sym];
+    if (!e) continue;
+    const date = (typeof e.asOf === "string" ? e.asOf.slice(0, 10) : "") || fallbackDate;
+    const f = enrichmentToFundamentals(sym, date, e);
+    if (f) fundamentals.push(f);
+    const a = enrichmentToAnalyst(sym, date, e);
+    if (a) analyst.push(a);
+  }
+  return { fundamentals, analyst, enriched: capped.length, cappedFrom };
+}
+
 // ── Low-level POST ─────────────────────────────────────────────────────────────
 
 function countCloses(payload: CongressSharePayload): number {
@@ -269,11 +462,16 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     prices: payload.prices?.length ?? 0,
     closes: countCloses(payload),
     insider: payload.insider?.length ?? 0,
-    shortVolume: payload.shortVolume?.length ?? 0
+    shortVolume: payload.shortVolume?.length ?? 0,
+    fundamentals: payload.fundamentals?.length ?? 0,
+    analyst: payload.analyst?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
-  if (sent.refs === 0 && sent.spx === 0 && sent.prices === 0 && sent.insider === 0 && sent.shortVolume === 0) {
+  if (
+    sent.refs === 0 && sent.spx === 0 && sent.prices === 0 && sent.insider === 0 &&
+    sent.shortVolume === 0 && sent.fundamentals === 0 && sent.analyst === 0
+  ) {
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
@@ -282,10 +480,12 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Stamp our origin so the counterpart never echoes our own rows back to us (no-echo-loop guard).
+    const body = { ...payload, origin: payload.origin ?? APP_B_ORIGIN };
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
       signal: controller.signal,
       cache: "no-store"
     });
@@ -453,9 +653,11 @@ export interface CongressDailyShareSummary {
   spxRows: number;
   insiderRows: number;
   shortVolRows: number;
+  fundamentalsRows: number;
+  analystRows: number;
   posts: number;
   failedPosts: number;
-  sent: { spx: number; prices: number; closes: number; insider: number; shortVolume: number };
+  sent: { spx: number; prices: number; closes: number; insider: number; shortVolume: number; fundamentals: number; analyst: number };
   responses?: unknown[];
 }
 
@@ -468,8 +670,8 @@ export interface CongressDailyShareSummary {
 export async function runCongressDailyShare(options: RunCongressDailyShareOptions = {}): Promise<CongressDailyShareSummary> {
   const now = options.now ?? Date.now();
   const empty = {
-    tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
-    posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
+    tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0, fundamentalsRows: 0, analystRows: 0,
+    posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0, fundamentals: 0, analyst: 0 }
   };
   if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
 
@@ -506,13 +708,19 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const insider = customUniverse ? [] : buildInsiderImport();
   const shortVolume = customUniverse ? [] : buildShortVolumeImport();
 
-  // POST: the first chunk carries the SPX series + insider + short-volume (one fewer round-trip);
-  // remaining chunks are prices only.
+  // Fundamentals + analyst (App A PR #46 slots) — DEFAULT OFF (CONGRESS_SHARE_FUNDAMENTALS). Enriches
+  // a capped slice of the universe via the self-caching cascade; empty unless explicitly enabled.
+  const { fundamentals, analyst } = await buildFundamentalsAnalystImport(universe, now);
+
+  // POST: the first chunk carries the SPX series + insider + short-volume + fundamentals + analyst
+  // (one fewer round-trip); remaining chunks are prices only.
   const chunks = chunkPrices(priceEntries);
-  const head: CongressSharePayload = { spx, insider, shortVolume };
+  const head: CongressSharePayload = { spx, insider, shortVolume, fundamentals, analyst };
+  const headHasNonPrice =
+    spx.length > 0 || insider.length > 0 || shortVolume.length > 0 || fundamentals.length > 0 || analyst.length > 0;
   const payloads: CongressSharePayload[] =
     chunks.length === 0
-      ? spx.length > 0 || insider.length > 0 || shortVolume.length > 0
+      ? headHasNonPrice
         ? [head]
         : []
       : chunks.map((prices, i) => (i === 0 ? { ...head, prices } : { prices }));
@@ -520,7 +728,7 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const responses: unknown[] = [];
   let posts = 0;
   let failedPosts = 0;
-  const sent = { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 };
+  const sent = { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0, fundamentals: 0, analyst: 0 };
   for (const payload of payloads) {
     const result = await shareWithCongressTrade(payload);
     posts++;
@@ -531,6 +739,8 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
       sent.closes += result.sent.closes;
       sent.insider += result.sent.insider;
       sent.shortVolume += result.sent.shortVolume;
+      sent.fundamentals += result.sent.fundamentals;
+      sent.analyst += result.sent.analyst;
     } else if (!result.skipped) {
       failedPosts++;
     }
@@ -553,6 +763,8 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     spxRows: spx.length,
     insiderRows: insider.length,
     shortVolRows: shortVolume.length,
+    fundamentalsRows: fundamentals.length,
+    analystRows: analyst.length,
     posts,
     failedPosts,
     sent,
@@ -567,6 +779,8 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
       spxRows: summary.spxRows,
       insiderRows: summary.insiderRows,
       shortVolRows: summary.shortVolRows,
+      fundamentalsRows: summary.fundamentalsRows,
+      analystRows: summary.analystRows,
       posts,
       failedPosts,
       sent,
