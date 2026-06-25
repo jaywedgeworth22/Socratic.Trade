@@ -100,7 +100,10 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
         accountNumber: String(item.account_number ?? item.accountNumber),
         // Robinhood labels accounts with `nickname` (e.g. "Agentic"); fall back to type.
         label: String(item.nickname ?? item.label ?? item.brokerage_account_type ?? item.type ?? "Brokerage account"),
-        agenticAllowed: Boolean(item.agentic_allowed ?? item.agenticAllowed ?? true),
+        // Robinhood MCP does not return agentic_allowed; default to true only for
+        // standard brokerage accounts (not IRA/Roth) since the MCP is purpose-built for
+        // agentic equity trading. An explicit false from the broker still overrides.
+        agenticAllowed: Boolean(item.agentic_allowed ?? item.agenticAllowed ?? (accountType === "brokerage")),
         capabilities
       };
     });
