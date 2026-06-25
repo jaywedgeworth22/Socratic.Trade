@@ -164,7 +164,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   // Matured skipped-candidate counterfactuals (empty price map => realized rows only,
   // no live quotes needed). Lets the tuner learn from high-scoring names it passed on.
   const missedOpportunities = summarizeMissedOpportunities(
-    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30 })
+    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId })
   );
   // Factor-outcome history: realized win-rate and avg-return grouped by dominant entry factor.
   // Gated by the same closed-lot minimum — below the gate the sample is too thin to trust

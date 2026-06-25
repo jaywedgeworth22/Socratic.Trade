@@ -697,13 +697,13 @@ export interface SkippedCandidateReturn {
 export function getSkippedCandidateReturns(
   currentPrices: Record<string, number>,
   userId: string = "local",
-  options: { limit?: number; maxAgeDays?: number } = {}
+  options: { limit?: number; maxAgeDays?: number; connectedAccountId?: string } = {}
 ): SkippedCandidateReturn[] {
   const limit = options.limit ?? 12;
   const maxAgeDays = options.maxAgeDays ?? 14;
   const now = Date.now();
   const seen = new Set<string>();
-  const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3)
+  const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3, options.connectedAccountId)
     .map((row): SkippedCandidateReturn | undefined => {
       if (!row.exitPrice || row.returnPct === undefined) return undefined;
       const asOfTime = new Date(row.snapshotAt).getTime();

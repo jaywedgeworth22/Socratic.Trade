@@ -6,6 +6,7 @@ import {
   dailyExecutionStats,
   finishStrategyRun,
   getActiveConnectedAccount,
+  getConnectedAccount,
   getPolicy,
   getProposal,
   getStrategyPrompt,
@@ -107,26 +108,35 @@ export function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
 }
 
-export async function runStrategyOnce(userId: string = "local", options: { manual?: boolean } = {}): Promise<StrategyResult> {
-  // Run lock: prevent overlapping runs from double-counting daily limits.
-  if (!acquireStrategyLock(userId)) {
+export async function runStrategyOnce(
+  userId: string = "local",
+  options: { manual?: boolean; connectedAccountId?: string } = {}
+): Promise<StrategyResult> {
+  // Target account: an explicit override (scheduler running a non-active account) or the active
+  // account. Everything below derives from this account's policy, so a single override here runs
+  // the whole loop against the targeted account.
+  const targetAccountId = options.connectedAccountId;
+  // Per-account run lock: prevent overlapping runs from double-counting daily limits,
+  // scoped to the target account so a different account isn't blocked.
+  const connectedAccountId = targetAccountId ?? getPolicy(userId).connectedAccountId;
+  if (!acquireStrategyLock(userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
   const runId = crypto.randomUUID();
-  insertStrategyRun(runId, userId);
+  insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   const manualRun = Boolean(options.manual);
 
   try {
-    const savedPolicy = getPolicy(userId);
+    const savedPolicy = getPolicy(userId, targetAccountId);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
     if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
     const policy: RunnablePolicy = manualRun
       ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
       : { ...savedPolicy, accountNumber };
-    const activeAccount = getActiveConnectedAccount(userId);
+    const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
 
     const gateway = getBrokerGateway(policy, userId);
@@ -547,8 +557,8 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       runId,
       asOf: new Date().toISOString(),
       signals: [...chosenEvidence, ...skippedEvidence]
-    }, userId);
-    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25 })
+    }, userId, connectedAccountId);
+    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
@@ -606,7 +616,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     finishStrategyRun(runId, "failed", summary, userId);
-    const policy = getPolicy(userId);
+    const policy = getPolicy(userId, targetAccountId);
     result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
@@ -614,7 +624,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, connectedAccountId);
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
@@ -1129,7 +1139,7 @@ export async function executeProposal(
   // Approve can each read the same pre-cap totals and both place — jointly
   // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
   // the same lock here serialises approval execution against the strategy loop.
-  if (!acquireStrategyLock(userId)) {
+  if (!acquireStrategyLock(userId, policy.connectedAccountId)) {
     return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
   }
 
@@ -1336,25 +1346,27 @@ export async function executeProposal(
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
     return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, policy.connectedAccountId);
   }
 }
 
 export function rejectProposal(proposalId: string, userId: string = "local"): void {
   const proposal = getProposal(proposalId, userId);
+  const connectedAccountId = getPolicy(userId).connectedAccountId;
   updateProposalStatus(proposalId, "rejected", undefined, undefined, undefined, userId);
   audit("proposal_rejected", {
     proposalId,
     symbol: proposal?.proposal.symbol,
     side: proposal?.proposal.side,
     action: "rejection"
-  }, userId);
+  }, userId, connectedAccountId);
   // Feed the rejection into the counterfactual pipeline so its post-rejection return matures and
   // shows up in missed-opportunity analytics — "the app analyzes it anyway". Best-effort, non-fatal.
   if (proposal) {
     try {
       recordRejectedProposalCounterfactual({
         userId,
+        connectedAccountId,
         runId: proposal.runId,
         symbol: proposal.proposal.symbol,
         refPrice: proposal.proposal.referencePrice,
@@ -1479,7 +1491,7 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14 })
+  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId })
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
