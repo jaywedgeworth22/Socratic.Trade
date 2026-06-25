@@ -16,6 +16,12 @@ export type IndexUniverse =
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
 
+// Sell-to-fund-buy (PR 3): when a run's intended BUYs exceed buying power, how to raise cash by
+// trimming holdings. "off" (default) = never, behavior unchanged. "suggest" = surface the plan only.
+// "propose" = queue the funding sells for human approval. "automated" = let them execute under the
+// account's existing authority (auto-placed only when the account is already in "decide" mode).
+export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
+
 export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
@@ -202,6 +208,14 @@ export interface RiskRules {
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
   /**
+   * ATR-based stop tuning (only used when policy.atrStops is on). The protective stop DISTANCE becomes
+   * atrStopMultiple × ATR(atrStopPeriod) expressed as a % of entry, instead of the fixed stopLossPct —
+   * a volatility-aware stop driven by the name's own realized daily range. Falls back to the fixed/beta
+   * stop when bars are unavailable. atrStopPeriod default 14, atrStopMultiple default 2.0.
+   */
+  atrStopPeriod?: number;
+  atrStopMultiple?: number;
+  /**
    * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
    * before the system auto-halts new entries (systemState → "close_only") and fires a
    * kill-switch notification. Undefined or <=0 disables. Unlike the per-position stopLossPct,
@@ -318,6 +332,8 @@ export interface TradingPolicy {
   additionalSymbols: string[];
   blocklist?: string[];
   strategyAuthority: StrategyAuthority;
+  /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
+  sellToFundBuy?: SellToFundBuyMode;
   /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
    *  fallback. This is the Green Team / Bull proposer model. */
   llmModel?: string;
@@ -443,6 +459,16 @@ export interface TradingPolicy {
    */
   betaScaledStops?: boolean;
   /**
+   * ATR-based stops (opt-in, default false). When on, the per-position protective stop DISTANCE is
+   * computed from the name's Average True Range — atrStopMultiple × ATR(atrStopPeriod) as a % of entry
+   * (see riskRules.atrStopPeriod/atrStopMultiple) — instead of the fixed riskRules.stopLossPct. This is
+   * a volatility-aware stop driven by the name's own realized daily range; it adapts per-symbol without
+   * needing a beta. Takes precedence over betaScaledStops for the stop distance when both are on. Only
+   * applies when stopLossPct > 0 (it sets the DISTANCE of the configured stop), and falls back to the
+   * fixed/beta stop whenever recent bars are unavailable — a position is never left unprotected.
+   */
+  atrStops?: boolean;
+  /**
    * Convert deterministic OPENING market orders into marketable-limit orders (priced through the
    * quote by tuning.marketableLimitBufferBps) so a fast-regime entry can't fill arbitrarily far past
    * the quote. Default false. Protective EXIT orders intentionally stay market for fill certainty —
@@ -512,7 +538,7 @@ export interface TradeProposal {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
     string
   >
 >;
@@ -563,6 +589,11 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED). */
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   /** Cross-sectional: this name's intraday % move minus the average move of its sector among
    *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
   sectorRelStrength?: number;
@@ -672,6 +703,10 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   evidenceBulletins?: string[];
   sources?: EnrichmentSources;
 }

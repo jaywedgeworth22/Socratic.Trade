@@ -910,6 +910,25 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
+  async function copyProfileToAccount(profileId: string, connectedAccountId: string) {
+    if (!profileId || !connectedAccountId) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/profiles/${profileId}/copy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectedAccountId })
+      });
+      if (!response.ok) throw await responseError(response, "Copy to account failed");
+      toast.success("Strategy copied to account.");
+      await load({ quiet: true });
+    } catch (copyError) {
+      toast.error(copyError instanceof Error ? copyError.message : "Copy to account failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function requestStrategyTuning() {
     setTuningBusy(true);
     setTuningError("");
@@ -1315,6 +1334,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 onEdit={() => setStudioOpen(true)}
                 onOpenFlow={() => setNodeEditorOpen(true)}
                 activateProfile={activateProfile}
+                copyProfileToAccount={copyProfileToAccount}
                 newProfileName={newProfileName}
                 setNewProfileName={setNewProfileName}
                 createProfile={createProfile}
@@ -2708,6 +2728,7 @@ function StrategyView({
   onEdit,
   onOpenFlow,
   activateProfile,
+  copyProfileToAccount,
   newProfileName,
   setNewProfileName,
   createProfile,
@@ -2723,6 +2744,7 @@ function StrategyView({
   onEdit: () => void;
   onOpenFlow: () => void;
   activateProfile: (id: string) => void;
+  copyProfileToAccount: (profileId: string, connectedAccountId: string) => void;
   newProfileName: string;
   setNewProfileName: (v: string) => void;
   createProfile: () => void;
@@ -2732,6 +2754,11 @@ function StrategyView({
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
 }) {
+  // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
+  const [copyTarget, setCopyTarget] = useState("");
+  const activeAccountId = snapshot.policy.connectedAccountId;
+  const copyTargets = (snapshot.connectedAccounts ?? []).filter((a) => a.id !== activeAccountId);
+  const selectedProfileId = snapshot.activeProfile?.id ?? "";
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <Card className="lg:col-span-2">
@@ -2758,6 +2785,27 @@ function StrategyView({
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+            {copyTargets.length > 0 && selectedProfileId && (
+              <div className="mt-2">
+                <span className="mb-1.5 block text-xs font-medium text-muted">Copy this strategy to another account</span>
+                <div className="flex items-center gap-2">
+                  <select className={inputClass} value={copyTarget} onChange={(e) => setCopyTarget(e.target.value)}>
+                    <option value="">Select account…</option>
+                    {copyTargets.map((a) => (
+                      <option key={a.id} value={a.id}>{a.label}</option>
+                    ))}
+                  </select>
+                  <Button
+                    variant="ghost"
+                    disabled={!copyTarget}
+                    onClick={() => copyProfileToAccount(selectedProfileId, copyTarget)}
+                    title="Apply this saved strategy to the selected account's live state (does not change its run-state)."
+                  >
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Save current as a named strategy</span>
@@ -2805,6 +2853,19 @@ function StrategyView({
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
                <OptionalNumberField label="Max avg correlation" value={policy.maxAvgCorrelation} placeholder="blank disables" step={0.05} onCommit={(v) => updatePolicy({ maxAvgCorrelation: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
+             </div>
+             <div title="When a run's intended buys exceed buying power, optionally raise cash by trimming holdings (largest losers first, never the buy targets).">
+               <span className="mb-1.5 block text-xs font-medium text-muted">Sell to fund buys</span>
+               <select
+                 className={inputClass}
+                 value={policy.sellToFundBuy ?? "off"}
+                 onChange={(e) => updatePolicy({ sellToFundBuy: e.target.value as TradingPolicy["sellToFundBuy"] })}
+               >
+                 <option value="off">Off — never sell to fund</option>
+                 <option value="suggest">Suggest only (no orders)</option>
+                 <option value="propose">Propose sells for approval</option>
+                 <option value="automated">Automated — sell to fund</option>
+               </select>
              </div>
              <Field label="Sector Caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
                <input className="w-full rounded-md border border-line bg-surface-3/50 px-3 py-2 text-[13px] text-fg outline-none focus:border-accent" defaultValue={formatSectorCaps(policy.sectorCaps)} onBlur={(e) => updatePolicy({ sectorCaps: parseSectorCaps(e.target.value) })} />

@@ -7,10 +7,11 @@ All workflow definitions are now **active** in `.github/workflows/`:
 - `e2e.yml` — Playwright smoke (`npm run test:e2e`)
 - `deploy.yml` — production deploy on push to `main`
 
-They were previously **staged here** because the agents' automated push path
-(`scripts/land.sh`) refuses `.github/workflows/` diffs (the agents' token lacks the GitHub
-OAuth `workflow` scope). The owner activated them with a workflow-scoped push. This
-directory now keeps only the deploy/runner setup notes below as operations reference.
+They were previously **staged here** while the agents' push token lacked the GitHub OAuth
+`workflow` scope. That scope is now present on the token `git push` uses (via
+`gh auth git-credential`), and `scripts/land.sh` is scope-aware — so **agents can push
+`.github/workflows/` changes directly**; `ci-pending/` staging is only the fallback if the
+scope is ever missing. This directory now keeps only the deploy/runner setup notes below.
 
 ## Deploy workflow (`deploy.yml`)
 

@@ -19,6 +19,8 @@ import {
   chunkPrices,
   isCongressDailyShareDue,
   isCongressShareAutoEnabled,
+  marketQuoteToAnalyst,
+  marketQuoteToFundamentals,
   marketQuoteToRef,
   ohlcBarsToCloses,
   ohlcBarsToPriceEntry,
@@ -41,6 +43,8 @@ beforeAll(() => {
 beforeEach(() => {
   delete process.env.CONGRESS_TRADE_TOKEN;
   delete process.env.CONGRESS_SHARE_ENABLED;
+  delete process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED;
+  delete process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER;
   delete process.env.CONGRESS_TRADE_BASE_URL;
   resetCongressRefThrottle();
   mockedFetchDailyOHLC.mockReset();
@@ -183,7 +187,8 @@ describe("shareWithCongressTrade", () => {
     expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
     expect(JSON.parse(init.body as string)).toEqual({
       refs: [{ ticker: "AAPL" }],
-      spx: [{ date: "2026-06-15", close: 5400 }]
+      spx: [{ date: "2026-06-15", close: 5400 }],
+      origin: "app-b" // no-echo-loop provenance tag stamped on every outbound payload
     });
     expect(res).toMatchObject({ ok: true, status: 200, response: { ok: true, refs: 1 }, sent: { refs: 1, spx: 1 } });
   });
@@ -278,7 +283,7 @@ describe("runCongressDailyShare", () => {
     expect(res).toMatchObject({ ok: false, skipped: true, reason: "no-token" });
   });
 
-  it("shares custom symbols + SPX in one POST and does not advance the daily marker", async () => {
+  it("shares custom symbols + SPX as separate bounded POSTs and does not advance the daily marker", async () => {
     process.env.CONGRESS_TRADE_TOKEN = "tok";
     const bars: OHLCBar[] = [
       { time: "2026-06-15", close: 100 },
@@ -295,12 +300,11 @@ describe("runCongressDailyShare", () => {
     const res = await runCongressDailyShare({ now, force: true, symbols: ["AAPL", "MSFT"] });
 
     expect(res.ok).toBe(true);
-    expect(res).toMatchObject({ tickers: 2, priced: 2, spxRows: 2, posts: 1, failedPosts: 0 });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.spx).toHaveLength(2);
-    expect(body.prices.map((p: { ticker: string }) => p.ticker)).toEqual(["AAPL", "MSFT"]);
-    // ^GSPC + the two tickers were fetched.
+    expect(res).toMatchObject({ tickers: 2, priced: 2, spxRows: 2, failedPosts: 0 });
+    // spx and prices now go in their own bounded POSTs (not one bundled body).
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(bodies.find((b) => b.spx)?.spx).toHaveLength(2);
+    expect(bodies.find((b) => b.prices)?.prices.map((p: { ticker: string }) => p.ticker)).toEqual(["AAPL", "MSFT"]);
     expect(mockedFetchDailyOHLC).toHaveBeenCalledWith("^GSPC", now);
     // Custom-symbol runs must NOT advance the once-per-day marker.
     expect(isCongressDailyShareDue(now)).toBe(true);
@@ -358,7 +362,7 @@ describe("insider / short-volume import builders", () => {
 });
 
 describe("runCongressDailyShare — insider + short-volume on the nightly batch", () => {
-  it("includes cached insider + short-volume rows in the first POST", async () => {
+  it("sends cached insider + short-volume rows as their own bounded POSTs", async () => {
     process.env.CONGRESS_TRADE_TOKEN = "tok";
     setInternalSetting("webSource:insider:dataset", {
       filings: [{ symbol: "AAPL", owner: "Jane", buyTx: 2, sellTx: 0, buyShares: 9000, sellShares: 0, filedAt: recentDate(2), accession: "y1" }],
@@ -373,8 +377,124 @@ describe("runCongressDailyShare — insider + short-volume on the nightly batch"
     const res = await runCongressDailyShare({ now: Date.now(), force: true }); // non-custom → builds both
     expect(res.insiderRows).toBeGreaterThanOrEqual(1);
     expect(res.shortVolRows).toBeGreaterThanOrEqual(1);
-    const firstBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
-    expect(firstBody.insider.length).toBeGreaterThanOrEqual(1);
-    expect(firstBody.shortVolume.length).toBeGreaterThanOrEqual(1);
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(bodies.some((b) => Array.isArray(b.insider) && b.insider.length >= 1)).toBe(true);
+    expect(bodies.some((b) => Array.isArray(b.shortVolume) && b.shortVolume.length >= 1)).toBe(true);
+    // No single POST bundles everything — each dataset rides its own bounded request.
+    expect(bodies.every((b) => !(b.insider && b.prices))).toBe(true);
+  });
+
+  it("caps each symbol's closes to CONGRESS_SHARE_MAX_CLOSES_PER_TICKER (most-recent N)", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER = "2";
+    mockedFetchDailyOHLC.mockResolvedValue([
+      { time: "2026-06-12", close: 1 },
+      { time: "2026-06-13", close: 2 },
+      { time: "2026-06-14", close: 3 },
+      { time: "2026-06-15", close: 4 },
+      { time: "2026-06-16", close: 5 }
+    ]);
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await runCongressDailyShare({ now: Date.UTC(2026, 5, 22), force: true, symbols: ["AAPL"] });
+    expect(res.ok).toBe(true);
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    const entry = bodies.find((b) => b.prices)?.prices.find((p: { ticker: string }) => p.ticker === "AAPL");
+    expect(entry.closes).toHaveLength(2); // capped from 5 → most-recent 2
+    expect(entry.closes.map((c: { date: string }) => c.date)).toEqual(["2026-06-15", "2026-06-16"]);
+    expect(entry.currentPrice).toBe(5); // still the latest close
+  });
+
+  it("fullHistory backfill bypasses the per-symbol close cap (sends the full series)", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER = "2"; // would cap nightly, but backfill ignores it
+    mockedFetchDailyOHLC.mockResolvedValue([
+      { time: "2026-06-12", close: 1 },
+      { time: "2026-06-13", close: 2 },
+      { time: "2026-06-14", close: 3 },
+      { time: "2026-06-15", close: 4 },
+      { time: "2026-06-16", close: 5 }
+    ]);
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await runCongressDailyShare({ now: Date.UTC(2026, 5, 22), force: true, symbols: ["AAPL"], fullHistory: true });
+    expect(res.ok).toBe(true);
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    const entry = bodies.find((b) => b.prices)?.prices.find((p: { ticker: string }) => p.ticker === "AAPL");
+    expect(entry.closes).toHaveLength(5); // full series, not capped to 2
+  });
+});
+
+describe("marketQuoteToFundamentals / marketQuoteToAnalyst", () => {
+  it("maps fundamentals (52w aliases), omits absent fields, null when empty", () => {
+    expect(
+      marketQuoteToFundamentals(
+        { symbol: "aapl", peRatio: 25, eps: 6, beta: 1.2, dividendYield: 0.5, fiftyTwoWeekHigh: 200, fiftyTwoWeekLow: 120, fcfYield: 3, debtToEquity: 1.5, epsGrowth: 10 },
+        "2026-06-23"
+      )
+    ).toMatchObject({
+      ticker: "AAPL", date: "2026-06-23", peRatio: 25, eps: 6, beta: 1.2, dividendYield: 0.5,
+      week52High: 200, week52Low: 120, fcfYield: 3, debtToEquity: 1.5, epsGrowth: 10
+    });
+    expect(marketQuoteToFundamentals({ symbol: "AAPL" }, "2026-06-23")).toBeNull();
+  });
+
+  it("blends analyst counts across sources, keeps rating, null when empty", () => {
+    const a = marketQuoteToAnalyst(
+      {
+        symbol: "AAPL",
+        analystRating: "Buy",
+        analystBySource: {
+          fmp: { score: 80, label: "Buy", counts: { strongBuy: 2, buy: 3, hold: 1, sell: 0, strongSell: 0 } },
+          finnhub: { score: 75, label: "Buy", counts: { strongBuy: 1, buy: 2, hold: 2, sell: 1, strongSell: 0 } }
+        }
+      },
+      "2026-06-23"
+    );
+    expect(a).toMatchObject({ ticker: "AAPL", date: "2026-06-23", rating: "Buy", strongBuy: 3, buy: 5, hold: 3, sell: 1, strongSell: 0 });
+    expect(marketQuoteToAnalyst({ symbol: "AAPL" }, "2026-06-23")).toBeNull();
+  });
+});
+
+describe("shareScanRefs — fundamentals + analyst", () => {
+  it("includes fundamentals + analyst for candidates in the same POST (when the gate is on)", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED = "on"; // App A's #46 migration is live
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const scan = {
+      topCandidates: [
+        {
+          symbol: "AAPL",
+          peRatio: 25,
+          analystRating: "Buy",
+          analystBySource: { fmp: { score: 80, label: "Buy", counts: { strongBuy: 2, buy: 1, hold: 0, sell: 0, strongSell: 0 } } }
+        }
+      ]
+    } as unknown as Parameters<typeof shareScanRefs>[0];
+    const res = await shareScanRefs(scan);
+    expect(res?.ok).toBe(true);
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.refs[0].ticker).toBe("AAPL");
+    expect(body.fundamentals[0]).toMatchObject({ ticker: "AAPL", peRatio: 25 });
+    expect(body.analyst[0]).toMatchObject({ ticker: "AAPL", rating: "Buy", strongBuy: 2 });
+  });
+
+  it("HOLDS fundamentals + analyst by default (refs still flow) until App A's #46 migration", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    // CONGRESS_SHARE_FUNDAMENTALS_ENABLED unset (default) → held
+    const fetchSpy = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const scan = {
+      topCandidates: [{ symbol: "AAPL", peRatio: 25, analystRating: "Buy", analystBySource: { fmp: { score: 80, label: "Buy", counts: { strongBuy: 2, buy: 1, hold: 0, sell: 0, strongSell: 0 } } } }]
+    } as unknown as Parameters<typeof shareScanRefs>[0];
+    const res = await shareScanRefs(scan);
+    expect(res?.ok).toBe(true);
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.refs[0].ticker).toBe("AAPL"); // refs still flow
+    expect(body.fundamentals).toEqual([]); // held
+    expect(body.analyst).toEqual([]); // held
   });
 });

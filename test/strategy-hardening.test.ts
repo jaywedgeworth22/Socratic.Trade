@@ -208,3 +208,30 @@ describe("generateProactiveRiskProposals beta-scaled stops", () => {
     expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
   });
 });
+
+describe("generateProactiveRiskProposals ATR stops", () => {
+  const positions: EquityPosition[] = [{ symbol: "TSLA", quantity: 10, averageCost: 100, marketValue: 850, sector: "Auto" }];
+  const prices = { TSLA: 85 }; // down 15%
+  const stopRules: TradingPolicy["riskRules"] = { stopLossPct: 10 };
+
+  it("uses the ATR-based stop distance (wider) so a -15% move no longer breaches a 20% ATR stop", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules, atrStops: true }), {}, { TSLA: 20 });
+    expect(out.some((p) => p.symbol === "TSLA")).toBe(false);
+  });
+  it("uses the ATR-based stop distance (tighter) so a -15% move breaches a 5% ATR stop", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules, atrStops: true }), {}, { TSLA: 5 });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+  it("ATR takes precedence over beta-scaling when both are on (beta 2 would widen to 20%, ATR 5% overrides)", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules, atrStops: true, betaScaledStops: true }), { TSLA: 2 }, { TSLA: 5 });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+  it("falls back to the fixed/beta stop when no ATR pct is supplied for the symbol", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules, atrStops: true }), {}, {});
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+  it("ignores the ATR map entirely when atrStops is off (default)", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules }), {}, { TSLA: 20 });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+});

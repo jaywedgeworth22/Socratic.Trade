@@ -6,6 +6,7 @@ import {
   dailyExecutionStats,
   finishStrategyRun,
   getActiveConnectedAccount,
+  getConnectedAccount,
   getPolicy,
   getProposal,
   getStrategyPrompt,
@@ -34,6 +35,7 @@ import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCount
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
+import { planFundingSells } from "./sell-to-fund";
 import {
   getConfidenceCalibration,
   getFactorScorecard,
@@ -49,6 +51,8 @@ import {
 } from "./performance";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, betaScaledStopPct, evaluateTradeProposal } from "./policy";
+import { atr, atrStopPct } from "./indicators";
+import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -107,26 +111,35 @@ export function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
 }
 
-export async function runStrategyOnce(userId: string = "local", options: { manual?: boolean } = {}): Promise<StrategyResult> {
-  // Run lock: prevent overlapping runs from double-counting daily limits.
-  if (!acquireStrategyLock(userId)) {
+export async function runStrategyOnce(
+  userId: string = "local",
+  options: { manual?: boolean; connectedAccountId?: string } = {}
+): Promise<StrategyResult> {
+  // Target account: an explicit override (scheduler running a non-active account) or the active
+  // account. Everything below derives from this account's policy, so a single override here runs
+  // the whole loop against the targeted account.
+  const targetAccountId = options.connectedAccountId;
+  // Per-account run lock: prevent overlapping runs from double-counting daily limits,
+  // scoped to the target account so a different account isn't blocked.
+  const connectedAccountId = targetAccountId ?? getPolicy(userId).connectedAccountId;
+  if (!acquireStrategyLock(userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
   const runId = crypto.randomUUID();
-  insertStrategyRun(runId, userId);
+  insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   const manualRun = Boolean(options.manual);
 
   try {
-    const savedPolicy = getPolicy(userId);
+    const savedPolicy = getPolicy(userId, targetAccountId);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
     if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
     const policy: RunnablePolicy = manualRun
       ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
       : { ...savedPolicy, accountNumber };
-    const activeAccount = getActiveConnectedAccount(userId);
+    const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
 
     const gateway = getBrokerGateway(policy, userId);
@@ -235,7 +248,30 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
     for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
       if (typeof q.beta === "number" && Number.isFinite(q.beta)) betaBySymbol[normalizeSymbol(sym)] = q.beta;
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol);
+    // ATR-based stops (opt-in, default off): precompute a per-symbol stop DISTANCE (% of entry) from each
+    // open position's recent daily range so the sync proactive generator can use it (mirrors betaBySymbol).
+    // Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the fixed/beta stop.
+    const atrStopPctBySymbol: Record<string, number> = {};
+    if (policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) {
+      const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
+      const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
+      await Promise.all(
+        workingPositions
+          .filter((p) => Math.abs(p.quantity) > 0.000001 && p.averageCost > 0)
+          .map(async (p) => {
+            const sym = normalizeSymbol(p.symbol);
+            try {
+              const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+              if (!bars) return;
+              const pct = atrStopPct(atr(bars, period), p.averageCost, multiple);
+              if (typeof pct === "number") atrStopPctBySymbol[sym] = pct;
+            } catch {
+              // best-effort — fall back to the fixed/beta stop for this name
+            }
+          })
+      );
+    }
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
 
     let ragContext = "";
     try {
@@ -327,8 +363,51 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       debatedProposals.push(proposal);
     }
 
+    // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
+    // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
+    // Default "off" → no-op. "suggest" only records the plan (audit + run summary); "propose" queues
+    // the funding sells for human approval; "automated" lets them ride the account's existing
+    // authority (auto-placed only when already in "decide"). Funding sells carry tradeThesisTag
+    // "Sell-to-Fund" so the execution loop can route propose-mode ones correctly.
+    const sellToFundMode = policy.sellToFundBuy ?? "off";
+    let fundingSells: TradeProposal[] = [];
+    let sellToFundNote = "";
+    if (sellToFundMode !== "off") {
+      const isOpening = (p: TradeProposal) => p.side === "buy" || p.side === "short";
+      const intendedOpeningNotional = debatedProposals.filter(isOpening).reduce((sum, p) => {
+        const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
+        const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
+        return sum + (Number.isFinite(notional) ? notional : 0);
+      }, 0);
+      // Never sell a name we're trading this run (buy targets, or already-proposed exits/trims).
+      const exclude = [
+        ...debatedProposals.filter(isOpening).map((p) => normalizeSymbol(p.symbol)),
+        ...proactiveProposals.map((p) => normalizeSymbol(p.symbol)),
+        ...debatedProposals.filter((p) => p.side === "sell" || p.side === "cover").map((p) => normalizeSymbol(p.symbol))
+      ];
+      const plan = planFundingSells({
+        mode: sellToFundMode,
+        buyingPower: workingPortfolio.buyingPower,
+        intendedOpeningNotional,
+        positions: workingPositions.map((p) => ({ symbol: normalizeSymbol(p.symbol), quantity: p.quantity, marketValue: p.marketValue, averageCost: p.averageCost })),
+        currentPrices,
+        excludeSymbols: exclude
+      });
+      if (plan.sells.length > 0) {
+        audit(
+          "sell_to_fund_plan",
+          { mode: sellToFundMode, shortfall: plan.shortfall, raised: plan.raised, summary: plan.summary, sells: plan.sells.map((s) => ({ symbol: s.symbol, quantity: s.quantity })) },
+          userId,
+          connectedAccountId
+        );
+        sellToFundNote = `Sell-to-fund-buy (${sellToFundMode}): ${plan.summary}`;
+        // suggest = record only; propose/automated = actually emit the sells into the pipeline.
+        if (sellToFundMode === "propose" || sellToFundMode === "automated") fundingSells = plan.sells;
+      }
+    }
+
     const proposals = await applyCorrelationClusterGate(
-      [...proactiveProposals, ...debatedProposals],
+      [...fundingSells, ...proactiveProposals, ...debatedProposals],
       policy,
       workingPositions,
       userId
@@ -389,7 +468,40 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
           { policy, userId }
         );
         autoRevertOnCapBreach(decision.reasons, policy, userId);
+        // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
+        // rejection) so its post-block return matures into missed-opportunity analytics — closing the
+        // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
+        // exit is not a missed opportunity); best-effort + non-fatal.
+        if (normalizedProposal.side === "buy" || normalizedProposal.side === "short") {
+          try {
+            recordRejectedProposalCounterfactual({
+              userId,
+              connectedAccountId,
+              runId,
+              symbol: normalizedProposal.symbol,
+              refPrice: normalizedProposal.referencePrice,
+              createdAt: new Date().toISOString(),
+              regime: normalizedProposal.entryMarketRegime
+            });
+          } catch (err) {
+            console.warn("[strategy] policy-blocked counterfactual failed:", err instanceof Error ? err.message : String(err));
+          }
+        }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        continue;
+      }
+
+      // Sell-to-fund "propose" mode: funding sells queue for human approval even under "decide"
+      // authority — raising cash by selling is the user's call. (Identified by tradeThesisTag so it's
+      // robust to any reordering by the cluster gate.)
+      if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
+        const proposalId = crypto.randomUUID();
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        await sendNotification(
+          { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         continue;
       }
 
@@ -547,8 +659,8 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       runId,
       asOf: new Date().toISOString(),
       signals: [...chosenEvidence, ...skippedEvidence]
-    }, userId);
-    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25 })
+    }, userId, connectedAccountId);
+    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
@@ -565,7 +677,8 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
       revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
         ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
-        : ""
+        : "",
+      sellToFundNote
     ]
       .filter(Boolean)
       .join(" ");
@@ -606,7 +719,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     finishStrategyRun(runId, "failed", summary, userId);
-    const policy = getPolicy(userId);
+    const policy = getPolicy(userId, targetAccountId);
     result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
@@ -614,7 +727,7 @@ export async function runStrategyOnce(userId: string = "local", options: { manua
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, connectedAccountId);
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
@@ -1129,7 +1242,7 @@ export async function executeProposal(
   // Approve can each read the same pre-cap totals and both place — jointly
   // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
   // the same lock here serialises approval execution against the strategy loop.
-  if (!acquireStrategyLock(userId)) {
+  if (!acquireStrategyLock(userId, policy.connectedAccountId)) {
     return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
   }
 
@@ -1336,25 +1449,27 @@ export async function executeProposal(
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
     return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, policy.connectedAccountId);
   }
 }
 
 export function rejectProposal(proposalId: string, userId: string = "local"): void {
   const proposal = getProposal(proposalId, userId);
+  const connectedAccountId = getPolicy(userId).connectedAccountId;
   updateProposalStatus(proposalId, "rejected", undefined, undefined, undefined, userId);
   audit("proposal_rejected", {
     proposalId,
     symbol: proposal?.proposal.symbol,
     side: proposal?.proposal.side,
     action: "rejection"
-  }, userId);
+  }, userId, connectedAccountId);
   // Feed the rejection into the counterfactual pipeline so its post-rejection return matures and
   // shows up in missed-opportunity analytics — "the app analyzes it anyway". Best-effort, non-fatal.
   if (proposal) {
     try {
       recordRejectedProposalCounterfactual({
         userId,
+        connectedAccountId,
         runId: proposal.runId,
         symbol: proposal.proposal.symbol,
         refPrice: proposal.proposal.referencePrice,
@@ -1479,7 +1594,7 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14 })
+  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId })
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
@@ -2381,24 +2496,42 @@ export function generateProactiveRiskProposals(
   positions: EquityPosition[],
   currentPrices: Record<string, number>,
   policy: TradingPolicy,
-  betaBySymbol: Record<string, number> = {}
+  betaBySymbol: Record<string, number> = {},
+  // Precomputed ATR-based stop DISTANCE (% of entry) per symbol — supplied by the caller (which has
+  // bars) when policy.atrStops is on. Mirrors the betaBySymbol precompute pattern so this stays a pure
+  // sync function. Empty/absent → fall back to the fixed/beta stop (a name is never left unprotected).
+  atrStopPctBySymbol: Record<string, number> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
   const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
   const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
   const betaStops = policy.betaScaledStops === true;
+  const atrStops = policy.atrStops === true;
 
   if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
 
+  // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
+  // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
+  // over beta-scaling when both are on — it's the more direct, per-name volatility measure.
+  const effectiveStopPct = (sym: string, baseStopPct: number, beta: number | undefined): number => {
+    if (baseStopPct <= 0) return baseStopPct;
+    if (atrStops) {
+      const atrPct = atrStopPctBySymbol[sym];
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
+    }
+    return betaScaledStopPct(baseStopPct, beta, betaStops);
+  };
+
   for (const pos of positions) {
     if (Math.abs(pos.quantity) <= 0.000001 || pos.averageCost <= 0) continue;
-    const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
+    const sym = normalizeSymbol(pos.symbol);
+    const currentPrice = currentPrices[sym] ?? (pos.marketValue / pos.quantity);
     if (!currentPrice || currentPrice <= 0) continue;
-    // Volatility-aware stop distance: widen for high-beta names, tighten for low-beta (no-op when
-    // betaScaledStops is off or the name has no beta). Take-profit stays flat (a target, not a stop).
-    const beta = betaBySymbol[normalizeSymbol(pos.symbol)];
-    const effStopLossPct = betaScaledStopPct(stopLossPct, beta, betaStops);
+    // Volatility-aware stop distance: ATR-based (realized range) or beta-scaled (widen high-beta,
+    // tighten low-beta), else a flat %. Take-profit stays flat (a target, not a stop).
+    const beta = betaBySymbol[sym];
+    const effStopLossPct = effectiveStopPct(sym, stopLossPct, beta);
 
     let reason = "";
     let exitSide: "sell" | "cover" = "sell";
@@ -2418,7 +2551,7 @@ export function generateProactiveRiskProposals(
       if (!policy.shortSellingEnabled) continue;
       const returnPct = ((pos.averageCost - currentPrice) / pos.averageCost) * 100;
       const baseShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
-      const effShortStop = betaScaledStopPct(baseShortStop, beta, betaStops);
+      const effShortStop = effectiveStopPct(sym, baseShortStop, beta);
       if (effShortStop > 0 && returnPct <= -effShortStop) {
         reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop.toFixed(2)}% limit.`;
       } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
