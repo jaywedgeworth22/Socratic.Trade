@@ -26,13 +26,17 @@ import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSi
 
 const IMPORT_PATH = "/api/admin/securities/import";
 const DEFAULT_BASE_URL = "https://congress.trade";
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
 
-// Endpoint caps (from the import contract): ≤ ~2,000 tickers / ≤ ~20,000 closes per call.
-const MAX_REFS_PER_POST = 2000;
-const MAX_TICKERS_PER_POST = 2000;
-const CLOSE_BUDGET_PER_POST = 18_000; // stay safely under the 20k closes/call ceiling
+// Per-POST sizing. The endpoint accepts up to ~2,000 tickers / ~20,000 closes, but App A's per-call
+// work (row upserts + per-trade performance recompute) made big chunks blow the timeout in prod, so we
+// keep each POST small and bounded — many small POSTs beat one timing-out megabatch.
+const MAX_REFS_PER_POST = 2000; // refs are tiny (no closes) — fine in bulk
+const MAX_TICKERS_PER_POST = 100; // bound per-POST perf recompute on App A
+const CLOSE_BUDGET_PER_POST = 5_000; // bound per-POST upload + upsert
+const MAX_ROWS_PER_POST = 500; // insider / short-volume rows per POST
+const DEFAULT_MAX_CLOSES_PER_TICKER = 260; // ~1y; App A backfills deeper history itself
 
 // ── Configuration / gating ────────────────────────────────────────────────────
 
@@ -61,9 +65,33 @@ export function isCongressShareAutoEnabled(): boolean {
   return congressTradeToken() !== undefined && flagOn(process.env.CONGRESS_SHARE_ENABLED);
 }
 
+/**
+ * Whether to include fundamentals[]/analyst[] in the scan-hook push. Held OFF by default: App A's #46
+ * tables don't exist until its migration runs, and pushing those rows earlier just errors them on App A
+ * (the rest of the import is unaffected). Flip this on only after App A confirms #46 is applied.
+ */
+export function congressFundamentalsShareEnabled(): boolean {
+  return flagOn(process.env.CONGRESS_SHARE_FUNDAMENTALS_ENABLED);
+}
+
 function maxDailyTickers(): number {
+  // Caps the nightly UNIVERSE (chunked into MAX_TICKERS_PER_POST-sized POSTs), not the per-POST size.
   const v = Number(process.env.CONGRESS_SHARE_MAX_TICKERS ?? 2000);
-  return Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), MAX_TICKERS_PER_POST) : 2000;
+  return Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), 2000) : 2000;
+}
+
+/** Per-symbol close cap for the nightly price push — bounds payload (App A backfills deeper itself). */
+function maxClosesPerTicker(): number {
+  const v = Number(process.env.CONGRESS_SHARE_MAX_CLOSES_PER_TICKER ?? DEFAULT_MAX_CLOSES_PER_TICKER);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_MAX_CLOSES_PER_TICKER;
+}
+
+/** Split an array into fixed-size chunks (for insider / short-volume rows). */
+function rowChunks<T>(rows: T[], size = MAX_ROWS_PER_POST): T[][] {
+  if (rows.length === 0) return [];
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
 }
 
 function refTtlMs(): number {
@@ -129,12 +157,41 @@ export interface CongressShortVol {
   elevated: boolean;
 }
 
+/** Fundamentals row in App A's import shape (PR #46). Keyed by ticker+date; missing → null on A. */
+export interface CongressFundamental {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  peRatio?: number;
+  eps?: number;
+  beta?: number;
+  dividendYield?: number;
+  week52High?: number;
+  week52Low?: number;
+  fcfYield?: number;
+  debtToEquity?: number;
+  epsGrowth?: number;
+}
+
+/** Analyst-consensus row in App A's import shape (PR #46). App B has no price targets → omitted. */
+export interface CongressAnalyst {
+  ticker: string;
+  date: string; // YYYY-MM-DD (as-of)
+  rating?: string; // blended consensus label
+  strongBuy?: number;
+  buy?: number;
+  hold?: number;
+  sell?: number;
+  strongSell?: number;
+}
+
 export interface CongressSharePayload {
   refs?: CongressRef[];
   spx?: CongressClose[];
   prices?: CongressPrice[];
   insider?: CongressInsider[];
   shortVolume?: CongressShortVol[];
+  fundamentals?: CongressFundamental[];
+  analyst?: CongressAnalyst[];
 }
 
 export interface CongressShareResult {
@@ -145,7 +202,16 @@ export interface CongressShareResult {
   response?: unknown;
   error?: string;
   /** Counts actually transmitted across all POSTs in this call. */
-  sent: { refs: number; spx: number; prices: number; closes: number; insider: number; shortVolume: number };
+  sent: {
+    refs: number;
+    spx: number;
+    prices: number;
+    closes: number;
+    insider: number;
+    shortVolume: number;
+    fundamentals: number;
+    analyst: number;
+  };
 }
 
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
@@ -169,6 +235,63 @@ export function marketQuoteToRef(
     ref.marketCap = q.marketCap;
   }
   return ref;
+}
+
+function numOrUndef(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Map a scanned MarketQuote's fundamentals to App A's import row (PR #46). `date` is the as-of day.
+ * Returns null when the quote carries no fundamental values (nothing worth sending). App A saves App B's
+ * FMP quota by accepting these — App B already fetched them during the scan.
+ */
+export function marketQuoteToFundamentals(
+  q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
+  date: string
+): CongressFundamental | null {
+  const ticker = normalizeSymbol(q.symbol);
+  if (!ticker) return null;
+  const row: CongressFundamental = { ticker, date };
+  const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
+  const eps = numOrUndef(q.eps); if (eps !== undefined) row.eps = eps;
+  const beta = numOrUndef(q.beta); if (beta !== undefined) row.beta = beta;
+  const dy = numOrUndef(q.dividendYield); if (dy !== undefined) row.dividendYield = dy;
+  const hi = numOrUndef(q.fiftyTwoWeekHigh); if (hi !== undefined) row.week52High = hi;
+  const lo = numOrUndef(q.fiftyTwoWeekLow); if (lo !== undefined) row.week52Low = lo;
+  const fcf = numOrUndef(q.fcfYield); if (fcf !== undefined) row.fcfYield = fcf;
+  const de = numOrUndef(q.debtToEquity); if (de !== undefined) row.debtToEquity = de;
+  const eg = numOrUndef(q.epsGrowth); if (eg !== undefined) row.epsGrowth = eg;
+  // Only the ticker+date keys present → nothing real to share.
+  return Object.keys(row).length > 2 ? row : null;
+}
+
+/**
+ * Map a scanned MarketQuote's analyst consensus to App A's import row (PR #46). Blends the per-source
+ * rating counts App B holds; App B has no price targets, so those are omitted (App A fills null).
+ */
+export function marketQuoteToAnalyst(
+  q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource">,
+  date: string
+): CongressAnalyst | null {
+  const ticker = normalizeSymbol(q.symbol);
+  if (!ticker) return null;
+  const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
+  let haveCounts = false;
+  for (const detail of Object.values(q.analystBySource ?? {})) {
+    if (!detail?.counts) continue;
+    haveCounts = true;
+    counts.strongBuy += detail.counts.strongBuy ?? 0;
+    counts.buy += detail.counts.buy ?? 0;
+    counts.hold += detail.counts.hold ?? 0;
+    counts.sell += detail.counts.sell ?? 0;
+    counts.strongSell += detail.counts.strongSell ?? 0;
+  }
+  if (!q.analystRating && !haveCounts) return null;
+  const row: CongressAnalyst = { ticker, date };
+  if (q.analystRating) row.rating = q.analystRating;
+  if (haveCounts) Object.assign(row, counts);
+  return row;
 }
 
 /** Convert OHLC bars to deduped, date-sorted {date, close, volume?} closes (drops invalid bars). */
@@ -269,11 +392,14 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     prices: payload.prices?.length ?? 0,
     closes: countCloses(payload),
     insider: payload.insider?.length ?? 0,
-    shortVolume: payload.shortVolume?.length ?? 0
+    shortVolume: payload.shortVolume?.length ?? 0,
+    fundamentals: payload.fundamentals?.length ?? 0,
+    analyst: payload.analyst?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
-  if (sent.refs === 0 && sent.spx === 0 && sent.prices === 0 && sent.insider === 0 && sent.shortVolume === 0) {
+  const total = sent.refs + sent.spx + sent.prices + sent.insider + sent.shortVolume + sent.fundamentals + sent.analyst;
+  if (total === 0) {
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
@@ -298,7 +424,12 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     return { ok: true, status: res.status, response, sent };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error("[congress-share] import error:", error);
+    // Include payload sizes so a timeout/abort points at which dataset was too big.
+    console.error(
+      `[congress-share] import error: ${error} ` +
+        `(refs=${sent.refs} spx=${sent.spx} prices=${sent.prices} closes=${sent.closes} ` +
+        `insider=${sent.insider} shortVolume=${sent.shortVolume} fundamentals=${sent.fundamentals} analyst=${sent.analyst})`
+    );
     return { ok: false, error, sent };
   } finally {
     clearTimeout(timer);
@@ -348,15 +479,24 @@ const refGuardHost = globalThis as unknown as { __congressRefSentAt?: Map<string
 const refSentAt: Map<string, number> = refGuardHost.__congressRefSentAt ?? (refGuardHost.__congressRefSentAt = new Map());
 
 /**
- * Forward the scan's candidate company refs to App A. Fire-and-forget friendly + self-guarded.
- * No-op unless automatic sharing is enabled. Per-symbol throttled (default 6h) so it never spams.
+ * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
+ * fetched for them — to App A. The scan already paid for this data, so sharing it lets App A skip its
+ * own FMP calls (PR #46 import slots). Fire-and-forget friendly + self-guarded; no-op unless automatic
+ * sharing is enabled; per-symbol throttled (default 6h) so it never spams. Fundamentals/analyst are
+ * HELD OFF (refs still flow) until CONGRESS_SHARE_FUNDAMENTALS_ENABLED is set — App A's #46 tables don't
+ * exist until its migration runs, and pushing those rows earlier errors them on App A.
  */
 export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Promise<CongressShareResult | null> {
   try {
     if (!isCongressShareAutoEnabled()) return null;
     const now = Date.now();
     const ttl = refTtlMs();
+    const date = utcDate(now);
+    // Held OFF until App A's #46 migration is live (pushing these rows earlier errors them on App A).
+    const includeFundamentals = congressFundamentalsShareEnabled();
     const refs: CongressRef[] = [];
+    const fundamentals: CongressFundamental[] = [];
+    const analyst: CongressAnalyst[] = [];
     const claimed: string[] = [];
     for (const quote of scan.topCandidates ?? []) {
       const ref = marketQuoteToRef(quote);
@@ -364,13 +504,19 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       const sentAt = refSentAt.get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
+      if (includeFundamentals) {
+        const f = marketQuoteToFundamentals(quote, date);
+        if (f) fundamentals.push(f);
+        const a = marketQuoteToAnalyst(quote, date);
+        if (a) analyst.push(a);
+      }
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
       refSentAt.set(ref.ticker, now);
       if (refs.length >= MAX_REFS_PER_POST) break;
     }
     if (refs.length === 0) return null;
-    const result = await shareWithCongressTrade({ refs });
+    const result = await shareWithCongressTrade({ refs, fundamentals, analyst });
     if (!result.ok) {
       // Roll back the throttle so a later scan retries the failed refs (don't spam on success).
       for (const ticker of claimed) refSentAt.delete(ticker);
@@ -442,6 +588,12 @@ export interface RunCongressDailyShareOptions {
   force?: boolean;
   /** Override the universe (admin targeted test). When set, the date marker is NOT advanced. */
   symbols?: string[];
+  /**
+   * Deep-history backfill: send each symbol's FULL available history (skip the per-symbol close cap)
+   * so App A can compute performance back to old trade dates. Still chunked into small bounded POSTs.
+   * Use one-time / on-demand via the admin route; the recurring nightly run leaves this off (light).
+   */
+  fullHistory?: boolean;
 }
 
 export interface CongressDailyShareSummary {
@@ -492,10 +644,15 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   }
 
   const concurrency = Number(process.env.CONGRESS_SHARE_CONCURRENCY ?? 4) || 4;
+  // Deep-history backfill sends each symbol's FULL series (still chunked into small POSTs); the nightly
+  // run caps to the most-recent N closes (App A backfills deeper itself) to keep each POST under the wall.
+  const maxCloses = options.fullHistory ? Number.POSITIVE_INFINITY : maxClosesPerTicker();
   const priceEntries = (
     await mapPool(universe, concurrency, async (symbol) => {
       try {
-        return ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now));
+        const entry = ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now));
+        if (entry && entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
+        return entry;
       } catch {
         return null;
       }
@@ -506,16 +663,14 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   const insider = customUniverse ? [] : buildInsiderImport();
   const shortVolume = customUniverse ? [] : buildShortVolumeImport();
 
-  // POST: the first chunk carries the SPX series + insider + short-volume (one fewer round-trip);
-  // remaining chunks are prices only.
-  const chunks = chunkPrices(priceEntries);
-  const head: CongressSharePayload = { spx, insider, shortVolume };
-  const payloads: CongressSharePayload[] =
-    chunks.length === 0
-      ? spx.length > 0 || insider.length > 0 || shortVolume.length > 0
-        ? [head]
-        : []
-      : chunks.map((prices, i) => (i === 0 ? { ...head, prices } : { prices }));
+  // Send each dataset as its OWN bounded POST(s) rather than one bundled megabatch: App A's per-call
+  // work (upserts + per-trade perf recompute) made big combined payloads exceed the timeout, and a
+  // bundled POST also let one oversized dataset abort the rest. Independent small POSTs each succeed.
+  const payloads: CongressSharePayload[] = [];
+  if (spx.length > 0) payloads.push({ spx });
+  for (const rows of rowChunks(insider)) payloads.push({ insider: rows });
+  for (const rows of rowChunks(shortVolume)) payloads.push({ shortVolume: rows });
+  for (const prices of chunkPrices(priceEntries)) payloads.push({ prices });
 
   const responses: unknown[] = [];
   let posts = 0;

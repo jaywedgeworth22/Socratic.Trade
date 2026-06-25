@@ -65,6 +65,17 @@ sourced from its cached web-sources and built by `buildInsiderImport()` / `build
 These ride in the first POST of the nightly batch (with `spx`). Read back via App A's
 `GET /api/market/insider/{T}` and `GET /api/market/short-volume/{T}`.
 
+**Round-3 additions (2026-06-24):** the **after-scan hook** (`shareScanRefs`) now also forwards
+`fundamentals[]` + `analyst[]` for the scanned candidates — built by `marketQuoteToFundamentals` /
+`marketQuoteToAnalyst` from the `MarketQuote` data the scan already fetched (no extra FMP calls), so App A
+can skip its own FMP fundamentals/analyst pulls. Shapes match App A's PR #46 import slots
+(`fundamentals: {ticker,date,peRatio,eps,beta,dividendYield,week52High,week52Low,fcfYield,debtToEquity,epsGrowth}`;
+`analyst: {ticker,date,rating,strongBuy,buy,hold,sell,strongSell}` — App B has no price targets, so those
+are omitted). Sent in the same throttled scan-hook POST as `refs`, but **gated behind
+`CONGRESS_SHARE_FUNDAMENTALS_ENABLED` (default off)** and **held until App A confirms its #46 migration is
+applied** — App A's tables don't exist until then, and pushing those rows early *errors them* on App A
+(the rest of the import is unaffected). `refs` keep flowing regardless; flip the flag on after App A pings.
+
 ## Safety / gating
 
 - **Default OFF.** Automatic forwarding (both hooks) runs only when
@@ -75,10 +86,13 @@ These ride in the first POST of the nightly batch (with `spx`). Read back via Ap
   dashboard snapshot. No unauthenticated write path is exposed.
 - Every outbound call is self-guarded (timeout + try/catch) and **never throws**
   into a scan or scheduler tick.
-- Array sizes are capped to the endpoint's limits (≤ ~2,000 tickers / ≤ ~20,000
-  closes per call): `chunkPrices()` packs by both a close budget (18,000/POST)
-  and a ticker count, truncating any single oversized ticker to its most-recent
-  closes.
+- **POSTs are kept small and split per dataset** (prod hardening, 2026-06-24): App A's per-call work
+  (row upserts + per-trade perf recompute) blew the timeout on big bundled payloads, so the nightly
+  batch now sends `spx`, `insider` (≤500/POST), `shortVolume` (≤500/POST), and `prices` (chunked by a
+  5,000-close budget + ≤100 tickers/POST) as **independent** bounded requests, caps each symbol's
+  history to ~1y (`CONGRESS_SHARE_MAX_CLOSES_PER_TICKER`, default 260 — App A backfills deeper itself),
+  and uses a 30s per-POST timeout (`CONGRESS_SHARE_TIMEOUT_MS`). Errors log the per-dataset `sent` counts
+  for diagnosis.
 - A persisted marker (`congress-share:lastDailyRunDate`) makes the nightly batch
   idempotent per UTC day.
 
@@ -88,9 +102,13 @@ These ride in the first POST of the nightly batch (with `spx`). Read back via Ap
 immediately, bypassing the once-per-day cadence. Requires `CONGRESS_TRADE_TOKEN`
 (returns 400 otherwise) but **not** `CONGRESS_SHARE_ENABLED`.
 
-- Body `{}` → share the monitored universe (watchlists + policy universes).
+- Body `{}` → share the monitored universe (watchlists + policy universes), recent-capped.
 - Body `{ "symbols": ["AAPL","MSFT"] }` → share only those tickers (a targeted
   test that does **not** advance the daily marker).
+- Body `{ "fullHistory": true }` (optionally with `symbols`) → **deep-history backfill**: send each
+  symbol's FULL series (uncapped, still chunked into small POSTs) so App A can compute performance back
+  to old trade dates. Run once / after adding symbols; the recurring nightly run stays recent-capped.
+  See `docs/congress-trade-data-plan.md`.
 
 Response echoes a summary: `{ ok, tickers, priced, spxRows, posts, failedPosts,
 sent, responses, autoEnabled }`, where `responses` carries App A's per-POST
