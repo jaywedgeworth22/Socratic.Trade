@@ -14,9 +14,24 @@ trades, `GET /api/analytics/conflicts`). All three are gated on `CONGRESS_ANALYT
 `refreshCongressAnalytics` now fetches conviction + conflicts in parallel with the leaderboard/cluster/member
 calls and wires both into the per-ticker overlay. **Write side** — `history.ts` Yahoo fetch now prefers
 `indicators.adjclose[0].adjclose` (split+dividend-adjusted) over raw `quote.close`, so prices pushed to App A
-via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1203/1203 tests. **Deferred
+via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1222/1222 tests. **Deferred
 (need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
 See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
+
+## 2026-06-25 — Switch all secret delivery to Infisical; remove the GCP path
+Branch `claude/switch-to-infisical`. Operator decision: Infisical is the single secrets source of
+truth; `.env.local` is not a secret source. **Removed** the GCP path — `scripts/gcp-secrets-run.mjs`,
+the `*:gcp` npm scripts, the `@google-cloud/secret-manager` dep, and `gcp`/`doppler` from
+`SecretsSource` (`src/lib/secrets-source.ts` is now `"infisical" | "env"`; boot-guard error +
+`instrumentation.ts` reference only `start:secrets`). The Infisical runner already sets
+`SECRETS_SOURCE=infisical`, so the `REQUIRE_SECRETS_MANAGER=1` boot guard is behavior-unchanged. Wired
+the operator's project IDs into `.env.example`/docs: app → `agentic-trading` (`39d93bb7-…`), shared
+App-A/B → `shared-at-ct` (`18f563a3-…`); the machine-identity client secret stays out of the repo.
+Rewrote `docs/deployment.md` "Configuration & secrets", `docs/secrets.md`,
+`docs/ops-observability-security.md`, and `PLAN.md` to Infisical-only; `.gitignore` makes the
+`.env.local` ignore explicit. Verify: build ✓ · tsc ✓ clean · 1222/1222 tests. Host-side follow-up (not done here): flip
+PM2 `trading` → `start:secrets` + `REQUIRE_SECRETS_MANAGER=1`; `deploy.yml` still launches plain
+`next start`. See `docs/rollouts/2026-06-25-switch-to-infisical-remove-gcp.md`.
 
 ## 2026-06-25 — Massive flat-file bulk backfill + broad-universe expansion (Phase 4)
 Branch `agent/claude-flatfile-backfill`. Phase 4 of the settings/universe program
