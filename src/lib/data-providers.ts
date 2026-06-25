@@ -11,6 +11,7 @@
 
 import { normalizeSymbol } from "./money";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
+import { logApiHealth } from "./db-health";
 import { getStreamedHeadlines } from "./streams/news-store";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -254,17 +255,55 @@ function maxSymbols(): number {
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  options: { retries?: number; backoffMs?: number } = {}
+  options: { retries?: number; backoffMs?: number; service?: string; keySource?: string; userId?: string; deferSuccessLog?: boolean } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
-  for (let attempt = 0; ; attempt++) {
-    const response = await fetch(url, init);
-    if (response.status === 429 && attempt < retries) {
-      await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
-      continue;
+  const start = Date.now();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(url, init);
+      if (response.status === 429 && attempt < retries) {
+        if (options.service) {
+          logApiHealth({
+            service: options.service,
+            ok: false,
+            latencyMs: Date.now() - start,
+            errorText: "HTTP 429 (rate limited, retrying)",
+            keySource: options.keySource,
+            userId: options.userId,
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+        continue;
+      }
+      // When deferSuccessLog is set, skip the auto-success row so the caller can log
+      // after validating the response body (e.g. providers that embed errors in HTTP 200).
+      // HTTP failure rows are still written here regardless of the flag.
+      if (options.service && !(response.ok && options.deferSuccessLog)) {
+        logApiHealth({
+          service: options.service,
+          ok: response.ok,
+          latencyMs: Date.now() - start,
+          errorText: response.ok ? undefined : `HTTP ${response.status}`,
+          keySource: options.keySource,
+          userId: options.userId,
+        });
+      }
+      return response;
     }
-    return response;
+  } catch (err) {
+    if (options.service) {
+      logApiHealth({
+        service: options.service,
+        ok: false,
+        latencyMs: Date.now() - start,
+        errorText: err instanceof Error ? err.message : String(err),
+        keySource: options.keySource,
+        userId: options.userId,
+      });
+    }
+    throw err;
   }
 }
 
@@ -714,6 +753,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://data.alpaca.markets/v1beta1/news";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -722,6 +762,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -772,7 +813,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
           headers,
           cache: "no-store",
           signal: controller.signal
-        });
+        }, { service: this.name, keySource: this.keySource, userId: this.userId });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const json = (await response.json()) as { news?: Array<{ headline?: string; symbols?: string[] }> };
         articles = Array.isArray(json.news) ? json.news : [];
@@ -837,6 +878,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
   readonly configured = true;
   private readonly base = "https://data.alpaca.markets/v2/stocks/snapshots";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -845,6 +887,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -880,7 +923,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
             },
             cache: "no-store",
             signal: controller.signal
-          });
+          }, { service: this.name, keySource: this.keySource, userId: this.userId });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           snapshots = (await response.json()) as Record<string, AlpacaSnapshot>;
         } finally {
@@ -972,7 +1015,10 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     if (misses.length === 0) return result;
 
     let creds: YfCreds;
-    try { creds = await this.getCreds(); } catch { return result; }
+    try { creds = await this.getCreds(); } catch (err) {
+      logApiHealth({ service: this.name, ok: false, errorText: err instanceof Error ? err.message : String(err) });
+      return result;
+    }
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
@@ -1026,7 +1072,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
         cache: "no-store",
         signal: controller.signal
-      });
+      }, { service: this.name });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
       const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
@@ -1115,6 +1161,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://finnhub.io/api/v1";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1122,6 +1169,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1260,7 +1308,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1284,6 +1332,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://financialmodelingprep.com/stable";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1291,6 +1340,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1436,7 +1486,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1452,6 +1502,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
   readonly configured = true;
   private readonly base = "https://www.alphavantage.co/query";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1459,6 +1510,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1485,14 +1537,18 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             const timeout = setTimeout(() => controller.abort(), 6000);
             let payload: Record<string, unknown>;
             try {
-              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+              // deferSuccessLog: true — don't mark 200 healthy until body validates;
+              // Alpha Vantage embeds quota/error messages in HTTP 200 responses.
+              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               payload = await response.json() as Record<string, unknown>;
-              
+
               if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
                 const msg = String(payload.Note || payload.Information || payload["Error Message"]);
+                logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
                 throw new Error(`Alpha Vantage API warning/error: ${msg}`);
               }
+              logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
             } finally {
               clearTimeout(timeout);
             }
@@ -1612,6 +1668,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
   readonly configured = true;
   private readonly base: string;
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1620,6 +1677,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
   ) {
     this.base = process.env.FINTECH_STUDIOS_BASE_URL ?? "https://studio.fintechstudios.com/api/v1";
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1665,7 +1723,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
                 }),
                 cache: "no-store",
                 signal: controller.signal,
-              });
+              }, { service: this.name, keySource: this.keySource, userId: this.userId });
 
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -1720,6 +1778,7 @@ export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://api-v2.intrinio.com";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1727,6 +1786,7 @@ export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1845,7 +1905,7 @@ export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1861,6 +1921,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "tiingo";
   readonly configured = true;
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1868,6 +1929,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1973,7 +2035,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1990,6 +2052,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "twelvedata";
   readonly configured = true;
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1997,6 +2060,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -2027,7 +2091,9 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         const timeout = setTimeout(() => controller.abort(), 10000);
         let raw: unknown;
         try {
-          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+          // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
+        // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           raw = await response.json();
         } finally {
@@ -2041,6 +2107,14 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         // Multiple symbols → { AAPL: { symbol: "AAPL", ... }, MSFT: { ... } }
         const quoteMap: Record<string, Record<string, unknown>> = {};
         const rawObj = raw as Record<string, unknown>;
+
+        // Check for a top-level API error (invalid key, quota exhausted, etc.)
+        if (rawObj.status === "error" || (rawObj.message && !rawObj.symbol && !rawObj.data)) {
+          const msg = typeof rawObj.message === "string" ? rawObj.message : "TwelveData API error";
+          logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
+          continue;
+        }
+        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         if (typeof rawObj.symbol === "string") {
           // Single-symbol response
           quoteMap[rawObj.symbol as string] = rawObj;

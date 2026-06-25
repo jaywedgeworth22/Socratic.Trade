@@ -4,12 +4,68 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
+Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
+
+## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
+Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
+429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
+capability probe (neither Massive nor FMP exposes a plan endpoint): Massive free is capped ~2yr
+history + 5/min, so a >2yr AAPL aggregate query distinguishes free vs paid; FMP is best-effort
+(premium/limit error → free). On a **lapse or change** it alerts via the in-app feed
+(`provider_degraded`) AND the multi-channel dispatcher (`notify` → push/webhook/**email** via Resend/
+SMS), and **auto-clamps Massive to the free-safe 5/min** (restoring 100 when paid returns) — detection
+can only lower the cap, and biases to "unknown→no-action" so a paid key is never wrongly clamped.
+Cadence-gated (default 24h, anchored overnight ET with a 1.5× catch-up) off the always-on scheduler
+tick. Surfaced in `/api/health` as `checks.dataProviders` (+ `dataProvidersDegraded`) and via exported
+`getProviderTierStatus()` — the integration point for the status/admin/health tool. **Operator (for
+email):** set `RESEND_API_KEY` + `NOTIFY_EMAIL_FROM`, enable the Email channel + address in Settings →
+Notifications. tsc clean · 1146 tests (+17) · build green. See
+`docs/rollouts/2026-06-24-provider-tier-watchdog.md`.
+
+## 2026-06-25 — Member skill-weighting from App A `/member/:filerId/performance` (default-OFF path)
+Branch `agent/claude-member-skill`. App A shipped a per-member performance endpoint (realized
+return / win-rate / **alpha vs S&P**) + confirmed its #46 fundamentals/analyst tables are live in
+prod. The congress-analytics overlay now weights cluster members by **real skill (alpha)** via new
+`getAppAMemberPerformance` + `buildMemberSkillScores` (rank-normalized `avgExcess`, keyed by filerId,
+bounded `MAX_SKILL_LOOKUPS=200`), **falling back** to the activity proxy (`buildMemberScores`) until App
+A has scored a member (`scoredCount>0` — needs the price push to fill in). Only runs under
+`CONGRESS_ANALYTICS_ENABLED`; no perf calls when there are no clusters. Verify: tsc clean ·
+analytics+client tests 22 passed · full trio via land.sh. **Ops next:** flip
+`CONGRESS_SHARE_FUNDAMENTALS_ENABLED=on` (tables now live) + run `{"fullHistory":true}` backfill so alpha
+fills in. Open item unchanged: price-adjustment (raw vs adjusted closes). See
+`docs/rollouts/2026-06-25-member-skill-weighting.md`.
+
+## 2026-06-25 — Learning-loop honesty (OOS no-op caution + policy-blocked counterfactual)
+Branch `claude/learning-loop-honesty`. First of the clean/additive backlog batches (post #137).
+Both additive + advisory-only (no money path). (1) `applyOosGate` (`strategy-tuning.ts`) now appends
+a "proposed factor-weight changes were NOT out-of-sample validated (<reason>)" caution on each path
+where the OOS gate can't run (fetch threw / null result <4 snapshot dates / no composite IC) instead
+of silently keeping weights — no gating change, just honesty. (2) Policy-BLOCKED opening proposals
+(`runStrategyOnce` post-review block) now feed `recordRejectedProposalCounterfactual` (opening sides
+only) so they mature into missed-opportunity analytics like user rejections do. Verify: tsc clean ·
+1113/1114 tests (+2; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-learning-loop-honesty.md`.
+
+## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
+Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When
+`policy.atrStops` is on, the protective stop DISTANCE = `atrStopMultiple × ATR(atrStopPeriod)` as a
+% of entry (clamped 1–50%) instead of fixed `stopLossPct` — driven by the name's realized daily range
+(no beta needed). Pure `trueRange`/`atr`/`atrStopPct` in `indicators.ts`; policy fields `atrStops` +
+`riskRules.atrStop{Period,Multiple}` (validated); async precompute mirrors `betaBySymbol` and feeds the
+sync `generateProactiveRiskProposals`; falls back to fixed/beta when bars are unavailable (never
+unprotected); ATR > beta when both on. New canonical reference `docs/stop-loss-and-exit-strategies.md`
+covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS validation are live).
+Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
+
 ## 2026-06-25 — Surface avgDaysHeld / shortTermPct in scorecard tooltips
 Branch `claude/scorecard-turnover-ui`. Clean/additive backlog batch — display-only, no trading-logic
 change. The thesis/regime scorecards already computed `avgDaysHeld`/`shortTermPct` and shipped them in
 the snapshot; the client dropped them when mapping into `ScorecardBars`. Now the bar tooltip appends
 "<N>d avg hold - <M>% short-term" when present (omitted otherwise). Verify: tsc clean · 1111/1112 tests
 (only the cache-provenance flake) · build green. See `docs/rollouts/2026-06-25-scorecard-turnover-ui.md`.
+
 
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
@@ -80,6 +136,33 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
+  New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
+  (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256
+  error fingerprinting. Credential scoping: health rows keyed by `(service, key_source)` so env-key
+  calls and user-key calls are tracked separately — prevents false STOPPED alerts when one user's key
+  fails but the env key is healthy. All 10 provider classes have `private readonly keySource` +
+  `this.keySource = keySource` wired; all fetchWithRetry call sites pass `keySource`/`userId`. ALTER
+  TABLE migrations for existing DBs (adds `key_source` + `user_id` columns, recreates error_patterns
+  table with correct NOT NULL DEFAULT '' key_source + UNIQUE(service,fingerprint,key_source)). Admin
+  client groups cards and detail panels by credential lane, passes `?keySource=` to log API. 429s
+  logged before retry sleep. Alpha Vantage 200-but-error no longer logged as healthy (deferSuccessLog).
+  TwelveData 200-but-error also fixed. Index migration ordering fix (idx_api_health_log_service_key
+  moved after ALTER TABLE). Added `error_message TEXT` column to `trade_proposals` — broker/network
+  errors are now persisted when a trade reaches `placing_failed` status and surfaced in the dashboard
+  proposal card UI. tsc clean; 1 pre-existing test failure (cache-provenance date flake); build green.
+  See `docs/rollouts/2026-06-25-connections-health-panel.md` and
+  `docs/rollouts/2026-06-25-credential-scoped-health-lanes.md`.
+- 2026-06-25 (`claude/alpaca-order-type-pagination`): **Alpaca broker-robustness fixes.** (1) Order
+  type mapping — `mapAlpacaOrderType` maps Alpaca's raw `stop`→`stop_market`, `trailing_stop`→
+  `stop_market`, unknown→`market` (was leaking raw values via `o.type as OrderType`). (2)
+  `getEquityOrders` now paginates the REST fallback via `until` (pages of 500, deduped, bounded) so
+  history isn't silently capped; also fixed an incidental double-map that set `state:"undefined"` on
+  the REST path. Shared `mapAlpacaOrder` helper. +`test/alpaca-order-mapping.test.ts`. Verified: tsc
+  clean; 1128/1129 (only cache-provenance flake); build green. See
+  `docs/rollouts/2026-06-25-alpaca-order-type-pagination.md`.
 - 2026-06-25 (`claude/sell-to-fund-buy`, **PR 3 of 3**): **Sell-to-fund-buy 3-way setting.** Opt-in
   `policy.sellToFundBuy` (`off`|`suggest`|`propose`|`automated`, **default off**): when a run's intended
   buys exceed buying power, optionally raise cash by trimming the largest unrealized losers (never the
@@ -114,6 +197,13 @@ Branch: claude/magical-faraday-uce1uy
   rebuild, `pm2 restart trading`) — not reachable from the cloud agent env.
 
 - 2026-06-24 (`fix/land-workflow-scope-guard`): **Agents can push `.github/workflows/` changes directly.** Root cause wasn't a permission gap — the gh token already has the `workflow` scope and `git push` uses `gh auth git-credential` — it was a STALE `scripts/land.sh` guard that always `die`d on a workflow diff. Made step 5 **scope-aware**: allow the push when `gh auth status` shows the `workflow` scope (the common case), only block (with `gh auth refresh -h github.com -s workflow` guidance) when it's genuinely missing. Corrected `AGENTS.md` step-7 + the stale `ci-pending/README.md` note. This PR proves it end-to-end — its diff includes a `.github/workflows/ci.yml` header comment (documenting `verify` as the required ruleset check), so the push exercises the workflow-scope path. Also closed PR #84 (bot-identity — owner doesn't want enforced review). See `docs/rollouts/2026-06-24-land-workflow-scope-guard.md`.
+- 2026-06-24 (`codex/alpaca-account-label-display`): **Preserve custom Alpaca account labels in Accounts.**
+  Fixed the Accounts list formatter so Alpaca/Alpaca MCP rows use the saved account label as the row title
+  (for example, "Roth IRA") instead of replacing it with the inferred execution environment ("Paper" or
+  "Brokerage"). The subtitle still shows the broker/environment/account number. Verification:
+  `npx tsc --noEmit`; `npm test` (123 files / 1067 tests); `npm run build`; `git diff --check`.
+  See `docs/rollouts/2026-06-24-alpaca-account-label-display.md`.
+
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
   Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same
   hover/click treatment and open symbol drilldown, with ticker-logo display passed through. Simplified

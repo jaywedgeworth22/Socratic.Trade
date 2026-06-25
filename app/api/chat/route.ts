@@ -37,11 +37,19 @@ export async function POST(request: Request) {
   }
 
   const providerHint = typeof body.provider === "string" ? body.provider : undefined;
-  // Always per-user: an explicit provider hint, else the env-configured default keyed to this user.
-  // (No shared singleton — that would pin one user's key/attribution for everyone.)
-  const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
-  const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
 
-  const reply = await orchestrate({ userId, message: body.message });
-  return NextResponse.json(reply);
+  try {
+    // Always per-user: an explicit provider hint, else the env-configured default keyed to this user.
+    // (No shared singleton — that would pin one user's key/attribution for everyone.)
+    const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
+    const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
+    const reply = await orchestrate({ userId, message: body.message });
+    return NextResponse.json(reply);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[chat] orchestrator error:", message);
+    // Single-operator app: forward the actual error (e.g. "invalid_api_key") so the
+    // operator can act on it. Not a multi-user SaaS where internal details must be hidden.
+    return NextResponse.json({ error: "chat_failed", message }, { status: 500 });
+  }
 }

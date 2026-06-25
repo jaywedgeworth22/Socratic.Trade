@@ -9,7 +9,7 @@
  * key credentials. We use the REST API here, so no S3 signing is needed.)
  */
 
-import { resolveApiKey } from "../db";
+import { getInternalSetting, resolveApiKey } from "../db";
 
 export interface FullMarketBreadth {
   /** % of the full US universe advancing day-over-day. */
@@ -47,8 +47,34 @@ export function massiveApiBase(): string {
   return process.env.MASSIVE_API_BASE ?? "https://api.massive.com";
 }
 
+// If the provider-tier watchdog (provider-tier.ts) detected the Massive key is on the FREE tier
+// (e.g. the paid sub lapsed), clamp the effective limit to the free-safe 5/min so we don't 429-storm
+// the raised paid default. Read from the persisted tier status, cached 60s to keep the reserve path
+// cheap. Key string mirrors PROVIDER_TIER_STATUS_KEY (kept literal to avoid a massive↔provider-tier
+// import cycle). Defaults to "not free" on any read error, so detection can only ever lower the cap.
+const FREE_SAFE_MAX_CALLS_PER_MINUTE = 5;
+let tierClampCache = { at: 0, free: false };
+function massiveDetectedFree(now: number): boolean {
+  if (now - tierClampCache.at < 60_000) return tierClampCache.free;
+  let free = false;
+  try {
+    const status = getInternalSetting<Record<string, { tier?: string }>>("providerTier:status");
+    free = status?.massive?.tier === "free";
+  } catch {
+    free = false;
+  }
+  tierClampCache = { at: now, free };
+  return free;
+}
+
+/** Test helper: reset the tier-clamp cache so a freshly-written status is read immediately. */
+export function clearMassiveTierClampCacheForTests(): void {
+  tierClampCache = { at: 0, free: false };
+}
+
 export function reserveMassiveRestCall(now: number = Date.now()): boolean {
-  const maxCalls = Math.floor(numericEnv("MASSIVE_REST_MAX_CALLS_PER_MINUTE", DEFAULT_REST_MAX_CALLS_PER_MINUTE));
+  const envMax = Math.floor(numericEnv("MASSIVE_REST_MAX_CALLS_PER_MINUTE", DEFAULT_REST_MAX_CALLS_PER_MINUTE));
+  const maxCalls = massiveDetectedFree(now) ? Math.min(envMax, FREE_SAFE_MAX_CALLS_PER_MINUTE) : envMax;
   if (maxCalls <= 0) return false;
   const windowMs = 60_000;
   while (restCallTimestamps.length > 0 && now - restCallTimestamps[0]! >= windowMs) restCallTimestamps.shift();
