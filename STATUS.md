@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
+Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`
+(Phase 1 universe floor merged in #156). The proactive take-profit used to SELL the FULL position
+("trim" was a misnomer); now `planTakeProfitTrims` sells `takeProfitTrimPct`% (default 50) and lets the
+rest ride, gated by a **monotonic take-profit band ratchet** (new `take_profit_trims` table + CRUD) so it
+trims once per band (+20/+40/…) instead of laddering out every run. `generateProactiveRiskProposals` now
+emits only stateless full-position stop-loss/short-stop exits. The band is committed **on fill**
+(`recordFillFromProposal`), not at plan time, so a proposed/blocked/rejected trim is re-offered next run
+(an adversarial review caught the plan-time version silently dropping trims in default propose mode — fixed);
+the ratchet is **lot-keyed by cost basis** (close+rebuy resets); whole-share positions trim in whole shares
+(no forced fractional). Behavior change: existing take-profit users move from full-exit to a 50% trim via
+mergePolicy default. Verify: tsc clean · 62 take-profit/strategy tests pass · adversarial review (7 findings,
+all fixed) + full trio via land.sh. **Next:** Phase 3 settings overhaul, Phase 4 flat-file backfill
+(Massive flat files verified working). See `docs/rollouts/2026-06-25-take-profit-trim.md`.
+
 ## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
 Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
 opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`

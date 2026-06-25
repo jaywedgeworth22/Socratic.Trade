@@ -438,6 +438,22 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_broker_protective_stops_account ON broker_protective_stops (user_id, account_number);
 
+    -- Take-profit trim ratchet: the highest take-profit "band" (floor(returnPct / takeProfitPct)) at
+    -- which a partial trim has already been emitted for an open position. Monotonic per (user, account,
+    -- symbol) so a partial take-profit trims once per band instead of laddering out every run; cleared
+    -- when the position closes. One row per open profitable position.
+    CREATE TABLE IF NOT EXISTS take_profit_trims (
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      band INTEGER NOT NULL,
+      -- Position cost basis at the time the band was recorded. The ratchet is keyed to this lot: if the
+      -- current position's average cost no longer matches, it's a new lot (close+rebuy) and the band resets.
+      avg_cost REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, account_number, symbol)
+    );
+
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
       id TEXT PRIMARY KEY,

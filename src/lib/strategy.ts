@@ -61,6 +61,8 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
+import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
@@ -273,6 +275,20 @@ export async function runStrategyOnce(
       );
     }
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
+    // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
+    // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
+    // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
+    if (policy.accountNumber) {
+      try {
+        const lastTpBands = getTakeProfitTrimBands(policy.accountNumber, userId);
+        const tpPlan = planTakeProfitTrims(workingPositions, currentPrices, policy, lastTpBands);
+        const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
+        clearTakeProfitTrimBands(policy.accountNumber, Object.keys(lastTpBands).filter((s) => !heldSymbols.has(s)), userId);
+        proactiveProposals.push(...tpPlan.proposals);
+      } catch (err) {
+        console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
+      }
+    }
 
     let ragContext = "";
     try {
@@ -2506,12 +2522,13 @@ export function generateProactiveRiskProposals(
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
-  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
   const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
   const betaStops = policy.betaScaledStops === true;
   const atrStops = policy.atrStops === true;
 
-  if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
+  // Take-profit trims are handled by planTakeProfitTrims (a stateful, laddered band ratchet); this
+  // generator emits only stateless FULL-position stop-loss / short-stop exits.
+  if (stopLossPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
 
   // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
   // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
@@ -2543,8 +2560,6 @@ export function generateProactiveRiskProposals(
       const returnPct = ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
       if (effStopLossPct > 0 && returnPct <= -effStopLossPct) {
         reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effStopLossPct.toFixed(2)}% limit.`;
-      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-        reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
       exitSide = "sell";
     } else {
@@ -2556,8 +2571,6 @@ export function generateProactiveRiskProposals(
       const effShortStop = effectiveStopPct(sym, baseShortStop, beta);
       if (effShortStop > 0 && returnPct <= -effShortStop) {
         reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop.toFixed(2)}% limit.`;
-      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-        reason = `Proactive short take-profit cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
       exitSide = "cover";
     }
@@ -2577,4 +2590,106 @@ export function generateProactiveRiskProposals(
     }
   }
   return proactiveProposals;
+}
+
+/** Clamp a take-profit trim percent to (0,100]; undefined/invalid → 100 (full exit, back-compat). */
+export function clampTakeProfitTrimPct(pct: number | undefined): number {
+  if (typeof pct !== "number" || !Number.isFinite(pct) || pct <= 0) return 100;
+  return Math.min(100, pct);
+}
+
+const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+
+/**
+ * Quantity to sell for a take-profit trim. Exits fully at >=100%. For a WHOLE-share position the trim is
+ * floored to whole shares (so it never forces a fractional order a non-fractional broker would reject); a
+ * sub-1-share slice or a <1-share remainder becomes a full exit. An already-fractional position keeps a
+ * fractional trim (the broker already supports fractional for it), avoiding a dust remainder.
+ */
+export function takeProfitTrimQuantity(qty: number, trimPct: number): number {
+  const q = Math.abs(qty);
+  if (q <= 0) return 0;
+  if (trimPct >= 100) return round6(q);
+  const raw = q * (trimPct / 100);
+  if (Number.isInteger(q)) {
+    const whole = Math.floor(raw);
+    if (whole < 1 || q - whole < 1) return round6(q); // no clean whole-share slice → full exit at target
+    return whole;
+  }
+  if (q - raw < 0.0001) return round6(q); // negligible remainder → full exit, no dust
+  return round6(raw);
+}
+
+export interface TakeProfitTrimPlan {
+  proposals: TradeProposal[];
+  /**
+   * Symbols + bands the trims emitted this run target (each proposal also carries `takeProfitBand`/
+   * `takeProfitBasis`). The band is persisted on FILL by recordFillFromProposal, NOT here — so a
+   * proposed/blocked/rejected trim is re-offered next run rather than silently ratcheted past.
+   */
+  advancedBands: Array<{ symbol: string; band: number }>;
+}
+
+/**
+ * Plan partial take-profit trims with a monotonic, lot-keyed band ratchet. For each position at/above its
+ * take-profit target, the take-profit BAND = floor(returnPct / takeProfitPct); a trim of
+ * `takeProfitTrimPct`% of the CURRENT position is emitted ONLY when that band exceeds the highest band
+ * already TRIMMED for this lot (`lastBandBySymbol[sym]`, matched by cost basis). So a partial take-profit
+ * trims once per band (e.g. at +20%, +40%, …) instead of laddering out the position every run, and a
+ * close+rebuy (different cost basis) starts fresh. Pure/sync. The caller reads prior bands from
+ * `take_profit_trims`; the band is committed only when the trim actually FILLS (recordFillFromProposal).
+ */
+export function planTakeProfitTrims(
+  positions: EquityPosition[],
+  currentPrices: Record<string, number>,
+  policy: TradingPolicy,
+  lastBandBySymbol: Record<string, TakeProfitTrimBand> = {}
+): TakeProfitTrimPlan {
+  const proposals: TradeProposal[] = [];
+  const advancedBands: Array<{ symbol: string; band: number }> = [];
+  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
+  if (takeProfitPct <= 0) return { proposals, advancedBands };
+  const trimPct = clampTakeProfitTrimPct(policy.riskRules.takeProfitTrimPct);
+
+  for (const pos of positions) {
+    const qty = Math.abs(pos.quantity);
+    if (qty <= 0.000001 || pos.averageCost <= 0) continue;
+    const sym = normalizeSymbol(pos.symbol);
+    const currentPrice = currentPrices[sym] ?? (pos.quantity !== 0 ? pos.marketValue / pos.quantity : 0);
+    if (!currentPrice || currentPrice <= 0) continue;
+
+    const isShort = pos.quantity < 0;
+    if (isShort && !policy.shortSellingEnabled) continue; // only manage shorts the app could have opened
+    const returnPct = isShort
+      ? ((pos.averageCost - currentPrice) / pos.averageCost) * 100
+      : ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
+    if (returnPct < takeProfitPct) continue;
+
+    const band = Math.floor(returnPct / takeProfitPct);
+    // Ratchet keyed to THIS lot: a stored band only counts if its cost basis still matches the live
+    // position (otherwise it's a new lot from a close+rebuy → start fresh at band 0).
+    const prior = lastBandBySymbol[sym];
+    const lastBand = prior && Math.abs(prior.avgCost - pos.averageCost) < 0.005 ? prior.band : 0;
+    if (band <= lastBand) continue; // already trimmed at/above this band for this lot (monotonic)
+
+    const trimQty = takeProfitTrimQuantity(qty, trimPct);
+    if (trimQty <= 0) continue;
+    const side: "sell" | "cover" = isShort ? "cover" : "sell";
+    const label = trimPct >= 100 ? "full exit" : `${trimPct}% trim`;
+    proposals.push({
+      symbol: sym,
+      side,
+      type: "market",
+      quantity: trimQty,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      rationale: `Proactive take-profit ${label}: ${pos.symbol} +${returnPct.toFixed(2)}% (band ${band} @ ${takeProfitPct}% step) — ${side === "cover" ? "covering" : "selling"} ${trimQty}, letting the rest ride.`,
+      tradeThesisTag: "Risk-Exit",
+      entryMarketRegime: "Active Risk Check",
+      takeProfitBand: band,
+      takeProfitBasis: pos.averageCost
+    });
+    advancedBands.push({ symbol: sym, band });
+  }
+  return { proposals, advancedBands };
 }

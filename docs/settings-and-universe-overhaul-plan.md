@@ -19,7 +19,7 @@ and ~17 enforced policy settings have **no UI** plus several silent priorities.
   reliable penny gate). Threaded through `scanMarket` → all 3 call sites.
 - Tests: `test/universe-floor.test.ts`.
 
-## Phase 2 — Take-profit: full exit → real partial trim (next)
+## Phase 2 — Take-profit: full exit → real partial trim ✅ (`docs/rollouts/2026-06-25-take-profit-trim.md`)
 - New `riskRules.takeProfitTrimPct` (fraction of the position to sell at the target; default keeps a sane
   trim, e.g. 50, with 100 = full exit). Fix the misleading "trim" rationale wording.
 - **Re-trigger ratchet (required):** the proactive generator runs every ~60s; a naive partial trim would
