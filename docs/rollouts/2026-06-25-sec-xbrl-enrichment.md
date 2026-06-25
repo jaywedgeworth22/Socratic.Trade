@@ -201,6 +201,27 @@ re-added. No test asserted the old behavior; `test/sec-xbrl.test.ts` 22/22 still
 
 Full trio green: tsc clean · 1176/1177 (only the cache-provenance flake) · build.
 
+## Round 8 (Codex review): use the complete LongTermDebt total when only short-term debt is separate
+
+Codex flagged (P2, line 2328) a debt-aggregation gap in `debtAtEnd`. For the input shape:
+`LongTermDebtNoncurrent` + a larger complete `LongTermDebt` total + separate `ShortTermBorrowings`/
+`CommercialPaper`, but **no** `LongTermDebtCurrent`/`DebtCurrent` — the `current` var is set to
+`shortTerm`, so the `current === undefined` gate on the "use the complete LongTermDebt total" fallback
+was false and the code returned `noncurrent + shortTerm` instead of `ltdTotal + shortTerm`, dropping the
+LT debt's current maturities that `ltdTotal` bundles. That understates D/E ahead of Yahoo and weakens the
+quality score / over-leverage veto.
+
+Root cause: the gate conflated the *LT current-maturity* component with *short-term borrowings*. The
+decision to use `ltdTotal` (which already bundles LT current maturities) must depend ONLY on whether a
+separate LT current-maturity concept (`LongTermDebtCurrent`/`DebtCurrent`) is tagged — `shortTerm`
+(revolver/CP outside LT debt) is orthogonal and added on top either way. Fix: gate on
+`hasSeparateLtCurrent = debtCurrentAgg !== undefined || ltdCurrent !== undefined` instead of
+`current === undefined`. The only behavioral change is the reported shape; all prior debt-aggregation
+cases are preserved. New regression test in `test/sec-xbrl.test.ts` (now 23 cases): noncurrent 500M +
+complete total 600M + shortTerm 90M ÷ equity 345M → 2.0 (was the understated ~1.71).
+
+Full trio green: tsc clean · 1177/1178 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

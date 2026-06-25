@@ -239,6 +239,20 @@ describe("parseCompanyFacts — debt aggregation edge cases", () => {
     expect(r.debtToEquity).toBe(2.0);
   });
 
+  it("uses the complete LongTermDebt total (not noncurrent) when only short-term debt is separate", () => {
+    // noncurrent 500M omits current maturities; LongTermDebt total 600M bundles them. A separate
+    // ShortTermBorrowings 90M (revolver/CP) is OUTSIDE long-term debt. No LongTermDebtCurrent/DebtCurrent
+    // is tagged, so the LT figure must come from the complete total: (600M + 90M) / 345M = 2.0 — NOT the
+    // understated noncurrent path (500M + 90M) / 345M ≈ 1.71. shortTerm must not suppress the total fallback.
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 345_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 500_000_000, form: "10-K" }],
+      LongTermDebt: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }],
+      ShortTermBorrowings: [{ end: "2023-12-31", val: 90_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
   it("prefers the aggregate DebtCurrent over summing the separate current components", () => {
     const r = parseCompanyFacts(rawFacts({
       StockholdersEquity: [{ end: "2023-12-31", val: 250_000_000, form: "10-K" }],

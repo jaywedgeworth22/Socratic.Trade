@@ -2323,9 +2323,14 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       else if (ltdCurrent !== undefined || shortTerm !== undefined) current = (ltdCurrent ?? 0) + (shortTerm ?? 0);
 
       if (noncurrent !== undefined) {
-        // When NO separate current maturity is tagged but the complete LongTermDebt total is larger, use
-        // the total (it bundles current maturities the noncurrent concept omits) so leverage isn't understated.
-        if (current === undefined && ltdTotal !== undefined && ltdTotal > noncurrent) return ltdTotal + (shortTerm ?? 0);
+        // When NO separate current maturity of LT debt is tagged (LongTermDebtCurrent / aggregate
+        // DebtCurrent) but the complete LongTermDebt total is larger, use that total — it bundles the
+        // current maturities the noncurrent concept omits — so leverage isn't understated. This gates on
+        // the LT-current concepts ONLY, not on `shortTerm`: a separate ShortTermBorrowings/CommercialPaper
+        // fact is orthogonal (revolver/CP outside LT debt) and is added on top either way, so its presence
+        // must not suppress the ltdTotal-bundles-current-maturities fallback.
+        const hasSeparateLtCurrent = debtCurrentAgg !== undefined || ltdCurrent !== undefined;
+        if (!hasSeparateLtCurrent && ltdTotal !== undefined && ltdTotal > noncurrent) return ltdTotal + (shortTerm ?? 0);
         return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
       }
       // LongTermDebt is the COMPLETE long-term total (don't re-add its current maturities), but add any
