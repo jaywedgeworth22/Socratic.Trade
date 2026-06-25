@@ -39,6 +39,41 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.model).toBe("grok-build-0.1");
   });
 
+  it("routes gemini-2.5-flash to Gemini's OpenAI-compat endpoint (chat-completions)", () => {
+    const endpoint = resolveLlmEndpoint({ llmModel: "gemini-2.5-flash" });
+    expect(endpoint.provider).toBe("gemini");
+    expect(endpoint.url).toContain("generativelanguage.googleapis.com");
+    expect(endpoint.transport).toBe("chat-completions");
+    expect(endpoint.model).toBe("gemini-2.5-flash");
+  });
+
+  it("routes mistral-large-latest to Mistral (chat-completions)", () => {
+    const endpoint = resolveLlmEndpoint({ llmModel: "mistral-large-latest" });
+    expect(endpoint.provider).toBe("mistral");
+    expect(endpoint.url).toContain("api.mistral.ai");
+    expect(endpoint.transport).toBe("chat-completions");
+    expect(endpoint.model).toBe("mistral-large-latest");
+  });
+
+  it("routes the Mistral family (ministral/codestral) to Mistral", () => {
+    expect(resolveLlmEndpoint({ llmModel: "ministral-8b-latest" }).provider).toBe("mistral");
+    expect(resolveLlmEndpoint({ llmModel: "codestral-latest" }).provider).toBe("mistral");
+  });
+
+  it("honors GEMINI_API_URL / MISTRAL_API_URL overrides", () => {
+    const savedG = process.env.GEMINI_API_URL;
+    const savedM = process.env.MISTRAL_API_URL;
+    process.env.GEMINI_API_URL = "https://gw.example/gemini/chat/completions";
+    process.env.MISTRAL_API_URL = "https://gw.example/mistral/chat/completions";
+    try {
+      expect(resolveLlmEndpoint({ llmModel: "gemini-3.5-flash" }).url).toBe("https://gw.example/gemini/chat/completions");
+      expect(resolveLlmEndpoint({ llmModel: "mistral-medium-latest" }).url).toBe("https://gw.example/mistral/chat/completions");
+    } finally {
+      if (savedG === undefined) delete process.env.GEMINI_API_URL; else process.env.GEMINI_API_URL = savedG;
+      if (savedM === undefined) delete process.env.MISTRAL_API_URL; else process.env.MISTRAL_API_URL = savedM;
+    }
+  });
+
   it("routes gpt-5.4-mini to OpenAI", () => {
     const savedUrl = process.env.OPENAI_API_URL;
     delete process.env.OPENAI_API_URL;

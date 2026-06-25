@@ -4,7 +4,7 @@ import { resolveOpenAiModel, type OpenAiTransport } from "./llm-request";
 export type LlmTeamRole = "green" | "red" | "support";
 
 export interface LlmEndpoint {
-  provider: "openai" | "xai";
+  provider: "openai" | "xai" | "gemini" | "mistral";
   url: string;
   key?: string;
   model: string;
@@ -40,6 +40,40 @@ export function resolveLlmEndpoint(
     const cred = resolveLlmCredential("xai", userId);
     return {
       provider: "xai",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^gemini/i.test(model)) {
+    // Google Gemini via its OpenAI-compatibility layer (chat/completions only — not the Responses API).
+    const url =
+      process.env.GEMINI_API_URL?.trim() ||
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+    const cred = resolveLlmCredential("gemini", userId);
+    return {
+      provider: "gemini",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
+    // Mistral AI — its native API is OpenAI-shaped, so it's a drop-in chat/completions provider.
+    const url =
+      process.env.MISTRAL_API_URL?.trim() ||
+      "https://api.mistral.ai/v1/chat/completions";
+    const cred = resolveLlmCredential("mistral", userId);
+    return {
+      provider: "mistral",
       url,
       key: cred.key,
       model,

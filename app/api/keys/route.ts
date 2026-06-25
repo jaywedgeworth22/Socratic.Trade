@@ -36,6 +36,22 @@ const API_KEY_CATALOG = [
     docsUrl: "https://console.x.ai/"
   },
   {
+    service: "gemini",
+    label: "Google Gemini",
+    category: "LLM",
+    required: false,
+    unlocks: "Gemini models for trade proposals and strategy analysis. Select a gemini-* model in Settings to use.",
+    docsUrl: "https://aistudio.google.com/app/apikey"
+  },
+  {
+    service: "mistral",
+    label: "Mistral AI",
+    category: "LLM",
+    required: false,
+    unlocks: "Mistral models for trade proposals and strategy analysis. Select a mistral-* model in Settings to use.",
+    docsUrl: "https://console.mistral.ai/api-keys"
+  },
+  {
     service: "finnhub",
     label: "Finnhub",
     category: "Market data",

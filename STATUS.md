@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Add Google Gemini + Mistral as LLM providers (model-name routed)
+Branch `feat/gemini-mistral-providers`. Mirrors the xAI/Grok wiring: `resolveLlmEndpoint`
+(`llm-provider.ts`) now routes `gemini-*` → Gemini OpenAI-compat endpoint and
+`mistral|ministral|codestral|…` → Mistral, both `chat-completions` (OpenAI-compatible, no new
+transport). Added `GEMINI_API_KEY`/`MISTRAL_API_KEY` to the env map + aliases + boot migration +
+`resolveLlmCredential` type (`db-api-keys.ts`), key-catalog rows (`app/api/keys`), Gemini+Mistral
+optgroups in both Green/Red Team model selects (`dashboard-client.tsx`), approximate usage pricing
+(`llm-usage.ts`), `.env.example`, and routing tests. Keys resolve per-user with operator-env failover,
+same as OpenAI/xAI; endpoints/model ids verified live (Gemini compat = chat/completions only).
+tsc clean · 1207 tests (+5) · build green. Isolated worktree off `origin/main`; landing via PR. See
+`docs/rollouts/2026-06-25-gemini-mistral-providers.md`.
+
 ## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
 Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
 opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`

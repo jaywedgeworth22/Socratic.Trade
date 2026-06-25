@@ -3309,6 +3309,16 @@ function StrategyStudio({
                   <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
                   <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
                 </optgroup>
+                <optgroup label="Google Gemini — requires Gemini key in Connections">
+                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — cheapest Gemini</option>
+                  <option value="gemini-2.5-flash">gemini-2.5-flash — balanced Gemini</option>
+                  <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini Flash</option>
+                </optgroup>
+                <optgroup label="Mistral — requires Mistral key in Connections">
+                  <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
+                  <option value="mistral-medium-latest">mistral-medium-latest — balanced Mistral default</option>
+                  <option value="mistral-large-latest">mistral-large-latest — strongest Mistral, higher cost</option>
+                </optgroup>
               </select>
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
@@ -3323,6 +3333,16 @@ function StrategyStudio({
                 <optgroup label="xAI (Grok) — requires xAI key in Connections">
                   <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
                   <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
+                </optgroup>
+                <optgroup label="Google Gemini — requires Gemini key in Connections">
+                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — cheapest Gemini</option>
+                  <option value="gemini-2.5-flash">gemini-2.5-flash — balanced Gemini</option>
+                  <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini Flash</option>
+                </optgroup>
+                <optgroup label="Mistral — requires Mistral key in Connections">
+                  <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
+                  <option value="mistral-medium-latest">mistral-medium-latest — balanced Mistral</option>
+                  <option value="mistral-large-latest">mistral-large-latest — strongest Mistral review</option>
                 </optgroup>
               </select>
             </Field>
