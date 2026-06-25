@@ -76,9 +76,11 @@ existing behavior; no phase scope, timeline, or approach changed.
   `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated
   `CONGRESS_TRADE_READS_ENABLED` with a `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and 6h
   caching — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
-  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Note: the parallel cascade means this is
-  precedence + caching, not paid-call elimination (paid providers fetch mixed price+fundamentals
-  bundles); dropping a redundant paid fundamentals provider is the operational saving lever.
+  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Paid-call elimination is now an **opt-in
+  short-circuit** (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): when App A covers a symbol's fundamentals, the
+  paid fundamentals providers (`costTier:"paid"`) are skipped for it; default OFF. App A misses are
+  negative-cached 1h. A→B push wired (`APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` on App A; App B needs the
+  same token + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`).
 
 ## Build Order
 
