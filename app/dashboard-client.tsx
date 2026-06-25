@@ -979,6 +979,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
+  const isAdmin = snapshot.currentUser?.isAdmin ?? false;
   const symbolMetaBySymbol = snapshot.symbolMetaBySymbol ?? {};
   // Best available scan for resolving clicked tickers → full quotes: the freshly
   // fetched live scan, falling back to the captured run's scan if it's still loading.
@@ -3398,6 +3399,7 @@ function SettingsContent({
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
+  const isAdmin = snapshot.currentUser?.isAdmin ?? false;
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   useEffect(() => setSection(initialSection), [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
@@ -3721,18 +3723,20 @@ function SettingsContent({
               </div>
             </div>
             <ApiKeysSection />
-            <div className="rounded-lg border border-line bg-surface-2/45 p-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-fg">Connection Health</div>
-                <p className="mt-0.5 text-xs text-muted">Monitor API status, latency, error patterns, and stopped keys.</p>
+            {isAdmin && (
+              <div className="rounded-lg border border-line bg-surface-2/45 p-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-fg">Connection Health</div>
+                  <p className="mt-0.5 text-xs text-muted">Monitor API status, latency, error patterns, and stopped keys.</p>
+                </div>
+                <a
+                  href="/admin/connections"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-2 transition-colors"
+                >
+                  View Status →
+                </a>
               </div>
-              <a
-                href="/admin/connections"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-2 transition-colors"
-              >
-                View Status →
-              </a>
-            </div>
+            )}
           </div>
         )}
 
