@@ -69,3 +69,35 @@ npm run build      # clean — all routes compile and bundle successfully
 - If Robinhood ever adds `agentic_allowed` to the `get_accounts` response, the
   explicit field will correctly override the default via `??`.
 - No migration needed — this is a runtime derivation, not persisted state.
+
+---
+
+## 2026-06-25 addendum — Assistant ignores lowercase ticker queries
+
+### Summary
+
+The Assistant tab returned its canned intro message for every query (e.g. "how much is aapl").
+
+### Root cause
+
+`classifyIntent` in `src/lib/chat/llm.ts` extracted ticker symbols with `/\b([A-Z]{2,5})\b/` —
+uppercase only. All-lowercase input like "how much is aapl" found no symbol, so
+`sym` was `undefined`, the quote-intent branch was skipped, and `groundedChat()`
+returned the fallback message.
+
+### Fix
+
+Two-pass extraction. First pass: uppercase-only (existing behavior, no change for normal input).
+Second pass: phrase-pattern fallback using structured quote phrases like
+`"how much is X"`, `"price of X"`, `"X price"`, `"quote for X"` — avoids false
+matches on ordinary English words.
+
+Verified:
+- "how much is aapl" → `{ intent: "quote", symbol: "AAPL" }` ✓
+- "aapl price" → `{ intent: "quote", symbol: "AAPL" }` ✓
+- "AAPL price" → `{ intent: "quote", symbol: "AAPL" }` ✓ (unchanged)
+- "what is the weather" → `{ intent: "chat" }` ✓ (no false positive)
+
+### Files
+
+- `src/lib/chat/llm.ts` — `classifyIntent`, symbol extraction block

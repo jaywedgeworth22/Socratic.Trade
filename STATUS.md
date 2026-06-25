@@ -125,6 +125,7 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
   New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
