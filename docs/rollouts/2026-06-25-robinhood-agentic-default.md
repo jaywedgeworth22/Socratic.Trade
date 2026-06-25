@@ -101,3 +101,30 @@ Verified:
 ### Files
 
 - `src/lib/chat/llm.ts` — `classifyIntent`, symbol extraction block
+
+---
+
+## 2026-06-25 addendum — cache-provenance.test.ts CI flake fixed
+
+### Summary
+
+Fixed the pre-existing CI failure in `test/cache-provenance.test.ts:112` that was blocking this PR from merging.
+
+### Root cause
+
+The test "user-keyed result is NOT returned for a different userId (no cross-user leak)" called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, relying on all network calls failing with the real `fetch`. A Yahoo VIX fallback path was added to `fetchMacroData` (to provide a partial regime signal without FRED) after the test was written. In CI where outbound network is allowed, `fetchVixFromYahoo()` can reach Yahoo Finance and succeed, causing `asOf` to be set to today's date rather than `"unavailable"`, breaking the assertion.
+
+### Fix
+
+Replaced `vi.unstubAllGlobals()` with `vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in test")))` so the Yahoo VIX fetch also fails deterministically. No production code changed.
+
+### Files
+
+- `test/cache-provenance.test.ts` — line 107, replaced `vi.unstubAllGlobals()` with a rejecting fetch stub
+
+### Verification
+
+```bash
+npx vitest run test/cache-provenance.test.ts   # 8/8 passed
+npm test                                        # 1151/1151 passed
+```

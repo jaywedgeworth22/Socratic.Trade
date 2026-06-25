@@ -4,6 +4,9 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
+Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
+
 ## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
 Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
 429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
