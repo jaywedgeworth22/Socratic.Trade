@@ -144,6 +144,9 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         const quoteOnly = await fetchQuoteOnlyMarketQuotes(customSymbolsMissingFromScreener, positions);
         quotes = [...quotes, ...quoteOnly.quotes];
         warnings.push(...quoteOnly.warnings);
+        // The quote-only fallback DISPLAYS these Yahoo quotes; record its provider so MarketScan.source
+        // still lists Yahoo even if enrichment later contributes no accepted field for those rows.
+        for (const q of quoteOnly.quotes) if (q.provider) universeSources.add(q.provider);
       }
       // Market breadth: % of the full screener that's advancing today — a free,
       // market-wide risk-on/risk-off gauge (computed from data we already fetched).
@@ -276,7 +279,10 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const enrichedBySymbol = new Map(topCandidates.map((quote) => [quote.symbol, quote]));
     const mergedRanked = ranked.map((quote) => enrichedBySymbol.get(quote.symbol) ?? quote);
 
-    const baseSource = provider.configured ? `${this.name}+${provider.name}` : this.name;
+    // Name only the enrichment providers that ACTUALLY contributed a field this scan (not every enabled
+    // provider) — keeps MarketScan.source honest when a keyless/default-OFF provider returned nothing.
+    const contributedSources = provider.activeSources ?? (provider.configured ? [provider.name] : []);
+    const baseSource = contributedSources.length > 0 ? `${this.name}+${contributedSources.join("+")}` : this.name;
     const source = appendUniqueSources(
       overlaySources.size > 0 ? `${baseSource}+${[...overlaySources].join("+")}` : baseSource,
       [...universeSources]
@@ -829,9 +835,12 @@ function qualityScore(quote: MarketQuote): number {
   else if (quote.marketCap >= 1_000_000_000) base = 60;
   else base = 45;
   // Leverage: lower debt/equity = higher quality. Providers report D/E as a ratio
-  // (1.5) or a percentage (150); normalize to a ratio before bucketing.
+  // (1.5) or a percentage (150); normalize to a ratio before bucketing. The `>10 → ÷100`
+  // heuristic is SOURCE-AWARE: sec-xbrl always emits a true ratio (a genuine 12x must stay 12,
+  // not become 0.12 and wrongly score as near-debt-free), so the heuristic is skipped for it.
   if (typeof quote.debtToEquity === "number") {
-    const de = quote.debtToEquity > 10 ? quote.debtToEquity / 100 : quote.debtToEquity;
+    const deFromRatioSource = quote.sources?.debtToEquity === "sec-xbrl";
+    const de = !deFromRatioSource && quote.debtToEquity > 10 ? quote.debtToEquity / 100 : quote.debtToEquity;
     if (de >= 0 && de <= 0.5) base += 10;
     else if (de <= 1.5) base += 3;
     else if (de > 3) base -= 10;

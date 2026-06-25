@@ -14,6 +14,13 @@ integration checkout uses the single pre-production beta hostname
 port `4001`. Do not add a second dev/beta hostname in code, docs, Tunnel
 ingress, DNS, or Access configuration.
 
+Secrets/config topology (2026-06-25): `.env.local` is git-ignored and
+per-worktree (never committed; only `.env.example` is tracked), and **GCP Secret
+Manager is the authoritative upstream for secret values** — each `.env.local` is
+a local cache. See `docs/deployment.md` → "Configuration & secrets
+(`.env.local`) — what's authoritative". This documents existing behavior; no
+phase scope, timeline, or approach changed.
+
 | # | Phase | Spec | Status |
 |---|-------|------|--------|
 | 1 | Autonomy loop | `docs/phase-1-autonomy-loop.md` | Mostly implemented; hardening/tests remain |

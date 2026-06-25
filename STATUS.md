@@ -16,6 +16,30 @@ invariant); (3) `dashboard-client.tsx` `proposalSize()` never renders a sentinel
 tsc clean · policy+persistence tests 56 passed · full trio via land.sh. See
 `docs/rollouts/2026-06-25-exit-notional-sentinel-fix.md`.
 
+## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
+Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
+
+## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
+Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
+(`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
+git-ignored (only `.env.example` tracked), each worktree's copy is independent, and **GCP
+Secret Manager is the authoritative upstream for secret values** — every `.env.local` is a
+local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
+`GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
+across the integration/agent/production copies, and that per-user keys live encrypted in
+`user_api_keys`, not `.env.local`. Addressed four Codex review rounds on PR #150: steer to
+plain scripts when GCP is unset + flag a `gcp-secrets-run.mjs` premature-exit bug (follow-up
+code fix); shared secrets change in GCP not the seed; require scoping on shared GCP projects;
+clarify `GCP_SECRETS_OVERWRITE`/`.env.local` precedence; note `*:gcp` wrappers inject-only
+(never rewrite the file); call out bootstrap secrets like the stable `ENCRYPTION_KEY`;
+reconcile `docs/ops-observability-security.md` to name GCP (not Infisical) canonical, marking
+Infisical `*:secrets` legacy (no GCP→Infisical sync); and note the Litestream sidecar reads
+creds from the live `.env.local`, not `*:gcp`; document the wrapper's fail-open behavior and
+that `GCP_PROJECT_ID`/ADC must be exported (not in `.env.local`); and add `connected_accounts`
+to the encrypted-secret inventory. Added a dated `PLAN.md` topology note. Verified locally: build ✓, tsc ✓ clean, tests 1128/1129 (only
+the pre-existing `cache-provenance` flake). See
+`docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md`.
+
 ## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
 Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
 429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
@@ -56,6 +80,32 @@ only) so they mature into missed-opportunity analytics like user rejections do. 
 1113/1114 tests (+2; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-learning-loop-honesty.md`.
 
+## 2026-06-25 — SEC EDGAR XBRL company-facts enrichment provider (keyless, default-OFF)
+Branch `claude/sec-xbrl-enrichment` (PR #145). Keyless, default-OFF enrichment provider filling the
+EXISTING `debtToEquity` field from authoritative SEC filings (companyfacts API). No new field threading
+(stays within existing fields). Reuses `secUserAgent`/`politeFetchText`/`runRateLimited`/
+`loadTickerCikMap`/`padCik`; cascade order after FMP, before Yahoo. Pure tested `parseCompanyFacts`
+(debt-specific concepts ÷ equity at the LATEST balance-sheet period — annual or 10-Q — amended-10-K/A-aware,
+budget-bounded, dedup'd background warms, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was
+dropped in Codex review round 3** — annual 10-K EPS isn't the TTM that `SymbolEnrichment.eps` documents,
+so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Twelve Codex review rounds
+applied — incl. round 6 (honest `MarketScan.source`: cascade now names only providers that actually
+contributed a field, app-wide), round 7 (dropped the per-symbol budget guard so the background loop keeps
+warming the 24 h cache after the interactive 8 s budget elapses; the outer race alone caps latency), round
+8 (debt aggregation: use the complete `LongTermDebt` total — not just noncurrent — when only short-term
+debt is separately tagged, so D/E isn't understated), round 9 (publish the RAW D/E ratio so the
+bear-veto/analytics see true leverage, with the `>10 → ÷100` percentage heuristic now SOURCE-AWARE in
+market.ts/dashboard so a true 12x isn't misread as 0.12; plus `enrich()` returns a snapshot so background
+cache-warming can't retroactively flip a symbol's source), round 10 (restrict parsed facts to periodic
+10-K/10-Q forms so a non-periodic 8-K/pro-forma fact can't win the latest-period reducer), round 11
+(anchor equity on the latest period under EITHER `StockholdersEquity` or the
+`…IncludingPortionAttributableToNoncontrollingInterest` total, preferring parent-only, so filers that tag
+only the inclusive total for the current period don't get stale leverage), and round 12 (three follow-ons:
+D/E column now sorts by the source-aware normalized value; the quote-only Yahoo fallback is recorded in
+`MarketScan.source`; and the cold SEC ticker→CIK map fetch is in-flight-deduped). Verified by the
+main agent (tsc clean · 1183/1184 tests; only the cache-provenance flake · build green). See
+`docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
+
 ## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
 Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When
 `policy.atrStops` is on, the protective stop DISTANCE = `atrStopMultiple × ATR(atrStopPeriod)` as a
@@ -67,6 +117,14 @@ unprotected); ATR > beta when both on. New canonical reference `docs/stop-loss-a
 covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS validation are live).
 Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
+
+## 2026-06-25 — Surface avgDaysHeld / shortTermPct in scorecard tooltips
+Branch `claude/scorecard-turnover-ui`. Clean/additive backlog batch — display-only, no trading-logic
+change. The thesis/regime scorecards already computed `avgDaysHeld`/`shortTermPct` and shipped them in
+the snapshot; the client dropped them when mapping into `ScorecardBars`. Now the bar tooltip appends
+"<N>d avg hold - <M>% short-term" when present (omitted otherwise). Verify: tsc clean · 1111/1112 tests
+(only the cache-provenance flake) · build green. See `docs/rollouts/2026-06-25-scorecard-turnover-ui.md`.
+
 
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
@@ -137,6 +195,8 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
   New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
   (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256

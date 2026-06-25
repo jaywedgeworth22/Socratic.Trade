@@ -51,7 +51,18 @@ export interface Intent {
 export function classifyIntent(message: string): Intent {
   const lc = String(message).toLowerCase();
   const EXCLUDE = ["THE", "BUY", "SELL", "USD", "PE", "AND", "FOR", "YOU"];
-  const sym = (String(message).match(/\b([A-Z]{2,5})\b/g) || []).map(canonicalTicker).find((s) => !EXCLUDE.includes(s));
+  // First pass: standard all-uppercase tickers (e.g. "AAPL price").
+  // Second pass: phrase-pattern fallback for all-lowercase input (e.g. "how much is aapl",
+  // "aapl price") — avoids false matches on ordinary English words.
+  const sym = (() => {
+    const upper = (String(message).match(/\b([A-Z]{2,5})\b/g) ?? []).map(canonicalTicker).find((s) => !EXCLUDE.includes(s));
+    if (upper) return upper;
+    const m =
+      String(message).match(/\b(?:price\s+of|how\s+much\s+(?:is|for)|quote\s+for)\s+\$?([A-Za-z.]{1,10})\b/i) ??
+      String(message).match(/\b\$?([A-Za-z.]{2,10})\s+(?:price|quote|stock)\b/i);
+    const ticker = m ? canonicalTicker(m[1]!) : undefined;
+    return ticker && !EXCLUDE.includes(ticker) ? ticker : undefined;
+  })();
 
   if (
     /\b(alert|notify|tell me|let me know|remind me)\b/.test(lc) &&
