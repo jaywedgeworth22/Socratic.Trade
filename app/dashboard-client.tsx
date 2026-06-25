@@ -4013,7 +4013,7 @@ function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-2 gap-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "provider_degraded"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
