@@ -119,7 +119,8 @@ to `https://paper-api.alpaca.markets/v2`, defaults live Brokerage to
 explicitly enables that override. Alpaca IRA subtype detection is best-effort:
 when broker payloads expose `account_type`/`account_sub_type`, the gateway maps
 Roth/Traditional into account capabilities; otherwise manual tax treatment remains
-the reliable source.
+the reliable source. The Accounts list keeps the user-entered Alpaca label as the
+row title while showing Paper/Brokerage as broker environment metadata.
 `resolveApiKey` now routes OpenAI proposal/tuning/red-team/post-mortem calls,
 Finnhub/FMP/Alpha Vantage enrichment, FRED macro + macro history, Tradier/
 Marketstack/Massive OHLC, Massive breadth/news/flat-file helpers, SEC EDGAR

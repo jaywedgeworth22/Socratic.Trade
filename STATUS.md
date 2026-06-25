@@ -26,6 +26,18 @@ the TTM that `SymbolEnrichment.eps` documents, so EPS is left to Yahoo/FMP and t
 publishes `debtToEquity`. Verified by the main agent (tsc clean · 1130/1131 tests; only the
 cache-provenance flake · build green). See `docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
 
+## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
+Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When
+`policy.atrStops` is on, the protective stop DISTANCE = `atrStopMultiple × ATR(atrStopPeriod)` as a
+% of entry (clamped 1–50%) instead of fixed `stopLossPct` — driven by the name's realized daily range
+(no beta needed). Pure `trueRange`/`atr`/`atrStopPct` in `indicators.ts`; policy fields `atrStops` +
+`riskRules.atrStop{Period,Multiple}` (validated); async precompute mirrors `betaBySymbol` and feeds the
+sync `generateProactiveRiskProposals`; falls back to fixed/beta when bars are unavailable (never
+unprotected); ATR > beta when both on. New canonical reference `docs/stop-loss-and-exit-strategies.md`
+covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS validation are live).
+Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
+
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
 analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
@@ -95,6 +107,14 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/alpaca-order-type-pagination`): **Alpaca broker-robustness fixes.** (1) Order
+  type mapping — `mapAlpacaOrderType` maps Alpaca's raw `stop`→`stop_market`, `trailing_stop`→
+  `stop_market`, unknown→`market` (was leaking raw values via `o.type as OrderType`). (2)
+  `getEquityOrders` now paginates the REST fallback via `until` (pages of 500, deduped, bounded) so
+  history isn't silently capped; also fixed an incidental double-map that set `state:"undefined"` on
+  the REST path. Shared `mapAlpacaOrder` helper. +`test/alpaca-order-mapping.test.ts`. Verified: tsc
+  clean; 1128/1129 (only cache-provenance flake); build green. See
+  `docs/rollouts/2026-06-25-alpaca-order-type-pagination.md`.
 - 2026-06-25 (`claude/sell-to-fund-buy`, **PR 3 of 3**): **Sell-to-fund-buy 3-way setting.** Opt-in
   `policy.sellToFundBuy` (`off`|`suggest`|`propose`|`automated`, **default off**): when a run's intended
   buys exceed buying power, optionally raise cash by trimming the largest unrealized losers (never the
@@ -129,6 +149,13 @@ Branch: claude/magical-faraday-uce1uy
   rebuild, `pm2 restart trading`) — not reachable from the cloud agent env.
 
 - 2026-06-24 (`fix/land-workflow-scope-guard`): **Agents can push `.github/workflows/` changes directly.** Root cause wasn't a permission gap — the gh token already has the `workflow` scope and `git push` uses `gh auth git-credential` — it was a STALE `scripts/land.sh` guard that always `die`d on a workflow diff. Made step 5 **scope-aware**: allow the push when `gh auth status` shows the `workflow` scope (the common case), only block (with `gh auth refresh -h github.com -s workflow` guidance) when it's genuinely missing. Corrected `AGENTS.md` step-7 + the stale `ci-pending/README.md` note. This PR proves it end-to-end — its diff includes a `.github/workflows/ci.yml` header comment (documenting `verify` as the required ruleset check), so the push exercises the workflow-scope path. Also closed PR #84 (bot-identity — owner doesn't want enforced review). See `docs/rollouts/2026-06-24-land-workflow-scope-guard.md`.
+- 2026-06-24 (`codex/alpaca-account-label-display`): **Preserve custom Alpaca account labels in Accounts.**
+  Fixed the Accounts list formatter so Alpaca/Alpaca MCP rows use the saved account label as the row title
+  (for example, "Roth IRA") instead of replacing it with the inferred execution environment ("Paper" or
+  "Brokerage"). The subtitle still shows the broker/environment/account number. Verification:
+  `npx tsc --noEmit`; `npm test` (123 files / 1067 tests); `npm run build`; `git diff --check`.
+  See `docs/rollouts/2026-06-24-alpaca-account-label-display.md`.
+
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
   Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same
   hover/click treatment and open symbol drilldown, with ticker-logo display passed through. Simplified
