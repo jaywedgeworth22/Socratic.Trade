@@ -319,7 +319,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
-  // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity + eps from authoritative SEC filings.
+  // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity from authoritative SEC filings.
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values when enabled.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
@@ -2123,7 +2123,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 }
 
 // ── SEC EDGAR XBRL company-facts provider (keyless, default-OFF) ─────────────
-// Fills debtToEquity and eps from authoritative SEC 10-K filings via the public
+// Fills debtToEquity from authoritative SEC 10-K filings via the public
 // companyfacts API (https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json).
 // Polite 300 ms inter-symbol delay per SEC fair-access guidance.
 // Enable with: SEC_XBRL_ENRICHMENT_ENABLED=on
@@ -2133,9 +2133,10 @@ const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
 const SEC_XBRL_FETCH_TIMEOUT_MS = 6_000; // per-symbol fetch cap (kept short — SEC is on the scan path)
 const SEC_XBRL_BUDGET_MS = 8_000; // overall wall-clock budget for the SEC pass during a scan
 
-/** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity and eps.
+/** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
+ *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
  *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
-export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?: number } {
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
   try {
     if (!json || typeof json !== "object") return {};
     const root = json as Record<string, unknown>;
@@ -2212,7 +2213,9 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?:
       else if (ltdCurrent !== undefined || shortTerm !== undefined) current = (ltdCurrent ?? 0) + (shortTerm ?? 0);
 
       if (noncurrent !== undefined) return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
-      if (ltdTotal !== undefined) return ltdTotal; // LongTermDebt is the COMPLETE long-term total — don't re-add current
+      // LongTermDebt is the COMPLETE long-term total (don't re-add its current maturities), but add any
+      // genuinely-separate ShortTermBorrowings (commercial paper / revolver) — not part of long-term debt.
+      if (ltdTotal !== undefined) return ltdTotal + (shortTerm ?? 0);
       if (current !== undefined) return current; // only current-debt concepts present
       return undefined;
     }
@@ -2221,6 +2224,14 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?:
     // The app treats `debtToEquity` as debt/equity for quality scoring + the bear-veto, so total
     // Liabilities (which includes operating payables/leases/deferred revenue) would over-state leverage.
     // Compute from debt concepts at the SAME period as equity; omit when no debt concept exists there.
+    //
+    // NOTE: this provider intentionally does NOT publish `eps`. SymbolEnrichment.eps is documented as
+    // TRAILING-TWELVE-MONTHS, but SEC companyfacts EPS facts are per-period (annual 10-K / quarterly
+    // 10-Q) — the latest annual 10-K EPS is last fiscal year's figure, not current TTM. Since this
+    // provider sits ahead of Yahoo in the cascade, publishing annual EPS would override Yahoo's real
+    // TTM EPS mid-year with a stale value. debtToEquity is a point-in-time balance-sheet ratio, so the
+    // latest annual filing is correct for it. (A true trailing EPS from quarterly facts could be added
+    // later if a TTM-correct computation is wired.)
     let debtToEquity: number | undefined;
     const equity = latestEntry(getEntries("StockholdersEquity", "USD"));
     if (equity !== undefined && equity.val > 0) {
@@ -2230,23 +2241,7 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?:
       }
     }
 
-    // ── eps: choose the latest reporting period across diluted+basic, prefer diluted within it ──
-    // (Picking the diluted array up-front would return a stale diluted value when only basic has a newer fact.)
-    let eps: number | undefined;
-    const dilutedEntries = getEntries("EarningsPerShareDiluted", "USD/shares");
-    const basicEntries = getEntries("EarningsPerShareBasic", "USD/shares");
-    const dilutedLatest = latestEntry(dilutedEntries);
-    const basicLatest = latestEntry(basicEntries);
-    const targetEpsEnd = [dilutedLatest?.end, basicLatest?.end].filter((e): e is string => typeof e === "string").sort().pop();
-    if (targetEpsEnd) {
-      const epsVal = valueAtEnd(dilutedEntries, targetEpsEnd) ?? valueAtEnd(basicEntries, targetEpsEnd);
-      if (epsVal !== undefined && Number.isFinite(epsVal)) eps = epsVal;
-    }
-
-    return {
-      ...(debtToEquity !== undefined && { debtToEquity }),
-      ...(eps !== undefined && { eps })
-    };
+    return debtToEquity !== undefined ? { debtToEquity } : {};
   } catch {
     return {};
   }
@@ -2317,7 +2312,9 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
       }
     });
     work.catch(() => {}); // the background continuation must never surface as an unhandled rejection
-    await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, SEC_XBRL_BUDGET_MS))]);
+    // Use the REMAINING budget (the CIK-map race already consumed part of it) so the whole SEC pass —
+    // map load + companyfacts fetches — shares one SEC_XBRL_BUDGET_MS, not two.
+    await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())))]);
 
     return result;
   }

@@ -112,9 +112,10 @@ describe("parseCompanyFacts — debtToEquity (debt-specific concepts)", () => {
   });
 
   it("omits debtToEquity when NO debt-specific concept exists (does not fall back to Liabilities)", () => {
+    // No debt concept → empty result. This provider only publishes debtToEquity, never eps
+    // (annual 10-K EPS is not the TTM that SymbolEnrichment.eps documents — left to Yahoo).
     const r = parseCompanyFacts(makeFixture({ longTermDebtEntries: null, currentDebtEntries: null }));
-    expect(r.debtToEquity).toBeUndefined();
-    expect(r.eps).toBe(4.8); // EPS still resolves
+    expect(r).toEqual({});
   });
 
   it("aligns debt and equity on the SAME period (a newer non-10-K debt fact is not combined with older equity)", () => {
@@ -195,17 +196,18 @@ describe("parseCompanyFacts — debt aggregation edge cases", () => {
     expect(r.debtToEquity).toBe(2.0); // (400+100)/250
   });
 
-  it("uses an amended 10-K/A restatement over the original 10-K for the same period", () => {
+  it("uses an amended 10-K/A debt restatement over the original 10-K for the same period", () => {
     const r = parseCompanyFacts(rawFacts({
-      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
-      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }],
-      EarningsPerShareDiluted: [
-        { end: "2023-12-31", val: 4.0, form: "10-K", filed: "2024-02-15" },
-        { end: "2023-12-31", val: 3.2, form: "10-K/A", filed: "2024-06-01" } // restated — later filed wins
+      StockholdersEquity: [
+        { end: "2023-12-31", val: 300_000_000, form: "10-K", filed: "2024-02-15" },
+        { end: "2023-12-31", val: 300_000_000, form: "10-K/A", filed: "2024-06-01" }
+      ],
+      LongTermDebtNoncurrent: [
+        { end: "2023-12-31", val: 600_000_000, form: "10-K", filed: "2024-02-15" },
+        { end: "2023-12-31", val: 900_000_000, form: "10-K/A", filed: "2024-06-01" } // restated — later filed wins
       ]
     }));
-    expect(r.eps).toBe(3.2);
-    expect(r.debtToEquity).toBe(2.0);
+    expect(r.debtToEquity).toBe(3.0); // 900M/300M from the amended filing, not 600M/300M
   });
 });
 
@@ -226,27 +228,13 @@ describe("parseTickerCikMap (dual-class tickers)", () => {
   });
 });
 
-describe("parseCompanyFacts — eps (latest period, diluted-preferred-within-period)", () => {
-  it("prefers diluted EPS within the latest period", () => {
-    expect(parseCompanyFacts(makeFixture()).eps).toBe(4.8);
-  });
-
-  it("uses the NEWER basic EPS when diluted is stale (only older diluted exists)", () => {
-    // Reviewer scenario: diluted only has 2022; basic has a newer 2023 → must return basic 4.9, not stale 3.5.
-    const r = parseCompanyFacts(
-      makeFixture({
-        dilutedEpsEntries: [{ end: "2022-12-31", val: 3.5, form: "10-K" }],
-        basicEpsEntries: [
-          { end: "2022-12-31", val: 3.6, form: "10-K" },
-          { end: "2023-12-31", val: 4.9, form: "10-K" }
-        ]
-      })
-    );
-    expect(r.eps).toBe(4.9);
-  });
-
-  it("falls back to basic EPS when diluted is absent entirely", () => {
-    expect(parseCompanyFacts(makeFixture({ dilutedEpsEntries: [] })).eps).toBe(4.9);
+describe("parseCompanyFacts — does NOT publish eps (annual 10-K EPS ≠ TTM)", () => {
+  it("returns no eps field even when EarningsPerShare concepts are present", () => {
+    // The fixture supplies diluted+basic EPS arrays; the provider must ignore them entirely so a
+    // stale annual figure never supersedes Yahoo's TTM EPS in the cascade.
+    const r = parseCompanyFacts(makeFixture());
+    expect("eps" in r).toBe(false);
+    expect(r.debtToEquity).toBe(2.0); // debt still resolves
   });
 });
 

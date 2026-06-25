@@ -7,8 +7,10 @@ Opus main agent (full tsc/test/build trio + code read of the parse + cascade wir
 ## Summary
 
 A keyless, default-OFF enrichment provider that fills the EXISTING `SymbolEnrichment`
-fields `debtToEquity` and `eps` from authoritative SEC filings via the public
-companyfacts API (`https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json`).
+field `debtToEquity` from authoritative SEC filings via the public companyfacts API
+(`https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json`). (EPS was also filled
+in rounds 1–2 but was **dropped in round 3** — see that note below — because annual 10-K
+EPS isn't the TTM figure `SymbolEnrichment.eps` documents.)
 
 - **No new field threading** — it only populates fields that already exist on
   `SymbolEnrichment`/`MarketQuote`, so the cross-file enrichment surface
@@ -89,6 +91,28 @@ A second Codex pass on the round-1 fixes surfaced 5 more valid edge cases, all f
 
 Tests now 63 in the SEC + data-providers suites. Full trio still green (tsc clean · 1132/1133 ·
 build). Touched `src/lib/web-sources/sec8k.ts` additively (new exports; `loadCikMap` unchanged).
+
+## Codex review — round 3 (applied): EPS dropped, debtToEquity only
+
+A third Codex pass flagged that publishing `eps` from SEC at all was unsafe: `SymbolEnrichment.eps`
+is documented as **TTM**, but an annual `10-K` EPS is a point-in-time fiscal-year figure. Because the
+SEC provider sits *before* Yahoo in the cascade, a stale annual EPS could supersede Yahoo's TTM EPS
+mid-year. Rather than synthesize a true trailing EPS from four quarterly facts (fragile, and outside
+this connector's minimal-surface intent), **EPS was removed from the SEC provider entirely**:
+
+1. **`parseCompanyFacts` now returns `{ debtToEquity?: number }`** — the whole EPS computation block
+   (diluted/basic latest-period selection) was deleted. debtToEquity is a point-in-time balance-sheet
+   ratio, so the annual-vs-TTM mismatch does not apply to it. EPS is left to Yahoo/FMP.
+2. **`LongTermDebt` aggregate total now also adds `ShortTermBorrowings`** when present (the prior fix
+   only added current maturities for the noncurrent-only concept), so revolver/commercial-paper debt
+   isn't dropped from the leverage ratio.
+3. **The per-symbol fetch loop's budget race uses `Math.max(0, deadline - Date.now())`** so a past
+   deadline can't pass a negative delay to `setTimeout`.
+
+Doc/comments/env all updated to say debtToEquity-only. Tests: the EPS describe block was replaced with
+a "does NOT publish eps" guard, the 10-K/A amendment case was repurposed to a **debt** restatement
+(amended `10-K/A` 900M wins over original `10-K` 600M for the same period end), and the "no debt
+concept" case now asserts an empty result.
 
 ## Follow-ups
 
