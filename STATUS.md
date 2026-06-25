@@ -7,6 +7,27 @@ steps materially change.
 ## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
 Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
 
+## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
+Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
+(`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
+git-ignored (only `.env.example` tracked), each worktree's copy is independent, and **GCP
+Secret Manager is the authoritative upstream for secret values** — every `.env.local` is a
+local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
+`GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
+across the integration/agent/production copies, and that per-user keys live encrypted in
+`user_api_keys`, not `.env.local`. Addressed four Codex review rounds on PR #150: steer to
+plain scripts when GCP is unset + flag a `gcp-secrets-run.mjs` premature-exit bug (follow-up
+code fix); shared secrets change in GCP not the seed; require scoping on shared GCP projects;
+clarify `GCP_SECRETS_OVERWRITE`/`.env.local` precedence; note `*:gcp` wrappers inject-only
+(never rewrite the file); call out bootstrap secrets like the stable `ENCRYPTION_KEY`;
+reconcile `docs/ops-observability-security.md` to name GCP (not Infisical) canonical, marking
+Infisical `*:secrets` legacy (no GCP→Infisical sync); and note the Litestream sidecar reads
+creds from the live `.env.local`, not `*:gcp`; document the wrapper's fail-open behavior and
+that `GCP_PROJECT_ID`/ADC must be exported (not in `.env.local`); and add `connected_accounts`
+to the encrypted-secret inventory. Added a dated `PLAN.md` topology note. Verified locally: build ✓, tsc ✓ clean, tests 1128/1129 (only
+the pre-existing `cache-provenance` flake). See
+`docs/rollouts/2026-06-25-env-local-source-of-truth-doc.md`.
+
 ## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
 Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
 429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
