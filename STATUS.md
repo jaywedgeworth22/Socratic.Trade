@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Learning-loop honesty (OOS no-op caution + policy-blocked counterfactual)
+Branch `claude/learning-loop-honesty`. First of the clean/additive backlog batches (post #137).
+Both additive + advisory-only (no money path). (1) `applyOosGate` (`strategy-tuning.ts`) now appends
+a "proposed factor-weight changes were NOT out-of-sample validated (<reason>)" caution on each path
+where the OOS gate can't run (fetch threw / null result <4 snapshot dates / no composite IC) instead
+of silently keeping weights — no gating change, just honesty. (2) Policy-BLOCKED opening proposals
+(`runStrategyOnce` post-review block) now feed `recordRejectedProposalCounterfactual` (opening sides
+only) so they mature into missed-opportunity analytics like user rejections do. Verify: tsc clean ·
+1113/1114 tests (+2; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-learning-loop-honesty.md`.
+
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
 analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
