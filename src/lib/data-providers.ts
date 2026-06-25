@@ -2133,6 +2133,11 @@ const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
 const SEC_XBRL_FETCH_TIMEOUT_MS = 6_000; // per-symbol fetch cap (kept short — SEC is on the scan path)
 const SEC_XBRL_BUDGET_MS = 8_000; // overall wall-clock budget for the SEC pass during a scan
 
+// Symbols whose companyfacts fetch is in progress, shared across concurrent enrich() calls. The SEC pass
+// keeps warming the cache in the background past the per-scan budget; without this guard a second scan
+// that starts before the first's warm finishes would re-fetch the same companyfacts URLs concurrently.
+const secXbrlInFlight = new Set<string>();
+
 /** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
  *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
  *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
@@ -2147,9 +2152,6 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     const concepts = gaap as Record<string, unknown>;
 
     type Fact = { end: string; val: number; form?: string; filed?: string };
-    // Annual forms include the AMENDED 10-K/A (restatements) — excluding it would publish stale
-    // values whenever an original 10-K also exists.
-    const isAnnual = (form?: string): boolean => form === "10-K" || form === "10-K/A";
 
     // Helper: extract entries array for a concept + unit (keeping form + filed date).
     function getEntries(concept: string, unit: string): Fact[] {
@@ -2174,27 +2176,27 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       return out;
     }
 
-    // Helper: pick the latest entry — prefer annual (10-K/10-K/A); tie-break a shared period end by the
-    // latest `filed` so an amended restatement supersedes the original filing.
+    // Helper: pick the entry for the latest reporting PERIOD across ALL forms (10-K, 10-K/A, AND 10-Q).
+    // debtToEquity is a point-in-time balance-sheet ratio, so a newer 10-Q balance sheet supersedes the
+    // prior fiscal-year 10-K — preferring the annual filing would publish last year's leverage for most of
+    // the year after Q1/Q2/Q3. Tie-break a shared period end by the latest `filed` (an amendment beats the
+    // original) so a 10-K/A restatement supersedes the superseded 10-K.
     function latestEntry(entries: Fact[]): Fact | undefined {
       if (entries.length === 0) return undefined;
-      const annuals = entries.filter((e) => isAnnual(e.form));
-      const pool = annuals.length > 0 ? annuals : entries;
-      return pool.reduce((best, e) => {
+      return entries.reduce((best, e) => {
         if (e.end > best.end) return e;
         if (e.end === best.end && (e.filed ?? "") > (best.filed ?? "")) return e;
         return best;
-      }, pool[0]);
+      }, entries[0]);
     }
 
-    // Helper: the value of a concept AT a specific reporting-period end date — prefer the annual filing
-    // and the latest `filed` (amendment) at that end — so debt + equity facts are aligned on the same period.
+    // Helper: the value of a concept AT a specific reporting-period end date — the latest `filed` at that
+    // end wins (an amendment supersedes the original) — so debt + equity facts stay aligned on the SAME
+    // period regardless of form (the equity anchor may be a 10-Q quarter).
     function valueAtEnd(entries: Fact[], end: string): number | undefined {
       const atEnd = entries.filter((e) => e.end === end);
       if (atEnd.length === 0) return undefined;
-      const annuals = atEnd.filter((e) => isAnnual(e.form));
-      const pool = annuals.length > 0 ? annuals : atEnd;
-      return pool.reduce((best, e) => ((e.filed ?? "") > (best.filed ?? "") ? e : best), pool[0]).val;
+      return atEnd.reduce((best, e) => ((e.filed ?? "") > (best.filed ?? "") ? e : best), atEnd[0]).val;
     }
 
     // Total DEBT at a period end from debt-specific concepts (never total Liabilities). Returns undefined
@@ -2230,8 +2232,8 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     // 10-Q) — the latest annual 10-K EPS is last fiscal year's figure, not current TTM. Since this
     // provider sits ahead of Yahoo in the cascade, publishing annual EPS would override Yahoo's real
     // TTM EPS mid-year with a stale value. debtToEquity is a point-in-time balance-sheet ratio, so the
-    // latest annual filing is correct for it. (A true trailing EPS from quarterly facts could be added
-    // later if a TTM-correct computation is wired.)
+    // latest reporting PERIOD (annual OR quarterly) is correct for it — see latestEntry above. (A true
+    // trailing EPS from quarterly facts could be added later if a TTM-correct computation is wired.)
     let debtToEquity: number | undefined;
     const equity = latestEntry(getEntries("StockholdersEquity", "USD"));
     if (equity !== undefined && equity.val > 0) {
@@ -2296,19 +2298,29 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     // SEC data completed. Symbols not yet fetched fall through to FMP/Yahoo this pass and resolve from
     // the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
     const work = runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
+      if (Date.now() > deadline) return; // over budget — leave as a cache miss; the next scan retries
+      const cik = tickerToCik[symbol];
+      if (!cik) return;
+      const cacheKey = `sec-xbrl:${symbol}`;
+      // A concurrent scan may have warmed this symbol since we snapshotted misses — use it, don't refetch.
+      const fresh = cache.get(cacheKey);
+      if (fresh && fresh.expiresAt > Date.now()) { result[symbol] = fresh.data; return; }
+      // Dedup concurrent background warms: if another enrich() is already fetching this symbol, skip it
+      // (it falls through to Yahoo this pass and resolves from the warmed cache next scan).
+      if (secXbrlInFlight.has(symbol)) return;
+      secXbrlInFlight.add(symbol);
       try {
-        if (Date.now() > deadline) return; // over budget — leave as a cache miss; the next scan retries
-        const cik = tickerToCik[symbol];
-        if (!cik) return;
         const paddedCik = padCik(cik);
         const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`;
         const text = await politeFetchText(url, { headers: { "user-agent": ua }, timeoutMs: SEC_XBRL_FETCH_TIMEOUT_MS });
         const json = JSON.parse(text) as unknown;
         const data = parseCompanyFacts(json);
-        cache.set(`sec-xbrl:${symbol}`, { expiresAt: now + SEC_XBRL_TTL_MS, data });
+        cache.set(cacheKey, { expiresAt: now + SEC_XBRL_TTL_MS, data });
         result[symbol] = data;
       } catch {
         // best-effort — this symbol falls through to the next provider
+      } finally {
+        secXbrlInFlight.delete(symbol);
       }
     });
     work.catch(() => {}); // the background continuation must never surface as an unhandled rejection

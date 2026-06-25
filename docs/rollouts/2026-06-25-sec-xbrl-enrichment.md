@@ -114,6 +114,27 @@ a "does NOT publish eps" guard, the 10-K/A amendment case was repurposed to a **
 (amended `10-K/A` 900M wins over original `10-K` 600M for the same period end), and the "no debt
 concept" case now asserts an empty result.
 
+## Codex review — round 4 (applied)
+
+The round-4 pass had only two findings still current against the merge commit (the other twelve were
+`outdated` — already fixed in rounds 1–3); both valid and fixed:
+
+1. **D/E now uses the latest balance-sheet PERIOD, not the latest annual filing.** `latestEntry` /
+   `valueAtEnd` previously preferred 10-K/10-K/A, so after a company filed Q1/Q2/Q3 the provider would
+   still publish last fiscal year-end's leverage (and, sitting ahead of Yahoo, override Yahoo's more
+   current value). debtToEquity is a point-in-time balance-sheet ratio, so the latest reporting period —
+   annual OR a newer 10-Q snapshot — is correct. Both helpers now pick the latest `end` across all forms
+   (latest `filed` tie-break for amendments). When the latest equity period has no aligned debt fact, D/E
+   is omitted (falls through to Yahoo) rather than reaching back to a stale aligned period. The dead
+   `isAnnual` helper was removed. Test "prefers 10-K over non-10-K" was replaced with a "latest 10-Q
+   supersedes prior 10-K" case plus an "omit when no aligned debt period" case.
+2. **Concurrent background warms are de-duplicated.** The SEC pass keeps warming the cache past the
+   per-scan budget; a second scan starting before the first finished could re-fetch the same companyfacts
+   URLs. Added a module-level `secXbrlInFlight` Set (skip a symbol already being fetched) plus a
+   pre-fetch cache re-check (use a just-warmed value instead of refetching).
+
+Full trio green: tsc clean · 1146/1147 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

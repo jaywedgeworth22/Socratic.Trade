@@ -20,11 +20,12 @@ Branch `claude/sec-xbrl-enrichment` (PR #145). Keyless, default-OFF enrichment p
 EXISTING `debtToEquity` field from authoritative SEC filings (companyfacts API). No new field threading
 (stays within existing fields). Reuses `secUserAgent`/`politeFetchText`/`runRateLimited`/
 `loadTickerCikMap`/`padCik`; cascade order after FMP, before Yahoo. Pure tested `parseCompanyFacts`
-(debt-specific concepts ÷ equity, period-aligned, amended-10-K/A-aware, budget-bounded, defensive).
-Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was dropped in Codex review round 3** — annual 10-K EPS isn't
-the TTM that `SymbolEnrichment.eps` documents, so EPS is left to Yahoo/FMP and the SEC provider only
-publishes `debtToEquity`. Verified by the main agent (tsc clean · 1130/1131 tests; only the
-cache-provenance flake · build green). See `docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
+(debt-specific concepts ÷ equity at the LATEST balance-sheet period — annual or 10-Q — amended-10-K/A-aware,
+budget-bounded, dedup'd background warms, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was
+dropped in Codex review round 3** — annual 10-K EPS isn't the TTM that `SymbolEnrichment.eps` documents,
+so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Four Codex review rounds
+applied. Verified by the main agent (tsc clean · 1146/1147 tests; only the cache-provenance flake · build
+green). See `docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
 
 ## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc
 Branch `claude/atr-stops`. New volatility-aware per-position stop mode, default OFF. When

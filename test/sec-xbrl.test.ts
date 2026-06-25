@@ -148,18 +148,32 @@ describe("parseCompanyFacts — debtToEquity (debt-specific concepts)", () => {
     expect(parseCompanyFacts(makeFixture({ equityEntries: [{ end: "2023-12-31", val: -100, form: "10-K" }] })).debtToEquity).toBeUndefined();
   });
 
-  it("prefers 10-K debt/equity entries over non-10-K at the same scan", () => {
-    const r = parseCompanyFacts(
-      makeFixture({
-        equityEntries: [
-          { end: "2023-12-31", val: 300_000_000, form: "10-K" },
-          { end: "2024-03-31", val: 999_999_999 } // non-10-K, later — latestEntry prefers the 10-K
-        ],
-        longTermDebtEntries: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }],
-        currentDebtEntries: null
-      })
-    );
-    expect(r.debtToEquity).toBe(2.0);
+  it("uses the latest balance-sheet period (a newer 10-Q snapshot supersedes the prior 10-K)", () => {
+    // Equity + debt both report a newer 2024-Q1 balance sheet; D/E must come from that quarter, not the
+    // stale 2023 fiscal year-end (preferring the annual filing would publish last year's leverage all year).
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [
+        { end: "2023-12-31", val: 300_000_000, form: "10-K" },
+        { end: "2024-03-31", val: 320_000_000, form: "10-Q" }
+      ],
+      LongTermDebtNoncurrent: [
+        { end: "2023-12-31", val: 600_000_000, form: "10-K" },
+        { end: "2024-03-31", val: 640_000_000, form: "10-Q" }
+      ]
+    }));
+    expect(r.debtToEquity).toBe(2.0); // 640M/320M at 2024-Q1, not 600M/300M at 2023-FY
+  });
+
+  it("omits D/E when the latest equity period has no debt fact to align with (falls through to Yahoo)", () => {
+    // Latest equity is a 2024-Q1 10-Q, but debt is only tagged at the 2023 10-K — no aligned period → omit.
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [
+        { end: "2023-12-31", val: 300_000_000, form: "10-K" },
+        { end: "2024-03-31", val: 320_000_000, form: "10-Q" }
+      ],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBeUndefined();
   });
 });
 
