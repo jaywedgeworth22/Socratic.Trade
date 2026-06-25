@@ -178,6 +178,36 @@ describe("parseCompanyFacts — debtToEquity (debt-specific concepts)", () => {
     expect(r.debtToEquity).toBe(2.0);
   });
 
+  it("anchors on the alternate equity concept when the latest period only tags the inclusive total", () => {
+    // The newest period (2024-Q1) only tags StockholdersEquityIncludingPortionAttributableToNon-
+    // controllingInterest, not parent-only StockholdersEquity. Anchor on it (with aligned 2024-Q1 debt)
+    // rather than publishing the stale 2023 period: 640M/320M = 2.0.
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest: [
+        { end: "2024-03-31", val: 320_000_000, form: "10-Q" }
+      ],
+      LongTermDebtNoncurrent: [
+        { end: "2023-12-31", val: 600_000_000, form: "10-K" },
+        { end: "2024-03-31", val: 640_000_000, form: "10-Q" }
+      ]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
+  it("prefers parent-only StockholdersEquity over the inclusive total at the same period", () => {
+    // Both concepts tag 2023-12-31; the parent-only value (300M) is the conventional D/E denominator,
+    // not the larger inclusive total (400M): 600M/300M = 2.0, not 600M/400M = 1.5.
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest: [
+        { end: "2023-12-31", val: 400_000_000, form: "10-K" }
+      ],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
   it("omits D/E when the latest equity period has no debt fact to align with (falls through to Yahoo)", () => {
     // Latest equity is a 2024-Q1 10-Q, but debt is only tagged at the 2023 10-K — no aligned period → omit.
     const r = parseCompanyFacts(rawFacts({

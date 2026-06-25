@@ -268,6 +268,23 @@ reducer. New test: a newer 8-K equity fact at 2024-03-31 is ignored → D/E reso
 
 Full trio green: tsc clean · 1179/1180 (only the cache-provenance flake) · build.
 
+## Round 11 (Codex review): fall back to the alternate equity concept
+
+Codex flagged (P2, line 2366) that the equity anchor used only `StockholdersEquity`. Filers that tag the
+current balance-sheet period only under `StockholdersEquityIncludingPortionAttributableToNoncontrolling-
+Interest` (total equity incl. minority interest) — not the parent-only concept — would anchor on a stale
+older period (or omit SEC leverage) despite aligned current debt, feeding stale leverage to scoring and
+the bear veto.
+
+Fix: anchor on the latest equity PERIOD available under EITHER concept (`latestEntry([...pure, ...incl])`),
+and at that period PREFER the parent-only `StockholdersEquity` value (the conventional D/E denominator),
+falling back to the inclusive total only when the pure concept isn't tagged there
+(`valueAtEnd(pure, end) ?? valueAtEnd(incl, end)`). Two new tests: (a) latest period only under the
+inclusive concept → anchors on it (640M/320M = 2.0, not the stale 2023 period); (b) both concepts at the
+same period → uses parent-only 300M (D/E 2.0), not the inclusive 400M (1.5).
+
+Full trio green: tsc clean · 1181/1182 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

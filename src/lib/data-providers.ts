@@ -2363,11 +2363,20 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     // latest reporting PERIOD (annual OR quarterly) is correct for it — see latestEntry above. (A true
     // trailing EPS from quarterly facts could be added later if a TTM-correct computation is wired.)
     let debtToEquity: number | undefined;
-    const equity = latestEntry(getEntries("StockholdersEquity", "USD"));
-    if (equity !== undefined && equity.val > 0) {
-      const totalDebt = debtAtEnd(equity.end);
+    // Anchor on the latest equity PERIOD available under EITHER standard equity concept. Some filers tag
+    // the current balance-sheet period only under StockholdersEquityIncludingPortionAttributableToNon-
+    // controllingInterest (total equity incl. minority interest), not the parent-only StockholdersEquity;
+    // anchoring on the pure concept alone would publish a stale older period (or omit SEC leverage) despite
+    // aligned current debt. At the anchored period, PREFER the parent-only value (the conventional D/E
+    // denominator), falling back to the inclusive total when only it is tagged there.
+    const equityPure = getEntries("StockholdersEquity", "USD");
+    const equityIncl = getEntries("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD");
+    const equityAnchor = latestEntry([...equityPure, ...equityIncl]);
+    const equityVal = equityAnchor && (valueAtEnd(equityPure, equityAnchor.end) ?? valueAtEnd(equityIncl, equityAnchor.end));
+    if (equityAnchor !== undefined && equityVal !== undefined && equityVal > 0) {
+      const totalDebt = debtAtEnd(equityAnchor.end);
       if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
-        const ratio = Math.round((totalDebt / equity.val) * 100) / 100;
+        const ratio = Math.round((totalDebt / equityVal) * 100) / 100;
         // Publish the RAW true ratio (e.g. 1.5, or 12 for a genuinely 12x-levered name). The bear-veto
         // (strategy.ts) and analytics/exports compare this value directly, so it must NOT be capped or
         // pre-normalized — a cap would let a >ceiling name escape a strict `> ceiling` veto and would
