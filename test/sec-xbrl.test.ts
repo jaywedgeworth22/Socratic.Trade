@@ -200,6 +200,45 @@ describe("parseCompanyFacts — debt aggregation edge cases", () => {
     expect(r.debtToEquity).toBe(2.0);
   });
 
+  it("caps the published ratio at 10 so a >10x-levered name isn't misread as a percentage downstream", () => {
+    // 1200M debt / 100M equity = 12.0. Display + qualityScore treat D/E > 10 as a percentage and ÷100,
+    // so an uncapped 12 would render as 0.12 (near debt-free). Cap at 10 → still reads as max-leverage.
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 100_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 1_200_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(10);
+  });
+
+  it("uses the combined finance-lease noncurrent concept when the pure concept is absent", () => {
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      LongTermDebtAndFinanceLeaseObligationsNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0); // 600M/300M
+  });
+
+  it("counts CommercialPaper as short-term debt when no ShortTermBorrowings/DebtCurrent exists", () => {
+    // noncurrent 400M + commercial paper 100M = 500M / 250M = 2.0
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 250_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 400_000_000, form: "10-K" }],
+      CommercialPaper: [{ end: "2023-12-31", val: 100_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
+  it("falls back to the complete LongTermDebt total when noncurrent is tagged but no current concept is", () => {
+    // noncurrent 500M omits current maturities; LongTermDebt total 600M bundles them. With no current
+    // concept, use the larger total (600M/300M = 2.0), not the understated noncurrent (500M/300M = 1.67).
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 500_000_000, form: "10-K" }],
+      LongTermDebt: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
   it("prefers the aggregate DebtCurrent over summing the separate current components", () => {
     const r = parseCompanyFacts(rawFacts({
       StockholdersEquity: [{ end: "2023-12-31", val: 250_000_000, form: "10-K" }],

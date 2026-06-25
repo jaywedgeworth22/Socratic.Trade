@@ -135,6 +135,31 @@ The round-4 pass had only two findings still current against the merge commit (t
 
 Full trio green: tsc clean · 1146/1147 (only the cache-provenance flake) · build.
 
+## Codex review — round 5 (applied)
+
+Three findings current against the round-4 commit, all valid and fixed:
+
+1. **Unit consistency — published D/E is capped at 10 (signal-inversion bug).** The provider computed a
+   raw ratio (e.g. `12` for a 12×-levered firm), but display + qualityScore (`market.ts:834`,
+   `dashboard-client.tsx:2097`) treat any `debtToEquity > 10` as a **percentage** and divide by 100 — so
+   `12` rendered as `0.12` and an over-levered name scored as nearly debt-free. The bear-veto
+   (`strategy.ts:834`) instead compares the raw value to a **ratio** ceiling with no `/100`, so a ratio is
+   the correct convention; the only failure is real ratios >10 colliding with the display/quality
+   heuristic. Capping the published ratio at 10 keeps all three consumers correct (vetoed · penalized ·
+   shown "10.00"); 10×+ D/E is already pathological, so the cap only touches that extreme tail.
+2. **Combined-lease + commercial-paper concepts** added to `debtAtEnd`: noncurrent falls back to
+   `LongTermDebtAndFinanceLeaseObligationsNoncurrent`; the LT total to
+   `LongTermDebtAndCapitalLeaseObligations`; current maturities to
+   `LongTermDebtAndFinanceLeaseObligationsCurrent`; short-term to `CommercialPaper`. Filers using the
+   combined tags no longer publish only a partial debt figure.
+3. **LongTermDebt-total fallback when no current concept is tagged.** When `LongTermDebtNoncurrent` and a
+   complete `LongTermDebt` total both exist for the period but no separate current-debt concept does,
+   `debtAtEnd` now uses the larger total (it bundles the untagged current maturities) instead of the
+   understated noncurrent-only figure.
+
+Four new sec-xbrl tests (cap, combined noncurrent, commercial paper, total-fallback). Full trio green:
+tsc clean · 1172/1173 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

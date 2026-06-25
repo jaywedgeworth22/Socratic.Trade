@@ -2202,11 +2202,24 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     // Total DEBT at a period end from debt-specific concepts (never total Liabilities). Returns undefined
     // when no debt concept is present (so we omit debtToEquity rather than fabricate it).
     function debtAtEnd(end: string): number | undefined {
-      const noncurrent = valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end);
-      const ltdTotal = valueAtEnd(getEntries("LongTermDebt", "USD"), end);
+      // Long-term debt, NONCURRENT portion — prefer the pure concept, fall back to the combined
+      // debt+finance-lease concept some filers tag instead.
+      const noncurrent =
+        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsNoncurrent", "USD"), end);
+      // The COMPLETE long-term total (incl. current maturities) — pure concept then combined-lease variant.
+      const ltdTotal =
+        valueAtEnd(getEntries("LongTermDebt", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndCapitalLeaseObligations", "USD"), end);
       const debtCurrentAgg = valueAtEnd(getEntries("DebtCurrent", "USD"), end);
-      const ltdCurrent = valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end);
-      const shortTerm = valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end);
+      // Current maturities of LT debt — pure concept then combined-lease variant.
+      const ltdCurrent =
+        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsCurrent", "USD"), end);
+      // Short-term borrowings OUTSIDE long-term debt (revolver / commercial paper).
+      const shortTerm =
+        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end) ??
+        valueAtEnd(getEntries("CommercialPaper", "USD"), end);
 
       // Current-debt portion: prefer the aggregate DebtCurrent; otherwise SUM the separate components
       // (current maturities of LT debt + short-term borrowings) so neither is dropped.
@@ -2214,7 +2227,12 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       if (debtCurrentAgg !== undefined) current = debtCurrentAgg;
       else if (ltdCurrent !== undefined || shortTerm !== undefined) current = (ltdCurrent ?? 0) + (shortTerm ?? 0);
 
-      if (noncurrent !== undefined) return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
+      if (noncurrent !== undefined) {
+        // When NO separate current maturity is tagged but the complete LongTermDebt total is larger, use
+        // the total (it bundles current maturities the noncurrent concept omits) so leverage isn't understated.
+        if (current === undefined && ltdTotal !== undefined && ltdTotal > noncurrent) return ltdTotal + (shortTerm ?? 0);
+        return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
+      }
       // LongTermDebt is the COMPLETE long-term total (don't re-add its current maturities), but add any
       // genuinely-separate ShortTermBorrowings (commercial paper / revolver) — not part of long-term debt.
       if (ltdTotal !== undefined) return ltdTotal + (shortTerm ?? 0);
@@ -2239,7 +2257,14 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
     if (equity !== undefined && equity.val > 0) {
       const totalDebt = debtAtEnd(equity.end);
       if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
-        debtToEquity = Math.round((totalDebt / equity.val) * 100) / 100;
+        const ratio = Math.round((totalDebt / equity.val) * 100) / 100;
+        // Publish as a RATIO (e.g. 1.5), matching the bear-veto, which compares the raw value to a ratio
+        // ceiling (strategy.ts) WITHOUT the percentage heuristic. But display + quality (market.ts,
+        // dashboard-client.tsx) treat any value > 10 as a PERCENTAGE and divide by 100 — so cap the
+        // published ratio at 10. A genuinely >10x-levered name still reads as max-leverage (vetoed,
+        // penalized, shown "10.00") instead of being misread as 0.1x. (10x+ D/E is already pathological;
+        // the cap only touches that extreme tail.)
+        debtToEquity = Math.min(ratio, 10);
       }
     }
 
