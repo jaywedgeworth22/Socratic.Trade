@@ -44,6 +44,12 @@ jobs:
           DIR="${DEPLOY_DIR:-$HOME/apps/trading-live}"
           APP="${PM2_APP:-trading}"
 
+          # Load the Infisical bootstrap if this box has been cut over to Infisical
+          # (written by scripts/infisical-prod-cutover.sh; chmod 600, never committed,
+          # lives outside the repo). Absent → plain build/restart, i.e. unchanged.
+          ENV_FILE="$HOME/.config/agentic-trading/deploy.env"
+          if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; echo "[deploy] loaded Infisical bootstrap from $ENV_FILE"; fi
+
           echo "::group::Update worktree ($DIR -> origin/main)"
           cd "$DIR"
           # The launchd runner has no stored git credentials / no TTY, so the
@@ -64,7 +70,13 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"
-          npm run build
+          if [ -n "${INFISICAL_TOKEN:-}" ] && command -v infisical >/dev/null 2>&1; then
+            echo "[deploy] Infisical configured — building with secrets (build:secrets)"
+            npm run build:secrets
+          else
+            echo "[deploy] Infisical not configured — plain build"
+            npm run build
+          fi
           echo "::endgroup::"
 
           echo "::group::Restart PM2 process ($APP)"

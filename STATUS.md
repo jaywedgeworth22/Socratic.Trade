@@ -18,6 +18,32 @@ via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1222
 (need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
 See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
 
+## 2026-06-25 — Assistant chat across all five LLM providers
+Branch `feat/chat-multi-provider` (throwaway worktree `~/apps/trading-ag13`). The Assistant chat now
+spans **OpenAI · Anthropic · xAI (Grok) · Google Gemini · Mistral**, with a few recommended models
+per provider (cost ↔ capability) selectable from the Assistant header (sticky via `localStorage`,
+sent as a `model` hint — no DB migration). Routing is by model name: `chatProviderForModel` →
+`llmForModel` (`src/lib/chat/llm.ts`). Grok/Gemini/Mistral reuse `OpenAILLM`'s chat/completions tool
+loop with a per-provider base URL + key; Anthropic keeps its Messages loop. Per-provider keys resolve
+via `resolveLlmCredential(...gemini|mistral...)` (per-user-first, operator failover); no
+cross-provider borrowing — a keyless provider degrades to `MockLLM`. Added Anthropic/Gemini/Mistral
+rows to the `Settings → Connections` catalog (`/api/keys`) and ledger pricing. **NB:** the lost PR
+#161 (Gemini/Mistral) was never in `main`; this adds that plumbing from scratch, chat-scoped — the
+strategy loop / Strategy-Studio dropdowns still cover only OpenAI + xAI (separate follow-up). Verify:
+tsc ✓ · 1228/1228 ✓ · build ✓ · live `/api/keys` + `/api/chat` (mock + keyless-gemini) checks.
+See `docs/rollouts/2026-06-25-chat-multi-provider-models.md`.
+
+## 2026-06-25 — Wire deploy.yml for Infisical + operator cutover script
+Branch `claude/infisical-prod-cutover`. Follow-up to #165. Adds `scripts/infisical-prod-cutover.sh`
+(idempotent, **run on the box**): writes the bootstrap to `~/.config/agentic-trading/deploy.env`,
+imports `.env.local` → Infisical, re-creates PM2 `trading` to `npm run start:secrets`, verifies
+`/api/health`, optional `--scrub` of `.env.local`. `deploy.yml` now sources that bootstrap and builds
+via `build:secrets` when Infisical is configured, else plain build — **safe** (unchanged behaviour
+pre-cutover; `pm2 restart` reuses the existing launch command). Host-side steps 2–3 need the
+machine-identity token + live secret values, so they can't run from the cloud agent — delivered as the
+one-command script. Verify: `bash -n` OK · build ✓ · tsc ✓ clean · 1222/1222. See
+`docs/rollouts/2026-06-25-infisical-prod-cutover-deploy-wiring.md`.
+
 ## 2026-06-25 — Switch all secret delivery to Infisical; remove the GCP path
 Branch `claude/switch-to-infisical`. Operator decision: Infisical is the single secrets source of
 truth; `.env.local` is not a secret source. **Removed** the GCP path — `scripts/gcp-secrets-run.mjs`,

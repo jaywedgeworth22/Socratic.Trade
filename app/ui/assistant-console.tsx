@@ -98,33 +98,80 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
   { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
 ];
 
-/** Provider options shown in the model-selector. The env var (CHAT_LLM) sets the initial value;
- *  the selection is sent as a per-request hint to the API (stored client-side only — no DB migration). */
-type ChatProvider = "mock" | "anthropic" | "openai";
+// Chat-model selector: pick any of the five providers. The chosen model is sent as a per-request
+// `model` hint to /api/chat, which routes it to the right provider by name (claude-*→Anthropic,
+// grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, else OpenAI). The matching provider key must be
+// set in Settings → Connections; OpenAI is the operator default. A few recommended models per
+// provider, spanning cost ↔ capability. Selection is sticky via localStorage (no DB migration).
+const CHAT_MODEL_GROUPS: Array<{ label: string; options: Array<{ value: string; label: string }> }> = [
+  { label: "Offline", options: [{ value: "mock", label: "Mock — deterministic, no key" }] },
+  {
+    label: "OpenAI",
+    options: [
+      { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest" },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default" },
+      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost" }
+    ]
+  },
+  {
+    label: "Anthropic (needs Anthropic key)",
+    options: [
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast & low cost" },
+      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — stronger reasoning" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 — strongest, premium" }
+    ]
+  },
+  {
+    label: "xAI / Grok (needs xAI key)",
+    options: [
+      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost" },
+      { value: "grok-4.3", label: "grok-4.3 — stronger, large context" }
+    ]
+  },
+  {
+    label: "Google Gemini (needs Gemini key)",
+    options: [
+      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost" },
+      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — balanced, long context" },
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — strongest flash" }
+    ]
+  },
+  {
+    label: "Mistral (needs Mistral key)",
+    options: [
+      { value: "mistral-small-latest", label: "mistral-small-latest — lowest cost" },
+      { value: "mistral-medium-latest", label: "mistral-medium-latest — balanced" },
+      { value: "mistral-large-latest", label: "mistral-large-latest — strongest" }
+    ]
+  }
+];
 
-const PROVIDER_LABELS: Record<ChatProvider, string> = {
-  mock: "Mock (offline)",
-  anthropic: "Anthropic",
-  openai: "OpenAI"
-};
+const DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
+const CHAT_MODEL_STORAGE_KEY = "assistant.chatModel";
 
 export function AssistantView({
   executionState,
   approveProposal,
   rejectProposal,
-  defaultProvider
+  defaultModel
 }: {
   executionState: ExecutionState;
   approveProposal: (proposalId: string) => Promise<void>;
   rejectProposal: (proposalId: string) => Promise<void>;
-  /** Initial provider; matches the server-side CHAT_LLM env var. Defaults to "mock". */
-  defaultProvider?: ChatProvider;
+  /** Initial chat model. Overridden by a sticky localStorage choice; defaults to gpt-5.4-mini. */
+  defaultModel?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [provider, setProvider] = useState<ChatProvider>(defaultProvider ?? "mock");
+  const [model, setModel] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
+      if (saved) return saved;
+    }
+    return defaultModel ?? DEFAULT_CHAT_MODEL;
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
   const dest = destination(executionState);
 
@@ -149,6 +196,11 @@ export function AssistantView({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, drafts]);
 
+  // Persist the chat-model choice so it survives reloads (client-side only — no DB migration).
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, model);
+  }, [model]);
+
   const patchDraft = (msgId: string, patch: Partial<DraftState>) =>
     setDrafts((d) => ({ ...d, [msgId]: { ...(d[msgId] ?? { phase: "draft" }), ...patch } as DraftState }));
 
@@ -163,7 +215,7 @@ export function AssistantView({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message, provider })
+        body: JSON.stringify({ message, model })
       });
       if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;
@@ -176,7 +228,7 @@ export function AssistantView({
     } finally {
       setSending(false);
     }
-  }, [input, provider, sending]);
+  }, [input, model, sending]);
 
   async function checkPolicy(msgId: string, draft: ChatDraft) {
     patchDraft(msgId, { phase: "checking" });
@@ -255,13 +307,17 @@ export function AssistantView({
         </div>
         <div className="flex items-center gap-2">
           <select
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as ChatProvider)}
-            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-            title="Chat LLM provider"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="max-w-[15rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+            title="Chat model — pick any provider. The matching key must be set in Settings → Connections (OpenAI is the default)."
           >
-            {(Object.keys(PROVIDER_LABELS) as ChatProvider[]).map((p) => (
-              <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
+            {CHAT_MODEL_GROUPS.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.options.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <Chip tone={dest.tone}>{dest.text}</Chip>

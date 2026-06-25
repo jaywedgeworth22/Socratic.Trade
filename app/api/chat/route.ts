@@ -1,6 +1,6 @@
 import { resolveRequestUserId } from "@/lib/request-user";
 import { buildProductionDeps, makeOrchestrator } from "@/lib/chat/orchestrator";
-import { AnthropicLLM, getLLM, MockLLM, OpenAILLM, type LlmUsageOpts } from "@/lib/chat/llm";
+import { AnthropicLLM, getLLM, llmForModel, MockLLM, OpenAILLM, type LlmUsageOpts } from "@/lib/chat/llm";
 import { resolveLlmCredential } from "@/lib/db";
 import { NextResponse } from "next/server";
 
@@ -30,18 +30,20 @@ function llmFromProvider(hint: string | undefined, userId: string) {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => ({}))) as { message?: unknown; userId?: unknown; provider?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { message?: unknown; userId?: unknown; provider?: unknown; model?: unknown };
   const userId = resolveRequestUserId(request, body);
   if (typeof body.message !== "string" || !body.message.trim()) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
+  const modelHint = typeof body.model === "string" && body.model.trim() ? body.model.trim() : undefined;
   const providerHint = typeof body.provider === "string" ? body.provider : undefined;
 
   try {
-    // Always per-user: an explicit provider hint, else the env-configured default keyed to this user.
-    // (No shared singleton — that would pin one user's key/attribution for everyone.)
-    const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
+    // Always per-user. Precedence: an explicit model (routed to its provider across all five
+    // providers), else a legacy provider hint, else the env-configured default — each keyed to this
+    // user. (No shared singleton — that would pin one user's key/attribution for everyone.)
+    const llm = (modelHint ? llmForModel(modelHint, userId) : undefined) ?? llmFromProvider(providerHint, userId) ?? getLLM(userId);
     const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
     const reply = await orchestrate({ userId, message: body.message });
     return NextResponse.json(reply);
