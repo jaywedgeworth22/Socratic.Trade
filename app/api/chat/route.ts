@@ -37,12 +37,12 @@ export async function POST(request: Request) {
   }
 
   const providerHint = typeof body.provider === "string" ? body.provider : undefined;
-  // Always per-user: an explicit provider hint, else the env-configured default keyed to this user.
-  // (No shared singleton — that would pin one user's key/attribution for everyone.)
-  const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
-  const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
 
   try {
+    // Always per-user: an explicit provider hint, else the env-configured default keyed to this user.
+    // (No shared singleton — that would pin one user's key/attribution for everyone.)
+    const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
+    const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
     const reply = await orchestrate({ userId, message: body.message });
     return NextResponse.json(reply);
   } catch (e) {
