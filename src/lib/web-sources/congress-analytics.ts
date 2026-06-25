@@ -11,6 +11,7 @@ import {
   congressAnalyticsEnabled,
   getAppAClusterBuys,
   getAppAMemberLeaderboard,
+  getAppAMemberPerformance,
   getAppATickerLeaderboard,
   type AppAMemberRow
 } from "../congress-trade-client";
@@ -23,6 +24,7 @@ const DEFAULT_WINDOW_DAYS = 90;
 const TICKER_LIMIT = 1000;
 const CLUSTER_LIMIT = 200;
 const MEMBER_LIMIT = 500;
+const MAX_SKILL_LOOKUPS = 200; // cap per-member performance calls per refresh
 
 export { congressAnalyticsEnabled };
 
@@ -96,6 +98,38 @@ export function buildMemberScores(members: AppAMemberRow[]): Map<string, number>
   return map;
 }
 
+/**
+ * Member SKILL scores (0–100) from App A's per-member performance endpoint, rank-normalized by realized
+ * alpha vs the S&P (`avgExcess`, falling back to `medianExcess` then `avgReturn`). Only members with
+ * `scoredCount > 0` are ranked — App A returns nulls until a member has scored trades (which needs prices
+ * filled in). Returns a Map keyed by **filerId** (stable), distinct from the name-keyed activity proxy.
+ * Empty until App A has scored performance; callers fall back to `buildMemberScores` (activity prominence).
+ */
+export async function buildMemberSkillScores(filerIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const distinct = Array.from(new Set(filerIds.map((id) => String(id || "").trim()).filter(Boolean))).slice(
+    0,
+    MAX_SKILL_LOOKUPS
+  );
+  if (distinct.length === 0) return map;
+
+  const perf = await Promise.all(distinct.map((id) => getAppAMemberPerformance(id).catch(() => null)));
+  const scored: Array<{ id: string; alpha: number }> = [];
+  distinct.forEach((id, i) => {
+    const p = perf[i];
+    if (!p || typeof p.scoredCount !== "number" || p.scoredCount <= 0) return;
+    const alpha = [p.avgExcess, p.medianExcess, p.avgReturn].find(
+      (v): v is number => typeof v === "number" && Number.isFinite(v)
+    );
+    if (typeof alpha === "number") scored.push({ id, alpha });
+  });
+  if (scored.length === 0) return map;
+
+  scored.sort((a, b) => b.alpha - a.alpha);
+  scored.forEach((s, i) => map.set(s.id, Math.round(100 * (1 - i / Math.max(1, scored.length - 1)))));
+  return map;
+}
+
 export async function refreshCongressAnalytics(now: number = Date.now(), force = false): Promise<WebSourceRefreshResult> {
   if (!congressAnalyticsEnabled()) {
     return { id: "congress-analytics", ok: true, recordCount: 0, sources: [], fetchedAt: "", skipped: true };
@@ -127,6 +161,12 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
   }
 
   const memberScores = buildMemberScores(members);
+  // Real skill (alpha vs S&P, keyed by filerId) for the members surfaced in clusters; the name-keyed
+  // activity proxy below is the fallback until App A has scored per-member performance.
+  const clusterFilerIds = clusters.flatMap((c) =>
+    (Array.isArray(c.topMembers) ? c.topMembers : []).map((m) => String(m?.filerId ?? "")).filter(Boolean)
+  );
+  const skillScores = await buildMemberSkillScores(clusterFilerIds);
   const overlay: Record<string, CongressAnalytics> = {};
   for (const t of leaders) {
     const sym = normalizeSymbol(t.ticker);
@@ -150,8 +190,10 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     const topMembers = Array.isArray(c.topMembers) ? c.topMembers : [];
     let best = 0;
     for (const m of topMembers) {
+      const filerId = String(m?.filerId ?? "").trim();
       const name = String((m?.fullName || m?.memberName || m?.name) ?? "").trim().toLowerCase();
-      const s = name ? memberScores.get(name) : undefined;
+      // Prefer real skill (alpha vs S&P, by filerId); fall back to activity prominence (by name).
+      const s = (filerId ? skillScores.get(filerId) : undefined) ?? (name ? memberScores.get(name) : undefined);
       if (typeof s === "number" && s > best) best = s;
     }
     if (best > 0) entry.topMemberScore = best;

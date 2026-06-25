@@ -20,6 +20,19 @@ email):** set `RESEND_API_KEY` + `NOTIFY_EMAIL_FROM`, enable the Email channel +
 Notifications. tsc clean · 1146 tests (+17) · build green. See
 `docs/rollouts/2026-06-24-provider-tier-watchdog.md`.
 
+## 2026-06-25 — Member skill-weighting from App A `/member/:filerId/performance` (default-OFF path)
+Branch `agent/claude-member-skill`. App A shipped a per-member performance endpoint (realized
+return / win-rate / **alpha vs S&P**) + confirmed its #46 fundamentals/analyst tables are live in
+prod. The congress-analytics overlay now weights cluster members by **real skill (alpha)** via new
+`getAppAMemberPerformance` + `buildMemberSkillScores` (rank-normalized `avgExcess`, keyed by filerId,
+bounded `MAX_SKILL_LOOKUPS=200`), **falling back** to the activity proxy (`buildMemberScores`) until App
+A has scored a member (`scoredCount>0` — needs the price push to fill in). Only runs under
+`CONGRESS_ANALYTICS_ENABLED`; no perf calls when there are no clusters. Verify: tsc clean ·
+analytics+client tests 22 passed · full trio via land.sh. **Ops next:** flip
+`CONGRESS_SHARE_FUNDAMENTALS_ENABLED=on` (tables now live) + run `{"fullHistory":true}` backfill so alpha
+fills in. Open item unchanged: price-adjustment (raw vs adjusted closes). See
+`docs/rollouts/2026-06-25-member-skill-weighting.md`.
+
 ## 2026-06-25 — Learning-loop honesty (OOS no-op caution + policy-blocked counterfactual)
 Branch `claude/learning-loop-honesty`. First of the clean/additive backlog batches (post #137).
 Both additive + advisory-only (no money path). (1) `applyOosGate` (`strategy-tuning.ts`) now appends
