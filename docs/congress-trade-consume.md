@@ -41,18 +41,22 @@ targetMean/High/Low/Median, analystRating/Score/BySource) — **no new field**, 
 - **Rating-only rows** still surface: when App A has a `rating` label but no buy/sell counts, the provider
   derives a score (`scoreFromAnalystLabel`) and writes `analystBySource`, which is what the cascade blends
   into the displayed rating.
-- **Deeper saving — the opt-in short-circuit (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`):** when this flag AND
-  `CONGRESS_TRADE_READS_ENABLED` are on, the cascade runs the **free** providers first, then **skips the
-  paid fundamentals providers' fetch for any symbol App A FULLY covered**. "Fully covered" means App A
-  supplied the whole set those paid providers would have contributed: `peRatio`, `eps`, `beta`, `fcfYield`,
-  `debtToEquity`, `epsGrowth` **and** analyst consensus (`analystRating` or `targetMean`). A partial App A
-  row (e.g. `peRatio`+`eps` only) still falls through to the paid tier so no field is silently dropped.
-  For covered symbols that eliminates the duplicate paid call — price still comes from the free tier
-  (Alpaca/Yahoo) and App A's row carries the rest of the fundamentals/analyst set, so nothing is lost.
-  Paid providers are marked with `costTier: "paid"`; the merge stays in registration order so field
-  precedence is unchanged. **Default OFF** — when off the cascade runs every provider over every symbol
-  exactly as before. (Operational alternative, no flag: with App A trusted, drop a redundant paid
-  fundamentals provider from the cascade entirely.)
+- **Deeper saving — the opt-in coverage hint (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`):** when this flag AND
+  `CONGRESS_TRADE_READS_ENABLED` are on, the cascade runs the **free** providers first to learn what App A
+  already covers, then runs the **paid** providers over the **same** symbols but hands each one an
+  `EnrichmentContext` — a per-symbol set of the `SymbolEnrichment` fields App A already filled. A paid
+  provider uses it to skip only the redundant **sub-calls** that would re-fetch already-covered fields,
+  **without skipping the whole provider** — so the fields it *uniquely* supplies still come through.
+  Concretely, FMP makes four independent calls per symbol (`ratios-ttm` → P/E, `grades-consensus` →
+  analyst, `insider-trading`, `senate-trading`); when App A already has P/E + analyst it skips the first
+  two and still fetches insider/senate. **Nothing is lost** — only duplicate upstream calls are
+  eliminated. (The earlier design skipped the *entire* paid provider for "covered" symbols; that silently
+  dropped the news/sentiment, insider/senate, and quote fields those bundled providers also supply, so it
+  was replaced — see the rollout note.) Paid providers are tagged `costTier: "paid"`; ones that ignore the
+  hint behave exactly as before; the merge stays in registration order so field precedence is unchanged.
+  **Default OFF** — when off the cascade runs every provider over every symbol with no hint, exactly as
+  before. (Operational alternative, no flag: with App A trusted, drop a redundant paid fundamentals
+  provider from the cascade entirely — accepting you also forgo that provider's unique fields.)
 
 ## 2. App A as the congressional source (`CONGRESS_TRADE_AS_CONGRESS_SOURCE`)
 When on, `refreshCongress` (`src/lib/web-sources/congress.ts`) swaps its scraper cascade (Senate eFD /
@@ -114,7 +118,7 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 |---------|---------|
 | `CONGRESS_TRADE_READS_ENABLED` | cache-aside market reads (history tier) **and** the fundamentals/analyst enrichment tier (§1b) |
 | `CONGRESS_TRADE_MAX_STALE_DAYS` | freshness cap (default 21) for App A fundamentals/analyst rows before they fall through to paid providers |
-| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | skip the paid fundamentals providers' fetch for symbols App A FULLY covered — full fundamentals (peRatio/eps/beta/fcfYield/debtToEquity/epsGrowth) + analyst (rating or targetMean); partial rows still hit paid (needs `CONGRESS_TRADE_READS_ENABLED`); default off |
+| `ENRICHMENT_SHORT_CIRCUIT_ENABLED` | hand paid providers a per-symbol coverage hint so they skip only the redundant sub-calls App A already covers (e.g. FMP's P/E + analyst calls) while still fetching their unique fields; no whole provider is skipped (needs `CONGRESS_TRADE_READS_ENABLED`); default off |
 | `CONGRESS_TRADE_AS_CONGRESS_SOURCE` | source congressional trades from App A instead of scrapers |
 | `CONGRESS_WEBHOOK_SECRET` | shared bearer App A presents to the webhook (default-closed when blank) |
 | `CONGRESS_STREAM_ENABLED` | start the outbound SSE consumer |

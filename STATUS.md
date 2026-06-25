@@ -19,8 +19,11 @@ paid fundamentals providers are skipped for it (`costTier:"paid"` tags; default 
 misses are negative-cached 1h. A→B push wired: `APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` set as App A
 Worker secrets (App B needs the same token + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`). tsc clean, 1205
 tests, build OK. See `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`. **Codex round 2 (PR #160):**
-drop non-positive App A peRatio/52w sentinels; short-circuit now requires App A to FULLY cover a symbol
-(six fundamentals + analyst) before skipping paid — partial rows fall through. 1206 tests.
+drop non-positive App A peRatio/52w sentinels. **Codex round 3:** replaced the whole-provider skip (it
+silently dropped bundled paid providers' news/insider/senate/quote fields) with a per-symbol
+`EnrichmentContext` coverage hint — paid providers now skip only redundant *sub-calls* (FMP skips
+ratios-ttm/grades-consensus when App A has P/E+analyst, still fetches insider/senate); plus key App A's
+analyst under its upstream source so the cascade doesn't double-count the same consensus. 1221 tests.
 
 ## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
 Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`

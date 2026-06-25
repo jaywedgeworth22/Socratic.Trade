@@ -17,6 +17,7 @@ import {
   parseWebullUnofficialQuote,
   scoreHeadlines,
   type MarketEnrichmentProvider,
+  type EnrichmentContext,
   type SymbolEnrichment
 } from "../src/lib/data-providers";
 
@@ -973,7 +974,7 @@ describe("CascadingEnrichmentProvider.activeSources (honest source attribution)"
   });
 });
 
-describe("enrichment short-circuit (App A covers fundamentals → skip paid)", () => {
+describe("enrichment short-circuit (App A coverage hint → paid providers skip redundant sub-calls)", () => {
   const FLAG = "ENRICHMENT_SHORT_CIRCUIT_ENABLED";
   const READS = "CONGRESS_TRADE_READS_ENABLED";
   afterEach(() => {
@@ -984,70 +985,82 @@ describe("enrichment short-circuit (App A covers fundamentals → skip paid)", (
   function appA(fundamentals: Record<string, SymbolEnrichment>): MarketEnrichmentProvider {
     return { name: "congress.trade", configured: true, costTier: "free", async enrich() { return fundamentals; } };
   }
-  function paidSpy(calls: string[][]): MarketEnrichmentProvider {
+  // Records the symbols it was called with AND the per-symbol coverage hint it received,
+  // mimicking a bundled paid provider (App-A-covered fundamentals + its OWN unique fields).
+  function paidSpy(calls: string[][], hints: Array<Record<string, ReadonlySet<string>> | undefined>): MarketEnrichmentProvider {
     return {
       name: "fmp",
       configured: true,
       costTier: "paid",
-      async enrich(syms: string[]) {
+      async enrich(syms: string[], context?: EnrichmentContext) {
         calls.push(syms);
+        hints.push(context?.coveredFields);
         const out: Record<string, SymbolEnrichment> = {};
-        for (const s of syms) out[s] = { peRatio: 99, eps: 9, sector: "Paid" };
+        for (const s of syms) {
+          const covered = context?.coveredFields?.[s];
+          out[s] = {
+            // pe/analyst only when NOT covered (mimics skipping the redundant sub-call);
+            // insider/senate are always supplied — App A never covers them.
+            ...(covered?.has("peRatio") ? {} : { peRatio: 99 }),
+            ...(covered?.has("analystRating") ? {} : { analystRating: "Sell" }),
+            insiderSentiment: 70,
+            senateTrades: 3,
+          };
+        }
         return out;
       }
     };
   }
 
-  it("skips the paid provider for symbols App A already covered, still calls it for uncovered", async () => {
+  it("still runs every paid provider over every symbol, but hands them the coverage hint", async () => {
     process.env[FLAG] = "on";
     process.env[READS] = "on";
     const calls: string[][] = [];
+    const hints: Array<Record<string, ReadonlySet<string>> | undefined> = [];
     const cascade = new CascadingEnrichmentProvider([
-      // AAA has the FULL fundamentals + analyst set → covered; BBB does not.
+      // AAA covered; BBB not. App A surfaces analyst as analystBySource (the cascade
+      // derives the displayed rating from that, not the scalar).
       appA({
-        AAA: {
-          peRatio: 10,
-          eps: 2,
-          beta: 1.1,
-          fcfYield: 0.05,
-          debtToEquity: 0.4,
-          epsGrowth: 0.12,
-          analystRating: "Buy",
-          sector: "AppA",
-        },
+        AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "congress.trade": { score: 80, label: "Buy" } } },
       }),
-      paidSpy(calls)
+      paidSpy(calls, hints)
     ]);
     const out = await cascade.enrich(["AAA", "BBB"]);
-    // Paid provider was called ONLY with the uncovered symbol.
-    expect(calls).toEqual([["BBB"]]);
-    // Covered symbol keeps App A's values; uncovered falls through to paid.
-    expect(out.AAA.sector).toBe("AppA");
-    expect(out.AAA.peRatio).toBe(10);
-    expect(out.BBB.sector).toBe("Paid");
+    // No whole-provider skip: the paid provider runs over BOTH symbols.
+    expect(calls).toEqual([["AAA", "BBB"]]);
+    // It received a per-symbol coverage hint listing App A's filled fields for AAA only.
+    expect(hints[0]?.AAA?.has("peRatio")).toBe(true);
+    expect(hints[0]?.AAA?.has("analystRating")).toBe(true);
+    expect(hints[0]?.BBB).toBeUndefined();
   });
 
-  it("does NOT skip paid for a PARTIAL App A row (missing analyst/other fundamentals)", async () => {
+  it("preserves the paid provider's unique fields for covered symbols (nothing lost)", async () => {
     process.env[FLAG] = "on";
     process.env[READS] = "on";
     const calls: string[][] = [];
+    const hints: Array<Record<string, ReadonlySet<string>> | undefined> = [];
     const cascade = new CascadingEnrichmentProvider([
-      // peRatio + eps only — not the full set, so the paid tier must still run.
-      appA({ AAA: { peRatio: 10, eps: 2, sector: "AppA" } }),
-      paidSpy(calls)
+      appA({ AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "congress.trade": { score: 80, label: "Buy" } } } }),
+      paidSpy(calls, hints)
     ]);
-    await cascade.enrich(["AAA"]);
-    expect(calls).toEqual([["AAA"]]);
+    const out = await cascade.enrich(["AAA"]);
+    // App A's pe/analyst win; the paid provider's unique insider/senate still come through.
+    expect(out.AAA.peRatio).toBe(10);
+    expect(out.AAA.analystRating).toBe("Buy"); // App A, not the paid "Sell"
+    expect(out.AAA.insiderSentiment).toBe(70);
+    expect(out.AAA.senateTrades).toBe(3);
   });
 
-  it("runs the paid provider for every symbol when the flag is OFF (default)", async () => {
+  it("passes NO coverage hint when the flag is OFF (default)", async () => {
     process.env[READS] = "on"; // reads on, short-circuit off
     const calls: string[][] = [];
+    const hints: Array<Record<string, ReadonlySet<string>> | undefined> = [];
     const cascade = new CascadingEnrichmentProvider([
       appA({ AAA: { peRatio: 10, eps: 2 } }),
-      paidSpy(calls)
+      paidSpy(calls, hints)
     ]);
     await cascade.enrich(["AAA", "BBB"]);
     expect(calls).toEqual([["AAA", "BBB"]]);
+    expect(hints[0]).toBeUndefined();
   });
 });

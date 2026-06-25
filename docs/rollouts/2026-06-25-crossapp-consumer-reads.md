@@ -61,6 +61,25 @@ fundamentals providers' fetch for any symbol App A FULLY covered**. Price still 
   providers supply (the six fundamentals + `analystRating` or `targetMean`) before excluding a symbol;
   partial rows fall through to paid. Docs (`congress-trade-consume.md` §1b + config table) updated to match.
 
+## Codex review round 3 (PR #160, commit 87cefe3) — short-circuit correctness rework
+Two more P2s, both valid and related (App A's enrichment derives from the *same* upstream providers):
+- **P2 lost fields (line 627)** — the whole-provider skip dropped fields the bundled paid providers
+  *also* supply but App A never does: Finnhub/Alpha-Vantage **news+sentiment**, FMP **insider/senate**,
+  Intrinio/Tiingo/TwelveData **quote** fields. "Nothing is lost" was false. **Reworked**: no whole
+  provider is skipped anymore. The cascade now passes paid providers an `EnrichmentContext`
+  (`coveredFields[symbol]` = the set of fields App A filled); a provider skips only the redundant
+  **sub-calls**. Implemented for **FMP** — when App A has P/E it skips `ratios-ttm`, when App A has analyst
+  it skips `grades-consensus`, but always fetches `insider-trading`/`senate-trading`. Providers that ignore
+  the hint are unchanged. Real call savings, zero field loss.
+- **P2 double-counted analyst (line 455)** — when App A's analyst row originated from FMP/Finnhub/Yahoo,
+  keying it under `congress.trade` made the cascade blend the *same* consensus as two independent votes,
+  skewing `analystScore`. **Fixed**: key App A's `analystBySource` entry under its upstream `source`
+  (e.g. `fmp`) when present, so `Object.assign` dedupes it against the direct provider when that provider
+  also runs; fall back to `congress.trade` only when the source is unknown.
+- Tests reworked to assert the new sub-call behavior (paid provider always runs, receives the hint,
+  preserves its unique insider/senate fields for covered symbols). Docs: `congress-trade-consume.md` §1b +
+  config table. tsc clean, data-providers 51/51.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
   `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (skip paid for App-A-covered symbols), plus the B→A push flags

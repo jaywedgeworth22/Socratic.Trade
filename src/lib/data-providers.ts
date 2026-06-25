@@ -160,14 +160,24 @@ export type EnrichmentSourcedField =
   | "targetLow"
   | "targetMedian";
 
+/** Per-run hint the cascade passes to paid providers when the short-circuit is on.
+ *  `coveredFields[symbol]` is the set of `SymbolEnrichment` keys a free upstream
+ *  (App A / congress.trade) already filled for that symbol. A provider may use it to
+ *  skip the redundant SUB-calls that would only re-fetch already-covered fields —
+ *  while still fetching everything else it uniquely supplies, so no field is lost. */
+export interface EnrichmentContext {
+  coveredFields?: Record<string, ReadonlySet<string>>;
+}
+
 export interface MarketEnrichmentProvider {
   name: string;
   configured: boolean;
-  enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
+  enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>>;
   /** Registered providers that supplied ≥1 field in the most recent enrich() run (cascade only). */
   activeSources?: string[];
   /** Cost classification for the optional short-circuit (default "free" when unset).
-   *  "paid" providers are skipped per-symbol when App A already covered fundamentals. */
+   *  "paid" providers receive a coverage hint so they can skip redundant sub-calls
+   *  for symbols a free upstream (App A) already covered. */
   costTier?: "free" | "paid";
 }
 
@@ -449,10 +459,17 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           const score = analystScoreFromCounts(counts) ?? (a.rating ? scoreFromAnalystLabel(a.rating) : undefined);
           if (score !== undefined) {
             const total = counts.strongBuy + counts.buy + counts.hold + counts.sell + counts.strongSell;
+            // Key the analyst entry under the UPSTREAM provider App A got it from (e.g.
+            // "fmp"/"finnhub"/"yahoo-finance"), not "congress.trade". The cascade blends
+            // analystBySource by key; if that same direct provider also runs, its entry
+            // overwrites this one (Object.assign) instead of counting the identical
+            // consensus as a second independent vote. Only when App A's source is unknown
+            // do we fall back to our own name so it still surfaces as a distinct read.
+            const sourceKey = a.source?.trim() ? a.source.trim().toLowerCase() : this.name;
             e.analystRating = a.rating || labelFromAnalystScore(score);
             e.analystScore = Math.round(score);
             e.analystBySource = {
-              [this.name]: {
+              [sourceKey]: {
                 score: Math.round(score),
                 label: a.rating || labelFromAnalystScore(score),
                 ...(total > 0 ? { counts } : {}),
@@ -586,46 +603,34 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
     // Each provider's result set, paired with its name, kept in REGISTRATION order
     // so the first-wins merge below is unchanged regardless of how we fetched.
-    const run = (p: MarketEnrichmentProvider, syms: string[]) =>
+    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext) =>
       p
-        .enrich(syms)
+        .enrich(syms, context)
         .then((data) => ({ name: p.name, data }))
         .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }));
 
     let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
     if (enrichmentShortCircuitEnabled()) {
-      // Short-circuit: run the free providers first; for symbols App A FULLY
-      // covered (the complete fundamentals + analyst set from congress.trade),
-      // skip the PAID providers' fetch entirely — eliminating the duplicate paid
-      // call. App A's row carries that whole set, and price comes from the free
-      // tier (Alpaca/Yahoo), so nothing is lost for covered symbols.
+      // Short-circuit: run the free providers first so we learn what App A
+      // (congress.trade) already covers, then run the PAID providers over the SAME
+      // symbols but hand them a per-symbol coverage hint. A paid provider uses it to
+      // skip only the redundant SUB-calls (e.g. FMP's ratios-ttm + grades-consensus
+      // when App A already has P/E + analyst) while STILL fetching the fields it
+      // uniquely supplies — insider/senate signals, news/sentiment, quote fields, etc.
+      // No whole provider is skipped, so no field is ever lost; only duplicate
+      // upstream calls are eliminated. Providers that ignore the hint behave exactly
+      // as before. Price still comes from the free tier (Alpaca/Yahoo).
       const freeProviders = this.providers.filter((p) => p.costTier !== "paid");
       const paidProviders = this.providers.filter((p) => p.costTier === "paid");
       const freeResults = await Promise.all(freeProviders.map((p) => run(p, normalized)));
       const appA = freeResults.find((r) => r.name === "congress.trade")?.data ?? {};
-      // A symbol is only "covered" — and thus safe to skip ALL paid providers for —
-      // when App A supplied the FULL set of fields those paid providers would have
-      // contributed. A partial App A row (e.g. peRatio+eps but no beta/analyst) must
-      // still fall through to the paid tier, or we'd silently drop those fields.
-      const covered = new Set(
-        normalized.filter((s) => {
-          const e = appA[s];
-          if (!e) return false;
-          const hasFundamentals =
-            e.peRatio !== undefined &&
-            e.eps !== undefined &&
-            e.beta !== undefined &&
-            e.fcfYield !== undefined &&
-            e.debtToEquity !== undefined &&
-            e.epsGrowth !== undefined;
-          const hasAnalyst = e.analystRating !== undefined || e.targetMean !== undefined;
-          return hasFundamentals && hasAnalyst;
-        })
-      );
-      const uncovered = normalized.filter((s) => !covered.has(s));
-      const paidResults = await Promise.all(
-        paidProviders.map((p) => (uncovered.length ? run(p, uncovered) : Promise.resolve({ name: p.name, data: {} })))
-      );
+      const coveredFields: Record<string, ReadonlySet<string>> = {};
+      for (const s of normalized) {
+        const e = appA[s];
+        if (e) coveredFields[s] = new Set(Object.keys(e));
+      }
+      const context: EnrichmentContext = { coveredFields };
+      const paidResults = await Promise.all(paidProviders.map((p) => run(p, normalized, context)));
       // Reassemble in registration order so the merge precedence is identical.
       const byName = new Map<string, Record<string, SymbolEnrichment>>();
       for (const r of [...freeResults, ...paidResults]) byName.set(r.name, r.data);
@@ -1586,7 +1591,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -1604,12 +1609,23 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
+          // Coverage hint (short-circuit only): when a free upstream (App A) already
+          // supplied P/E or analyst consensus for this symbol, skip the matching FMP
+          // SUB-call — but always keep fetching insider/senate (and targets), which
+          // App A never supplies, so nothing FMP uniquely provides is lost.
+          const covered = context?.coveredFields?.[symbol];
+          const skipPe = covered?.has("peRatio") ?? false;
+          const skipConsensus = covered?.has("analystRating") ?? false;
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
           const wantTargets = fmpPriceTargetsEnabled();
           const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
-            this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
+            skipPe
+              ? Promise.resolve(undefined)
+              : this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
+            skipConsensus
+              ? Promise.resolve(undefined)
+              : this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`),
             wantTargets
