@@ -18,8 +18,9 @@
 
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
-import { symbolsForPolicyUniverse } from "./index-universes";
+import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
+import { fetchGroupedDailyBarsRange } from "./market-signals/massive-s3";
 import { normalizeSymbol } from "./money";
 import type { MarketQuote, MarketScan } from "./types";
 import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSignals } from "./web-sources";
@@ -595,6 +596,18 @@ function collectMonitoredSymbols(): string[] {
   return Array.from(set);
 }
 
+/** Union of every STATIC index universe's members (dynamic-source universes contribute no static symbols). */
+export function allIndexUniverseSymbols(): string[] {
+  const set = new Set<string>();
+  for (const cfg of Object.values(INDEX_UNIVERSES)) {
+    for (const s of cfg.symbols) {
+      const sym = normalizeSymbol(s);
+      if (sym) set.add(sym);
+    }
+  }
+  return Array.from(set);
+}
+
 /** Bounded-concurrency async map (gentle on the upstream history providers). */
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
@@ -622,6 +635,17 @@ export interface RunCongressDailyShareOptions {
    * Use one-time / on-demand via the admin route; the recurring nightly run leaves this off (light).
    */
   fullHistory?: boolean;
+  /**
+   * Source full history from Massive flat files (bulk per-day downloads pivoted to per-ticker series)
+   * instead of N per-ticker REST calls. Scales to a broad universe; falls back to the per-ticker source
+   * for any symbol absent from the flat files. Best paired with `fullHistory` + `allIndexes`.
+   */
+  flatFile?: boolean;
+  /**
+   * Expand the (non-custom) universe to the union of every STATIC index universe (S&P 500, Nasdaq-100,
+   * Dow 30, …) plus the monitored symbols — for a broad cross-index backfill. Still capped by maxDailyTickers.
+   */
+  allIndexes?: boolean;
 }
 
 export interface CongressDailyShareSummary {
@@ -658,10 +682,12 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     return { ok: false, skipped: true, reason: "not-due", ...empty };
   }
 
-  const universe = (customUniverse ? options.symbols! : collectMonitoredSymbols())
-    .map(normalizeSymbol)
-    .filter(Boolean)
-    .slice(0, maxDailyTickers());
+  const baseUniverse = customUniverse
+    ? options.symbols!
+    : options.allIndexes
+      ? [...allIndexUniverseSymbols(), ...collectMonitoredSymbols()]
+      : collectMonitoredSymbols();
+  const universe = Array.from(new Set(baseUniverse.map(normalizeSymbol).filter(Boolean))).slice(0, maxDailyTickers());
 
   // S&P-500 daily closes (^GSPC) — sent once per day regardless of the ticker universe.
   let spx: CongressClose[] = [];
@@ -675,17 +701,46 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
   // Deep-history backfill sends each symbol's FULL series (still chunked into small POSTs); the nightly
   // run caps to the most-recent N closes (App A backfills deeper itself) to keep each POST under the wall.
   const maxCloses = options.fullHistory ? Number.POSITIVE_INFINITY : maxClosesPerTicker();
-  const priceEntries = (
-    await mapPool(universe, concurrency, async (symbol) => {
-      try {
-        const entry = ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now));
-        if (entry && entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
-        return entry;
-      } catch {
-        return null;
-      }
-    })
-  ).filter((p): p is CongressPrice => p !== null);
+  const capCloses = (entry: CongressPrice | null): CongressPrice | null => {
+    if (entry && entry.closes.length > maxCloses) entry.closes = entry.closes.slice(-maxCloses);
+    return entry;
+  };
+  const perTicker = async (symbols: string[]): Promise<CongressPrice[]> =>
+    (
+      await mapPool(symbols, concurrency, async (symbol) => {
+        try {
+          return capCloses(ohlcBarsToPriceEntry(symbol, await fetchDailyOHLC(symbol, now)));
+        } catch {
+          return null;
+        }
+      })
+    ).filter((p): p is CongressPrice => p !== null);
+
+  let priceEntries: CongressPrice[];
+  if (options.flatFile) {
+    // Bulk path: one pass over the flat files for the whole universe, then per-ticker fallback for misses
+    // (or when flat-file download isn't granted, in which case the whole universe falls back).
+    const years = Number(process.env.MASSIVE_FLATFILE_BACKFILL_YEARS ?? 5) || 5;
+    const toISO = toBusinessDay(now) ?? new Date(now).toISOString().slice(0, 10);
+    const fromISO = new Date(now - years * 365 * 86_400_000).toISOString().slice(0, 10);
+    let seriesBySymbol = new Map<string, OHLCBar[]>();
+    try {
+      seriesBySymbol = await fetchGroupedDailyBarsRange(fromISO, toISO, { tickers: universe });
+    } catch (err) {
+      console.error("[congress-share] flat-file range fetch failed; falling back per-ticker:", err);
+    }
+    const entries: CongressPrice[] = [];
+    const missing: string[] = [];
+    for (const symbol of universe) {
+      const bars = seriesBySymbol.get(symbol);
+      const entry = bars && bars.length ? capCloses(ohlcBarsToPriceEntry(symbol, bars)) : null;
+      if (entry) entries.push(entry);
+      else missing.push(symbol);
+    }
+    priceEntries = [...entries, ...(await perTicker(missing))];
+  } else {
+    priceEntries = await perTicker(universe);
+  }
 
   // App B's two highest-fit datasets for congress.trade — already cached locally, sent once/day.
   const insider = customUniverse ? [] : buildInsiderImport();
