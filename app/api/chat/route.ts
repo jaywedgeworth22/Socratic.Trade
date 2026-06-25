@@ -42,6 +42,12 @@ export async function POST(request: Request) {
   const llm = llmFromProvider(providerHint, userId) ?? getLLM(userId);
   const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
 
-  const reply = await orchestrate({ userId, message: body.message });
-  return NextResponse.json(reply);
+  try {
+    const reply = await orchestrate({ userId, message: body.message });
+    return NextResponse.json(reply);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[chat] orchestrator error:", message);
+    return NextResponse.json({ error: "chat_failed", message }, { status: 500 });
+  }
 }
