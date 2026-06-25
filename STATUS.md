@@ -4,6 +4,15 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Read-only chat state tools (get_portfolio_pnl / get_performance_summary / get_reflection)
+Branch `claude/chat-readonly-state-tools`. Clean/additive backlog batch — additive, read-only, zero
+execution risk. Added the three remaining grounded read-only chat tools (the first batch already
+shipped): P&L (realized+unrealized+win rate, live/paper, current prices derived from positions),
+performance summary (thesis + regime scorecards), and the post-mortem reflection. Same optional-dep
+pattern (`ToolDef` in `buildTools` + dep in `buildProductionDeps`); each degrades to null/empty when
+unwired. Verify: tsc clean · 1115/1116 tests (+4; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-chat-readonly-state-tools.md`.
+
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
 analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
