@@ -28,16 +28,18 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
-- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel.**
-  New `/admin/connections` page showing health status for all 11 API providers (alpaca-news,
-  alpaca-snapshot, yahoo-finance, finnhub, fmp, alpha-vantage, fintechstudios, intrinio,
-  tiingo, twelvedata, congress.trade). Two new SQLite tables (`api_health_log` + 
-  `api_health_error_patterns`) with FIFO 500-row cap, SHA-256 error fingerprinting. 
-  fetchWithRetry patched with `service?` option; all call sites wired. 30s auto-refresh 
-  client, service cards with health dots, detail drawer (raw log + error patterns), STOPPED 
-  chip when last 5 consecutive calls fail or no success in 60min. Link in Settings → 
-  Connections tab. tsc clean; 1 pre-existing test failure (cache-provenance date flake, 
-  unrelated); build green. See `docs/rollouts/2026-06-25-connections-health-panel.md`.
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes.**
+  New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
+  (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256
+  error fingerprinting. Credential scoping: health rows keyed by `(service, key_source)` so env-key
+  calls and user-key calls are tracked separately — prevents false STOPPED alerts when one user's key
+  fails but the env key is healthy. All 10 provider classes have `private readonly keySource` +
+  `this.keySource = keySource` wired; all fetchWithRetry call sites pass `keySource`/`userId`. ALTER
+  TABLE migrations for existing DBs (adds `key_source` + `user_id` columns). Admin client groups
+  cards and detail panels by credential lane, passes `?keySource=` to log API. tsc clean; 1 pre-existing
+  test failure (cache-provenance date flake); build green. See
+  `docs/rollouts/2026-06-25-connections-health-panel.md` and
+  `docs/rollouts/2026-06-25-credential-scoped-health-lanes.md`.
 
 - 2026-06-24 (`codex/alpaca-ticker-prod-update`): **Macro ticker click polish + Alpaca account inference.**
   Extracted the shared Market Scan-style ticker button so Macro movers/news tickers get the same

@@ -7,6 +7,7 @@ import { Card, Chip, Dot, Tabs } from "../../ui/primitives";
 
 interface ServiceHealthSummary {
   service: string;
+  keySource: string | null;
   lastSuccessTs: string | null;
   lastSuccessLatencyMs: number | null;
   lastFailureTs: string | null;
@@ -34,6 +35,7 @@ interface ErrorPatternRow {
   first_seen: string;
   last_seen: string;
   count: number;
+  key_source: string | null;
 }
 
 interface HealthData {
@@ -86,7 +88,12 @@ function ServiceCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <Dot tone={tone} pulse={summary.stoppedWorking} />
-          <span className="font-medium text-sm truncate">{summary.service}</span>
+          <span className="font-medium text-sm truncate">
+            {summary.service}
+            {summary.keySource && (
+              <span className="ml-1 text-xs font-normal text-muted">({summary.keySource})</span>
+            )}
+          </span>
         </div>
         {summary.stoppedWorking && (
           <Chip tone="down">STOPPED</Chip>
@@ -133,17 +140,23 @@ function ServiceDetail({
   useEffect(() => {
     if (tab !== "log") return;
     setLoadingLog(true);
-    fetch(`/api/admin/connections-health?service=${encodeURIComponent(summary.service)}&limit=100`)
+    const ksParam = summary.keySource !== null ? `&keySource=${encodeURIComponent(summary.keySource)}` : "&keySource=";
+    fetch(`/api/admin/connections-health?service=${encodeURIComponent(summary.service)}&limit=100${ksParam}`)
       .then((r) => r.json())
       .then((data) => setLog(data.log ?? []))
       .catch(() => setLog([]))
       .finally(() => setLoadingLog(false));
-  }, [summary.service, tab, asOf]);
+  }, [summary.service, summary.keySource, tab, asOf]);
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm">{summary.service}</h3>
+        <h3 className="font-semibold text-sm">
+          {summary.service}
+          {summary.keySource && (
+            <span className="ml-1.5 text-xs font-normal text-muted">({summary.keySource})</span>
+          )}
+        </h3>
         <Tabs<DrawerTab>
           value={tab}
           onChange={setTab}
@@ -255,7 +268,8 @@ export function ConnectionsHealthClient() {
     return () => clearInterval(interval);
   }, [fetch_]);
 
-  const selectedSummary = data?.services.find((s) => s.service === selected) ?? null;
+  const laneKey = (s: ServiceHealthSummary) => `${s.service}:${s.keySource ?? ""}`;
+  const selectedSummary = data?.services.find((s) => laneKey(s) === selected) ?? null;
   const stoppedCount = data?.services.filter((s) => s.stoppedWorking).length ?? 0;
 
   return (
@@ -309,14 +323,16 @@ export function ConnectionsHealthClient() {
                   .slice()
                   .sort((a, b) => {
                     if (a.stoppedWorking !== b.stoppedWorking) return a.stoppedWorking ? -1 : 1;
-                    return a.service.localeCompare(b.service);
+                    const svcCmp = a.service.localeCompare(b.service);
+                    if (svcCmp !== 0) return svcCmp;
+                    return (a.keySource ?? "").localeCompare(b.keySource ?? "");
                   })
                   .map((s) => (
                     <ServiceCard
-                      key={s.service}
+                      key={laneKey(s)}
                       summary={s}
-                      selected={selected === s.service}
-                      onClick={() => setSelected(selected === s.service ? null : s.service)}
+                      selected={selected === laneKey(s)}
+                      onClick={() => setSelected(selected === laneKey(s) ? null : laneKey(s))}
                     />
                   ))}
               </>
@@ -328,7 +344,7 @@ export function ConnectionsHealthClient() {
             <Card className="p-4 self-start sticky top-4">
               <ServiceDetail
                 summary={selectedSummary}
-                errorPatterns={data.errorPatterns[selectedSummary.service] ?? []}
+                errorPatterns={data.errorPatterns[laneKey(selectedSummary)] ?? []}
                 asOf={data.asOf}
               />
             </Card>

@@ -602,9 +602,12 @@ function migrate(database: Database.Database): void {
       ts TEXT NOT NULL,
       ok INTEGER NOT NULL CHECK(ok IN (0,1)),
       latency_ms INTEGER,
-      error_text TEXT
+      error_text TEXT,
+      key_source TEXT,
+      user_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_api_health_log_service_ts ON api_health_log (service, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC);
 
     CREATE TABLE IF NOT EXISTS api_health_error_patterns (
       id TEXT PRIMARY KEY,
@@ -614,7 +617,8 @@ function migrate(database: Database.Database): void {
       first_seen TEXT NOT NULL,
       last_seen TEXT NOT NULL,
       count INTEGER NOT NULL DEFAULT 1,
-      UNIQUE(service, fingerprint)
+      key_source TEXT,
+      UNIQUE(service, fingerprint, key_source)
     );
     CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
   `);
@@ -686,6 +690,22 @@ function migrate(database: Database.Database): void {
 
   // Rename: legacy "dry_run" proposal status is now "paper".
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
+
+  // Credential-scoped health rows: add key_source + user_id to existing api_health_log tables.
+  const healthLogCols = database.prepare("PRAGMA table_info(api_health_log)").all() as Array<{ name: string }>;
+  if (healthLogCols.length > 0) {
+    if (!healthLogCols.some((c) => c.name === "key_source")) {
+      database.exec("ALTER TABLE api_health_log ADD COLUMN key_source TEXT");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC)");
+    }
+    if (!healthLogCols.some((c) => c.name === "user_id")) {
+      database.exec("ALTER TABLE api_health_log ADD COLUMN user_id TEXT");
+    }
+  }
+  const healthPatternCols = database.prepare("PRAGMA table_info(api_health_error_patterns)").all() as Array<{ name: string }>;
+  if (healthPatternCols.length > 0 && !healthPatternCols.some((c) => c.name === "key_source")) {
+    database.exec("ALTER TABLE api_health_error_patterns ADD COLUMN key_source TEXT");
+  }
 
   const now = new Date().toISOString();
   // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
