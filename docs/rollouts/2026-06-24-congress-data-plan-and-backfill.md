@@ -8,8 +8,10 @@ no costly redundancies, and a no-paid-access / low-cap future plan. Ran an exhau
 inventory (workflow), wrote the plan, and added the one missing code piece (deep-history backfill).
 
 ## Inventory headlines
-- **App A's `price_eod` is FMP-only** (~$1.3k/mo, 230 calls/day shared with enrichment; degrades to "--"
-  with no fallback) — its biggest cost + single point of failure.
+- **App A's `price_eod` is FMP-only** (~230-call/day cap shared with enrichment; degrades to "--" with no
+  fallback) — its single point of failure for prices. (FMP is cheap — Starter tier, ~tens of $/mo; the
+  earlier "~$1.3k/mo" was an erroneous inventory-agent estimate, since corrected. The real risk is the
+  daily cap + single-source fragility, not the dollar cost.)
 - **App B's prices come from Massive/Tradier (paid) + Yahoo/Stooq (free)** → App B feeding App A prices
   offloads App A's most fragile dependency. **Stooq = free deep-history floor** for both.
 - App A needs prices back to each *trade's* date (years); the #134 ~1y nightly cap would starve that.

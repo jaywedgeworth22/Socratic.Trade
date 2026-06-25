@@ -4,10 +4,12 @@ Goal: each app gets every datum it needs, **neither double-pays**, and the whole
 when paid sources lapse or API caps drop. Grounded in a full inventory of both codebases (2026-06-24).
 
 ## TL;DR
-- **The biggest win is App B → App A prices.** App A's `price_eod` is **FMP-only** (its single biggest
-  cost, ~$1.3k/mo, 230 calls/day shared with enrichment; degrades to "--" with no fallback). App B's
-  prices come from Massive/Tradier (paid) **and Yahoo/Stooq (free)** — so App B feeding App A prices
-  offloads App A's most expensive, most fragile dependency.
+- **The biggest win is App B → App A prices.** App A's `price_eod` is **FMP-only** — single-sourced, on
+  a ~230-call/day cap shared with enrichment, with **no fallback** (degrades to "--" if the cap is hit on
+  a heavy ingestion day or the key lapses). FMP itself is cheap (App A is on the Starter tier, ~tens of
+  $/mo — *not* a four-figure bill); the real risk is the **daily cap + single-source fragility**. App B's
+  prices come from Massive/Tradier (paid) **and Yahoo/Stooq (free)**, so App B feeding App A prices
+  de-risks App A's most fragile dependency.
 - **The free floor for both is Stooq (deep history) + Yahoo (~1y) + SEC EDGAR (refs) + the free congress
   sources.** Route each datum through whoever has the cheapest/most-reliable source; share the result so
   the other never re-fetches. That sharing **is** the no-paid-access plan.
