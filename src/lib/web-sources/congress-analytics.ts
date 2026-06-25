@@ -154,7 +154,10 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
 
   // Only count convictions with a real score — null means "thin signal" and is not usable data.
   const usableConvictions = convictions.filter((c) => c.convictionScore !== null);
-  if (leaders.length === 0 && clusters.length === 0 && usableConvictions.length === 0 && conflicts.length === 0) {
+  // Guard only on the core endpoints: conviction/conflicts are supplemental and can return rows even
+  // when leaderboard/clusters fail. Including them in the guard would cause a partial overlay
+  // (conviction-only) to overwrite a prior complete dataset when the core endpoints are down.
+  if (leaders.length === 0 && clusters.length === 0) {
     // App A cold / no recent data — keep any prior dataset rather than wiping to empty.
     const prior = getCongressAnalyticsDataset();
     audit("web_source_refresh", { id: "congress-analytics", ok: false, recordCount: 0, reason: "empty" });
