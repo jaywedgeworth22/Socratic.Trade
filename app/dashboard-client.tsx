@@ -3653,6 +3653,18 @@ function SettingsContent({
               </div>
             </div>
             <ApiKeysSection />
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Connection Health</div>
+                <p className="mt-0.5 text-xs text-muted">Monitor API status, latency, error patterns, and stopped keys.</p>
+              </div>
+              <a
+                href="/admin/connections"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-2 transition-colors"
+              >
+                View Status →
+              </a>
+            </div>
           </div>
         )}
 

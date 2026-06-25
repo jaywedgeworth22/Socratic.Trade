@@ -11,6 +11,7 @@
 
 import { normalizeSymbol } from "./money";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
+import { logApiHealth } from "./db-health";
 import { getStreamedHeadlines } from "./streams/news-store";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -245,17 +246,38 @@ function maxSymbols(): number {
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  options: { retries?: number; backoffMs?: number } = {}
+  options: { retries?: number; backoffMs?: number; service?: string } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
-  for (let attempt = 0; ; attempt++) {
-    const response = await fetch(url, init);
-    if (response.status === 429 && attempt < retries) {
-      await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
-      continue;
+  const start = Date.now();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(url, init);
+      if (response.status === 429 && attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+        continue;
+      }
+      if (options.service) {
+        logApiHealth({
+          service: options.service,
+          ok: response.ok,
+          latencyMs: Date.now() - start,
+          errorText: response.ok ? undefined : `HTTP ${response.status}`,
+        });
+      }
+      return response;
     }
-    return response;
+  } catch (err) {
+    if (options.service) {
+      logApiHealth({
+        service: options.service,
+        ok: false,
+        latencyMs: Date.now() - start,
+        errorText: err instanceof Error ? err.message : String(err),
+      });
+    }
+    throw err;
   }
 }
 
@@ -755,7 +777,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
           headers,
           cache: "no-store",
           signal: controller.signal
-        });
+        }, { service: this.name });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const json = (await response.json()) as { news?: Array<{ headline?: string; symbols?: string[] }> };
         articles = Array.isArray(json.news) ? json.news : [];
@@ -863,7 +885,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
             },
             cache: "no-store",
             signal: controller.signal
-          });
+          }, { service: this.name });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           snapshots = (await response.json()) as Record<string, AlpacaSnapshot>;
         } finally {
@@ -1009,7 +1031,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
         cache: "no-store",
         signal: controller.signal
-      });
+      }, { service: this.name });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
       const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
@@ -1243,7 +1265,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1383,7 +1405,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1432,7 +1454,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             const timeout = setTimeout(() => controller.abort(), 6000);
             let payload: Record<string, unknown>;
             try {
-              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               payload = await response.json() as Record<string, unknown>;
               
@@ -1612,7 +1634,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
                 }),
                 cache: "no-store",
                 signal: controller.signal,
-              });
+              }, { service: this.name });
 
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -1792,7 +1814,7 @@ export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1920,7 +1942,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1974,7 +1996,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         const timeout = setTimeout(() => controller.abort(), 10000);
         let raw: unknown;
         try {
-          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           raw = await response.json();
         } finally {

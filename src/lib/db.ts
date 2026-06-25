@@ -595,6 +595,28 @@ function migrate(database: Database.Database): void {
       resolved_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
+
+    CREATE TABLE IF NOT EXISTS api_health_log (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      ts TEXT NOT NULL,
+      ok INTEGER NOT NULL CHECK(ok IN (0,1)),
+      latency_ms INTEGER,
+      error_text TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_health_log_service_ts ON api_health_log (service, ts DESC);
+
+    CREATE TABLE IF NOT EXISTS api_health_error_patterns (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      error_text TEXT NOT NULL,
+      first_seen TEXT NOT NULL,
+      last_seen TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(service, fingerprint)
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
   `);
 
   // Migrate tables to include user_id
@@ -849,3 +871,4 @@ export * from "./db-proposals";
 export * from "./db-fills";
 export * from "./db-notifications";
 export * from "./db-api-keys";
+export * from "./db-health";
