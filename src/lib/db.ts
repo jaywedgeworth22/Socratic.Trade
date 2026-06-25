@@ -285,7 +285,8 @@ function migrate(database: Database.Database): void {
       status TEXT NOT NULL,
       trade_thesis_tag TEXT,
       entry_market_regime TEXT,
-      execution_mode TEXT
+      execution_mode TEXT,
+      error_message TEXT
     );
 
     CREATE TABLE IF NOT EXISTS strategy_profiles (
@@ -617,6 +618,31 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
 
+    CREATE TABLE IF NOT EXISTS api_health_log (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      ts TEXT NOT NULL,
+      ok INTEGER NOT NULL CHECK(ok IN (0,1)),
+      latency_ms INTEGER,
+      error_text TEXT,
+      key_source TEXT,
+      user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_health_log_service_ts ON api_health_log (service, ts DESC);
+
+    CREATE TABLE IF NOT EXISTS api_health_error_patterns (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      error_text TEXT NOT NULL,
+      first_seen TEXT NOT NULL,
+      last_seen TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      key_source TEXT NOT NULL DEFAULT '',
+      UNIQUE(service, fingerprint, key_source)
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
+
     -- congress.trade (App A) return-path receiver: a local, writable EOD cache that App A's
     -- gap-fill push lands in (POST /api/admin/securities/import). App B's own price history is the
     -- live fetchDailyOHLC cascade, NOT a writable store — these three tables ARE that writable store
@@ -699,6 +725,9 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN last_revalidated_at TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN revalidation_note TEXT");
   }
+  if (!columns.some((column) => column.name === "error_message")) {
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN error_message TEXT");
+  }
   // MAE/MFE persistence: add excursion columns to fill_events (additive, guarded).
   const fillEventColumns = database.prepare("PRAGMA table_info(fill_events)").all() as Array<{ name: string }>;
   if (!fillEventColumns.some((c) => c.name === "mae")) {
@@ -774,6 +803,58 @@ function migrate(database: Database.Database): void {
 
   // Rename: legacy "dry_run" proposal status is now "paper".
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
+
+  // Credential-scoped health rows: add key_source + user_id to existing api_health_log tables.
+  const healthLogCols = database.prepare("PRAGMA table_info(api_health_log)").all() as Array<{ name: string }>;
+  if (healthLogCols.length > 0) {
+    if (!healthLogCols.some((c) => c.name === "key_source")) {
+      database.exec("ALTER TABLE api_health_log ADD COLUMN key_source TEXT");
+    }
+    if (!healthLogCols.some((c) => c.name === "user_id")) {
+      database.exec("ALTER TABLE api_health_log ADD COLUMN user_id TEXT");
+    }
+  }
+  // Create the composite index unconditionally here — after the column is guaranteed to exist
+  // (either from CREATE TABLE on fresh DBs, or from ALTER TABLE above on upgrades).
+  // Removed from the main exec block because CREATE TABLE is a no-op on existing tables,
+  // so the index ran before ALTER TABLE added the column, causing "no such column: key_source".
+  database.exec("CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC)");
+  // api_health_error_patterns: recreate with correct schema when the table predates credential
+  // scoping. Two things can be wrong on an existing DB:
+  //   (a) key_source column missing entirely, or is TEXT (nullable) instead of TEXT NOT NULL DEFAULT ''
+  //   (b) UNIQUE constraint is still (service, fingerprint) — the new ON CONFLICT target
+  //       (service, fingerprint, key_source) won't match, so every error-pattern upsert silently
+  //       no-ops and failures disappear from the panel.
+  // Fix: recreate the table with the correct schema in both cases.
+  const healthPatternCols = database.prepare("PRAGMA table_info(api_health_error_patterns)").all() as Array<{ name: string; notnull: number; dflt_value: string | null }>;
+  if (healthPatternCols.length > 0) {
+    const ksCol = healthPatternCols.find((c) => c.name === "key_source");
+    const needsRebuild = !ksCol || ksCol.notnull === 0; // missing or nullable
+    if (needsRebuild) {
+      // When key_source column is absent, SELECT '''' literal; when nullable column exists use COALESCE.
+      // Using COALESCE(key_source, '') on a table without that column raises "no such column".
+      const ksExpr = ksCol ? "COALESCE(key_source, '')" : "''";
+      database.exec(`
+        CREATE TABLE api_health_error_patterns_v2 (
+          id TEXT PRIMARY KEY,
+          service TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          error_text TEXT NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 1,
+          key_source TEXT NOT NULL DEFAULT '',
+          UNIQUE(service, fingerprint, key_source)
+        );
+        INSERT OR IGNORE INTO api_health_error_patterns_v2
+          SELECT id, service, fingerprint, error_text, first_seen, last_seen, count, ${ksExpr}
+          FROM api_health_error_patterns;
+        DROP TABLE api_health_error_patterns;
+        ALTER TABLE api_health_error_patterns_v2 RENAME TO api_health_error_patterns;
+        CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
+      `);
+    }
+  }
 
   const now = new Date().toISOString();
   // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
@@ -959,4 +1040,5 @@ export * from "./db-proposals";
 export * from "./db-fills";
 export * from "./db-notifications";
 export * from "./db-api-keys";
+export * from "./db-health";
 export * from "./db-securities-import";

@@ -842,6 +842,8 @@ export interface RecentProposal {
   proposalReferencePrice?: number;
   /** The current price used for the performance figure. */
   proposalCurrentPrice?: number;
+  /** Broker or network error message when status is placing_failed. */
+  errorMessage?: string;
 }
 
 export interface StrategyOutcome {

@@ -55,11 +55,12 @@ export function listRecentProposals(accountNumber: string, limit: number = 100, 
     estimated_notional: number | null;
     status: string;
     execution_mode: string | null;
+    error_message: string | null;
   };
   const cappedLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const rows = getDb()
     .prepare(
-      "SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, execution_mode FROM trade_proposals WHERE account_number = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?"
+      "SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, execution_mode, error_message FROM trade_proposals WHERE account_number = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?"
     )
     .all(scopeAccount(accountNumber), userId, cappedLimit) as RawRow[];
 
@@ -73,7 +74,8 @@ export function listRecentProposals(accountNumber: string, limit: number = 100, 
     review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined,
     estimatedNotional: r.estimated_notional ?? undefined,
     status: r.status,
-    executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined
+    executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined,
+    errorMessage: r.error_message ?? undefined
   }));
 }
 
@@ -143,12 +145,12 @@ export function getProposal(id: string, userId: string = "local"):
   };
 }
 
-export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local", refId?: string): void {
+export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local", refId?: string, errorMessage?: string): void {
   getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id) WHERE id = ? AND user_id = ?"
+      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message) WHERE id = ? AND user_id = ?"
     )
-    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, refId ?? null, id, userId);
+    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, refId ?? null, errorMessage ?? null, id, userId);
 }
 
 /**

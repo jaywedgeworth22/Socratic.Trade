@@ -34,6 +34,7 @@ import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan, TradeProposal } from "./types";
+import { isAdminEmail } from "./auth/admin";
 
 export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
   ensureTestAccount(userId);
@@ -192,7 +193,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   return {
     currentUser: {
       userId,
-      ...(currentUserEmail ? { email: currentUserEmail } : {})
+      ...(currentUserEmail ? { email: currentUserEmail } : {}),
+      isAdmin: isAdminEmail(currentUserEmail)
     },
     policy,
     strategyPrompt: getStrategyPrompt(userId),
