@@ -52,13 +52,16 @@ EXISTING `debtToEquity` field from authoritative SEC filings (companyfacts API).
 (debt-specific concepts ÷ equity at the LATEST balance-sheet period — annual or 10-Q — amended-10-K/A-aware,
 budget-bounded, dedup'd background warms, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was
 dropped in Codex review round 3** — annual 10-K EPS isn't the TTM that `SymbolEnrichment.eps` documents,
-so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Eight Codex review rounds
+so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Nine Codex review rounds
 applied — incl. round 6 (honest `MarketScan.source`: cascade now names only providers that actually
 contributed a field, app-wide), round 7 (dropped the per-symbol budget guard so the background loop keeps
-warming the 24 h cache after the interactive 8 s budget elapses; the outer race alone caps latency), and
-round 8 (debt aggregation: use the complete `LongTermDebt` total — not just noncurrent — when only
-short-term debt is separately tagged, so D/E isn't understated). Verified by the main agent (tsc clean ·
-1177/1178 tests; only the cache-provenance flake · build green). See
+warming the 24 h cache after the interactive 8 s budget elapses; the outer race alone caps latency), round
+8 (debt aggregation: use the complete `LongTermDebt` total — not just noncurrent — when only short-term
+debt is separately tagged, so D/E isn't understated), and round 9 (publish the RAW D/E ratio so the
+bear-veto/analytics see true leverage, with the `>10 → ÷100` percentage heuristic now SOURCE-AWARE in
+market.ts/dashboard so a true 12x isn't misread as 0.12; plus `enrich()` returns a snapshot so background
+cache-warming can't retroactively flip a symbol's source). Verified by the main agent (tsc clean ·
+1178/1179 tests; only the cache-provenance flake · build green). See
 `docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
 
 ## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc

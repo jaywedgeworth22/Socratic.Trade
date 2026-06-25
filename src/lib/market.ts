@@ -832,9 +832,12 @@ function qualityScore(quote: MarketQuote): number {
   else if (quote.marketCap >= 1_000_000_000) base = 60;
   else base = 45;
   // Leverage: lower debt/equity = higher quality. Providers report D/E as a ratio
-  // (1.5) or a percentage (150); normalize to a ratio before bucketing.
+  // (1.5) or a percentage (150); normalize to a ratio before bucketing. The `>10 → ÷100`
+  // heuristic is SOURCE-AWARE: sec-xbrl always emits a true ratio (a genuine 12x must stay 12,
+  // not become 0.12 and wrongly score as near-debt-free), so the heuristic is skipped for it.
   if (typeof quote.debtToEquity === "number") {
-    const de = quote.debtToEquity > 10 ? quote.debtToEquity / 100 : quote.debtToEquity;
+    const deFromRatioSource = quote.sources?.debtToEquity === "sec-xbrl";
+    const de = !deFromRatioSource && quote.debtToEquity > 10 ? quote.debtToEquity / 100 : quote.debtToEquity;
     if (de >= 0 && de <= 0.5) base += 10;
     else if (de <= 1.5) base += 3;
     else if (de > 3) base -= 10;

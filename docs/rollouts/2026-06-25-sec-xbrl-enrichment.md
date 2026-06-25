@@ -222,6 +222,36 @@ complete total 600M + shortTerm 90M ÷ equity 345M → 2.0 (was the understated 
 
 Full trio green: tsc clean · 1177/1178 (only the cache-provenance flake) · build.
 
+## Round 9 (Codex review): publish raw D/E (source-aware downstream) + snapshot the enrich() result
+
+Two P2 findings on commit `c967ae6`:
+
+**1. D/E cap corrupted policy/analytics (line 2367).** An earlier round capped the SEC ratio with
+`Math.min(ratio, 10)` so the downstream `>10 → ÷100` percentage heuristic wouldn't misread a true 12x as
+0.12. But the bear-veto (`strategy.ts` `deterministicBearFilter`) and analytics/exports compare the stored
+value DIRECTLY: with the cap, a true 12x stored as 10 escapes a strict `debtToEquity > ceiling` veto when
+the ceiling is 10, and exports understate leverage. Fix: publish the RAW ratio (`debtToEquity = ratio`),
+and make the percentage heuristic SOURCE-AWARE at both consumers — `market.ts` `qualityScore` and the
+`dashboard-client.tsx` D/E column now skip the `>10 → ÷100` conversion when
+`sources.debtToEquity === "sec-xbrl"` (which always emits a true ratio). Without the market.ts change,
+removing the cap would have made a raw 12 divide to 0.12 and land in the `de ≤ 0.5 → +10` bucket, REWARDING
+the over-levered name — so the source-aware guard there is load-bearing, not cosmetic. Per-field source is
+already tracked (`takeScalar("debtToEquity", …)` → `sources.debtToEquity`), so no new plumbing was needed.
+Updated the cap test to assert the raw 12; added a `market.test.ts` case proving a sec-xbrl D/E of 12 scores
+lower quality than 0.3 (i.e. penalized, not rewarded).
+
+**2. Background warming mutated the already-returned result (line 2450).** The background `runRateLimited`
+continuation writes into the same `result` object `enrich()` returned after the budget race. A late SEC
+write could flip a symbol's winning source AFTER enrich() resolved, making the cascade merge order
+timing-dependent. Fix: `return { ...result }` — a snapshot of what completed within the budget. The
+continuation keeps warming the cache (and may still mutate the original object), but those post-race writes
+no longer change what this pass returned.
+
+Files: `src/lib/data-providers.ts`, `src/lib/market.ts`, `app/dashboard-client.tsx`,
+`test/sec-xbrl.test.ts`, `test/market.test.ts`.
+
+Full trio green: tsc clean · 1178/1179 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW

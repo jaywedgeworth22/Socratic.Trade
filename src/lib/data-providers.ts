@@ -2358,13 +2358,14 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
       const totalDebt = debtAtEnd(equity.end);
       if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
         const ratio = Math.round((totalDebt / equity.val) * 100) / 100;
-        // Publish as a RATIO (e.g. 1.5), matching the bear-veto, which compares the raw value to a ratio
-        // ceiling (strategy.ts) WITHOUT the percentage heuristic. But display + quality (market.ts,
-        // dashboard-client.tsx) treat any value > 10 as a PERCENTAGE and divide by 100 — so cap the
-        // published ratio at 10. A genuinely >10x-levered name still reads as max-leverage (vetoed,
-        // penalized, shown "10.00") instead of being misread as 0.1x. (10x+ D/E is already pathological;
-        // the cap only touches that extreme tail.)
-        debtToEquity = Math.min(ratio, 10);
+        // Publish the RAW true ratio (e.g. 1.5, or 12 for a genuinely 12x-levered name). The bear-veto
+        // (strategy.ts) and analytics/exports compare this value directly, so it must NOT be capped or
+        // pre-normalized — a cap would let a >ceiling name escape a strict `> ceiling` veto and would
+        // understate leverage in exports. Display + quality (market.ts, dashboard-client.tsx) apply a
+        // `>10 → ÷100` percentage heuristic for providers that report D/E as a percentage; those call
+        // sites are SOURCE-AWARE and skip the heuristic for sec-xbrl (which always emits a true ratio),
+        // so a raw 12 is no longer misread as 0.12 there. See market.ts qualityScore / the D/E column.
+        debtToEquity = ratio;
       }
     }
 
@@ -2459,6 +2460,11 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     // map load + companyfacts fetches — shares one SEC_XBRL_BUDGET_MS, not two.
     await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())))]);
 
-    return result;
+    // Return a SNAPSHOT of what completed within the budget. The background continuation keeps warming
+    // the cache (and may still write into `result` for symbols fetched after the race), but it must not
+    // retroactively change what THIS pass returns: a late SEC write into the already-returned object
+    // could flip a symbol's winning source after enrich() resolved, making the cascade merge order
+    // timing-dependent. The spread decouples the returned value from those post-race mutations.
+    return { ...result };
   }
 }

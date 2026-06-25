@@ -200,14 +200,16 @@ describe("parseCompanyFacts — debt aggregation edge cases", () => {
     expect(r.debtToEquity).toBe(2.0);
   });
 
-  it("caps the published ratio at 10 so a >10x-levered name isn't misread as a percentage downstream", () => {
-    // 1200M debt / 100M equity = 12.0. Display + qualityScore treat D/E > 10 as a percentage and ÷100,
-    // so an uncapped 12 would render as 0.12 (near debt-free). Cap at 10 → still reads as max-leverage.
+  it("publishes the RAW ratio for a >10x-levered name (not capped) so the veto/analytics see true leverage", () => {
+    // 1200M debt / 100M equity = 12.0. The bear-veto and analytics compare this value directly, so it
+    // must stay 12 (a cap to 10 would let it escape a strict `> 10` ceiling veto and understate exports).
+    // The downstream `>10 → ÷100` percentage heuristic in market.ts/dashboard is source-aware and skips
+    // sec-xbrl, so a raw 12 is NOT misread as 0.12 there.
     const r = parseCompanyFacts(rawFacts({
       StockholdersEquity: [{ end: "2023-12-31", val: 100_000_000, form: "10-K" }],
       LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 1_200_000_000, form: "10-K" }]
     }));
-    expect(r.debtToEquity).toBe(10);
+    expect(r.debtToEquity).toBe(12);
   });
 
   it("uses the combined finance-lease noncurrent concept when the pure concept is absent", () => {
