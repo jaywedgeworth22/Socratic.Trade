@@ -1,4 +1,4 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots } from "./db";
+import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -189,7 +189,7 @@ export function recordFillFromProposal(input: {
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
-  return insertFillEvent({
+  const fill = insertFillEvent({
     userId: input.userId,
     proposalId: input.proposalId,
     runId: input.runId,
@@ -207,6 +207,18 @@ export function recordFillFromProposal(input: {
     // for the sector learning dimension (sector isn't on the proposal itself).
     raw: { proposal: input.proposal, review: input.review, execution: input.execution, sector: input.marketScan?.quotesBySymbol[symbol]?.sector }
   });
+
+  // Advance the take-profit trim ratchet ONLY now that the trim has actually been placed/filled — a
+  // proposed / policy-blocked / rejected trim never reaches recordFillFromProposal, so it's re-offered next
+  // run instead of silently ratcheting past its band. Keyed to the lot's cost basis for close+rebuy resets.
+  if (typeof input.proposal.takeProfitBand === "number") {
+    try {
+      recordTakeProfitTrimBand(input.accountNumber, symbol, input.proposal.takeProfitBand, input.proposal.takeProfitBasis ?? 0, input.userId);
+    } catch {
+      // ratchet bookkeeping must never break fill recording
+    }
+  }
+  return fill;
 }
 
 export function getPerformanceSummary(accountNumber: string, currentPrices: Record<string, number> = {}, userId: string = "local"): PerformanceSummary {
