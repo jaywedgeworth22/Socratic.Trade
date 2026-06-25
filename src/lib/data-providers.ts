@@ -167,6 +167,11 @@ export type EnrichmentSourcedField =
  *  while still fetching everything else it uniquely supplies, so no field is lost. */
 export interface EnrichmentContext {
   coveredFields?: Record<string, ReadonlySet<string>>;
+  /** Per-symbol upstream provider of App A's analyst row (e.g. "fmp"/"finnhub"/
+   *  "yahoo-finance"), so a provider only skips its OWN consensus sub-call when App A's
+   *  analyst actually came from it — otherwise its independent vote must still be fetched
+   *  and blended. Absent/unknown source → don't skip (treat as a distinct vote). */
+  analystSource?: Record<string, string>;
 }
 
 export interface MarketEnrichmentProvider {
@@ -378,7 +383,11 @@ function congressMaxStaleMs(): number {
   return (Number.isFinite(days) && days > 0 ? days : 21) * 86_400_000;
 }
 function rowIsFresh(row: { date?: string | null; updatedAt?: string | null }, now: number): boolean {
-  const stamp = row.updatedAt || row.date;
+  // Judge freshness by the row's market-data `date`, NOT `updatedAt`: a backfill run
+  // today bumps `updatedAt` while the underlying data is months old, and such a stale
+  // row must fall through to the live paid providers rather than override them. Fall
+  // back to `updatedAt` only when `date` is absent.
+  const stamp = row.date || row.updatedAt;
   if (!stamp) return false;
   const t = Date.parse(stamp);
   return Number.isFinite(t) && now - t <= congressMaxStaleMs();
@@ -625,11 +634,19 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const freeResults = await Promise.all(freeProviders.map((p) => run(p, normalized)));
       const appA = freeResults.find((r) => r.name === "congress.trade")?.data ?? {};
       const coveredFields: Record<string, ReadonlySet<string>> = {};
+      const analystSource: Record<string, string> = {};
       for (const s of normalized) {
         const e = appA[s];
-        if (e) coveredFields[s] = new Set(Object.keys(e));
+        if (e) {
+          coveredFields[s] = new Set(Object.keys(e));
+          // App A keys its analyst entry under the upstream provider it came from, so the
+          // single key here IS that source. A paid provider uses it to skip its own
+          // consensus sub-call only when App A's analyst is genuinely its data.
+          const srcKey = e.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
+          if (srcKey) analystSource[s] = srcKey;
+        }
       }
-      const context: EnrichmentContext = { coveredFields };
+      const context: EnrichmentContext = { coveredFields, analystSource };
       const paidResults = await Promise.all(paidProviders.map((p) => run(p, normalized, context)));
       // Reassemble in registration order so the merge precedence is identical.
       const byName = new Map<string, Record<string, SymbolEnrichment>>();
@@ -1614,8 +1631,13 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // SUB-call — but always keep fetching insider/senate (and targets), which
           // App A never supplies, so nothing FMP uniquely provides is lost.
           const covered = context?.coveredFields?.[symbol];
+          // P/E is a first-wins scalar: if App A has any valid P/E, FMP's would lose the
+          // merge anyway, so skipping ratios-ttm is safe regardless of App A's source.
           const skipPe = covered?.has("peRatio") ?? false;
-          const skipConsensus = covered?.has("analystRating") ?? false;
+          // Analyst consensus is BLENDED across sources: only skip grades-consensus when
+          // App A's analyst actually came from FMP (else FMP's distinct vote must still be
+          // fetched and blended — App A holding a Yahoo/Finnhub consensus doesn't cover it).
+          const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[symbol] === this.name;
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
           const wantTargets = fmpPriceTargetsEnabled();
@@ -1725,12 +1747,20 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             (p) => p.status === "rejected" && isTransientError(p.reason)
           );
           const isEmpty = Object.keys(data).length === 0;
+          // A coverage-trimmed fetch (we skipped ratios-ttm and/or grades-consensus)
+          // yields a PARTIAL row. Don't write it to the normal fmp cache: a later scan
+          // with App A off/stale, or with the short-circuit flag off, would otherwise
+          // treat the partial as a full FMP hit and never refetch P/E/analyst until TTL.
+          // The covered fields come from App A live each scan; FMP refetches its uniques.
+          const trimmed = skipPe || skipConsensus;
 
-          if (allRejected || hasTransientError || isEmpty) {
-            console.warn(
-              `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
-              `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
-            );
+          if (allRejected || hasTransientError || isEmpty || trimmed) {
+            if (!trimmed) {
+              console.warn(
+                `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
+                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+              );
+            }
           } else {
             writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + ttlMs());
           }

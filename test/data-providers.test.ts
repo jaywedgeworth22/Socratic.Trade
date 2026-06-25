@@ -985,24 +985,28 @@ describe("enrichment short-circuit (App A coverage hint → paid providers skip 
   function appA(fundamentals: Record<string, SymbolEnrichment>): MarketEnrichmentProvider {
     return { name: "congress.trade", configured: true, costTier: "free", async enrich() { return fundamentals; } };
   }
-  // Records the symbols it was called with AND the per-symbol coverage hint it received,
-  // mimicking a bundled paid provider (App-A-covered fundamentals + its OWN unique fields).
-  function paidSpy(calls: string[][], hints: Array<Record<string, ReadonlySet<string>> | undefined>): MarketEnrichmentProvider {
+  // Records the symbols it was called with AND the full context it received, faithfully
+  // modelling FMP's source-aware sub-call skipping: P/E skipped when App A covers peRatio
+  // (first-wins); consensus skipped only when App A's analyst source IS this provider.
+  function paidSpy(calls: string[][], contexts: Array<EnrichmentContext | undefined>): MarketEnrichmentProvider {
+    const NAME = "fmp";
     return {
-      name: "fmp",
+      name: NAME,
       configured: true,
       costTier: "paid",
       async enrich(syms: string[], context?: EnrichmentContext) {
         calls.push(syms);
-        hints.push(context?.coveredFields);
+        contexts.push(context);
         const out: Record<string, SymbolEnrichment> = {};
         for (const s of syms) {
           const covered = context?.coveredFields?.[s];
+          const skipPe = covered?.has("peRatio") ?? false;
+          const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[s] === NAME;
           out[s] = {
-            // pe/analyst only when NOT covered (mimics skipping the redundant sub-call);
-            // insider/senate are always supplied — App A never covers them.
-            ...(covered?.has("peRatio") ? {} : { peRatio: 99 }),
-            ...(covered?.has("analystRating") ? {} : { analystRating: "Sell" }),
+            // pe/analyst dropped only when its sub-call was skipped; insider/senate always
+            // supplied — App A never covers them, so nothing FMP uniquely provides is lost.
+            ...(skipPe ? {} : { peRatio: 99 }),
+            ...(skipConsensus ? {} : { analystBySource: { [NAME]: { score: 20, label: "Sell" } } }),
             insiderSentiment: 70,
             senateTrades: 3,
           };
@@ -1016,51 +1020,70 @@ describe("enrichment short-circuit (App A coverage hint → paid providers skip 
     process.env[FLAG] = "on";
     process.env[READS] = "on";
     const calls: string[][] = [];
-    const hints: Array<Record<string, ReadonlySet<string>> | undefined> = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
     const cascade = new CascadingEnrichmentProvider([
       // AAA covered; BBB not. App A surfaces analyst as analystBySource (the cascade
       // derives the displayed rating from that, not the scalar).
       appA({
-        AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "congress.trade": { score: 80, label: "Buy" } } },
+        AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "fmp": { score: 80, label: "Buy" } } },
       }),
-      paidSpy(calls, hints)
+      paidSpy(calls, contexts)
     ]);
-    const out = await cascade.enrich(["AAA", "BBB"]);
+    await cascade.enrich(["AAA", "BBB"]);
     // No whole-provider skip: the paid provider runs over BOTH symbols.
     expect(calls).toEqual([["AAA", "BBB"]]);
-    // It received a per-symbol coverage hint listing App A's filled fields for AAA only.
-    expect(hints[0]?.AAA?.has("peRatio")).toBe(true);
-    expect(hints[0]?.AAA?.has("analystRating")).toBe(true);
-    expect(hints[0]?.BBB).toBeUndefined();
+    // It received a per-symbol coverage hint (fields + analyst source) for AAA only.
+    expect(contexts[0]?.coveredFields?.AAA?.has("peRatio")).toBe(true);
+    expect(contexts[0]?.coveredFields?.AAA?.has("analystRating")).toBe(true);
+    expect(contexts[0]?.analystSource?.AAA).toBe("fmp");
+    expect(contexts[0]?.coveredFields?.BBB).toBeUndefined();
   });
 
   it("preserves the paid provider's unique fields for covered symbols (nothing lost)", async () => {
     process.env[FLAG] = "on";
     process.env[READS] = "on";
     const calls: string[][] = [];
-    const hints: Array<Record<string, ReadonlySet<string>> | undefined> = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
     const cascade = new CascadingEnrichmentProvider([
-      appA({ AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "congress.trade": { score: 80, label: "Buy" } } } }),
-      paidSpy(calls, hints)
+      appA({ AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "fmp": { score: 80, label: "Buy" } } } }),
+      paidSpy(calls, contexts)
     ]);
     const out = await cascade.enrich(["AAA"]);
     // App A's pe/analyst win; the paid provider's unique insider/senate still come through.
     expect(out.AAA.peRatio).toBe(10);
-    expect(out.AAA.analystRating).toBe("Buy"); // App A, not the paid "Sell"
+    expect(out.AAA.analystRating).toBe("Buy"); // App A (fmp-sourced), de-duped — single vote
     expect(out.AAA.insiderSentiment).toBe(70);
     expect(out.AAA.senateTrades).toBe(3);
+  });
+
+  it("still fetches FMP's own consensus when App A's analyst came from a DIFFERENT source", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const calls: string[][] = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
+    const cascade = new CascadingEnrichmentProvider([
+      // App A's analyst is Yahoo-sourced (score 80/"Buy"); FMP must still contribute its
+      // own vote (score 20/"Sell"), so the blended score is the average of the two (~50).
+      appA({ AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "yahoo-finance": { score: 80, label: "Buy" } } } }),
+      paidSpy(calls, contexts)
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(contexts[0]?.analystSource?.AAA).toBe("yahoo-finance");
+    // Two distinct votes (yahoo 80 + fmp 20) → blended ~50, NOT App A's 80 alone.
+    expect(out.AAA.analystScore).toBe(50);
+    expect(out.AAA.analystBySource && Object.keys(out.AAA.analystBySource).sort()).toEqual(["fmp", "yahoo-finance"]);
   });
 
   it("passes NO coverage hint when the flag is OFF (default)", async () => {
     process.env[READS] = "on"; // reads on, short-circuit off
     const calls: string[][] = [];
-    const hints: Array<Record<string, ReadonlySet<string>> | undefined> = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
     const cascade = new CascadingEnrichmentProvider([
       appA({ AAA: { peRatio: 10, eps: 2 } }),
-      paidSpy(calls, hints)
+      paidSpy(calls, contexts)
     ]);
     await cascade.enrich(["AAA", "BBB"]);
     expect(calls).toEqual([["AAA", "BBB"]]);
-    expect(hints[0]).toBeUndefined();
+    expect(contexts[0]).toBeUndefined();
   });
 });

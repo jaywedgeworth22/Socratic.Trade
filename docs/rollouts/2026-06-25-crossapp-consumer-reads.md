@@ -80,6 +80,28 @@ Two more P2s, both valid and related (App A's enrichment derives from the *same*
   preserves its unique insider/senate fields for covered symbols). Docs: `congress-trade-consume.md` §1b +
   config table. tsc clean, data-providers 51/51.
 
+## Codex review round 4 (PR #160, commit 2567078) — short-circuit edge cases
+Three more P2s on the round-3 mechanism, all valid:
+- **P2 stale backfills (`rowIsFresh`, line 384)** — the guard used `updatedAt || date`, so a row
+  *backfilled today* (fresh `updatedAt`) but carrying months-old market data (old `date`) passed and could
+  override current paid data. **Fixed**: judge freshness by the market-data `date` first (fall back to
+  `updatedAt` only when `date` is absent), so old backfilled-only rows correctly fall through.
+- **P2 analyst source in the hint (line 630)** — the coverage hint recorded only that `analystRating`
+  existed, so FMP skipped `grades-consensus` even when App A's analyst came from Yahoo/Finnhub — dropping
+  FMP's *distinct* vote from the blend. **Fixed**: `EnrichmentContext` now carries `analystSource` per
+  symbol (App A keys its analyst entry under the upstream provider). FMP skips its consensus sub-call only
+  when `analystSource === "fmp"`; otherwise it still fetches and blends its own vote. (P/E stays a
+  source-agnostic skip — it's first-wins, so App A's valid P/E wins regardless.)
+- **P2 partial FMP cache (line 1618)** — a coverage-trimmed FMP fetch produced a partial row that was
+  still written to the normal `fmp` cache, so a later scan with App A off/stale (or the flag off) would
+  serve it as a full hit and never refetch P/E/analyst until TTL. **Fixed**: a trimmed fetch is no longer
+  cached; covered fields come from App A live each scan, and FMP refetches its uniques.
+- Tests: the FMP mock now faithfully models source-aware skipping; added a case proving FMP's own
+  consensus is still fetched + blended when App A's analyst is a different source. data-providers 52/52.
+
+Earlier non-outdated threads (cache App A reads, negative-cache empty misses, P1 roadmap docs) were
+already addressed in rounds 1–2 — verified against current code, no further change.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (reads + the new fundamentals tier), optionally
   `ENRICHMENT_SHORT_CIRCUIT_ENABLED=on` (skip paid for App-A-covered symbols), plus the B→A push flags

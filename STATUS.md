@@ -23,7 +23,10 @@ drop non-positive App A peRatio/52w sentinels. **Codex round 3:** replaced the w
 silently dropped bundled paid providers' news/insider/senate/quote fields) with a per-symbol
 `EnrichmentContext` coverage hint — paid providers now skip only redundant *sub-calls* (FMP skips
 ratios-ttm/grades-consensus when App A has P/E+analyst, still fetches insider/senate); plus key App A's
-analyst under its upstream source so the cascade doesn't double-count the same consensus. 1221 tests.
+analyst under its upstream source so the cascade doesn't double-count the same consensus. **Codex round 4:**
+freshness now keys off the data `date` (not `updatedAt`) so today's backfill of old data falls through;
+FMP skips consensus only when App A's analyst is fmp-sourced (carries `analystSource` in the hint); a
+coverage-trimmed FMP fetch is no longer cached as a full hit. 1222 tests.
 
 ## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
 Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`
