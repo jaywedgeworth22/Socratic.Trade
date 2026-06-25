@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Fix: risk-exit blocked by MAX_SAFE_INTEGER notional sentinel
+Branch `agent/claude-exit-notional`. A SELL "Risk-Exit" (no live quote) was Blocked with "Projected net
+exposure $-9,007,199,254,740,800 exceeds net cap" and shown as "~$9,007,199,254,740,991.00" —
+`Number.MAX_SAFE_INTEGER`. Root cause: `estimateReviewNotional` (`alpaca.ts`) used that "price-unavailable
+→ over-cap" sentinel regardless of side; for an exit it corrupted the displayed notional AND the
+net-exposure projection (`netDelta=-MAX` overshot net through zero, tripping the cap). Fix: (1) `alpaca.ts`
+now side-aware — exits fall back to `referencePrice` then `0` (never the sentinel); opening orders keep it;
+(2) `policy.ts` gross/net exposure block gated on `isOpening` (closes structurally exempt — the documented
+invariant); (3) `dashboard-client.tsx` `proposalSize()` never renders a sentinel/non-finite value. Verify:
+tsc clean · policy+persistence tests 56 passed · full trio via land.sh. See
+`docs/rollouts/2026-06-25-exit-notional-sentinel-fix.md`.
+
 ## 2026-06-24 — Market-data paid-tier watchdog (lapse detection + email + auto-throttle)
 Branch `feat/provider-tier-watchdog`. Raising the Massive limit to 100/min (paid Starter) risked a
 429-storm if the sub lapses to free (5/min). New `src/lib/provider-tier.ts` runs a nightly
