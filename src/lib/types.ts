@@ -206,7 +206,10 @@ export interface RiskRules {
    * Fraction of the position to sell when take-profit triggers (1–100; 100 = full exit). Default 50 —
    * take partial profit and let the rest ride. Laddered by take-profit "band"
    * (floor(returnPct / takeProfitPct)) so it trims once per band, not every run (state in the
-   * `take_profit_trims` table). Undefined → treated as 100 (full exit) for back-compat.
+   * `take_profit_trims` table). NOTE: `mergePolicy` injects the DEFAULT (50) into stored policies that
+   * lack the key, so existing take-profit users move from full-exit to a 50% trim — a deliberate
+   * behavior change, not a no-op upgrade. A literal `undefined` (only reachable in non-merged policy
+   * objects / tests) is clamped to 100 (full exit).
    */
   takeProfitTrimPct?: number;
   takeProfitNotional?: number;
@@ -558,6 +561,14 @@ export interface TradeProposal {
    * When absent the stop-loss leg is a plain stop-market.
    */
   bracketStopLimit?: number;
+  /**
+   * Take-profit trim bookkeeping (set only on proactive take-profit trim proposals by
+   * planTakeProfitTrims). `takeProfitBand` = the take-profit band this trim corresponds to; its position
+   * cost basis is `takeProfitBasis`. The ratchet (take_profit_trims) is advanced ONLY when the trim
+   * actually fills (recordFillFromProposal), so a blocked/rejected/un-approved trim is re-offered next run.
+   */
+  takeProfitBand?: number;
+  takeProfitBasis?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the

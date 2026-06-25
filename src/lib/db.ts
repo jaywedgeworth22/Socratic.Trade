@@ -447,6 +447,9 @@ function migrate(database: Database.Database): void {
       account_number TEXT NOT NULL,
       symbol TEXT NOT NULL,
       band INTEGER NOT NULL,
+      -- Position cost basis at the time the band was recorded. The ratchet is keyed to this lot: if the
+      -- current position's average cost no longer matches, it's a new lot (close+rebuy) and the band resets.
+      avg_cost REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (user_id, account_number, symbol)
     );

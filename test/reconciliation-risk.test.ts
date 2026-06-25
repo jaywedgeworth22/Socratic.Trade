@@ -264,20 +264,34 @@ describe("generateProactiveRiskProposals", () => {
       expect(planTakeProfitTrims(positions, prices, policy).proposals[0].quantity).toBe(8);
     });
 
-    it("does NOT re-trim the same band (monotonic ratchet)", () => {
+    it("carries the band + cost basis on the proposal (committed on fill, not at plan time)", () => {
       const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
-      // Already trimmed band 1; at +25% (still band 1) → no new trim.
-      const plan = planTakeProfitTrims(positions, prices, policy, { NVDA: 1 });
+      const plan = planTakeProfitTrims(positions, prices, policy);
+      expect(plan.proposals[0]).toMatchObject({ takeProfitBand: 1, takeProfitBasis: 100 });
+    });
+
+    it("does NOT re-trim the same band for the same lot (monotonic ratchet, cost-basis matched)", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Already trimmed band 1 at basis 100; at +25% (still band 1, same basis) → no new trim.
+      const plan = planTakeProfitTrims(positions, prices, policy, { NVDA: { band: 1, avgCost: 100 } });
       expect(plan.proposals).toHaveLength(0);
       expect(plan.advancedBands).toHaveLength(0);
     });
 
     it("trims again only when a higher band is reached", () => {
       const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
-      // +45% = band 2 (floor(45/20)), prior band 1 → trims.
-      const plan = planTakeProfitTrims([{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1160 }], { NVDA: 145 }, policy, { NVDA: 1 });
+      // +45% = band 2 (floor(45/20)), prior band 1 same basis → trims.
+      const plan = planTakeProfitTrims([{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1160 }], { NVDA: 145 }, policy, { NVDA: { band: 1, avgCost: 100 } });
       expect(plan.proposals).toHaveLength(1);
       expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 2 }]);
+    });
+
+    it("resets the ratchet when the cost basis differs (close + rebuy starts fresh)", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Stored band 1 belongs to an OLD lot (basis 90); the current lot's basis is 100 → treat as band 0 → trims band 1.
+      const plan = planTakeProfitTrims(positions, prices, policy, { NVDA: { band: 1, avgCost: 90 } });
+      expect(plan.proposals).toHaveLength(1);
+      expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 1 }]);
     });
 
     it("emits a COVER trim for a profitable short when shorting is enabled", () => {
@@ -296,12 +310,18 @@ describe("generateProactiveRiskProposals", () => {
   });
 
   describe("takeProfitTrimQuantity", () => {
-    it("computes the fraction, full-exits at >=100, and avoids dust", () => {
+    it("floors WHOLE-share positions to whole shares (no forced fractional order)", () => {
       expect(takeProfitTrimQuantity(8, 50)).toBe(4);
       expect(takeProfitTrimQuantity(8, 100)).toBe(8);
-      expect(takeProfitTrimQuantity(10, 25)).toBe(2.5);
-      // 1-share position trimmed 99% → remainder 0.01 not dust → 0.99; but a tiny remainder full-exits.
-      expect(takeProfitTrimQuantity(1, 99.999)).toBe(1); // remainder < 0.0001 → full
+      expect(takeProfitTrimQuantity(10, 25)).toBe(2); // floor(2.5) → 2 whole shares
+      expect(takeProfitTrimQuantity(3, 50)).toBe(1); // floor(1.5) → 1, remainder 2
+    });
+    it("full-exits a whole-share position when no clean whole-share slice exists", () => {
+      expect(takeProfitTrimQuantity(1, 50)).toBe(1); // floor(0.5)=0 → full exit
+      expect(takeProfitTrimQuantity(2, 25)).toBe(2); // floor(0.5)=0 → full exit
+    });
+    it("keeps a fractional trim for an already-fractional position", () => {
+      expect(takeProfitTrimQuantity(2.5, 50)).toBe(1.25); // fractional position → fractional trim is fine
     });
   });
 

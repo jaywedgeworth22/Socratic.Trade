@@ -35,13 +35,23 @@ required.
     positions that have closed (re-buys start fresh), merges the trim proposals. Wrapped in try/catch so a
     DB hiccup never breaks the run; only runs when `policy.accountNumber` is set.
 
-## Design notes / caveats
-- **Monotonic ratchet** (band only increases; reset only on position close) → no double-trim of a band on
-  a pullback-and-recovery; a re-bought position starts fresh.
-- **Bands are recorded at PROPOSE time, not execution.** In `decide` (auto-exec) mode propose≈execute. In
-  `propose` mode, if the user rejects/ignores a trim, the band still advances and the trim isn't
-  re-proposed until the next band — acceptable v1 (the user explicitly declined); documented for a future
-  refinement (record on fill).
+## Design notes
+- **Bands are committed ON FILL, not at plan time.** `planTakeProfitTrims` stamps each trim proposal with
+  `takeProfitBand` + `takeProfitBasis`; the ratchet (`take_profit_trims`) is advanced only inside
+  `recordFillFromProposal` (the single fill chokepoint — paper, live, and approve paths). So a trim that is
+  merely proposed (propose mode), policy-/tradability-blocked, or rejected NEVER advances the band and is
+  re-offered next run. (This was the high-severity defect the adversarial review caught in the first cut,
+  which recorded at plan time and silently dropped the trim in the default `propose` mode.)
+- **Lot-keyed ratchet.** The stored band carries the position's cost basis; `planTakeProfitTrims` ignores a
+  stored band whose basis no longer matches the live position (a close+rebuy is a new lot → starts fresh),
+  closing the same-cycle close-and-rebuy gap. `clearTakeProfitTrimBands` still prunes fully-closed symbols.
+- **Whole-share trims.** `takeProfitTrimQuantity` floors a whole-share position's trim to whole shares (and
+  full-exits when no clean ≥1-share slice exists) so a trim never forces a fractional order a non-fractional
+  broker would reject; an already-fractional position keeps a fractional trim.
+- **Behavior change for existing users:** `mergePolicy` injects the new `takeProfitTrimPct` default (50)
+  into stored policies that lack the key, so users who previously got a FULL exit at take-profit now get a
+  50% partial trim with the remainder riding. Deliberate (matches the chosen default); the `undefined→100`
+  clamp only applies to non-merged policy literals/tests.
 - Take-profit and stop-loss are mutually exclusive for a position (return% can't be both ≤ −stop and
   ≥ +target), so the two generators never double-emit for the same name.
 
