@@ -85,6 +85,23 @@ export function parseCikTickerMap(json: unknown): Record<string, string> {
   return map;
 }
 
+/**
+ * Parse SEC company_tickers.json into a ticker -> numeric-CIK-string map. Unlike parseCikTickerMap
+ * (which collapses each CIK to ONE ticker), this keeps EVERY ticker, so dual-class names that share a
+ * CIK (e.g. GOOGL & GOOG) both resolve to their CIK.
+ */
+export function parseTickerCikMap(json: unknown): Record<string, string> {
+  const map: Record<string, string> = {};
+  const rows = json && typeof json === "object" ? Object.values(json as Record<string, unknown>) : [];
+  for (const row of rows) {
+    const r = row as { cik_str?: number | string; ticker?: string };
+    if (r?.cik_str == null || !r.ticker) continue;
+    const ticker = normalizeSymbol(r.ticker);
+    if (ticker) map[ticker] = String(Number(r.cik_str));
+  }
+  return map;
+}
+
 // ── Read API ─────────────────────────────────────────────────────────────────
 
 export interface EightKSignal {
@@ -137,6 +154,18 @@ export async function loadCikMap(now: number): Promise<Record<string, string>> {
   const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
   const map = parseCikTickerMap(json);
   if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+  return map;
+}
+
+const TICKER_CIK_KEY = "webSource:sec:tickerCikMap";
+
+/** Load the ticker→CIK map (preserves dual-class tickers), cached weekly in the settings KV. */
+export async function loadTickerCikMap(now: number): Promise<Record<string, string>> {
+  const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(TICKER_CIK_KEY);
+  if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
+  const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+  const map = parseTickerCikMap(json);
+  if (Object.keys(map).length > 0) setInternalSetting(TICKER_CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
   return map;
 }
 

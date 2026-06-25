@@ -13,7 +13,7 @@ import { normalizeSymbol } from "./money";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
-import { loadCikMap } from "./web-sources/sec8k";
+import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -2145,53 +2145,76 @@ export function parseCompanyFacts(json: unknown): { debtToEquity?: number; eps?:
     if (!gaap || typeof gaap !== "object") return {};
     const concepts = gaap as Record<string, unknown>;
 
-    // Helper: extract entries array for a concept + unit.
-    function getEntries(concept: string, unit: string): Array<{ end: string; val: number; form?: string }> {
+    type Fact = { end: string; val: number; form?: string; filed?: string };
+    // Annual forms include the AMENDED 10-K/A (restatements) — excluding it would publish stale
+    // values whenever an original 10-K also exists.
+    const isAnnual = (form?: string): boolean => form === "10-K" || form === "10-K/A";
+
+    // Helper: extract entries array for a concept + unit (keeping form + filed date).
+    function getEntries(concept: string, unit: string): Fact[] {
       const c = concepts[concept];
       if (!c || typeof c !== "object") return [];
       const units = (c as Record<string, unknown>).units;
       if (!units || typeof units !== "object") return [];
       const arr = (units as Record<string, unknown>)[unit];
       if (!Array.isArray(arr)) return [];
-      return arr.filter(
-        (e): e is { end: string; val: number; form?: string } =>
-          e !== null &&
-          typeof e === "object" &&
-          typeof e.end === "string" &&
-          typeof e.val === "number" &&
-          Number.isFinite(e.val)
-      );
+      const out: Fact[] = [];
+      for (const e of arr) {
+        if (e === null || typeof e !== "object") continue;
+        const r = e as Record<string, unknown>;
+        if (typeof r.end !== "string" || typeof r.val !== "number" || !Number.isFinite(r.val)) continue;
+        out.push({
+          end: r.end,
+          val: r.val,
+          form: typeof r.form === "string" ? r.form : undefined,
+          filed: typeof r.filed === "string" ? r.filed : undefined
+        });
+      }
+      return out;
     }
 
-    // Helper: pick the latest entry — prefer 10-K, fall back to any form.
-    function latestEntry(entries: Array<{ end: string; val: number; form?: string }>): { end: string; val: number; form?: string } | undefined {
+    // Helper: pick the latest entry — prefer annual (10-K/10-K/A); tie-break a shared period end by the
+    // latest `filed` so an amended restatement supersedes the original filing.
+    function latestEntry(entries: Fact[]): Fact | undefined {
       if (entries.length === 0) return undefined;
-      const annuals = entries.filter((e) => e.form === "10-K");
+      const annuals = entries.filter((e) => isAnnual(e.form));
       const pool = annuals.length > 0 ? annuals : entries;
-      return pool.reduce((best, e) => (e.end > best.end ? e : best), pool[0]);
+      return pool.reduce((best, e) => {
+        if (e.end > best.end) return e;
+        if (e.end === best.end && (e.filed ?? "") > (best.filed ?? "")) return e;
+        return best;
+      }, pool[0]);
     }
 
-    // Helper: the value of a concept AT a specific reporting-period end date (prefer 10-K at that end),
-    // so debt + equity facts are aligned on the same period rather than picked independently.
-    function valueAtEnd(entries: Array<{ end: string; val: number; form?: string }>, end: string): number | undefined {
+    // Helper: the value of a concept AT a specific reporting-period end date — prefer the annual filing
+    // and the latest `filed` (amendment) at that end — so debt + equity facts are aligned on the same period.
+    function valueAtEnd(entries: Fact[], end: string): number | undefined {
       const atEnd = entries.filter((e) => e.end === end);
       if (atEnd.length === 0) return undefined;
-      const annual = atEnd.find((e) => e.form === "10-K");
-      return (annual ?? atEnd[0]).val;
+      const annuals = atEnd.filter((e) => isAnnual(e.form));
+      const pool = annuals.length > 0 ? annuals : atEnd;
+      return pool.reduce((best, e) => ((e.filed ?? "") > (best.filed ?? "") ? e : best), pool[0]).val;
     }
 
-    // Sum of whatever DEBT-specific entries exist at a given period end. Returns undefined when NONE of
-    // the debt concepts are present (so we omit debtToEquity rather than fabricate it from total liabilities).
+    // Total DEBT at a period end from debt-specific concepts (never total Liabilities). Returns undefined
+    // when no debt concept is present (so we omit debtToEquity rather than fabricate it).
     function debtAtEnd(end: string): number | undefined {
-      const longTerm =
-        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end) ??
-        valueAtEnd(getEntries("LongTermDebt", "USD"), end);
-      const current =
-        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end) ??
-        valueAtEnd(getEntries("DebtCurrent", "USD"), end) ??
-        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end);
-      if (longTerm === undefined && current === undefined) return undefined;
-      return (longTerm ?? 0) + (current ?? 0);
+      const noncurrent = valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end);
+      const ltdTotal = valueAtEnd(getEntries("LongTermDebt", "USD"), end);
+      const debtCurrentAgg = valueAtEnd(getEntries("DebtCurrent", "USD"), end);
+      const ltdCurrent = valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end);
+      const shortTerm = valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end);
+
+      // Current-debt portion: prefer the aggregate DebtCurrent; otherwise SUM the separate components
+      // (current maturities of LT debt + short-term borrowings) so neither is dropped.
+      let current: number | undefined;
+      if (debtCurrentAgg !== undefined) current = debtCurrentAgg;
+      else if (ltdCurrent !== undefined || shortTerm !== undefined) current = (ltdCurrent ?? 0) + (shortTerm ?? 0);
+
+      if (noncurrent !== undefined) return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
+      if (ltdTotal !== undefined) return ltdTotal; // LongTermDebt is the COMPLETE long-term total — don't re-add current
+      if (current !== undefined) return current; // only current-debt concepts present
+      return undefined;
     }
 
     // ── debtToEquity: DEBT-specific concepts ÷ StockholdersEquity, aligned on equity's latest period ──
@@ -2251,30 +2274,36 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     }
     if (misses.length === 0) return result;
 
-    // Build ticker→CIK map (cached weekly in the settings KV by loadCikMap).
-    let tickerToCik: Map<string, string>;
+    const deadline = now + SEC_XBRL_BUDGET_MS;
+
+    // Ticker→CIK map (weekly-cached; preserves dual-class tickers that share a CIK). Bound the load by
+    // the SAME budget so a cold/expired map fetch (its own 9s timeout + retry) can't block the cascade
+    // before the scan budget even starts. On timeout/error, skip SEC this pass and fall through to
+    // FMP/Yahoo; the load keeps running in the background to warm its cache for the next scan.
+    let tickerToCik: Record<string, string>;
     try {
-      const cikMap = await loadCikMap(now); // CIK(string) → ticker
-      tickerToCik = new Map<string, string>();
-      for (const [cik, ticker] of Object.entries(cikMap)) {
-        tickerToCik.set(ticker, cik);
-      }
+      const mapPromise = loadTickerCikMap(now);
+      mapPromise.catch(() => {});
+      const loaded = await Promise.race([
+        mapPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())))
+      ]);
+      if (!loaded) return result;
+      tickerToCik = loaded;
     } catch {
-      for (const symbol of misses) result[symbol] = {};
       return result;
     }
 
     const ua = secUserAgent();
-    const deadline = now + SEC_XBRL_BUDGET_MS;
 
     // Bound the SEC pass on the interactive market-scan critical path: the rate-limited loop keeps
-    // running in the BACKGROUND to warm the cache, but enrich() returns within SEC_XBRL_BUDGET_MS with
-    // whatever SEC data completed. Symbols not yet fetched simply fall through to FMP/Yahoo this pass
-    // and resolve from the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
+    // running in the BACKGROUND to warm the cache, but enrich() returns within the budget with whatever
+    // SEC data completed. Symbols not yet fetched fall through to FMP/Yahoo this pass and resolve from
+    // the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
     const work = runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
       try {
         if (Date.now() > deadline) return; // over budget — leave as a cache miss; the next scan retries
-        const cik = tickerToCik.get(symbol);
+        const cik = tickerToCik[symbol];
         if (!cik) return;
         const paddedCik = padCik(cik);
         const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`;

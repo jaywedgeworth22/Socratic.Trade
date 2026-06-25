@@ -3,6 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { parseCompanyFacts, secXbrlEnrichmentEnabled } from "../src/lib/data-providers";
+import { parseTickerCikMap } from "../src/lib/web-sources/sec8k";
+
+/** Build a raw companyfacts blob from explicit us-gaap concept arrays (for debt-aggregation edge cases). */
+function rawFacts(usGaap: Record<string, Array<{ end: string; val: number; form?: string; filed?: string; unit?: string }>>) {
+  const gaap: Record<string, unknown> = {};
+  for (const [concept, entries] of Object.entries(usGaap)) {
+    const unit = concept.startsWith("EarningsPerShare") ? "USD/shares" : "USD";
+    gaap[concept] = { units: { [unit]: entries } };
+  }
+  return { facts: { "us-gaap": gaap } };
+}
 
 // Isolate the DB so this test does not collide with others.
 beforeAll(() => {
@@ -148,6 +159,70 @@ describe("parseCompanyFacts — debtToEquity (debt-specific concepts)", () => {
       })
     );
     expect(r.debtToEquity).toBe(2.0);
+  });
+});
+
+describe("parseCompanyFacts — debt aggregation edge cases", () => {
+  it("treats LongTermDebt as a COMPLETE total (no double-count of current maturities)", () => {
+    // LongTermDebt total 600M already includes current maturities; LongTermDebtCurrent 100M also tagged.
+    // Must NOT add the 100M again → 600M / 300M = 2.0 (not 700/300).
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      LongTermDebt: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }],
+      LongTermDebtCurrent: [{ end: "2023-12-31", val: 100_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
+  it("sums current maturities + short-term borrowings when no aggregate DebtCurrent exists", () => {
+    // noncurrent 400M + (LongTermDebtCurrent 60M + ShortTermBorrowings 40M) = 500M / 250M = 2.0
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 250_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 400_000_000, form: "10-K" }],
+      LongTermDebtCurrent: [{ end: "2023-12-31", val: 60_000_000, form: "10-K" }],
+      ShortTermBorrowings: [{ end: "2023-12-31", val: 40_000_000, form: "10-K" }]
+    }));
+    expect(r.debtToEquity).toBe(2.0);
+  });
+
+  it("prefers the aggregate DebtCurrent over summing the separate current components", () => {
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 250_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 400_000_000, form: "10-K" }],
+      DebtCurrent: [{ end: "2023-12-31", val: 100_000_000, form: "10-K" }],
+      LongTermDebtCurrent: [{ end: "2023-12-31", val: 999_000_000, form: "10-K" }] // ignored when aggregate present
+    }));
+    expect(r.debtToEquity).toBe(2.0); // (400+100)/250
+  });
+
+  it("uses an amended 10-K/A restatement over the original 10-K for the same period", () => {
+    const r = parseCompanyFacts(rawFacts({
+      StockholdersEquity: [{ end: "2023-12-31", val: 300_000_000, form: "10-K" }],
+      LongTermDebtNoncurrent: [{ end: "2023-12-31", val: 600_000_000, form: "10-K" }],
+      EarningsPerShareDiluted: [
+        { end: "2023-12-31", val: 4.0, form: "10-K", filed: "2024-02-15" },
+        { end: "2023-12-31", val: 3.2, form: "10-K/A", filed: "2024-06-01" } // restated — later filed wins
+      ]
+    }));
+    expect(r.eps).toBe(3.2);
+    expect(r.debtToEquity).toBe(2.0);
+  });
+});
+
+describe("parseTickerCikMap (dual-class tickers)", () => {
+  it("preserves every ticker that shares a CIK", () => {
+    const map = parseTickerCikMap({
+      "0": { cik_str: 1652044, ticker: "GOOGL" },
+      "1": { cik_str: 1652044, ticker: "GOOG" },
+      "2": { cik_str: 320193, ticker: "AAPL" }
+    });
+    expect(map.GOOGL).toBe("1652044");
+    expect(map.GOOG).toBe("1652044"); // would be lost by the CIK→ticker collapse
+    expect(map.AAPL).toBe("320193");
+  });
+  it("returns {} on garbage", () => {
+    expect(parseTickerCikMap(null)).toEqual({});
+    expect(parseTickerCikMap("x")).toEqual({});
   });
 });
 
