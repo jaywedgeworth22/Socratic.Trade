@@ -47,18 +47,19 @@ export async function POST(req: Request) {
     // Robinhood MCP to already be connected (OAuth complete).
     if (broker === "robinhood") {
       const accounts = await getRobinhoodGateway(userId).getAccounts();
-      // Prefer the account with "agentic" in its label/nickname when multiple eligible
-      // accounts exist (e.g. a regular Investing account + the Agentic account). If none
-      // has that label, falls back to the first agenticAllowed account.
+      // Prefer the account labeled "agentic". With only one eligible account the choice is
+      // unambiguous. With multiple, fall back is unsafe: every non-IRA brokerage is now
+      // agenticAllowed by default (Robinhood MCP omits the flag), so picking the wrong
+      // account could attach live trading to a read-only Investing account — fail closed.
       const agenticAccounts = accounts.filter((a) => a.agenticAllowed);
-      const agentic =
-        agenticAccounts.find((a) => a.label.toLowerCase().includes("agentic")) ??
-        agenticAccounts[0];
+      const labelMatch = agenticAccounts.find((a) => a.label.toLowerCase().includes("agentic"));
+      const agentic = labelMatch ?? (agenticAccounts.length === 1 ? agenticAccounts[0] : undefined);
       if (!agentic) {
-        return new NextResponse(
-          "No agentic-enabled Robinhood account found. Connect your Robinhood agentic account first.",
-          { status: 400 }
-        );
+        const msg =
+          agenticAccounts.length > 1
+            ? 'Multiple Robinhood accounts are eligible but none is labeled "Agentic". Nickname the correct account "Agentic" in the Robinhood app and try again.'
+            : "No agentic-enabled Robinhood account found. Connect your Robinhood agentic account first.";
+        return new NextResponse(msg, { status: 400 });
       }
       // Idempotent: reuse the existing row for this account if already synced (no duplicate
       // rows on re-sync), and activate it on first connect (when nothing else is active yet).
