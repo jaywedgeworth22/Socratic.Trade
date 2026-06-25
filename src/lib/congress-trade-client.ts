@@ -322,7 +322,7 @@ export interface AppAConvictionTicker {
 
 export async function getAppAConviction(opts: { window?: string; limit?: number } = {}): Promise<AppAConvictionTicker[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ tickers?: AppAConvictionTicker[] }>(`/api/analytics/conviction${analyticsQuery(opts)}`);
+  const json = await getJson<{ tickers?: AppAConvictionTicker[] }>(`/api/analytics/conviction${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.tickers) ? json!.tickers : [];
 }
 
@@ -363,7 +363,8 @@ export async function getAppATickerBacktest(
   if (opts.filerId) p.set("filerId", opts.filerId);
   const qs = p.toString();
   const json = await getJson<AppATickerBacktest>(
-    `/api/analytics/ticker/${encodeURIComponent(sym)}/backtest${qs ? `?${qs}` : ""}`
+    `/api/analytics/ticker/${encodeURIComponent(sym)}/backtest${qs ? `?${qs}` : ""}`,
+    readToken()
   );
   return json?.horizons?.length ? json : null;
 }
@@ -391,6 +392,6 @@ export async function getAppAConflicts(
   opts: { window?: string; limit?: number; chamber?: string; party?: string } = {}
 ): Promise<AppAConflict[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ conflicts?: AppAConflict[] }>(`/api/analytics/conflicts${analyticsQuery(opts)}`);
+  const json = await getJson<{ conflicts?: AppAConflict[] }>(`/api/analytics/conflicts${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.conflicts) ? json!.conflicts : [];
 }

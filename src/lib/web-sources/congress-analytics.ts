@@ -152,7 +152,7 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     getAppAConflicts({ window, limit: CONFLICT_LIMIT })
   ]);
 
-  if (leaders.length === 0 && clusters.length === 0 && convictions.length === 0) {
+  if (leaders.length === 0 && clusters.length === 0 && convictions.length === 0 && conflicts.length === 0) {
     // App A cold / no recent data — keep any prior dataset rather than wiping to empty.
     const prior = getCongressAnalyticsDataset();
     audit("web_source_refresh", { id: "congress-analytics", ok: false, recordCount: 0, reason: "empty" });
@@ -224,6 +224,11 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     const cc = conflictsByTicker.get(sym);
     if (cc) entry.conflictCount = cc;
     overlay[sym] = entry;
+  }
+  // Tickers in conflicts but absent from leaderboard and conviction — conflict-only overlay entry.
+  for (const [sym, cc] of conflictsByTicker) {
+    if (overlay[sym]) continue;
+    overlay[sym] = { conflictCount: cc };
   }
   for (const c of clusters) {
     const sym = normalizeSymbol(typeof c.ticker === "string" ? c.ticker : "");

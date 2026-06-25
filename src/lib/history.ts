@@ -258,18 +258,28 @@ async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
     // Prefer split+dividend-adjusted closes (adjclose) for correct multi-year returns.
     // Fall back to raw close if adjclose is absent or length-mismatched.
     const adjCloseArr = result?.indicators?.adjclose?.[0]?.adjclose ?? [];
-    const closeArr = adjCloseArr.length === ts.length ? adjCloseArr : rawClose;
-    if (ts.length === 0 || closeArr.length === 0) return null;
+    const useAdjusted = adjCloseArr.length === ts.length;
+    if (ts.length === 0 || rawClose.length === 0) return null;
     const bars: OHLCBar[] = [];
     for (let i = 0; i < ts.length; i++) {
-      const c = closeArr[i];
-      if (typeof c !== "number" || !Number.isFinite(c)) continue; // skip null/holiday gaps
+      const rawC = rawClose[i] ?? null;
+      const adjC = useAdjusted ? (adjCloseArr[i] ?? null) : rawC;
+      if (typeof adjC !== "number" || !Number.isFinite(adjC)) continue; // skip null/holiday gaps
+      // Scale O/H/L by adjclose/rawclose so all four OHLC values stay on the same basis.
+      // Candle consistency: close cannot fall outside [low, high] after ex-dividend adjustments.
+      let o = numOrUndef(q?.open?.[i]);
+      let h = numOrUndef(q?.high?.[i]);
+      let l = numOrUndef(q?.low?.[i]);
+      if (useAdjusted && typeof rawC === "number" && Number.isFinite(rawC) && rawC !== 0) {
+        const factor = adjC / rawC;
+        if (o !== undefined) o = o * factor;
+        if (h !== undefined) h = h * factor;
+        if (l !== undefined) l = l * factor;
+      }
       bars.push({
         time: ts[i] * 1000, // seconds → ms epoch
-        open: numOrUndef(q?.open?.[i]),
-        high: numOrUndef(q?.high?.[i]),
-        low: numOrUndef(q?.low?.[i]),
-        close: c,
+        open: o, high: h, low: l,
+        close: adjC,
         volume: numOrUndef(q?.volume?.[i])
       });
     }
