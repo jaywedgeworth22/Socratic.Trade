@@ -2417,8 +2417,14 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     // running in the BACKGROUND to warm the cache, but enrich() returns within the budget with whatever
     // SEC data completed. Symbols not yet fetched fall through to FMP/Yahoo this pass and resolve from
     // the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
+    //
+    // The budget is enforced SOLELY by the outer Promise.race below — the per-symbol loop deliberately
+    // has NO `Date.now() > deadline` short-circuit. A deadline check here would make every symbol after
+    // the first slow miss return without fetching, so the cache would never warm past that leading miss
+    // and repeated scans would keep retrying it instead of converging. Letting the continuation run to
+    // completion (rate-limited + in-flight-deduped, so it never double-hits SEC) warms the full 24h
+    // cache; the awaited race still caps interactive latency regardless of how long the loop runs.
     const work = runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
-      if (Date.now() > deadline) return; // over budget — leave as a cache miss; the next scan retries
       const cik = tickerToCik[symbol];
       if (!cik) return;
       const cacheKey = `sec-xbrl:${symbol}`;

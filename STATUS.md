@@ -52,8 +52,11 @@ EXISTING `debtToEquity` field from authoritative SEC filings (companyfacts API).
 (debt-specific concepts ÷ equity at the LATEST balance-sheet period — annual or 10-Q — amended-10-K/A-aware,
 budget-bounded, dedup'd background warms, defensive). Gate: `SEC_XBRL_ENRICHMENT_ENABLED`. **EPS was
 dropped in Codex review round 3** — annual 10-K EPS isn't the TTM that `SymbolEnrichment.eps` documents,
-so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Four Codex review rounds
-applied. Verified by the main agent (tsc clean · 1146/1147 tests; only the cache-provenance flake · build
+so EPS is left to Yahoo/FMP and the SEC provider only publishes `debtToEquity`. Seven Codex review rounds
+applied — incl. round 6 (honest `MarketScan.source`: cascade now names only providers that actually
+contributed a field, app-wide) and round 7 (dropped the per-symbol budget guard so the background loop
+keeps warming the 24 h cache after the interactive 8 s budget elapses; the outer race alone caps latency).
+Verified by the main agent (tsc clean · 1176/1177 tests; only the cache-provenance flake · build
 green). See `docs/rollouts/2026-06-25-sec-xbrl-enrichment.md`.
 
 ## 2026-06-25 — ATR-based stops (opt-in) + stop/exit reference doc

@@ -184,6 +184,23 @@ deferred:
 
 Full trio green: tsc clean · 1176/1177 (only the cache-provenance flake) · build.
 
+## Round 7 (Codex review): keep the SEC cache warming after the budget elapses
+
+Codex flagged (P2, line 2421) that the per-symbol callback inside the background `runRateLimited`
+loop opened with `if (Date.now() > deadline) return;`. That guard contradicted the loop's own comment
+("keeps running in the BACKGROUND to warm the cache"): once the 8 s interactive budget elapsed, every
+remaining symbol returned **without fetching**, so the 24 h cache never warmed past the first slow miss.
+Repeated scans then kept re-hitting that same leading miss instead of converging.
+
+Fix: removed the per-symbol deadline short-circuit. The interactive budget is already enforced solely by
+the outer `await Promise.race([work, timeout(deadline)])`, so the background continuation now runs to
+completion — rate-limited (300 ms) and in-flight-deduped (`secXbrlInFlight`, so it never double-hits SEC)
+— warming the full cache while interactive latency stays capped. Expanded the comment to state the budget
+is enforced *only* by the outer race and the loop deliberately has no deadline check, so the guard isn't
+re-added. No test asserted the old behavior; `test/sec-xbrl.test.ts` 22/22 still pass.
+
+Full trio green: tsc clean · 1176/1177 (only the cache-provenance flake) · build.
+
 ## Follow-ups
 
 More standardized XBRL concepts (revenue, margins, cash-flow) could be threaded as NEW
