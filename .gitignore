@@ -45,3 +45,10 @@ did.bin
 
 # Agent decision-note scratch written to the repo root — not app code; keep out of git.
 /memory/
+
+# GCP service-account key for Secret Manager — a credential, never commit it.
+gcp-sa-key.json
+
+# Editor / IDE workspace + scratch files — local only.
+.kiro/
+*.code-workspace
