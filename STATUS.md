@@ -4,6 +4,9 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
+Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
+
 ## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
 Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
 (`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
@@ -146,6 +149,8 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
+- 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
   New `/admin/connections` page showing health status for all 11 API providers. Two new SQLite tables
   (`api_health_log` + `api_health_error_patterns`) with FIFO 500-row cap per credential lane, SHA-256
