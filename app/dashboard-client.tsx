@@ -4552,7 +4552,14 @@ function proposalSize(proposal: TradeProposal, estimatedNotional?: number, price
   // (fill price can differ). Shares use the app-wide formatter (up to 3 significant
   // figures, trailing zeros stripped — e.g. 0.5, 0.25, 1.5).
   const px = price && price > 0 ? price : proposal.limitPrice && proposal.limitPrice > 0 ? proposal.limitPrice : undefined;
-  const cost = proposal.dollarAmount ?? estimatedNotional ?? (proposal.quantity && px ? proposal.quantity * px : undefined);
+  // Ignore the "price unavailable" over-cap sentinel (Number.MAX_SAFE_INTEGER) and any non-finite
+  // value — it is an internal "can't size this" flag, not a real estimate, and must never render as
+  // a dollar figure (it once showed as "~$9,007,199,254,740,991.00").
+  const safeNotional =
+    typeof estimatedNotional === "number" && Number.isFinite(estimatedNotional) && estimatedNotional < Number.MAX_SAFE_INTEGER
+      ? estimatedNotional
+      : undefined;
+  const cost = proposal.dollarAmount ?? safeNotional ?? (proposal.quantity && px ? proposal.quantity * px : undefined);
   const shares = proposal.quantity ?? (cost && px ? cost / px : undefined);
   if (typeof cost === "number" && cost > 0 && typeof shares === "number" && shares > 0) {
     return `~${money(cost)} for ${formatShareQuantity(shares, proposal.symbol)} shares`;

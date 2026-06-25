@@ -38,19 +38,42 @@ export function classifyAlpacaAccountType(account: Record<string, unknown>): Acc
  * a wrong notional corrupts the value persisted to `trade_proposals` and the daily
  * cap accounting (a fabricated $100 made a $50k buy count as $10k). Prefers explicit
  * order prices, then the live quote; if none is available and there's no dollar
- * amount, reports the order as over-cap so an un-sizable OPENING order is blocked
- * (exits aren't notional-capped, so they still pass).
+ * amount, an un-sizable OPENING order is reported as over-cap so it is blocked.
+ *
+ * Side matters. The over-cap sentinel is ONLY valid for opening orders (buy/short) —
+ * for those, "no price" means "can't size it, so don't let it through". For an EXIT
+ * (sell/cover) the sentinel is actively harmful: exits are never notional-capped, and a
+ * MAX_SAFE_INTEGER value corrupts the persisted/displayed notional AND the gross/net
+ * exposure projection (a 1-share sell looked like a ~$9 quadrillion short and tripped the
+ * net-exposure cap, blocking a risk-reducing exit). So for exits we fall back to the
+ * captured entry anchor (`referencePrice`) and, failing that, report 0 — the exit still
+ * executes and exposure caps correctly exempt it.
  */
 export function estimateReviewNotional(
-  input: { dollarAmount?: number; quantity?: number; limitPrice?: number; stopPrice?: number },
+  input: { side?: OrderSide; dollarAmount?: number; quantity?: number; limitPrice?: number; stopPrice?: number; referencePrice?: number },
   quotePrice: number | undefined
 ): { estimatedNotional: number; alerts: string[] } {
   if (input.dollarAmount != null) {
     return { estimatedNotional: input.dollarAmount, alerts: [] };
   }
-  const estPrice = input.limitPrice ?? input.stopPrice ?? (quotePrice && quotePrice > 0 ? quotePrice : undefined);
+  const isExit = input.side === "sell" || input.side === "cover";
+  // Live quote / explicit order price for either side; for an exit, also fall back to the entry anchor
+  // so a missing live quote doesn't corrupt the notional (exits aren't capped, so an approximation is fine).
+  const estPrice =
+    input.limitPrice ??
+    input.stopPrice ??
+    (quotePrice && quotePrice > 0 ? quotePrice : undefined) ??
+    (isExit && input.referencePrice && input.referencePrice > 0 ? input.referencePrice : undefined);
   if (estPrice != null && estPrice > 0) {
     return { estimatedNotional: (input.quantity ?? 0) * estPrice, alerts: [] };
+  }
+  if (isExit) {
+    // Never use the over-cap sentinel for an exit — exits are exempt from notional caps, and a giant value
+    // would corrupt the displayed notional and the net/gross exposure projection. 0 is safe and won't block.
+    return {
+      estimatedNotional: 0,
+      alerts: ["Price unavailable — exit notional could not be estimated; exits are not notional-capped, so this does not block the order."],
+    };
   }
   return {
     estimatedNotional: Number.MAX_SAFE_INTEGER,
