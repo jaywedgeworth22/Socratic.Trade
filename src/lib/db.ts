@@ -617,7 +617,7 @@ function migrate(database: Database.Database): void {
       first_seen TEXT NOT NULL,
       last_seen TEXT NOT NULL,
       count INTEGER NOT NULL DEFAULT 1,
-      key_source TEXT,
+      key_source TEXT NOT NULL DEFAULT '',
       UNIQUE(service, fingerprint, key_source)
     );
     CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
@@ -702,9 +702,38 @@ function migrate(database: Database.Database): void {
       database.exec("ALTER TABLE api_health_log ADD COLUMN user_id TEXT");
     }
   }
-  const healthPatternCols = database.prepare("PRAGMA table_info(api_health_error_patterns)").all() as Array<{ name: string }>;
-  if (healthPatternCols.length > 0 && !healthPatternCols.some((c) => c.name === "key_source")) {
-    database.exec("ALTER TABLE api_health_error_patterns ADD COLUMN key_source TEXT");
+  // api_health_error_patterns: recreate with correct schema when the table predates credential
+  // scoping. Two things can be wrong on an existing DB:
+  //   (a) key_source column missing entirely, or is TEXT (nullable) instead of TEXT NOT NULL DEFAULT ''
+  //   (b) UNIQUE constraint is still (service, fingerprint) — the new ON CONFLICT target
+  //       (service, fingerprint, key_source) won't match, so every error-pattern upsert silently
+  //       no-ops and failures disappear from the panel.
+  // Fix: recreate the table with the correct schema in both cases.
+  const healthPatternCols = database.prepare("PRAGMA table_info(api_health_error_patterns)").all() as Array<{ name: string; notnull: number; dflt_value: string | null }>;
+  if (healthPatternCols.length > 0) {
+    const ksCol = healthPatternCols.find((c) => c.name === "key_source");
+    const needsRebuild = !ksCol || ksCol.notnull === 0; // missing or nullable
+    if (needsRebuild) {
+      database.exec(`
+        CREATE TABLE api_health_error_patterns_v2 (
+          id TEXT PRIMARY KEY,
+          service TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          error_text TEXT NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 1,
+          key_source TEXT NOT NULL DEFAULT '',
+          UNIQUE(service, fingerprint, key_source)
+        );
+        INSERT OR IGNORE INTO api_health_error_patterns_v2
+          SELECT id, service, fingerprint, error_text, first_seen, last_seen, count, COALESCE(key_source, '')
+          FROM api_health_error_patterns;
+        DROP TABLE api_health_error_patterns;
+        ALTER TABLE api_health_error_patterns_v2 RENAME TO api_health_error_patterns;
+        CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
+      `);
+    }
   }
 
   const now = new Date().toISOString();

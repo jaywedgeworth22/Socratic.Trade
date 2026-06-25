@@ -255,6 +255,16 @@ async function fetchWithRetry(
     for (let attempt = 0; ; attempt++) {
       const response = await fetch(url, init);
       if (response.status === 429 && attempt < retries) {
+        if (options.service) {
+          logApiHealth({
+            service: options.service,
+            ok: false,
+            latencyMs: Date.now() - start,
+            errorText: "HTTP 429 (rate limited, retrying)",
+            keySource: options.keySource,
+            userId: options.userId,
+          });
+        }
         await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
         continue;
       }

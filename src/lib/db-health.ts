@@ -74,11 +74,14 @@ export function logApiHealth(opts: {
            )`
       ).run(opts.service, keySource, opts.service, keySource);
 
-      // Update error pattern if this is a failure
+      // Update error pattern if this is a failure.
+      // Use "" (not NULL) as the key_source sentinel so UNIQUE(service,fingerprint,key_source)
+      // deduplicates correctly — SQLite NULL values never collide in UNIQUE constraints.
       if (!opts.ok && opts.errorText) {
         const normalized = opts.errorText.trim().toLowerCase().replace(/\s+/g, " ");
         const fingerprint = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
         const patternId = randomUUID();
+        const patternKeySource = keySource ?? "";
 
         db.prepare(
           `INSERT INTO api_health_error_patterns
@@ -87,7 +90,7 @@ export function logApiHealth(opts: {
            ON CONFLICT(service, fingerprint, key_source) DO UPDATE SET
              last_seen = excluded.last_seen,
              count = count + 1`
-        ).run(patternId, opts.service, fingerprint, opts.errorText, now, now, keySource);
+        ).run(patternId, opts.service, fingerprint, opts.errorText, now, now, patternKeySource);
       }
     })();
   } catch {
@@ -246,14 +249,15 @@ export function getServiceErrorPatterns(
   try {
     const db = getDb();
     if (keySource !== undefined) {
+      // Error patterns use "" sentinel (not NULL) so UNIQUE dedup works; map null → ""
       return db
         .prepare(
           `SELECT id, service, fingerprint, error_text, first_seen, last_seen, count, key_source
            FROM api_health_error_patterns
-           WHERE service = ? AND key_source IS ?
+           WHERE service = ? AND key_source = ?
            ORDER BY last_seen DESC`
         )
-        .all(service, keySource ?? null) as ErrorPatternRow[];
+        .all(service, keySource ?? "") as ErrorPatternRow[];
     }
     return db
       .prepare(
@@ -280,7 +284,7 @@ export function getAllErrorPatterns(): Record<string, ErrorPatternRow[]> {
       .all() as ErrorPatternRow[];
     const result: Record<string, ErrorPatternRow[]> = {};
     for (const row of rows) {
-      // Key by "service:keySource" so env vs user lanes don't mix
+      // key_source is "" for no-key services (sentinel), never NULL in error_patterns
       const lane = `${row.service}:${row.key_source ?? ""}`;
       if (!result[lane]) result[lane] = [];
       result[lane].push(row);

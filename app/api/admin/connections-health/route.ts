@@ -14,7 +14,9 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const service = url.searchParams.get("service");
-  const keySourceParam = url.searchParams.has("keySource") ? url.searchParams.get("keySource") : undefined;
+  // ?keySource absent → undefined (no filter), ?keySource= (empty) → null (filter to NULL lane)
+  const ks = url.searchParams.get("keySource");
+  const keySourceParam = ks === null ? undefined : (ks === "" ? null : ks);
   const limit = Number(url.searchParams.get("limit")) || 100;
   const offset = Number(url.searchParams.get("offset")) || 0;
 
