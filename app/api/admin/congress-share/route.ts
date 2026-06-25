@@ -12,6 +12,11 @@ export const dynamic = "force-dynamic";
 //   { symbols?: string[] }      — share only those tickers (targeted test; does NOT advance the daily marker)
 //   { fullHistory?: boolean }   — deep-history backfill: send each symbol's FULL series (uncapped, still
 //                                 chunked) so App A can compute performance back to old trade dates.
+//   { allIndexes?: boolean }    — expand the (non-custom) universe to all STATIC index members + monitored
+//                                 (broad cross-index backfill; still capped by maxDailyTickers).
+//   { flatFile?: boolean }      — source full history from Massive flat files (bulk per-day downloads) instead
+//                                 of per-ticker REST calls — scales to a broad universe; per-ticker fallback
+//                                 for any symbol the flat files miss. Best paired with fullHistory + allIndexes.
 // Otherwise shares the monitored universe (recent-capped).
 export async function POST(request: Request) {
   const denied = requireAdmin(request);
@@ -26,16 +31,20 @@ export async function POST(request: Request) {
 
   let symbols: string[] | undefined;
   let fullHistory = false;
+  let flatFile = false;
+  let allIndexes = false;
   try {
-    const body = (await request.json()) as { symbols?: unknown; fullHistory?: unknown };
+    const body = (await request.json()) as { symbols?: unknown; fullHistory?: unknown; flatFile?: unknown; allIndexes?: unknown };
     if (Array.isArray(body?.symbols)) {
       symbols = body.symbols.map((s) => String(s)).filter(Boolean);
     }
     fullHistory = body?.fullHistory === true;
+    flatFile = body?.flatFile === true; // source full history from Massive flat files (bulk) vs per-ticker
+    allIndexes = body?.allIndexes === true; // expand the universe to all static index members + monitored
   } catch {
     // no body → share the monitored universe
   }
 
-  const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory });
+  const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory, flatFile, allIndexes });
   return NextResponse.json({ autoEnabled: isCongressShareAutoEnabled(), ...summary });
 }

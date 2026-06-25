@@ -18,6 +18,34 @@ via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1203
 (need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
 See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
 
+## 2026-06-25 — Massive flat-file bulk backfill + broad-universe expansion (Phase 4)
+Branch `agent/claude-flatfile-backfill`. Phase 4 of the settings/universe program
+(`docs/settings-and-universe-overhaul-plan.md`). New reusable flat-file bulk source in `massive-s3.ts`
+(`businessDaysBetween`, `pivotDayAggsToSeries`, `fetchGroupedDailyBarsRange`) — one Massive flat file = a
+whole day of the market, so a broad universe backfills with ~one download/day instead of N per-ticker calls.
+Wired into `runCongressDailyShare` as opt-in `flatFile` + `allIndexes` (all static index members + monitored,
+deduped/capped), with per-ticker fallback for misses; admin route + `.env.example` updated. Default backfill
+unchanged. **Verified live** against the paid flat-file bucket (real AAPL/MSFT bars; Juneteenth skipped;
+resolveApiKey resolves the S3 creds — shared-operator-infra tier). The pasted "S3 secret" had a 1-char typo;
+correct secret = the Massive API key (now in prod `.env.local`). Verify: tsc clean · 39 flatfile/congress
+tests + live smoke · full trio via land.sh. **Remaining:** Phase 3 settings overhaul (last phase). Run a
+broad backfill via `POST /api/admin/congress-share {"fullHistory":true,"flatFile":true,"allIndexes":true}`.
+
+## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
+Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`
+(Phase 1 universe floor merged in #156). The proactive take-profit used to SELL the FULL position
+("trim" was a misnomer); now `planTakeProfitTrims` sells `takeProfitTrimPct`% (default 50) and lets the
+rest ride, gated by a **monotonic take-profit band ratchet** (new `take_profit_trims` table + CRUD) so it
+trims once per band (+20/+40/…) instead of laddering out every run. `generateProactiveRiskProposals` now
+emits only stateless full-position stop-loss/short-stop exits. The band is committed **on fill**
+(`recordFillFromProposal`), not at plan time, so a proposed/blocked/rejected trim is re-offered next run
+(an adversarial review caught the plan-time version silently dropping trims in default propose mode — fixed);
+the ratchet is **lot-keyed by cost basis** (close+rebuy resets); whole-share positions trim in whole shares
+(no forced fractional). Behavior change: existing take-profit users move from full-exit to a 50% trim via
+mergePolicy default. Verify: tsc clean · 62 take-profit/strategy tests pass · adversarial review (7 findings,
+all fixed) + full trio via land.sh. **Next:** Phase 3 settings overhaul, Phase 4 flat-file backfill
+(Massive flat files verified working). See `docs/rollouts/2026-06-25-take-profit-trim.md`.
+
 ## 2026-06-25 — Force a secrets manager (Infisical) + boot guard; stop relying on .env.local
 Branch `feat/force-secrets-manager`. Makes Infisical Cloud the prod source-of-truth model and adds an
 opt-in guard so the app won't silently run on a local `.env.local`. New `src/lib/secrets-source.ts`

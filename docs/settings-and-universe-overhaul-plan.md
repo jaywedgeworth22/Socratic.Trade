@@ -19,7 +19,7 @@ and ~17 enforced policy settings have **no UI** plus several silent priorities.
   reliable penny gate). Threaded through `scanMarket` → all 3 call sites.
 - Tests: `test/universe-floor.test.ts`.
 
-## Phase 2 — Take-profit: full exit → real partial trim (next)
+## Phase 2 — Take-profit: full exit → real partial trim ✅ (`docs/rollouts/2026-06-25-take-profit-trim.md`)
 - New `riskRules.takeProfitTrimPct` (fraction of the position to sell at the target; default keeps a sane
   trim, e.g. 50, with 100 = full exit). Fix the misleading "trim" rationale wording.
 - **Re-trigger ratchet (required):** the proactive generator runs every ~60s; a naive partial trim would
@@ -49,7 +49,7 @@ Make the editor honest: surface what's enforced, label interactions, and prevent
     opening-only. Make both visible.
 - API validation in `app/api/policy/route.ts` for every newly-editable field.
 
-## Phase 4 — Backfill expansion + Massive flat files
+## Phase 4 — Backfill expansion + Massive flat files ✅ (`docs/rollouts/2026-06-25-flatfile-backfill.md`)
 - Expand the share/backfill universe beyond static index members: all index universes + non-index names
   above the `universeFloor`, replacing per-ticker OHLC fetches (which timed out / burn the API cap) with
   **Massive flat files** (bulk daily-aggregate files on S3, or the REST grouped-daily endpoint as the
