@@ -80,6 +80,14 @@ covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS v
 Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
 
+## 2026-06-25 — Surface avgDaysHeld / shortTermPct in scorecard tooltips
+Branch `claude/scorecard-turnover-ui`. Clean/additive backlog batch — display-only, no trading-logic
+change. The thesis/regime scorecards already computed `avgDaysHeld`/`shortTermPct` and shipped them in
+the snapshot; the client dropped them when mapping into `ScorecardBars`. Now the bar tooltip appends
+"<N>d avg hold - <M>% short-term" when present (omitted otherwise). Verify: tsc clean · 1111/1112 tests
+(only the cache-provenance flake) · build green. See `docs/rollouts/2026-06-25-scorecard-turnover-ui.md`.
+
+
 ## 2026-06-25 — App B return-path receiver + numeric analyst price targets (BUILT, default-OFF)
 Built the inbound half of the App A return-path plus the price-target provider that fills the
 analyst push's previously-null target columns. Merged on top of the fundamentals/analyst push that
