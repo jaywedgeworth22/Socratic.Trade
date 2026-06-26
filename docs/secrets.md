@@ -17,11 +17,11 @@ secrets, and injects them into the process env **before** Next boots. The runner
 
 **Auth (per project):** the runner authenticates the machine identity with its **Client ID + Client
 Secret** (universal auth, long-lived) — set `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET` and it
-maps them onto the CLI's `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` / `..._CLIENT_SECRET` so the CLI mints a
-fresh access token on every launch (nothing expires between deploys). A pre-minted `INFISICAL_TOKEN`
-(a short-lived JWT) is still accepted as a fallback. **The Client Secret is not the access token** —
-pasting a 64-char Client Secret into `INFISICAL_TOKEN` is the "malformed token" 403; use the
-Client ID + Secret pair instead.
+exchanges them for a fresh access token on every launch via `infisical login --method=universal-auth
+… --plain`, then passes that token to `infisical run`/`export` (nothing expires between deploys). A
+pre-minted `INFISICAL_TOKEN` (a short-lived JWT) is still accepted as a fallback. **The Client Secret
+is not the access token** — pasting a 64-char Client Secret into `INFISICAL_TOKEN` is the "malformed
+token" 403; use the Client ID + Secret pair instead.
 
 Precedence: injected secrets are in `process.env` before Next loads `.env.local`, and Next never
 overrides an already-set var — so the manager always wins over any leftover `.env.local`.

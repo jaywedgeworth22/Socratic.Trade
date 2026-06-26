@@ -67,7 +67,6 @@ while [ $# -gt 0 ]; do
 done
 
 log()  { printf '\n[cutover] %s\n' "$*"; }
-warn() { printf '\n[cutover] WARNING: %s\n' "$*" >&2; }
 die()  { printf '\n[cutover] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # A 64-char hex string is a machine-identity Client Secret, NOT an access token.
@@ -116,39 +115,43 @@ fi
 
 export INFISICAL_DISABLE_UPDATE_CHECK=true
 
-# Run `infisical` as the APP identity (universal auth preferred, token fallback).
-infisical_app() {
-  if [ -n "$APP_CLIENT_ID" ] && [ -n "$APP_CLIENT_SECRET" ]; then
-    INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$APP_CLIENT_ID" \
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$APP_CLIENT_SECRET" \
-      INFISICAL_TOKEN='' infisical "$@"
-  else
-    INFISICAL_TOKEN="$APP_TOKEN" infisical "$@"
-  fi
-}
-# Run `infisical` as the SHARED identity (only called when SHARED_ENABLED=1).
-infisical_shared() {
-  if [ -n "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; then
-    INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$SHARED_CLIENT_ID" \
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$SHARED_CLIENT_SECRET" \
-      INFISICAL_TOKEN='' infisical "$@"
-  else
-    INFISICAL_TOKEN="$SHARED_TOKEN" infisical "$@"
-  fi
+# Exchange a machine-identity Client ID + Client Secret for a short-lived access
+# token (universal auth). `--plain --silent` prints just the raw token, which the
+# CLI's secrets/export read via INFISICAL_TOKEN.
+mint_token() {  # $1=client_id $2=client_secret $3=label → prints the access token
+  local tok
+  tok="$(infisical login --method=universal-auth --client-id="$1" --client-secret="$2" --silent --plain 2>/dev/null)" \
+    || die "universal-auth login failed for the $3 identity. Check the Client ID + Client Secret pairing/access (each secret only works with its OWN identity's Client ID; watch for rotation/lockout)."
+  [ -n "$tok" ] || die "universal-auth login for the $3 identity returned an empty token."
+  printf '%s' "$tok"
 }
 
-# Decide whether the shared overlay is requested, rejecting a Client-Secret-as-token.
+# Resolve the app access token: mint from client creds, else use a supplied token.
+if [ -n "$APP_CLIENT_ID" ] && [ -n "$APP_CLIENT_SECRET" ]; then
+  log "Authenticating app identity (universal auth)…"
+  APP_TOKEN="$(mint_token "$APP_CLIENT_ID" "$APP_CLIENT_SECRET" app)"
+fi
+infisical_app() { INFISICAL_TOKEN="$APP_TOKEN" infisical "$@"; }
+
+# Decide whether the shared overlay is requested. An explicitly-set-but-malformed
+# shared token is a HARD ERROR (fail closed) — never silently restart prod app-only
+# when the operator asked for the shared App-A/B secrets.
 SHARED_ENABLED=0
 if [ -n "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; then
   SHARED_ENABLED=1
 elif [ -n "$SHARED_TOKEN" ]; then
   if looks_like_client_secret "$SHARED_TOKEN"; then
-    warn "INFISICAL_SHARED_TOKEN looks like a Client SECRET, not an access token — skipping the shared overlay. Set INFISICAL_SHARED_CLIENT_ID + INFISICAL_SHARED_CLIENT_SECRET to enable it."
-    SHARED_TOKEN=''
-  else
-    SHARED_ENABLED=1
+    die "INFISICAL_SHARED_TOKEN looks like a 64-char Client SECRET, not an access token. Provide INFISICAL_SHARED_CLIENT_ID + INFISICAL_SHARED_CLIENT_SECRET to enable the shared overlay, or unset INFISICAL_SHARED_TOKEN to intentionally skip it."
   fi
+  SHARED_ENABLED=1
 fi
+
+# Resolve the shared access token: mint from client creds, else use the supplied token.
+if [ "$SHARED_ENABLED" -eq 1 ] && [ -n "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; then
+  log "Authenticating shared identity (universal auth)…"
+  SHARED_TOKEN="$(mint_token "$SHARED_CLIENT_ID" "$SHARED_CLIENT_SECRET" shared)"
+fi
+infisical_shared() { INFISICAL_TOKEN="$SHARED_TOKEN" infisical "$@"; }
 
 # ── Verify access before changing anything ────────────────────────────────────
 log "Verifying Infisical access (project $PROJECT_ID, env $ENV_NAME)…"

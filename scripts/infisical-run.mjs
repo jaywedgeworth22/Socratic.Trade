@@ -4,12 +4,12 @@
 // boot guard, src/lib/secrets-source.ts).
 //
 // Auth (per project): prefer a machine-identity **Client ID + Client Secret**
-// (universal auth — the long-lived credential); fall back to a pre-minted **access
-// token** (INFISICAL_TOKEN — a short-lived JWT that expires). A Client Secret is NOT
-// an access token: we map the Client ID/Secret onto the Infisical CLI's native
-// INFISICAL_UNIVERSAL_AUTH_CLIENT_ID / INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET env
-// vars, which make `infisical run` / `infisical export` authenticate non-interactively
-// (the CLI mints a fresh token itself, so nothing expires between launches).
+// (universal auth — the long-lived credential). A Client Secret is NOT an access
+// token: we exchange the Client ID + Secret for a short-lived access token via
+// `infisical login --method=universal-auth … --plain` and pass it to the CLI as
+// INFISICAL_TOKEN (the documented machine-identity flow; the CLI's run/export read
+// INFISICAL_TOKEN, so we resolve to a concrete token rather than relying on env-var
+// auto-auth). A pre-minted INFISICAL_TOKEN is accepted as a fallback.
 //
 // Two modes:
 //   • Single project (default): `infisical run --projectId $INFISICAL_PROJECT_ID …`.
@@ -70,29 +70,58 @@ function hasAuth(a) {
   return Boolean((a.clientId && a.clientSecret) || a.token);
 }
 
-// Return a NEW env object with this project's credentials applied. Client ID +
-// Client Secret (universal auth) win, and we drop any INFISICAL_TOKEN so a stale or
-// wrong-project token can't take precedence; otherwise pass the pre-minted token
-// through (clearing any universal-auth vars so the two mechanisms never mix).
-function applyAuth(baseEnv, a) {
-  const env = { ...baseEnv };
-  if (a.clientId && a.clientSecret) {
-    env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID = a.clientId;
-    env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET = a.clientSecret;
-    delete env.INFISICAL_TOKEN;
-  } else if (a.token) {
-    env.INFISICAL_TOKEN = a.token;
-    delete env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID;
-    delete env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET;
+// Exchange a machine-identity Client ID + Client Secret for a short-lived access
+// token (universal auth). `--plain --silent` prints just the raw token.
+function mintToken(clientId, clientSecret, label) {
+  const r = spawnSync(
+    "infisical",
+    ["login", "--method=universal-auth", `--client-id=${clientId}`, `--client-secret=${clientSecret}`, "--silent", "--plain"],
+    { encoding: "utf8", env: { ...process.env, INFISICAL_DISABLE_UPDATE_CHECK: "true" } }
+  );
+  if (r.error) {
+    console.error(`[infisical] failed to run 'infisical login' for the ${label} identity:`, r.error.message);
+    process.exit(1);
   }
+  if (r.status !== 0) {
+    console.error(
+      `[infisical] universal-auth login failed for the ${label} identity (exit ${r.status}). ` +
+      `Check the Client ID + Client Secret pairing/access:`, (r.stderr || "").trim()
+    );
+    process.exit(r.status || 1);
+  }
+  const token = (r.stdout || "").trim();
+  if (!token) {
+    console.error(`[infisical] universal-auth login for the ${label} identity returned an empty token.`);
+    process.exit(1);
+  }
+  return token;
+}
+
+// A usable access token for an identity: Client ID + Secret (minted) wins so a stale
+// INFISICAL_TOKEN can't take precedence; otherwise a pre-supplied token; else null
+// (let the CLI fall back to a stored `infisical login` session, e.g. local dev).
+function resolveToken(a, label) {
+  if (a.clientId && a.clientSecret) return mintToken(a.clientId, a.clientSecret, label);
+  if (a.token) return a.token;
+  return null;
+}
+
+// Build a child/CLI env that authenticates purely via the resolved token, and never
+// leaks the machine-identity Client Secret(s) into the spawned process.
+function childEnv(extra, token) {
+  const env = { ...process.env, ...extra };
+  for (const k of [
+    "INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET",
+    "INFISICAL_SHARED_CLIENT_ID", "INFISICAL_SHARED_CLIENT_SECRET", "INFISICAL_SHARED_TOKEN",
+    "INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
+  ]) delete env[k];
+  if (token) env.INFISICAL_TOKEN = token; else delete env.INFISICAL_TOKEN;
+  env.INFISICAL_DISABLE_UPDATE_CHECK = env.INFISICAL_DISABLE_UPDATE_CHECK || "true";
   return env;
 }
 
 function runChild(env) {
-  const child = spawn(command[0], command.slice(1), {
-    stdio: "inherit",
-    env: { ...env, INFISICAL_DISABLE_UPDATE_CHECK: env.INFISICAL_DISABLE_UPDATE_CHECK || "true" },
-  });
+  const child = spawn(command[0], command.slice(1), { stdio: "inherit", env });
   child.on("error", (err) => {
     console.error("[infisical] Failed to start command:", err instanceof Error ? err.message : err);
     process.exit(1);
@@ -105,19 +134,13 @@ function runChild(env) {
 
 if (!sharedProjectId) {
   // ── Single project: the proven `infisical run` path (supports --watch) ──────
+  const appToken = resolveToken(appAuth, "app");
   const infisicalArgs = ["run", "--env", envName, "--path", secretsPath];
   if (appProjectId) infisicalArgs.push("--projectId", appProjectId);
   if (process.env.INFISICAL_WATCH === "true") infisicalArgs.push("--watch");
   infisicalArgs.push("--", ...command);
-  const env = applyAuth(
-    {
-      ...process.env,
-      INFISICAL_DISABLE_UPDATE_CHECK: process.env.INFISICAL_DISABLE_UPDATE_CHECK || "true",
-      // Marks that secrets came from a manager (read by the REQUIRE_SECRETS_MANAGER boot guard).
-      SECRETS_SOURCE: "infisical",
-    },
-    appAuth
-  );
+  // Marks that secrets came from a manager (read by the REQUIRE_SECRETS_MANAGER boot guard).
+  const env = childEnv({ SECRETS_SOURCE: "infisical" }, appToken);
   const child = spawn("infisical", infisicalArgs, { stdio: "inherit", env });
   child.on("exit", (code, signal) => {
     if (signal) { process.kill(process.pid, signal); return; }
@@ -133,13 +156,16 @@ if (!sharedProjectId) {
   const sharedEnv = process.env.INFISICAL_SHARED_ENV || envName;
   const sharedPath = process.env.INFISICAL_SHARED_PATH || secretsPath;
 
-  const sharedSecrets = fetchProject(sharedProjectId, sharedAuth, sharedEnv, sharedPath, "shared");
-  const appSecrets = fetchProject(appProjectId, appAuth, envName, secretsPath, "app");
+  const appToken = resolveToken(appAuth, "app");
+  const sharedToken = resolveToken(sharedAuth, "shared");
+
+  const sharedSecrets = fetchProject(sharedProjectId, sharedToken, sharedEnv, sharedPath, "shared");
+  const appSecrets = fetchProject(appProjectId, appToken, envName, secretsPath, "app");
 
   // Precedence: process env < shared < app. The app project overrides shared on
   // any shared key, so an app-specific value always wins; shared-only keys fall
   // through. Counts only — values are never logged.
-  const merged = { ...process.env, ...sharedSecrets, ...appSecrets, SECRETS_SOURCE: "infisical" };
+  const merged = { ...childEnv({}, appToken), ...sharedSecrets, ...appSecrets, SECRETS_SOURCE: "infisical" };
   const overlap = Object.keys(appSecrets).filter((k) => k in sharedSecrets).length;
   console.log(
     `[infisical] merged ${Object.keys(sharedSecrets).length} shared (${sharedProjectId}) + ` +
@@ -148,8 +174,8 @@ if (!sharedProjectId) {
   runChild(merged);
 }
 
-function fetchProject(projectId, auth, env, path, label) {
-  if (!hasAuth(auth)) {
+function fetchProject(projectId, token, env, path, label) {
+  if (!token) {
     const p = label === "shared" ? "_SHARED" : "";
     console.error(
       `[infisical] No credentials for the ${label} project ${projectId}. ` +
@@ -157,7 +183,9 @@ function fetchProject(projectId, auth, env, path, label) {
     );
     process.exit(2);
   }
-  const spawnEnv = applyAuth({ ...process.env, INFISICAL_DISABLE_UPDATE_CHECK: "true" }, auth);
+  const spawnEnv = { ...process.env, INFISICAL_TOKEN: token, INFISICAL_DISABLE_UPDATE_CHECK: "true" };
+  delete spawnEnv.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID;
+  delete spawnEnv.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET;
   const r = spawnSync(
     "infisical",
     ["export", "--projectId", projectId, "--env", env, "--path", path, "--format", "dotenv"],

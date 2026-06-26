@@ -11,9 +11,10 @@ the docs/script labeled `INFISICAL_TOKEN` as "the client SECRET", so a 64-char m
 Client Secret** (universal auth, long-lived) the primary credential everywhere, exchanged for a fresh
 token automatically:
 - `scripts/infisical-run.mjs` — accepts `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) and
-  maps them onto the CLI's native `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`..._CLIENT_SECRET` per project
-  (app vs shared identities kept distinct; stale `INFISICAL_TOKEN` dropped when client creds present);
-  token remains a fallback.
+  **mints a short-lived token** per project via `infisical login --method=universal-auth … --plain`
+  (app vs shared identities kept distinct; Client Secret never leaked to the app process); token
+  remains a fallback. (Codex review #177 P1: switched from env-var auto-auth to explicit minting; P2:
+  the cutover now fails closed on a malformed shared token instead of silently deploying app-only.)
 - `scripts/infisical-prod-cutover.sh` — prompts for Client ID (visible) + Client Secret (hidden),
   persists the long-lived creds to `deploy.env` (not an expiring token), **detects a 64-hex
   Client-Secret-in-a-token-field and dies with a clear message**, and hardens the shared block under

@@ -28,18 +28,22 @@ tokens.
 ## What changed
 
 - **`scripts/infisical-run.mjs`** — per-project auth resolves Client ID + Client Secret first
-  (`INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET`, and `INFISICAL_SHARED_CLIENT_ID`/`…_SECRET`),
-  mapping them onto the CLI's native `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`…_CLIENT_SECRET` for both
-  the single-project `infisical run` path and each `infisical export` in the app+shared overlay. App
-  and shared identities stay distinct (shared falls back to the app identity only when it has no creds
-  of its own). When client creds are present a stale `INFISICAL_TOKEN` is dropped so it can't take
-  precedence. A pre-minted `INFISICAL_TOKEN` still works as a fallback.
+  (`INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET`, and `INFISICAL_SHARED_CLIENT_ID`/`…_SECRET`) and
+  **exchanges them for a short-lived access token** via `infisical login --method=universal-auth …
+  --plain`, then passes that token to the single-project `infisical run` path and each `infisical
+  export` in the app+shared overlay. (Initially this mapped the client creds onto the CLI's
+  `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`…_CLIENT_SECRET` env vars; Codex review #177 P1 flagged that
+  `run`/`export` aren't guaranteed to auto-auth from those — the documented machine-identity flow is
+  to mint a token — so the runner now mints explicitly.) App and shared identities stay distinct
+  (shared falls back to the app identity only when it has no creds of its own); the Client Secret is
+  never leaked into the spawned app process. A pre-minted `INFISICAL_TOKEN` still works as a fallback.
 - **`scripts/infisical-prod-cutover.sh`** — accepts the Client ID/Secret (env → prior `deploy.env` →
-  interactive prompt: Client ID visible, Client Secret hidden); **detects a 64-hex value in a
-  token field and dies with the explanation** (app + shared); persists the **long-lived** creds to
-  `deploy.env` (only falls back to writing a token, with an expiry note, if that's all it has); and
-  hardens the shared overlay so it cleanly skips when not requested (no `set -u` unbound-variable
-  crash).
+  interactive prompt: Client ID visible, Client Secret hidden); mints a token the same way for its own
+  verify/import calls while persisting the **long-lived** creds to `deploy.env`; **detects a 64-hex
+  value in a token field and dies with the explanation** (app + shared — per Codex review #177 P2, an
+  explicitly-set-but-malformed `INFISICAL_SHARED_TOKEN` now fails closed instead of silently
+  restarting prod app-only); and hardens the shared overlay so it cleanly skips when not requested (no
+  `set -u` unbound-variable crash).
 - **`.github/workflows/deploy.yml`** — the `build:secrets` gate now fires on Client ID + Client Secret
   (or a token), so a client-creds box still builds with secrets.
 - **`.env.example`, `docs/secrets.md`, `docs/deployment.md`** — corrected the token-vs-Client-Secret
