@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Fix: broker fallback + scan timeout (Robinhood 401 + "couldn't reach" errors)
+Branch `fix/broker-fallback-scan-timeout`. Two operator-reported bugs. (1) **Broker fallback:**
+`getBrokerGateway` previously fell through to Robinhood for any `activeBroker` value that wasn't
+"alpaca"/"alpaca-mcp"/"test" — including `undefined`. Users with a missing or unrecognized
+`activeBroker` silently got the Robinhood gateway, triggering "Robinhood MCP HTTP 401:
+authentication required" errors in proposals even without a Robinhood account. Fix: only return
+Robinhood gateway for `activeBroker === "robinhood"`; everything else falls back to test. (2)
+**Scan timeout:** `scanMarket` had no timeout guard — if Yahoo Finance or Massive hung (rate-limit,
+outage), the reverse proxy would abort the connection after ~30 s and the browser saw a
+network-level error ("Couldn't reach the scan service"). Fix: 25 s `Promise.race` timeout so the
+route returns a JSON 500 with a clear message rather than a silent proxy abort. Verify: tsc ✓ ·
+1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-broker-fallback-scan-timeout.md`.
+
 ## 2026-06-26 — Per-turn model logging (admin transcript + hover) + fresher chat quote
 Branch `feat/chat-model-transcript-and-fresh-quote` (throwaway worktree `~/apps/trading-ag13`).
 (1) `chat_turns` gains a `model` column (migration v5); the orchestrator records the model on each
