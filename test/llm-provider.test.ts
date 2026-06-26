@@ -95,4 +95,53 @@ describe("resolveLlmEndpoint", () => {
       delete process.env.XAI_API_URL;
     }
   });
+
+  it("routes gemini-* to Google Gemini (OpenAI-compatible chat-completions)", () => {
+    const savedUrl = process.env.GEMINI_API_URL;
+    delete process.env.GEMINI_API_URL;
+    try {
+      const endpoint = resolveLlmEndpoint({ llmModel: "gemini-2.5-flash" });
+      expect(endpoint.provider).toBe("gemini");
+      expect(endpoint.url).toContain("generativelanguage.googleapis.com");
+      expect(endpoint.transport).toBe("chat-completions");
+      expect(endpoint.model).toBe("gemini-2.5-flash");
+    } finally {
+      if (savedUrl !== undefined) process.env.GEMINI_API_URL = savedUrl;
+    }
+  });
+
+  it("routes mistral-* (and ministral/codestral) to Mistral", () => {
+    const savedUrl = process.env.MISTRAL_API_URL;
+    delete process.env.MISTRAL_API_URL;
+    try {
+      for (const model of ["mistral-large-latest", "ministral-3b-latest", "codestral-latest"]) {
+        const endpoint = resolveLlmEndpoint({ llmModel: model });
+        expect(endpoint.provider).toBe("mistral");
+        expect(endpoint.url).toContain("api.mistral.ai");
+        expect(endpoint.transport).toBe("chat-completions");
+        expect(endpoint.model).toBe(model);
+      }
+    } finally {
+      if (savedUrl !== undefined) process.env.MISTRAL_API_URL = savedUrl;
+    }
+  });
+
+  it("honors GEMINI_API_URL / MISTRAL_API_URL overrides", () => {
+    process.env.GEMINI_API_URL = "https://custom.gemini.example.com/v1/chat/completions";
+    process.env.MISTRAL_API_URL = "https://custom.mistral.example.com/v1/chat/completions";
+    try {
+      expect(resolveLlmEndpoint({ llmModel: "gemini-2.5-flash" }).url).toBe("https://custom.gemini.example.com/v1/chat/completions");
+      expect(resolveLlmEndpoint({ llmModel: "mistral-large-latest" }).url).toBe("https://custom.mistral.example.com/v1/chat/completions");
+    } finally {
+      delete process.env.GEMINI_API_URL;
+      delete process.env.MISTRAL_API_URL;
+    }
+  });
+
+  it("routes the Red Team to Gemini/Mistral via redTeamLlmModel", () => {
+    const gem = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "gemini-2.5-flash" }, "local", "https://api.openai.com/v1/responses", "red");
+    expect(gem.provider).toBe("gemini");
+    const mis = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "mistral-large-latest" }, "local", "https://api.openai.com/v1/responses", "red");
+    expect(mis.provider).toBe("mistral");
+  });
 });

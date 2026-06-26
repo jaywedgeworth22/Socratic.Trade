@@ -396,3 +396,24 @@ describe("llmForModel — multi-provider routing", () => {
     });
   });
 });
+
+// ── MockLLM labels every answer ──────────────────────────────────────────────
+
+describe("MockLLM — labels every reply as a mock response", () => {
+  it("prefixes 'Mock Response: ' on a plain chat reply (and keeps the disclaimer)", async () => {
+    const res = await new MockLLM().run({ system: "", message: "hello there", tools: [], executeTool: async () => ({ ok: true }) });
+    expect(res.text.startsWith("Mock Response: ")).toBe(true);
+    expect(res.text).toContain("not personalized financial advice"); // disclaimer still present
+  });
+
+  it("labels a tool-backed answer exactly once (no double prefix)", async () => {
+    const res = await new MockLLM().run({
+      system: "",
+      message: "what's on my watchlist?",
+      tools: [],
+      executeTool: async (name: string) => (name === "list_watchlist" ? { watchlist: [] } : { ok: true })
+    });
+    expect(res.text.startsWith("Mock Response: ")).toBe(true);
+    expect(res.text.indexOf("Mock Response: ")).toBe(res.text.lastIndexOf("Mock Response: "));
+  });
+});
