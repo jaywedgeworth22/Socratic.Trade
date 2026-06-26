@@ -14,7 +14,7 @@ beforeAll(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY"];
+const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
 
 async function callRoute(): Promise<Record<string, boolean>> {
   const { getDb } = await import("../src/lib/db");
@@ -29,13 +29,13 @@ describe("GET /api/chat/providers", () => {
   it("marks every provider available when its key resolves (operator failover on)", async () => {
     vi.stubEnv("LLM_OPERATOR_FALLBACK", "on");
     for (const k of LLM_ENV) vi.stubEnv(k, "live-key");
-    expect(await callRoute()).toMatchObject({ openai: true, anthropic: true, xai: true, gemini: true, mistral: true });
+    expect(await callRoute()).toMatchObject({ openai: true, anthropic: true, xai: true, gemini: true, mistral: true, deepseek: true });
   });
 
   it("marks providers unavailable when no key resolves (failover off, no stored keys)", async () => {
     vi.stubEnv("LLM_OPERATOR_FALLBACK", "off");
     for (const k of LLM_ENV) vi.stubEnv(k, "");
-    expect(await callRoute()).toMatchObject({ openai: false, anthropic: false, xai: false, gemini: false, mistral: false });
+    expect(await callRoute()).toMatchObject({ openai: false, anthropic: false, xai: false, gemini: false, mistral: false, deepseek: false });
   });
 
   it("reports providers independently (only the keyed one is available)", async () => {

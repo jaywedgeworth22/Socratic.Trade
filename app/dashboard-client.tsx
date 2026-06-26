@@ -3338,6 +3338,10 @@ function StrategyStudio({
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
                 </optgroup>
+                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
+                </optgroup>
               </select>
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
@@ -3362,6 +3366,10 @@ function StrategyStudio({
                   <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                </optgroup>
+                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
                 </optgroup>
               </select>
             </Field>

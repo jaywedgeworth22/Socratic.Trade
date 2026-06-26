@@ -22,8 +22,8 @@ export interface LlmUsageOpts {
   context?: string;
 }
 
-/** The five chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
-export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral";
+/** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
 
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
 function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean): void {
@@ -422,7 +422,7 @@ export class OpenAILLM implements ChatLLM {
     private usage: LlmUsageOpts = {},
     // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral all share this tool loop),
     // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
-    private provider: "openai" | "xai" | "gemini" | "mistral" = "openai"
+    private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai"
   ) {}
 
   get modelName(): string {
@@ -538,21 +538,26 @@ export function chatProviderForModel(model: string): ChatProvider {
   if (/^grok/i.test(model)) return "xai";
   if (/^gemini/i.test(model)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
+  if (/^deepseek/i.test(model)) return "deepseek";
   return "openai";
 }
 
+/** OpenAI-compatible providers (everyone except Anthropic, which has its own Messages loop). */
+type OpenAiCompatProvider = Exclude<ChatProvider, "anthropic">;
+
 /** Base chat/completions URL for an OpenAI-compatible provider (env override per provider). */
-function openAiCompatChatUrl(provider: "openai" | "xai" | "gemini" | "mistral"): string {
+function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {
   if (provider === "xai") return process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions";
   if (provider === "gemini")
     return process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
+  if (provider === "deepseek") return process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions";
   return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 }
 
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
-function makeOpenAITransport(url: string, provider: "openai" | "xai" | "gemini" | "mistral"): OpenAITransport {
+function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {
   return async (body: any, apiKey: string) => {
     const res = await llmFetch(url, {
       method: "POST",

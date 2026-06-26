@@ -17,6 +17,35 @@ load, before any order attempt. (4) **UI translation:** `humanizeBrokerError()` 
 "Robinhood MCP HTTP 401" proposal error strings to the friendlier message in the Decisions tab.
 Verify: tsc ✓ · 1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-robinhood-auth-ux.md`.
 
+## 2026-06-26 — Provider logo assets + ntfy "recommended/free" + prod restart for Twilio
+Branch `feat/provider-logos-ntfy-recommended` (throwaway worktree `~/apps/trading-ag13`). (1) Committed
+the 6 operator-supplied provider logos to `public/model-logos/{openai,anthropic,xai,gemini,mistral,
+deepseek}.svg` — completes the #181 `ModelPicker` (was falling back to initial chips; couldn't commit
+them before because the SVGs were in iCloud Drive, macOS EPERM). (2) ntfy: delivery panel
+(`delivery-channels.tsx`) now shows a "Recommended · free" badge on the Push channel (ntfy already
+worked as the default push). (3) **Ops (not code):** added Twilio to Infisical → restarted PM2 `trading`
+(prod :4000) `--update-env` so `start:secrets` loaded `TWILIO_*`; health 200, `pm2 save`d — SMS now shows
+available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · all 6 `/model-logos/*.svg` serve
+200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
+for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
+
+## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
+Branch `feat/deepseek-ntfy-price-tiers` (throwaway worktree `~/apps/trading-ag13`). (1) **DeepSeek** =
+6th provider (chat + strategy), same OpenAI-compatible wiring as gemini/mistral: db-api-keys
+(`DEEPSEEK_API_KEY` + aliases + union + migration), `resolveLlmEndpoint` deepseek branch
+(`api.deepseek.com`), `chat/llm.ts` unions + `chatProviderForModel`/`openAiCompatChatUrl`, providers
+route, keys catalog (with China-data note), llm-usage pricing, llm-errors labels, Strategy Studio
+optgroups. Chat offers `deepseek-chat` (V3, tool-capable) + `deepseek-reasoner` (R1). (2) **Custom model
+picker** (`app/ui/model-picker.tsx`) replaces the chat native `<select>`: provider **logos** (white tile;
+colored-initial fallback) + **$/$$/$$$ price tiers** + "no key" availability. Logos load from
+`public/model-logos/<provider>.svg` — **assets NOT committed** (operator's SVGs are in iCloud Drive,
+which macOS blocks the app from reading: EPERM). Operator drops 6 SVGs in (names in
+`public/model-logos/README.md`) and they appear with no code change. (3) **ntfy** already works (default
+push, no key) via #180 panel — improved the hint. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live
+`/api/chat/providers`+`/api/keys` list DeepSeek, deepseek-chat 200 graceful, dashboard 200. NOT verified:
+custom-dropdown visuals + logos (client-only + no assets). See
+`docs/rollouts/2026-06-26-deepseek-model-picker-ntfy.md`.
+
 ## 2026-06-26 — Notification delivery-channels UI (email/SMS/push) + Send-test
 Branch `feat/notify-delivery-channels-ui` (throwaway worktree `~/apps/trading-ag13`). The new
 multi-channel notify system (`notify.ts` + `notification_prefs`) had a backend + API
