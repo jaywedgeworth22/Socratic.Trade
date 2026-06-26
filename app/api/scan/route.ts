@@ -28,11 +28,19 @@ export async function GET(request: Request) {
         positions = [];
       }
     }
-    const base = await scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-      candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve,
-      universeFloor: policy.universeFloor
-    });
+    // 25 s guard — if data providers hang (Yahoo rate-limit, Massive outage, etc.) the
+    // reverse-proxy would abort at ~30 s and the browser gets a misleading network error
+    // instead of a real 500. Race so we return a JSON response either way.
+    const base = await Promise.race([
+      scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+        candidateLimit: policy.marketScanCandidateLimit,
+        outlierReserve: policy.marketScanOutlierReserve,
+        universeFloor: policy.universeFloor
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Market scan timed out — data provider is slow or rate-limited")), 25_000)
+      )
+    ]);
     // Merge live broker bid/ask quotes for the top candidates, matching the strategy
     // run path (mergeQuoteData) so the table's Bid/Ask and freshest prices are populated.
     let scan = base;
