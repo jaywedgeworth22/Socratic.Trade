@@ -43,8 +43,10 @@ infisical secrets set --env=prod --path=/ $(grep -vE '^\s*#|^\s*$' .env.local | 
 ```
 Then create a **Machine Identity** (Project → Access Control) and on the box set the bootstrap. App
 secrets live in the **`agentic-trading`** project; shared App-A/B (congress-trade) secrets live in
-**`shared-at-ct`** (`18f563a3-9c88-454c-96eb-28fc9678f3ba`) — reference them into the app project
-(Infisical cross-project references) or pull them in a second pass.
+**`shared-at-ct`** (`18f563a3-9c88-454c-96eb-28fc9678f3ba`). To pull both, give the cutover script a
+second identity via `INFISICAL_SHARED_TOKEN` (and optionally `INFISICAL_SHARED_PROJECT_ID`): the
+runner fetches both projects with `infisical export` and merges them with the **app project winning**
+any overlapping key (shared is the fallback).
 ```bash
 export INFISICAL_TOKEN='<machine-identity universal-auth token>'   # the client SECRET, never committed
 export INFISICAL_PROJECT_ID='39d93bb7-76f9-498c-8b50-a7def52e072f' # agentic-trading (agentic-trading-s-xn-n)

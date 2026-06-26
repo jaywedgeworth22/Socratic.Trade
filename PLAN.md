@@ -21,8 +21,9 @@ the Infisical runner (`npm run start:secrets`), which injects them at startup, a
 `REQUIRE_SECRETS_MANAGER=1` makes prod refuse to boot off a local `.env.local`. See
 `docs/secrets.md` and `docs/deployment.md` → "Configuration & secrets". (The former
 GCP runner was removed — Infisical is the single path.) Production cutover is scripted
-(`scripts/infisical-prod-cutover.sh`) and `deploy.yml` auto-picks-up the box bootstrap. This
-documents existing behavior; no phase scope, timeline, or approach changed.
+(`scripts/infisical-prod-cutover.sh`) and `deploy.yml` auto-picks-up the box bootstrap; shared
+App-A/B secrets are pulled via an app-wins overlay (`INFISICAL_SHARED_PROJECT_ID`). This documents
+existing behavior; no phase scope, timeline, or approach changed.
 
 | # | Phase | Spec | Status |
 |---|-------|------|--------|
