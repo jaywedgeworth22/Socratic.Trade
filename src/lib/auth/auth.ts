@@ -67,11 +67,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const res = await fetch("https://api.github.com/user/emails", {
           headers: { Authorization: `Bearer ${account.access_token}`, "User-Agent": "authjs" }
         });
-        if (res.ok) {
-          const emails: Array<{ email: string; verified: boolean }> = await res.json();
-          const match = emails.find((e) => e.email.toLowerCase() === (profile.email as string).toLowerCase());
-          if (!match?.verified) return false;
-        }
+        if (!res.ok) return false; // fail closed on API error or rate-limit
+        const emails: Array<{ email: string; verified: boolean }> = await res.json();
+        const match = emails.find((e) => e.email.toLowerCase() === (profile.email as string).toLowerCase());
+        if (!match?.verified) return false;
       }
       return true;
     },

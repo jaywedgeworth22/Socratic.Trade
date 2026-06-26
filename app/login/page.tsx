@@ -62,20 +62,29 @@ export default function LoginPage() {
               </form>
             )}
             {appleConfigured && (
-              <form
-                action={async () => {
-                  "use server";
-                  await signIn("apple", { redirectTo: "/" });
-                }}
-              >
-                <button
-                  type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-80 dark:bg-white dark:text-neutral-900"
+              <>
+                <form
+                  action={async () => {
+                    "use server";
+                    await signIn("apple", { redirectTo: "/" });
+                  }}
                 >
-                  <AppleIcon />
-                  Sign in with Apple
-                </button>
-              </form>
+                  <button
+                    type="submit"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-80 dark:bg-white dark:text-neutral-900"
+                  >
+                    <AppleIcon />
+                    Sign in with Apple
+                  </button>
+                </form>
+                {!googleConfigured && !githubConfigured && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Apple is your only sign-in method. Apple only sends your email on first
+                    authorization — if your session expires, you will need to add Google or
+                    GitHub as a fallback to sign back in.
+                  </p>
+                )}
+              </>
             )}
           </div>
         ) : (
