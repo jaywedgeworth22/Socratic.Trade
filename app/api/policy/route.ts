@@ -123,6 +123,8 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.maxShortExposurePct !== undefined && (!Number.isFinite(policy.maxShortExposurePct) || policy.maxShortExposurePct <= 0 || policy.maxShortExposurePct > 100)) return "maxShortExposurePct must be between 0 and 100.";
   if (policy.maxShortOrderNotional !== undefined && (!Number.isFinite(policy.maxShortOrderNotional) || policy.maxShortOrderNotional <= 0)) return "maxShortOrderNotional must be positive.";
   if (policy.maxOrderPctOfAdv !== undefined && (!Number.isFinite(policy.maxOrderPctOfAdv) || policy.maxOrderPctOfAdv <= 0 || policy.maxOrderPctOfAdv > 100)) return "maxOrderPctOfAdv must be between 0 and 100.";
+  if (policy.maxQuoteAgeSec !== undefined && (!Number.isFinite(policy.maxQuoteAgeSec) || policy.maxQuoteAgeSec < 0)) return "maxQuoteAgeSec must be a non-negative number of seconds (0 or blank disables).";
+  if (policy.maxFundamentalsAgeSec !== undefined && (!Number.isFinite(policy.maxFundamentalsAgeSec) || policy.maxFundamentalsAgeSec < 0)) return "maxFundamentalsAgeSec must be a non-negative number of seconds (0 or blank disables).";
   if (policy.volPanicVixThreshold !== undefined && (!Number.isFinite(policy.volPanicVixThreshold) || policy.volPanicVixThreshold < 0)) return "volPanicVixThreshold must be a non-negative number.";
   if (policy.volPanicVvixThreshold !== undefined && (!Number.isFinite(policy.volPanicVvixThreshold) || policy.volPanicVvixThreshold < 0)) return "volPanicVvixThreshold must be a non-negative number.";
   if (policy.volPanicSkewThreshold !== undefined && (!Number.isFinite(policy.volPanicSkewThreshold) || policy.volPanicSkewThreshold < 0)) return "volPanicSkewThreshold must be a non-negative number.";
