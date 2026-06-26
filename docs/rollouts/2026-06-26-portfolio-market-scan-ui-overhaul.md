@@ -32,13 +32,42 @@ subagents in isolated worktrees and merged back.
   EyeOff) centrally; dropped the redundant Settings subtitle and the Accounts "Connect and switch…"
   subtitle (so it no longer mis-describes the Edit view); System Help modal enlarged to `xl`.
 
-### Per-region UI (team subagents — see following commits)
-Congress/Insider borders + "Congress.Trade" casing + time-period subtitle; Portfolio Brokerage tag
-green + mobile positions list; Readiness drops the broker chip; header mobile layout; Market Scan
-mobile + column/settings icons; System Help rebalance (MCP vs REST, de-emphasize Fintech Studios,
-fix $Unlimited + "Settings → Operate"); Settings definitions-at-bottom + "Safety" rename + Docs→icon +
-Effort capitalization + compact-banner option; Accounts/Edit-Account copy + required fields + Hide Test
-Account; Notifications "not configured" copy.
+### Per-region UI (team of Sonnet/Haiku/Opus subagents in worktrees → patches applied + merged)
+- **Congress/Insider panels**: `formatTradeSource` maps raw source keys to display labels
+  ("congress.trade" → **Congress.Trade**, "senate-efd" → Senate eFD, …); `formatDateRange` adds the
+  time span of the on-file trades to each subtitle; both lists get a bottom buffer so the last row
+  isn't clipped.
+- **Portfolio**: the Brokerage tag is now green (was red/`down`); the mobile summary's Positions stat
+  expands into a scrollable holdings list (symbol/value/P&L).
+- **Readiness**: the broker/mode chip removed (it duplicated the Portfolio tag); chips shrink on
+  mobile to fit one line.
+- **Header**: tighter, less-tall mobile layout; account dropdown drops the "(live)" suffix.
+- **Market Scan**: column-picker icon → Columns3, settings icon → SlidersHorizontal (was a gear +
+  speedometer); the long scan-detail subtitle collapses behind a toggle on mobile.
+- **System Help**: enlarged (`xl`) + mobile-fullscreen; Tax tab label, "Data Sources" tab (was
+  "Fintech Studios") covering the full source stack with Fintech Studios as one optional premium
+  source; MCP section rewritten generally (this app as the AI-agent example, balanced MCP-vs-REST
+  trade-offs, removed the Claude-Desktop command block); `$Unlimited` ceilings fixed; no tab-name
+  references.
+- **Settings**: "Risk & Safety" → "Safety"; definitions-moved-to-bottom for Tax + Safety + the Tuning
+  "skip money-losers" detail; removed the `docs/phase-9…` reference; Effort shown Title-Cased; the
+  Connections "Docs" text link became an external-link icon; data-pool contribute toggle reflects the
+  new ON default; market-scan copy rewritten for the additive top-N + outliers + holdings model;
+  redundant Settings/Accounts subtitles dropped.
+- **Display**: the compact-banner toggle became a 3-way **Full / Compact / Hidden** control (Hidden
+  removes the account-mode banner entirely).
+- **Accounts / Edit-Account**: broker-specific Edit titles; Robinhood-MCP note shows only for
+  Robinhood; "Connect Robinhood" / "Connect Alpaca" buttons (MCP option removed); Label default
+  "Paper"; italic hints; "(hidden)" on existing API key/secret; Label + Account Number no longer
+  optional; "Use a Custom Alpaca Endpoint" full width; responsive single-column form on mobile (fixes
+  the right-edge clipping); plus a "Hide Test account" toggle that drops Test from the selector.
+- **Notifications**: "not configured" (red, no "operator key missing"); SMS label drops "(Twilio)";
+  "Toggle a channel…" is its own sentence.
+- **Decisions**: overflow guards (`min-w-0`, `break-words`, `overflow-x-hidden`) to stop the
+  intermittent right-edge cutoff on mobile.
+
+### Verified
+S&P 500 + Nasdaq 100 = **515** confirmed correct (deduped union: 502 + 101 − 88 overlap).
 
 ## Files (base)
 - src/lib/web-sources/congress.ts, src/lib/web-sources/sec.ts, src/lib/market.ts,
@@ -48,8 +77,11 @@ Account; Notifications "not configured" copy.
 
 ## Verification
 - `npx tsc --noEmit` clean (after `npm ci`).
-- `npx vitest run` congress/market/universe-floor/learned-context/sec/alpaca subsets pass.
-- Full trio (tsc/test/build) re-run after the team's region edits merge.
+- `npx vitest run` — **1271/1271 pass** (incl. updated learned-context default tests).
+- `npm run build` — **Compiled successfully** (full route build).
+- Not browser-verified (no preview in this environment); UI correctness rests on tsc + build + careful
+  review of each merged region. Recommend a quick mobile walkthrough of Settings, System Help, the
+  Edit-Account modal, the Portfolio positions expander, and the Market Scan header.
 
 ## Notes / decisions
 - S&P 500 + Nasdaq 100 = **515** is correct (502 + 101 − 88 overlap, deduped union). No change.

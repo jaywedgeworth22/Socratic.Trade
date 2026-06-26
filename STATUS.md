@@ -4,6 +4,27 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Portfolio/Market-Scan/Settings/Help mobile-UX overhaul + data/exec fixes
+Branch `claude/portfolio-market-scan-ui-27azkz`. Large operator-driven UX + correctness pass (run as a
+team: backend + shared structural edits first, then per-region UI edits fanned out to Sonnet/Haiku/Opus
+subagents in isolated worktrees, patched back, verified centrally).
+**Backend/correctness:** future-dated congressional/insider trades now rejected at ingestion
+(`congress.ts normalizeTradeDate`, `sec.ts saneFilingDate`) — fixes the impossible "12/26/2026" date;
+market-scan candidate set = full top-N + up-to-N outliers (now incl. statistically extreme move/volume
+names) + force-included portfolio holdings; shared-pool contribution (`contributeShared`) now defaults
+ON; Alpaca `getPortfolio` account-number compare is case/space-tolerant with an actionable
+"Account Mismatch: …" message (fixes spurious aborts → no autonomous trades).
+**UI (dashboard-client.tsx + overlays/delivery-channels/notify):** large modals fill mobile screen;
+Congress/Insider source casing (**Congress.Trade**) + time-period subtitle + bottom buffer; Portfolio
+Brokerage tag green + mobile positions expander; Readiness drops broker chip; tighter mobile header +
+dropdown without "(live)"; Market Scan column/settings icons + mobile detail toggle; System Help
+enlarged + rebalanced (Data Sources tab, balanced MCP-vs-REST, `$Unlimited` fixed); Settings "Safety"
+rename + definitions-at-bottom + Docs→icon + Effort Title-Case + **3-way Full/Compact/Hidden** banner;
+Accounts/Edit-Account copy/required/hidden/full-width + **Hide Test account** toggle; Notifications copy.
+Verify: tsc clean · **1271/1271** tests · `npm run build` OK. Not browser-verified (no preview here).
+Next: live mobile walkthrough; deeper trace of the autonomous account-number provenance if mismatches
+persist. See `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+
 ## 2026-06-26 — Improvement program #2: wire RAG metadata filters + minScore floor (items #1/#6 DONE)
 Branch `agent/claude-rag-wire-filters`. `buildExtraFilters` + `minScore` were built in `vector-db.ts` but
 every caller passed `undefined` (dead code). Added `defaultMinScore()` (env `VECTOR_MIN_SCORE`, default 0.30,
