@@ -29,7 +29,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 | 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | TODO | `scripts/eval/*` (dataset, scoring, run-offline, run-providers), `test/eval-offline.test.ts` |
 | 1+#6 | **Wire RAG metadata filters + minScore floor** | ready | **DONE** (PR after #186) — `defaultMinScore()` (env `VECTOR_MIN_SCORE`=0.30) wired into strategy + chat retrieval; **buildExtraFilters made CASING-TOLERANT** (stored doc_type is inconsistent: sec-filings "10-K" vs sec8k "8-k" — a single-casing filter would have silently excluded 10-K/10-Q; fixed) | `vector-db.ts`, `strategy.ts`, `chat/orchestrator.ts`, `.env.example`, `test/vector-db-retrieval.test.ts` |
 | 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
-| 3 | **Embed congressional + insider disclosures into vector store** | ready | TODO | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `sec-filings.ts`, `.env.example` |
+| 3 | **Embed congressional + insider disclosures into vector store** | ready | **DONE** — `disclosure-rag.ts` converts congress trades + insider filings → RAG docs (doc_type `congress-trade`/`insider-filing`, `acceptance_datetime`=disclosure/filing date for the as-of guard) → `storeContexts`; flag `RAG_EMBED_DISCLOSURES` (default OFF); 22 tests | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `.env.example`, `test/disclosure-rag.test.ts` |
 | 8 | **Reasoning/template-collapse diversity check on rationales** | ready | TODO (shares strategy.ts/types.ts) | new `rationale-diversity.ts`, `db-proposals.ts`, `strategy.ts`, `types.ts` |
 | 5 | **Market-data staleness gate** | ready | TODO (shares strategy.ts/types.ts) | `types.ts`, `policy.ts`, `defaults.ts`, `strategy.ts`, `market.ts`, `app/api/policy/route.ts` |
 | 2 | **Query expansion / multi-query / RRF (RAG-Fusion)** | ready (opus) | TODO — see "Opus specs" below | retrieval path in `vector-db.ts` + `strategy.ts`, `test/vector-db-fusion.test.ts` |
@@ -59,8 +59,15 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   proposal review so the strategy can't act on stale-but-cached data (today freshness is only a label).
 - **langfuse-evals (M):** Langfuse already a dep; seed dataset + offline runner replaying across the 6
   providers + deterministic & LLM-judge scoring → catches prompt/RAG/provider regressions.
-- **rag-embed-congress-insider (M, flag):** vectorize congress/insider (currently structured-only) so
-  "congressional-context retrieval" is real RAG; reuse `rag/chunk.ts` + the SEC ingestion pattern.
+- **rag-embed-congress-insider (M, flag) — DONE:** `web-sources/disclosure-rag.ts` turns structured congress
+  trades + insider filings into natural-language RAG docs and upserts via `storeContexts` (reuses the
+  embedding stack; loaded by dynamic import so the heavy Voyage/Pinecone deps only load when the flag is on).
+  `acceptance_datetime` = `disclosedAt ?? tradedAt` (congress) / `filedAt` (insider) so the point-in-time
+  as-of guard never leaks a future disclosure. doc_type lowercase canonical. Flag `RAG_EMBED_DISCLOSURES`
+  (default OFF); fire-and-forget hook in `runDueRefreshes`. Deviation: short 1-2 sentence disclosures are sent
+  directly (not through `rag/chunk.ts`) — the chunker targets long docs. **Follow-up:** embeds the whole
+  dataset each refresh (deterministic upsert id → no dupes, but redundant embed cost); a fresh-delta-only
+  pass is a cheap later optimization.
 - **rag-hybrid-bm25 (M, flag):** Pinecone sparse-dense; needs a reindex (admin route). Land after wire-filters.
 - **reasoning-diversity (M, flag):** similarity metric over proposal rationales to flag boilerplate/
   input-agnostic output across a run.

@@ -51,6 +51,7 @@ import {
   refreshCongressAnalytics
 } from "./congress-analytics";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
+import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -162,6 +163,17 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
     } catch (error) {
       results.push({ id: "technical", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
+  }
+  // RAG embed for congressional + insider disclosures (flag-gated, default OFF).
+  // Fire-and-forget: advisory RAG only — never blocks or errors the refresh loop.
+  if (disclosureRagEnabled()) {
+    const congressData = getCongressDataset();
+    const insiderData = getInsiderDataset();
+    const trades = congressData?.trades ?? [];
+    const filings = insiderData?.filings ?? [];
+    embedDisclosures(trades, filings).catch((err) =>
+      console.error("[disclosure-rag] runDueRefreshes embed error:", err)
+    );
   }
   return results;
 }
