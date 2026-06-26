@@ -130,6 +130,9 @@ export function DeliveryChannelsPanel() {
                   className="rounded border-line"
                 />
                 <span className="font-medium text-fg">{ch.label}</span>
+                {ch.id === "push" && ch.available && (
+                  <span className="rounded bg-up/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-up">Recommended · free</span>
+                )}
                 {!ch.available && <span className="text-xs text-down">— not configured (operator key missing)</span>}
               </label>
               {on && ch.available && (
