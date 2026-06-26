@@ -1212,3 +1212,22 @@ export interface LearnedContextPendingRow {
   status: LearnedContextPendingStatus;
   resolvedAt: string | null;
 }
+
+/**
+ * Advisory result from the per-run rationale-diversity check (improvement-program item #8).
+ *
+ * Populated after proposals are generated; never blocks, drops, or modifies any proposal.
+ * Persisted via `audit("rationale_diversity", ...)` and optionally attached to `StrategyResult`.
+ */
+export interface RationaleDiversity {
+  /** Number of rationale strings evaluated. */
+  count: number;
+  /** Mean pairwise character-trigram Jaccard similarity across all N*(N-1)/2 pairs, in [0, 1]. */
+  meanPairwiseSimilarity: number;
+  /** Maximum pairwise similarity observed across any single pair, in [0, 1]. */
+  maxPairwiseSimilarity: number;
+  /** True when meanPairwiseSimilarity exceeds `threshold` — indicates likely template collapse. */
+  collapsed: boolean;
+  /** Similarity threshold used to set `collapsed` (default 0.85). */
+  threshold: number;
+}

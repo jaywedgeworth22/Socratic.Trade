@@ -408,6 +408,20 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
 }
 
+/** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
+export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"] as const;
+export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
+
+/**
+ * True when AT LEAST ONE supported LLM provider resolves a usable credential for this user — their own
+ * per-user key OR the operator-funded failover (see resolveLlmCredential). This is the gate for the two
+ * LLM-driven actions (strategy session + chat): when it returns false the app must error rather than
+ * silently degrade to a rule-based stub. Mirrors the same check the `/api/chat/providers` route exposes.
+ */
+export function userHasAnyLlmCredential(userId?: string): boolean {
+  return LLM_PROVIDER_SERVICES.some((service) => Boolean(resolveLlmCredential(service, userId).key));
+}
+
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
