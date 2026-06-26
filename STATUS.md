@@ -4,6 +4,14 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Cutover script prompts for the Infisical token
+Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,
+`read -rs`) for the app + shared tokens when they're not in the env / `deploy.env` and stdin is a TTY,
+and the non-interactive error explains the inline/export requirement (a bare `VAR=value` line on its
+own is NOT inherited by the child script — the operator hit this twice). Verified: `bash -n` + fake-shim
+tests (non-TTY no-token → clear error, no hang; env-token + `--no-restart` → completes). See
+`docs/rollouts/2026-06-26-cutover-token-prompt.md`.
+
 ## 2026-06-25 — Fix: chat OpenAI reasoning models need max_completion_tokens
 Branch `fix/chat-reasoning-max-completion-tokens` (throwaway worktree `~/apps/trading-ag13`). Bug from
 #167 (chat default became `gpt-5.4-mini`): the chat `OpenAILLM.run` hard-coded `max_tokens: 1024`, but
