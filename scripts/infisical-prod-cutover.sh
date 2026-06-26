@@ -21,6 +21,11 @@
 #
 # The token is read from the INFISICAL_TOKEN env var (preferred) or an existing
 # deploy.env. It is never printed and never committed.
+#
+# Optional shared project (App-A/B / congress-trade secrets): also export
+# INFISICAL_SHARED_TOKEN (its own machine identity); INFISICAL_SHARED_PROJECT_ID
+# defaults to shared-at-ct. The app project's values WIN over shared on any
+# shared key.
 set -euo pipefail
 
 DIR="${DEPLOY_DIR:-$HOME/apps/trading-live}"
@@ -30,6 +35,8 @@ ENV_FILE="$ENV_DIR/deploy.env"
 PROJECT_ID="${INFISICAL_PROJECT_ID:-39d93bb7-76f9-498c-8b50-a7def52e072f}" # agentic-trading
 ENV_NAME="${INFISICAL_ENV:-prod}"
 SECRETS_PATH="${INFISICAL_PATH:-/}"
+SHARED_PROJECT_ID="${INFISICAL_SHARED_PROJECT_ID:-18f563a3-9c88-454c-96eb-28fc9678f3ba}" # shared-at-ct
+SHARED_TOKEN="${INFISICAL_SHARED_TOKEN:-}"   # set → enable the app+shared overlay
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:4000/api/health}"
 DO_SCRUB=0
 DO_RESTART=1
@@ -68,6 +75,13 @@ infisical secrets --projectId "$PROJECT_ID" --env "$ENV_NAME" --path "$SECRETS_P
   || die "Infisical could not read project $PROJECT_ID/$ENV_NAME with this token. Check the machine identity's project access."
 log "Infisical access OK."
 
+if [ -n "$SHARED_TOKEN" ]; then
+  log "Verifying access to shared project $SHARED_PROJECT_ID…"
+  INFISICAL_TOKEN="$SHARED_TOKEN" infisical secrets --projectId "$SHARED_PROJECT_ID" --env "$ENV_NAME" --path "$SECRETS_PATH" >/dev/null \
+    || die "Shared project $SHARED_PROJECT_ID not readable with INFISICAL_SHARED_TOKEN. Check that machine identity's access."
+  log "Shared project access OK."
+fi
+
 # ── (2) Persist the bootstrap (chmod 600; never committed) ────────────────────
 log "Writing bootstrap to $ENV_FILE"
 mkdir -p "$ENV_DIR"; chmod 700 "$ENV_DIR"
@@ -83,6 +97,17 @@ export REQUIRE_SECRETS_MANAGER=1
 EOF
 umask 022
 chmod 600 "$ENV_FILE"
+
+if [ -n "$SHARED_TOKEN" ]; then
+  umask 177
+  cat >> "$ENV_FILE" <<EOF
+export INFISICAL_SHARED_PROJECT_ID='$SHARED_PROJECT_ID'
+export INFISICAL_SHARED_TOKEN='$SHARED_TOKEN'
+EOF
+  umask 022
+  chmod 600 "$ENV_FILE"
+  log "Enabled app+shared overlay (shared project $SHARED_PROJECT_ID; app wins overlaps)."
+fi
 
 # ── (2) Import the box's current .env.local into Infisical (values stay local) ─
 ENV_LOCAL="$DIR/.env.local"
