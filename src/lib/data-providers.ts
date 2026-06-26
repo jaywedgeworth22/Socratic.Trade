@@ -529,11 +529,17 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         }
         if (Object.keys(e).length > 0) {
           result[symbol] = e;
-          // A PARTIAL hit — one endpoint had fresh data, the other none (e.g. fundamentals
-          // landed but the analyst push is minutes behind) — must not be cached as complete
-          // under the full TTL, or the late-arriving half can't surface for hours. Cache the
-          // partial briefly (negative TTL); cache a complete both-halves row at the full TTL.
-          const partial = (freshFunds.length > 0) !== (freshAnalysts.length > 0);
+          // A PARTIAL hit — one field group actually contributed values and the other did
+          // not (e.g. fundamentals landed but the analyst push is minutes behind, OR a fresh
+          // row existed but carried only invalid/empty values) — must not be cached as
+          // complete under the full TTL, or the late-arriving half can't surface for hours.
+          // Judge by CONTRIBUTED fields, not just whether a fresh row existed. Cache a partial
+          // briefly (negative TTL); cache a complete both-halves row at the full TTL.
+          const FUND_KEYS = ["peRatio", "eps", "beta", "dividendYield", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "fcfYield", "debtToEquity", "epsGrowth"] as const;
+          const ANALYST_KEYS = ["analystBySource", "analystRating", "analystScore", "targetMean", "targetHigh", "targetLow", "targetMedian"] as const;
+          const haveFund = FUND_KEYS.some((k) => e[k] !== undefined);
+          const haveAnalyst = ANALYST_KEYS.some((k) => e[k] !== undefined);
+          const partial = haveFund !== haveAnalyst;
           const expiry = now + (partial ? CONGRESS_NEG_TTL_MS : ttlMs());
           writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, expiry);
         } else if (!transportError) {

@@ -169,6 +169,13 @@ Four more valid P2s — two were real bugs introduced by the round 5–7 changes
 - **STATUS.md handoff flag** — the opening current-state line still said `CONGRESS_TRADE_READS_ENABLED`;
   updated to the separate `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`.
 
+## Codex review round 10 (PR #160, commit cd73f8a)
+- **Partial-TTL based on contributed fields** — round 9's partial check used row *existence*
+  (`freshFunds.length` vs `freshAnalysts.length`), but a fresh row can carry only invalid/empty values
+  (all-non-positive numerics, or an analyst row with no rating/counts/targets) and still be cached as
+  "complete" at the full TTL, hiding a usable row pushed minutes later. **Fixed**: compute `partial` from
+  whether each field group actually *contributed* a value to `e` (FUND_KEYS / ANALYST_KEYS), not row count.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (price/history cache-aside) **and**
   `CONGRESS_TRADE_FUNDAMENTALS_ENABLED=on` (the fundamentals/analyst tier — gated SEPARATELY since the
