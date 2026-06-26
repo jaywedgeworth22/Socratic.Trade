@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Fix: chat OpenAI reasoning models need max_completion_tokens
+Branch `fix/chat-reasoning-max-completion-tokens` (throwaway worktree `~/apps/trading-ag13`). Bug from
+#167 (chat default became `gpt-5.4-mini`): the chat `OpenAILLM.run` hard-coded `max_tokens: 1024`, but
+OpenAI reasoning models (gpt-5 / o-series) reject it → `400 Unsupported parameter: 'max_tokens' … Use
+'max_completion_tokens'`. Fix: `OpenAILLM.run` now sends `max_completion_tokens: 4096` for OpenAI
+reasoning models (`isReasoningModel` + provider==="openai") and keeps `max_tokens: 1024` for OpenAI
+classic models and the OpenAI-compatible providers (xAI/Gemini/Mistral); Anthropic unaffected. The
+strategy path was already correct (`withLlmRequestBounds`). Verify: tsc ✓ (after `rm -rf .next` to clear
+a stale `.next/dev/` validator) · 1247/1247 ✓ · build ✓. See
+`docs/rollouts/2026-06-25-chat-reasoning-max-completion-tokens.md`.
+
 ## 2026-06-25 — Chat model picker: real key-availability + clean provider labels
 Branch `feat/chat-model-availability` (throwaway worktree `~/apps/trading-ag13`), refinement of
 #167/#169. (1) Dropped "(needs X key)" / "requires X key" labels from the chat picker AND Strategy

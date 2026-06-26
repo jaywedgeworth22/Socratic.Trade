@@ -417,3 +417,31 @@ describe("MockLLM — labels every reply as a mock response", () => {
     expect(res.text.indexOf("Mock Response: ")).toBe(res.text.lastIndexOf("Mock Response: "));
   });
 });
+
+// ── Token-cap parameter: max_completion_tokens for OpenAI reasoning models ────
+
+describe("OpenAILLM — token-cap param by model/provider", () => {
+  it("sends max_completion_tokens (not max_tokens) for OpenAI reasoning models", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-5.4-mini", transport, {}, "openai").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_completion_tokens).toBeGreaterThan(0);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("sends max_tokens for OpenAI classic (non-reasoning) models", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-4o-mini", transport).run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+
+  it("keeps max_tokens for OpenAI-compatible providers (never sends the OpenAI-only param)", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gemini-2.5-flash", transport, {}, "gemini").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+});

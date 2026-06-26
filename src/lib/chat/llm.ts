@@ -9,7 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { llmFetch } from "../llm-request";
+import { llmFetch, isReasoningModel } from "../llm-request";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -449,11 +449,21 @@ export class OpenAILLM implements ChatLLM {
     const toolCalls: ToolCall[] = [];
     let text = "";
 
+    // OpenAI's reasoning models (gpt-5 / o-series) REJECT `max_tokens` ("use max_completion_tokens
+    // instead") and spend part of the budget on hidden reasoning, so they need both the renamed
+    // param and a higher cap to leave room for a visible answer. Other providers (and OpenAI's
+    // classic models) keep `max_tokens`. Gated on provider too so we never send the OpenAI-only param
+    // to an OpenAI-compatible endpoint (xAI/Gemini/Mistral).
+    const tokenCap =
+      this.provider === "openai" && isReasoningModel(this.model)
+        ? { max_completion_tokens: 4096 }
+        : { max_tokens: 1024 };
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const resp = await this.transport(
         {
           model: this.model,
-          max_tokens: 1024,
+          ...tokenCap,
           messages,
           ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
         },
