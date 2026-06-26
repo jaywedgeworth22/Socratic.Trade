@@ -15,10 +15,10 @@ describe("secretsSource", () => {
   it("maps the runner marker and defaults to 'env'", () => {
     delete process.env.SECRETS_SOURCE;
     expect(secretsSource()).toBe("env");
-    process.env.SECRETS_SOURCE = "infisical";
+    process.env.SECRETS_SOURCE = "Infisical"; // case-insensitive
     expect(secretsSource()).toBe("infisical");
-    process.env.SECRETS_SOURCE = "GCP"; // case-insensitive
-    expect(secretsSource()).toBe("gcp");
+    process.env.SECRETS_SOURCE = "gcp"; // GCP path removed → no longer a recognized manager
+    expect(secretsSource()).toBe("env");
     process.env.SECRETS_SOURCE = "bogus";
     expect(secretsSource()).toBe("env");
   });

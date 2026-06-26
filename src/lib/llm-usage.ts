@@ -47,7 +47,14 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "grok-4.3": [1.25, 2.5],
   "claude-opus-4-8": [5, 25],
   "claude-sonnet-4-6": [3, 15],
-  "claude-haiku-4-5": [1, 5]
+  "claude-haiku-4-5": [1, 5],
+  // Gemini (lite listed first so the prefix match prefers it over the base flash key).
+  "gemini-2.5-flash-lite": [0.1, 0.4],
+  "gemini-2.5-flash": [0.3, 2.5],
+  "gemini-3.5-flash": [0.3, 2.5],
+  "mistral-large": [2, 6],
+  "mistral-medium": [0.4, 2],
+  "mistral-small": [0.1, 0.3]
 };
 
 function priceForModel(model: string | undefined): [number, number] | undefined {

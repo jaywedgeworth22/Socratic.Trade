@@ -35,7 +35,90 @@ set on in Infisical. **Codex round 6:** App A positive cache honors `ttlMs()`/`N
 bounded with `from=today−maxStaleDays`; FMP target-skip only suppresses caching when targets were actually
 going to be fetched. **Codex round 7:** positive-value guard on App A price targets; short-circuit awaits
 only the congress.trade tier (paid providers no longer serialized behind unrelated free tiers); PLAN.md
-flag ref fixed. 1224 tests.
+flag ref fixed. **Codex round 8 (doc-only):** rollout enablement steps point at the new
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`. Merged `origin/main` (5f83ec2) 2026-06-25. 1224 tests.
+
+## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
+Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up
+to #167. (1) **Strategy loop** now spans all five providers: `resolveLlmEndpoint` gained Gemini +
+Mistral branches (OpenAI-compatible chat/completions, env-overridable `GEMINI_API_URL`/
+`MISTRAL_API_URL`); Strategy Studio Green + Red Team dropdowns gained Gemini + Mistral optgroups. So
+proposal gen, Red Team, tuning, revalidation, and post-mortems can all run on any provider. (2) **All
+five env keys are operator-funded backups; the user's own key wins** (unchanged `resolveLlmCredential`
+model — now documented in `.env.example` + the Green Team hint; ANTHROPIC/GEMINI/MISTRAL keys added).
+(3) **Plain-English errors:** new pure `src/lib/llm-errors.ts` `humanizeLlmError(raw,{provider,status})`
+maps 401/403/404/429/5xx/timeout/context errors to short provider-named sentences (raw text fallback);
+wired into the chat client, green proposal path + tuning (thrown), Red Team `reason`, and revalidation/
+post-mortem logs. (4) **MockLLM labels every reply** with a `"Mock Response: "` prefix (idempotent) so
+mock can't be mistaken for a real model. Verify: tsc ✓ · 1243/1243 ✓ · build ✓ · live mock-label +
+graceful keyless-gemini + dashboard-200 checks. See
+`docs/rollouts/2026-06-25-llm-providers-strategy-and-plain-english-errors.md`.
+
+## 2026-06-25 — Infisical app+shared project overlay (app wins)
+Branch `claude/infisical-shared-overlay`. The runner pulled from ONE project, so `shared-at-ct`
+(App-A/B) secrets never reached the app. `scripts/infisical-run.mjs` now, when
+`INFISICAL_SHARED_PROJECT_ID` is set, fetches BOTH projects via `infisical export` (each with its own
+identity token) and merges `{...process.env, ...shared, ...app}` — **app wins** overlaps; shared is
+the fallback; precedence is runner-controlled (not CLI-dependent). Single-project keeps the proven
+`infisical run` path. `scripts/infisical-prod-cutover.sh` writes `INFISICAL_SHARED_PROJECT_ID`/
+`INFISICAL_SHARED_TOKEN` to deploy.env + verifies shared access; `.env.example`/docs document it.
+Verified deterministically with a fake `infisical` shim (real CLI absent): app value wins the overlap,
+shared-only/app-only keys present, exit code propagates. Verify: node --check + bash -n OK · build ✓ ·
+tsc ✓ · 1228/1228 tests. See `docs/rollouts/2026-06-25-infisical-shared-project-overlay.md`.
+
+## 2026-06-25 — Assistant chat across all five LLM providers
+Branch `feat/chat-multi-provider` (throwaway worktree `~/apps/trading-ag13`). The Assistant chat now
+spans **OpenAI · Anthropic · xAI (Grok) · Google Gemini · Mistral**, with a few recommended models
+per provider (cost ↔ capability) selectable from the Assistant header (sticky via `localStorage`,
+sent as a `model` hint — no DB migration). Routing is by model name: `chatProviderForModel` →
+`llmForModel` (`src/lib/chat/llm.ts`). Grok/Gemini/Mistral reuse `OpenAILLM`'s chat/completions tool
+loop with a per-provider base URL + key; Anthropic keeps its Messages loop. Per-provider keys resolve
+via `resolveLlmCredential(...gemini|mistral...)` (per-user-first, operator failover); no
+cross-provider borrowing — a keyless provider degrades to `MockLLM`. Added Anthropic/Gemini/Mistral
+rows to the `Settings → Connections` catalog (`/api/keys`) and ledger pricing. **NB:** the lost PR
+#161 (Gemini/Mistral) was never in `main`; this adds that plumbing from scratch, chat-scoped — the
+strategy loop / Strategy-Studio dropdowns still cover only OpenAI + xAI (separate follow-up). Verify:
+tsc ✓ · 1228/1228 ✓ · build ✓ · live `/api/keys` + `/api/chat` (mock + keyless-gemini) checks.
+See `docs/rollouts/2026-06-25-chat-multi-provider-models.md`.
+
+## 2026-06-25 — Wire deploy.yml for Infisical + operator cutover script
+Branch `claude/infisical-prod-cutover`. Follow-up to #165. Adds `scripts/infisical-prod-cutover.sh`
+(idempotent, **run on the box**): writes the bootstrap to `~/.config/agentic-trading/deploy.env`,
+imports `.env.local` → Infisical, re-creates PM2 `trading` to `npm run start:secrets`, verifies
+`/api/health`, optional `--scrub` of `.env.local`. `deploy.yml` now sources that bootstrap and builds
+via `build:secrets` when Infisical is configured, else plain build — **safe** (unchanged behaviour
+pre-cutover; `pm2 restart` reuses the existing launch command). Host-side steps 2–3 need the
+machine-identity token + live secret values, so they can't run from the cloud agent — delivered as the
+one-command script. Verify: `bash -n` OK · build ✓ · tsc ✓ clean · 1222/1222. See
+`docs/rollouts/2026-06-25-infisical-prod-cutover-deploy-wiring.md`.
+
+## 2026-06-25 — Switch all secret delivery to Infisical; remove the GCP path
+Branch `claude/switch-to-infisical`. Operator decision: Infisical is the single secrets source of
+truth; `.env.local` is not a secret source. **Removed** the GCP path — `scripts/gcp-secrets-run.mjs`,
+the `*:gcp` npm scripts, the `@google-cloud/secret-manager` dep, and `gcp`/`doppler` from
+`SecretsSource` (`src/lib/secrets-source.ts` is now `"infisical" | "env"`; boot-guard error +
+`instrumentation.ts` reference only `start:secrets`). The Infisical runner already sets
+`SECRETS_SOURCE=infisical`, so the `REQUIRE_SECRETS_MANAGER=1` boot guard is behavior-unchanged. Wired
+the operator's project IDs into `.env.example`/docs: app → `agentic-trading` (`39d93bb7-…`), shared
+App-A/B → `shared-at-ct` (`18f563a3-…`); the machine-identity client secret stays out of the repo.
+Rewrote `docs/deployment.md` "Configuration & secrets", `docs/secrets.md`,
+`docs/ops-observability-security.md`, and `PLAN.md` to Infisical-only; `.gitignore` makes the
+`.env.local` ignore explicit. Verify: build ✓ · tsc ✓ clean · 1222/1222 tests. Host-side follow-up (not done here): flip
+PM2 `trading` → `start:secrets` + `REQUIRE_SECRETS_MANAGER=1`; `deploy.yml` still launches plain
+`next start`. See `docs/rollouts/2026-06-25-switch-to-infisical-remove-gcp.md`.
+
+## 2026-06-25 — Massive flat-file bulk backfill + broad-universe expansion (Phase 4)
+Branch `agent/claude-flatfile-backfill`. Phase 4 of the settings/universe program
+(`docs/settings-and-universe-overhaul-plan.md`). New reusable flat-file bulk source in `massive-s3.ts`
+(`businessDaysBetween`, `pivotDayAggsToSeries`, `fetchGroupedDailyBarsRange`) — one Massive flat file = a
+whole day of the market, so a broad universe backfills with ~one download/day instead of N per-ticker calls.
+Wired into `runCongressDailyShare` as opt-in `flatFile` + `allIndexes` (all static index members + monitored,
+deduped/capped), with per-ticker fallback for misses; admin route + `.env.example` updated. Default backfill
+unchanged. **Verified live** against the paid flat-file bucket (real AAPL/MSFT bars; Juneteenth skipped;
+resolveApiKey resolves the S3 creds — shared-operator-infra tier). The pasted "S3 secret" had a 1-char typo;
+correct secret = the Massive API key (now in prod `.env.local`). Verify: tsc clean · 39 flatfile/congress
+tests + live smoke · full trio via land.sh. **Remaining:** Phase 3 settings overhaul (last phase). Run a
+broad backfill via `POST /api/admin/congress-share {"fullHistory":true,"flatFile":true,"allIndexes":true}`.
 
 ## 2026-06-25 — Take-profit → real partial trim + band ratchet (Phase 2 of settings/universe overhaul)
 Branch `agent/claude-tp-trim`. Phase 2 of the program in `docs/settings-and-universe-overhaul-plan.md`

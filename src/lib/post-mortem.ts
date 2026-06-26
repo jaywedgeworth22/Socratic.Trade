@@ -7,6 +7,7 @@ import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learnin
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
@@ -136,7 +137,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         });
 
         if (!response.ok) {
-          console.warn("Post-mortem LLM call failed", await response.text());
+          console.warn("Post-mortem LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
           return { text: undefined };
         }
 

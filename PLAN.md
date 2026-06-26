@@ -14,14 +14,15 @@ integration checkout uses the single pre-production beta hostname
 port `4001`. Do not add a second dev/beta hostname in code, docs, Tunnel
 ingress, DNS, or Access configuration.
 
-Secrets/config topology (2026-06-25): `.env.local` is git-ignored and
-per-worktree (never committed; only `.env.example` is tracked), and **GCP Secret
-Manager is the authoritative upstream for secret values** — each `.env.local` is
-a local cache. See `docs/deployment.md` → "Configuration & secrets
-(`.env.local`) — what's authoritative". The `*:gcp` wrapper
-(`gcp-secrets-run.mjs`) was also hardened: its no-`GCP_PROJECT_ID` fallback waits
-for the child process (it previously returned before `next build` finished), and
-it now fails open on any credential error instead of crashing. This documents
+Secrets/config topology (2026-06-25): `.env.local` is git-ignored and is **not** a
+secret source (only the secret-free `.env.example` is tracked), and **Infisical is
+the authoritative source of truth for secret values** — the app launches through
+the Infisical runner (`npm run start:secrets`), which injects them at startup, and
+`REQUIRE_SECRETS_MANAGER=1` makes prod refuse to boot off a local `.env.local`. See
+`docs/secrets.md` and `docs/deployment.md` → "Configuration & secrets". (The former
+GCP runner was removed — Infisical is the single path.) Production cutover is scripted
+(`scripts/infisical-prod-cutover.sh`) and `deploy.yml` auto-picks-up the box bootstrap; shared
+App-A/B secrets are pulled via an app-wins overlay (`INFISICAL_SHARED_PROJECT_ID`). This documents
 existing behavior; no phase scope, timeline, or approach changed.
 
 | # | Phase | Spec | Status |
