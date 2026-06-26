@@ -21,6 +21,55 @@ char-swap lines, zero logic change, `bash -n` ✓, 0 non-ASCII bytes left; verif
 *this* crash. Operator: `git pull` (or let the next deploy `git reset --hard`) then re-run with the app
 + shared Client ID/Secret pairs; still rotate the two compromised Client Secrets; don't `--scrub` until
 the app boots healthy. See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
+## 2026-06-26 — Improvement program #4: embed congress/insider disclosures into RAG (item #3 DONE)
+Branch `agent/claude-rag-embed-disclosures`. New `src/lib/web-sources/disclosure-rag.ts` converts structured
+congress trades + insider filings into natural-language RAG docs and upserts them via the existing
+`storeContexts` path (vector-db loaded by dynamic import so Voyage/Pinecone only load when enabled). Sets
+`acceptance_datetime` = `disclosedAt ?? tradedAt` (congress) / `filedAt` (insider) so the point-in-time as-of
+guard never leaks a future disclosure; doc_type `congress-trade`/`insider-filing` (lowercase). Flag
+`RAG_EMBED_DISCLOSURES` (default OFF); fire-and-forget hook in `runDueRefreshes`. Built by a model-tiered
+subagent team (sonnet recon→design→impl→review); 22 hermetic tests (vector-db upsert mocked); tsc clean.
+Follow-up: re-embeds the whole dataset each refresh (deterministic upsert id → no dupes, redundant embed
+cost) — a fresh-delta pass is a cheap later optimization. Verify: 22 tests pass · full trio via land.sh.
+
+## 2026-06-26 — Improvement program #3: four-side P&L + notional reset tests (item #2 DONE)
+Branch `agent/claude-risk-pnl-tests`. Completed item #2. Added 8 tests (test-only, no production change):
+`calculatePnl` realized-P&L now covers short round-trip (returnPct + side), partial cover with residual
+mark-to-market, partial-then-full sell, the all-four-side same-symbol interleave (the critical FIFO/sign
+case — sell consumes only longs, cover only shorts, no $0 cross-consumption), both flat-close mirrors
+(cover-no-short, sell-no-long), and a mixed residual long+short aggregation; plus a daily-notional
+cross-boundary case (orders age out of the day + rolling windows when queried with a far-future `now`).
+Authored + adversarially verified by a model-tiered subagent team (one author, two independent verifiers
+re-deriving every value from first principles, one with a no-import Node script) — **no production bug
+found**; the short/cover/notional money-path math is correct. **Stale-plan correction:** daily-notional
+*accounting/reset* was already covered by `daily-notional-reset.test.ts` (T6/T13) — only the cross-boundary
+case was genuinely missing. Verify: 45 tests in the two files pass · full trio via land.sh. Next: remaining
+program items driven by a model-tiered subagent team (langfuse-evals, RAG hybrid/embed, diversity/staleness,
+opus DO-items).
+
+## 2026-06-26 — Improvement program #2: wire RAG metadata filters + minScore floor (items #1/#6 DONE)
+Branch `agent/claude-rag-wire-filters`. `buildExtraFilters` + `minScore` were built in `vector-db.ts` but
+every caller passed `undefined` (dead code). Added `defaultMinScore()` (env `VECTOR_MIN_SCORE`, default 0.30,
+clamped [0,1]); wired `{docType, minScore}` into the strategy per-symbol RAG call and forwarded the chat
+intent's `doc_type` + minScore in `chat/orchestrator.ts` (it extracted doc_type then dropped it). **Caught a
+landmine in the spec:** stored `doc_type` casing is inconsistent (sec-filings "10-K" vs sec8k "8-k") and
+Pinecone `$in` is exact-match, so the spec's lowercase filter would have silently excluded all 10-K/10-Q —
+made `buildExtraFilters` casing-tolerant instead. Advisory path only; no flag. Also recovered the 4 opus
+specs (multi-query/RRF, coarse-credit, scheduler-lease, Self-RAG=SKIP) → appended to the program doc, so the
+handoff plan is now complete. Verify: tsc clean · 21 tests (vector-db-retrieval + chat-orchestrator) pass ·
+full trio via land.sh. Next: langfuse-evals, then rag-hybrid-bm25 / rag-embed-congress-insider (Batch 3).
+
+## 2026-06-26 — Improvement program kickoff: risk-breaker tests + tracking doc (item #2 partial)
+Branch `agent/claude-risk-tests`. First PR of a 14-item improvement program (RAG / learning-loop / risk /
+observability) — see `docs/improvement-program-2026-06-26.md` for the full plan, per-item specs, sequenced
+batches, and status (the handoff source of truth; autonomy now treated as potentially live → risk items
+production-grade). This PR adds the missing `test/risk-breaker.test.ts` (13 tests: pure
+`evaluateDrawdownBreaker` thresholds + drawdown-priority; `accountEquity`; stateful
+`recordAndEvaluateDrawdownBreaker` — HWM ratchets up never down, start-of-day persists intraday + resets
+next day, per-(account,source) scoping, no-op without configured limits). Remaining for item #2: short/cover
+P&L + daily-notional tests. Next: langfuse-evals, rag-wire-filters, then RAG-retrieval/learning/staleness
+clusters; 4 opus specs (multi-query/RRF, coarse-credit, scheduler, Self-RAG decision) being re-designed.
+Verify: 13 tests pass · full trio via land.sh.
 
 ## 2026-06-26 — Infisical universal auth: Client ID + Client Secret (no more token confusion)
 Branch `claude/practical-mendel-cqtduf`. Root-caused the operator's "malformed token" 403 + 401s:

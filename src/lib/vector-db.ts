@@ -62,6 +62,12 @@ function numericEnv(name: string, fallback: number, min = 0, max = Number.POSITI
   return Math.min(max, Math.max(min, parsed));
 }
 
+/** Cosine-similarity floor applied at every retrieval call site unless the caller overrides it.
+ *  Set VECTOR_MIN_SCORE=0 to disable the floor (restores the previous no-floor behavior). Default 0.30. */
+export function defaultMinScore(): number {
+  return numericEnv("VECTOR_MIN_SCORE", 0.3, 0, 1);
+}
+
 function embedBatchSize(): number {
   return Math.floor(numericEnv("VECTOR_EMBED_BATCH_SIZE", DEFAULT_EMBED_BATCH_SIZE, 1, 128));
 }
@@ -533,7 +539,13 @@ export interface RetrieveOptions {
 /** Build the optional metadata-filter clauses (doc_type/section/source) shared by both tiers. */
 export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
-  if (options?.docType && options.docType.length > 0) extra.doc_type = { $in: options.docType };
+  if (options?.docType && options.docType.length > 0) {
+    // doc_type casing is INCONSISTENT across ingesters — sec-filings.ts writes "10-K"/"10-Q" (upper) while
+    // sec8k.ts writes "8-k" (lower) — and Pinecone `$in` is exact-match. Match every casing variant so a
+    // filter never silently excludes a legitimately-stored doc type (which would be worse than no filter).
+    const variants = Array.from(new Set(options.docType.flatMap((d) => [d, d.toLowerCase(), d.toUpperCase()])));
+    extra.doc_type = { $in: variants };
+  }
   if (options?.section) extra.section = { $eq: options.section };
   if (options?.source) extra.source = { $eq: options.source };
   return extra;

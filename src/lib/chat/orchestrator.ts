@@ -11,7 +11,8 @@ import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
-import { retrieveContextDetailed } from "../vector-db";
+import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
+import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
@@ -168,7 +169,14 @@ export function buildProductionDeps(): ToolDeps {
     async searchKnowledge(args, userId) {
       const symbol = args.ticker ? canonicalTicker(args.ticker) : "";
       if (!symbol) return [];
-      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, args.as_of ? { asOf: args.as_of } : undefined);
+      // Forward ALL retrieval options: as-of (point-in-time), the doc_type the intent classifier extracted
+      // (previously dropped here), and the relevance floor. docType matching is casing-tolerant downstream.
+      const options: RetrieveOptions = {
+        ...(args.as_of ? { asOf: args.as_of } : {}),
+        ...(args.doc_type ? { docType: [args.doc_type] } : {}),
+        minScore: defaultMinScore()
+      };
+      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, options);
       // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).
       return chunks.map((c) => ({ chunk_id: c.id, text: c.text, source: c.source ?? "kb", as_of: c.as_of, score: c.score, url: c.url }));
     },
