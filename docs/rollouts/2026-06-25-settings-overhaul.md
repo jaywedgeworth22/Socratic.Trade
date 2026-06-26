@@ -55,6 +55,17 @@ overhaul so the settings are honest about what's enforced and what's mutually ex
   working control primitives. A live walkthrough on the user's running instance (Settings → Risk & Safety)
   is the recommended final check.
 
+## Adversarial review fixes (before merge)
+A review pass found 2 real bugs, both fixed:
+- **HIGH — "Blank = off" silently failed.** `updatePolicy` sent `JSON.stringify(...)`, which drops `undefined`
+  keys, so clearing a set field never reached the server and the `...current` merge restored the old value
+  (a pre-existing pattern this change made pervasive + documented). Fix: the client now serializes a cleared
+  field as `null` (survives JSON), and the route `stripNullsDeep`s the merged policy so a `null` becomes an
+  absent key (guard off / reverts to default). Regression test: `test/policy-clear-nulls.test.ts`.
+- **MEDIUM — nested `<label>`.** The permitted-order-types checkbox group was wrapped in `Field` (a `<label>`),
+  so a click on the heading/padding toggled the first checkbox. Fix: use a plain container with label/hint
+  spans instead of `Field`.
+
 ## Follow-ups
 - Completes the 4-phase settings/universe program.
 - Optional future polish: make the `$⇄%` control hold BOTH values (engine already honors `min($,%)`),

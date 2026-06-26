@@ -87,6 +87,10 @@ export async function PUT(request: Request) {
   if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
     delete policy.redTeamLlmModel;
   }
+  // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
+  // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
+  // a field actually turns the guard off / reverts it to its default.
+  stripNullsDeep(policy as unknown as Record<string, unknown>);
   const validationError = await validatePolicy(policy, userId);
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
@@ -197,6 +201,19 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
     } catch {
       return "Could not verify the selected account right now. Please try again in a moment.";
     }
+  }
+}
+
+/**
+ * Recursively delete keys whose value is `null` from a policy object (in place), so a client clearing an
+ * optional field (sent as `null` to survive JSON) becomes an ABSENT key — i.e. the guard is off / default.
+ * Skips arrays (e.g. permittedOrderTypes, enabledEvents never carry intentional nulls).
+ */
+export function stripNullsDeep(obj: Record<string, unknown>): void {
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    if (value === null) delete obj[key];
+    else if (typeof value === "object" && !Array.isArray(value)) stripNullsDeep(value as Record<string, unknown>);
   }
 }
 

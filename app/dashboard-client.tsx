@@ -732,7 +732,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       const response = await fetch("/api/policy", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...snapshot.policy, ...patch })
+        // Serialize `undefined` as `null` so CLEARING an optional field reaches the server (JSON.stringify
+        // would otherwise drop the key, and the server's `...current` merge would restore the old value —
+        // making "blank = off" silently fail). The route strips these nulls back to absent (clears the field).
+        body: JSON.stringify({ ...snapshot.policy, ...patch }, (_key, value) => (value === undefined ? null : value))
       });
       if (!response.ok) {
         throw await responseError(response, "Policy update failed");
@@ -3837,7 +3840,10 @@ function SettingsContent({
                 <div className="text-sm font-semibold text-fg">Order execution</div>
                 <p className="mt-0.5 text-xs text-faint">What order types are allowed and how entries are routed.</p>
               </div>
-              <Field label="Permitted order types" hint="A proposal whose type is not permitted is blocked. Most accounts only need market + limit.">
+              {/* Not a <Field> — Field is a <label>, and nesting the per-type checkbox <label>s inside it would make
+                  a stray click on the heading/padding toggle the first checkbox. Use a plain container. */}
+              <div className="block space-y-1.5">
+                <span className="block text-xs font-medium text-muted">Permitted order types</span>
                 <div className="flex flex-wrap gap-3">
                   {(["market", "limit", "stop_market", "stop_limit"] as const).map((t) => {
                     const types = policy.permittedOrderTypes ?? ["market", "limit"];
@@ -3857,7 +3863,8 @@ function SettingsContent({
                     );
                   })}
                 </div>
-              </Field>
+                <span className="block text-xs text-faint">A proposal whose type is not permitted is blocked. Most accounts only need market + limit.</span>
+              </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <OptionalNumberField label="Max order % of ADV" value={policy.maxOrderPctOfAdv} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ maxOrderPctOfAdv: v })} />
               </div>
