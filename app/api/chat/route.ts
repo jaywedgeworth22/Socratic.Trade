@@ -1,8 +1,16 @@
 import { resolveRequestUserId } from "@/lib/request-user";
 import { buildProductionDeps, makeOrchestrator } from "@/lib/chat/orchestrator";
 import { AnthropicLLM, getLLM, llmForModel, MockLLM, OpenAILLM, type LlmUsageOpts } from "@/lib/chat/llm";
-import { resolveLlmCredential } from "@/lib/db";
+import { resolveLlmCredential, userHasAnyLlmCredential } from "@/lib/db";
+import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { NextResponse } from "next/server";
+
+/** The explicit offline path: the deterministic MockLLM, intentionally keyless. Anything else is a real
+ *  provider and must resolve a credential. An empty/absent hint is NOT mock — it falls to a real env
+ *  default, so it stays gated. */
+function isOfflineMockRequest(modelHint: string | undefined, providerHint: string | undefined): boolean {
+  return modelHint?.toLowerCase() === "mock" || providerHint === "mock";
+}
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +46,14 @@ export async function POST(request: Request) {
 
   const modelHint = typeof body.model === "string" && body.model.trim() ? body.model.trim() : undefined;
   const providerHint = typeof body.provider === "string" ? body.provider : undefined;
+
+  // Chat is LLM-driven: gate it on a resolvable LLM credential (the user's own key OR the operator
+  // failover). The explicit offline Mock model is the only keyless path; a real-provider model (or no
+  // hint, which falls to a real env default) requires a key. Without one we 412 instead of silently
+  // degrading to MockLLM so the user gets a clear "connect a provider" message rather than canned text.
+  if (!isOfflineMockRequest(modelHint, providerHint) && !userHasAnyLlmCredential(userId)) {
+    return NextResponse.json({ error: "llm_credential_required", message: LLM_REQUIRED_CHAT_MESSAGE }, { status: 412 });
+  }
 
   try {
     // Always per-user. Precedence: an explicit model (routed to its provider across all five

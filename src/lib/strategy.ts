@@ -32,6 +32,7 @@ import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llm
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
+import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -1558,7 +1559,11 @@ async function proposeTrades(input: {
   learnedContext?: string;
 }): Promise<TradeProposal[]> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
-  if (!openaiKey) return fallbackProposal(input);
+  // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
+  // We deliberately do NOT fabricate a rule-based stub here: a strategy session is an LLM-driven action,
+  // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
+  // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
+  if (!openaiKey) throw new LlmCredentialRequiredError(LLM_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -2243,38 +2248,6 @@ function compactPromptObject(values: Record<string, unknown>): Record<string, un
     compacted[key] = value;
   }
   return compacted;
-}
-
-function fallbackProposal(input: {
-  policyAllowlist: string[];
-  portfolio: Portfolio;
-  positions: EquityPosition[];
-}): TradeProposal[] {
-  const allowed = new Set(input.policyAllowlist.map(normalizeSymbol));
-  const candidates = input.positions
-    .filter((position) => allowed.has(normalizeSymbol(position.symbol)))
-    .map((position) => ({
-      symbol: normalizeSymbol(position.symbol),
-      exposurePct: input.portfolio.totalMarketValue > 0 ? (position.marketValue / input.portfolio.totalMarketValue) * 100 : 0
-    }))
-    .sort((a, b) => a.exposurePct - b.exposurePct);
-
-  const symbol = candidates[0]?.symbol ?? input.policyAllowlist.map(normalizeSymbol)[0];
-  if (!symbol) return [];
-  return [
-    {
-      symbol,
-      side: "buy",
-      type: "market",
-      dollarAmount: 10,
-      timeInForce: "gfd",
-      marketHours: "regular_hours",
-      rationale:
-        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple rule-based rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
-      tradeThesisTag: "Development Fallback",
-      entryMarketRegime: "Rule-based"
-    }
-  ];
 }
 
 // The LLM is told confidenceScore is 1–100, but json_schema strict mode does not

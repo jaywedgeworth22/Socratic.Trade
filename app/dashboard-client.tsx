@@ -969,6 +969,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
       : undefined;
+  // A strategy session is LLM-driven. When NO LLM provider has a resolvable credential for this user
+  // (own key OR operator failover; see userHasAnyLlmCredential), "Run once" is gated with an actionable
+  // message — matching the /api/strategy/run 412 — rather than firing a run that only errors deep inside.
+  // The flag is optional on older payloads; treat a missing value as configured so we never false-block.
+  const llmGateReason = snapshot.llmConfigured === false ? "Connect an LLM provider in Settings to run a strategy session." : undefined;
   const allowedUniverse = policyUniverseSymbolCount(policy);
   const allowedCount = allowedUniverse.count;
   
