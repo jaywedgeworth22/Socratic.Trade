@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Stop-execution capability correction (copy) + verified broker matrix
+Branch `agent/claude-stop-execution`. Retracts a wrong Phase-3 claim ("no broker holds trailing stops").
+Diverse adversarial verification (84 agents, primary docs, 2 skeptics/claim — workflow `wf_e5bf1b0a-04d`):
+native trailing is the COMMON case (Alpaca/Robinhood/Schwab/Fidelity/IBKR/E*TRADE/Webull/Public), but for
+THIS app's two live integrations — Alpaca REST supports native trailing yet the app never emits it (OrderType
+lacks `trailing_stop`); Robinhood's Trading MCP exposes only market/limit/stop_market/stop_limit (NO trail,
+NO bracket). Fixed stops are static prices → should rest at the broker (Alpaca brackets already do; RH MCP
+`stop_market` can, gated off pending live verify). THIS PR = UI copy fix only. Follow-up (money-path, own
+PRs): (1) native Alpaca trailing, (2) broker-held fixed stop by default where the integration rests one,
+(3) app-managed fast loop (60s, broker+Massive prices) as FALLBACK for Test sim / RH trailing — avoid
+double-exit with broker-held stops. tsc clean · build via land.sh. See
+`docs/rollouts/2026-06-26-stop-execution-capability-correction.md`.
+
 ## 2026-06-26 — Root fix: dashboard accounts fall back to stored connected accounts
 Branch `fix/dashboard-accounts-fallback` (throwaway worktree `~/apps/trading-ag13`). Follow-up to #183.
 `snapshot.accounts` is built from a live `gateway.getAccounts()` that degrades to `[]` on a transient
