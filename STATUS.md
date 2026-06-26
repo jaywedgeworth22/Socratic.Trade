@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Notification delivery-channels UI (email/SMS/push) + Send-test
+Branch `feat/notify-delivery-channels-ui` (throwaway worktree `~/apps/trading-ag13`). The new
+multi-channel notify system (`notify.ts` + `notification_prefs`) had a backend + API
+(`GET/POST /api/notifications`, `POST /api/notifications/test`) but **no UI** — Settings only edited the
+legacy `policy.notificationSettings` webhook, so alerts sent nothing via email/SMS even with Resend
+configured (channels list was always empty). Added `app/ui/delivery-channels.tsx`
+(`DeliveryChannelsPanel`) under Settings → Notifications → "Direct delivery": per-channel toggle
+(disabled + "not configured" until the operator sets the provider key) + target input + **Save** +
+**Send test** (shows per-channel sent/skipped/failed). No backend change. **Operator setup (secrets stay
+out of chat/repo):** Email/Resend already set → works now; SMS needs `TWILIO_ACCOUNT_SID` /
+`TWILIO_AUTH_TOKEN` / `TWILIO_FROM` in Infisical + restart, then enable SMS + enter mobile in the UI.
+Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live `/api/notifications` GET/POST + `/test` + dashboard 200
+(email "not_configured" locally — no key here; available on the box). See
+`docs/rollouts/2026-06-26-notify-delivery-channels-ui.md`.
+
 ## 2026-06-26 — Fix: broker fallback + scan timeout (Robinhood 401 + "couldn't reach" errors)
 Branch `fix/broker-fallback-scan-timeout`. Two operator-reported bugs. (1) **Broker fallback:**
 `getBrokerGateway` previously fell through to Robinhood for any `activeBroker` value that wasn't

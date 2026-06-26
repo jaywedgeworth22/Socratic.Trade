@@ -98,6 +98,7 @@ import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
+import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
@@ -4279,6 +4280,14 @@ function SettingsContent({
                 );
               })}
             </div>
+          </div>
+          <div className="border-t border-line pt-3">
+            <span className="mb-1.5 block text-xs font-medium text-muted">Direct delivery (email · SMS · push)</span>
+            <p className="mb-2 text-[11px] text-faint">
+              Send price-alert and event notifications straight to you. Email/SMS require the operator to have configured the
+              provider keys (Resend / Twilio); toggle a channel, enter your target, then Send test to verify delivery.
+            </p>
+            <DeliveryChannelsPanel />
           </div>
         </div>
       )}
