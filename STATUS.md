@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Root fix: dashboard accounts fall back to stored connected accounts
+Branch `fix/dashboard-accounts-fallback` (throwaway worktree `~/apps/trading-ag13`). Follow-up to #183.
+`snapshot.accounts` is built from a live `gateway.getAccounts()` that degrades to `[]` on a transient
+broker/MCP enumeration miss, making the configured account vanish (the cause behind the #183 badge
+warning). Now `dashboard.ts` backfills any stored connected account (`listConnectedAccounts`) the live
+list didn't return, deriving `agenticAllowed` via new exported helper `connectedAccountAgenticFallback`
+(Robinhood → only `brokerage` defaults allowed, IRA/Roth not; Alpaca/Alpaca-MCP/Test → all allowed).
+Live entries win; only missing account numbers are added. Net: the active account always resolves to a
+definitive readiness status; execution gates stay strict/fail-closed. Verify: tsc ✓ · 1256/1256 ✓
+(new `test/dashboard-agentic-fallback.test.ts`) · build ✓. See
+`docs/rollouts/2026-06-26-dashboard-accounts-fallback.md`.
+
 ## 2026-06-26 — Fix: Brokerage readiness badge showed the opposite (false "not available")
 Branch `fix/brokerage-readiness-false-warning` (throwaway worktree `~/apps/trading-ag13`). The header
 Brokerage badge warned "not currently available for agentic execution" for the active, autonomous,
