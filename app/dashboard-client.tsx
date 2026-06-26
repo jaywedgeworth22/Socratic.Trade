@@ -1065,12 +1065,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     },
     {
       label: executionState.label,
-      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed === true,
+      // Only a broker that EXPLICITLY reports agenticAllowed=false is a hard block. `selectedBrokerAccount`
+      // is undefined when the live account list couldn't be fetched (a transient broker/MCP enumeration
+      // miss — gateway.getAccounts() failing degrades to [] in the snapshot). Don't false-alarm "not
+      // available" in that case: the account is configured + active, and the execution path fails closed
+      // on its own if the broker is genuinely unreachable. (Bug: showed the opposite of the real status.)
+      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed !== false,
       detail: executionState.usesLocalSimulation
         ? "Test mode uses local simulated fills."
-        : selectedBrokerAccount?.agenticAllowed === true
-          ? "Selected broker account is available for agentic execution."
-          : "Selected broker account is not currently available for agentic execution.",
+        : selectedBrokerAccount?.agenticAllowed === false
+          ? "Selected broker account is not available for agentic execution."
+          : selectedBrokerAccount
+            ? "Selected broker account is available for agentic execution."
+            : "Could not re-verify the account with the broker just now; agentic execution uses the selected account.",
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
     }
