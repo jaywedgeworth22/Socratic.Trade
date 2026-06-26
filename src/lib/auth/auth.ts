@@ -10,6 +10,12 @@
 // Optional OAuth providers (at least one required for sign-in):
 //   AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET — Google Cloud Console OAuth 2.0 client
 //   AUTH_GITHUB_ID / AUTH_GITHUB_SECRET — GitHub OAuth App (Settings → Developer)
+//   AUTH_APPLE_ID / AUTH_APPLE_SECRET   — Apple Services ID + client-secret JWT
+//     Note: Apple only sends the user's email on the FIRST authorization. The email
+//     is stored in the session JWT cookie (30-day lifetime). If the session expires and
+//     the user re-authorizes with Apple alone, sign-in will fail (Apple won't re-send
+//     the email). Keep at least one other provider active or ensure the session lifetime
+//     covers normal usage patterns.
 //
 // When AUTH_SECRET is NOT set the Auth.js path is simply never triggered
 // (authConfigured returns false in middleware.ts and the primary-email fallback
@@ -18,6 +24,7 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
+import Apple from "next-auth/providers/apple";
 import type { JWT } from "next-auth/jwt";
 import type { Session } from "next-auth";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
@@ -29,6 +36,9 @@ if (process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET) {
 if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
   providers.push(GitHub({ clientId: process.env.AUTH_GITHUB_ID, clientSecret: process.env.AUTH_GITHUB_SECRET }));
 }
+if (process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET) {
+  providers.push(Apple({ clientId: process.env.AUTH_APPLE_ID, clientSecret: process.env.AUTH_APPLE_SECRET }));
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
@@ -39,12 +49,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     decode: decodeSessionToken
   },
   callbacks: {
-    // Gate GitHub sign-ins on a non-null email. GitHub's /user endpoint only surfaces
-    // the user's publicly visible email, which GitHub restricts to verified addresses —
-    // but if the user has no public email set, profile.email is null and the session
-    // would have no email to check against the allowlist.
+    // Gate GitHub and Apple sign-ins on a non-null email.
+    // - GitHub: /user only surfaces publicly visible emails (GitHub-verified). Null means
+    //   the user has no public email set → no identity to check against the allowlist.
+    // - Apple: only sends the email on the FIRST authorization. If it's null here, the
+    //   user is re-authorizing after their session expired and Apple is no longer sharing
+    //   the email — sign-in fails, as we have no email to verify. See comment above.
     async signIn({ account, profile }: { account?: { provider?: string } | null; profile?: { email?: string | null } }) {
-      if (account?.provider === "github") {
+      if (account?.provider === "github" || account?.provider === "apple") {
         return !!(profile?.email);
       }
       return true;
