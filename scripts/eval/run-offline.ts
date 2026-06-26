@@ -3,13 +3,13 @@
  *
  * DEFAULT MODE (no env vars required):
  *   Runs every eval case through MockLLM only. No network, no API keys.
- *   npx tsx scripts/eval/run-offline.ts
+ *   npm run eval:offline
  *
  * REAL-PROVIDER MODE (opt-in via EVAL_REAL_PROVIDERS=1):
  *   Additionally runs cases through every provider whose API key is set in the environment.
  *   Requires the corresponding env var (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.).
- *   npx tsx scripts/eval/run-offline.ts --real-providers
- *   or: EVAL_REAL_PROVIDERS=1 npx tsx scripts/eval/run-offline.ts
+ *   npm run eval:offline -- --real-providers
+ *   or: EVAL_REAL_PROVIDERS=1 npm run eval:offline
  *
  * LANGFUSE (opt-in via LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY):
  *   Each run + score is logged to Langfuse when both keys are set.
@@ -18,22 +18,32 @@
  * BASELINE threshold (default 0.75):
  *   Override with EVAL_PASS_THRESHOLD=0.8 (0.0–1.0).
  *   Runner exits with code 1 when the aggregate score falls below the threshold.
+ *
+ * SAFETY cases: cases marked `safety: true` in the dataset fail the run regardless of the
+ *   aggregate score. These cover no-execution and advice-refusal checks.
  */
 
-// ── DB bootstrap (must precede any import that lazily calls getDb) ─────────────
-// llm.ts → resolveLlmCredential → getDb(); set DATABASE_URL before the imports resolve.
+// ── DB bootstrap ──────────────────────────────────────────────────────────────
+// DATABASE_URL must be set BEFORE this module loads so the db barrel (imported
+// below) always opens an isolated eval DB — never the app's data/app.db.
+// The npm script sets it via an env prefix; this guard is a belt-and-suspenders
+// fallback for direct `tsx` invocations that don't set it.
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-if (!process.env.DATABASE_URL) {
+// Always override if the URL looks like the app's own database path — the eval
+// runner must never open or migrate production/dev data.
+const existingDbUrl = process.env.DATABASE_URL ?? "";
+if (!existingDbUrl || existingDbUrl.includes("data/app.db")) {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `eval-runner-${Date.now()}.db`)}`;
 }
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { getDb } from "../../src/lib/db";
 import { MockLLM, llmForModel, chatProviderForModel } from "../../src/lib/chat/llm";
-import type { ChatLLM, LlmRunArgs } from "../../src/lib/chat/types";
-import { SYSTEM_PROMPT } from "../../src/lib/chat/prompt";
+import type { ChatLLM, LlmRunArgs, ToolSchema } from "../../src/lib/chat/types";
+import { SYSTEM_PROMPT, DISCLAIMER } from "../../src/lib/chat/prompt";
+import { buildTools } from "../../src/lib/chat/tools";
 import { withLlmGeneration } from "../../src/lib/observability";
 import { DATASET } from "./dataset";
 import { scoreCase, scoreLlmJudge } from "./score";
@@ -43,7 +53,24 @@ import type { CaseScore } from "./score";
 getDb();
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const PASS_THRESHOLD = Number(process.env.EVAL_PASS_THRESHOLD ?? 0.75);
+
+// Validate EVAL_PASS_THRESHOLD: must be a finite number in [0, 1].
+// Fail closed on NaN / out-of-range rather than silently accepting a broken gate.
+const rawThreshold = process.env.EVAL_PASS_THRESHOLD;
+let PASS_THRESHOLD: number;
+if (rawThreshold === undefined || rawThreshold === "") {
+  PASS_THRESHOLD = 0.75;
+} else {
+  const parsed = Number(rawThreshold);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    console.error(
+      `EVAL_PASS_THRESHOLD="${rawThreshold}" is invalid — must be a finite number in [0, 1]. Got ${parsed}.`
+    );
+    process.exit(2);
+  }
+  PASS_THRESHOLD = parsed;
+}
+
 const USE_REAL_PROVIDERS = process.env.EVAL_REAL_PROVIDERS === "1" || process.argv.includes("--real-providers");
 const USE_JUDGE = Boolean(process.env.EVAL_JUDGE_API_KEY && process.env.EVAL_JUDGE_MODEL);
 const SESSION_ID = `eval-offline-${Date.now()}`;
@@ -103,12 +130,21 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
   }
 }
 
+// ── Tool schemas (from the canonical registry) ────────────────────────────────
+// Build once and share across all providers — real providers use these schemas
+// so they can call get_quote, draft_order, kb_search, etc. in tool-call mode.
+const TOOL_SCHEMAS: ToolSchema[] = Object.entries(buildTools()).map(([name, t]) => ({
+  name,
+  description: t.description,
+  input_schema: t.input_schema,
+}));
+
 // ── Build LLM args for a case ─────────────────────────────────────────────────
 function buildArgs(message: string): LlmRunArgs {
   return {
     system: SYSTEM_PROMPT,
     message,
-    tools: [],
+    tools: TOOL_SCHEMAS,
     executeTool: executeTool as LlmRunArgs["executeTool"],
   };
 }
@@ -120,6 +156,10 @@ interface RunResult {
   output: string;
   caseScore: CaseScore;
   judgeScore?: { pass: boolean; score: number; detail: string };
+  /** True when this case is a safety-critical check (no-execute / advice-refusal). */
+  safety: boolean;
+  /** True when the case failed (deterministic failure OR judge failure). */
+  failed: boolean;
   durationMs: number;
   error?: string;
 }
@@ -150,6 +190,13 @@ async function runOneCase(llm: ChatLLM, evalCase: (typeof DATASET)[0], provider:
     output = "";
   }
 
+  // Apply the same disclaimer guarantee the orchestrator applies — real providers
+  // return raw model text; the app always appends the disclaimer server-side before
+  // delivering to users, so scoring must see the same post-processed output.
+  if (output && !output.includes(DISCLAIMER)) {
+    output = `${output}\n\n${DISCLAIMER}`;
+  }
+
   const caseScore = scoreCase(evalCase.id, output, evalCase.expectations);
 
   let judgeScore: RunResult["judgeScore"];
@@ -157,12 +204,17 @@ async function runOneCase(llm: ChatLLM, evalCase: (typeof DATASET)[0], provider:
     judgeScore = await scoreLlmJudge(output, evalCase.rubric, evalCase.id);
   }
 
+  // A case is failed if deterministic checks failed OR if the judge returned FAIL.
+  const failed = !caseScore.pass || Boolean(error) || (judgeScore !== undefined && !judgeScore.pass);
+
   return {
     caseId: evalCase.id,
     provider,
     output,
     caseScore,
     judgeScore,
+    safety: evalCase.safety === true,
+    failed,
     durationMs: Date.now() - start,
     error,
   };
@@ -193,7 +245,7 @@ function printSummaryTable(results: RunResult[]): void {
   console.log("─".repeat(44));
 
   for (const [provider, pResults] of byProvider) {
-    const pass = pResults.filter((r) => r.caseScore.pass).length;
+    const pass = pResults.filter((r) => !r.failed).length;
     const fail = pResults.length - pass;
     const avgScore = pResults.reduce((s, r) => s + r.caseScore.score, 0) / pResults.length;
     const avgMs = Math.round(pResults.reduce((s, r) => s + r.durationMs, 0) / pResults.length);
@@ -203,12 +255,13 @@ function printSummaryTable(results: RunResult[]): void {
   }
 
   console.log("\n── Per-case failures ────────────────────────────────────────\n");
-  const failures = results.filter((r) => !r.caseScore.pass || r.error);
+  const failures = results.filter((r) => r.failed);
   if (failures.length === 0) {
     console.log("  (none)\n");
   } else {
     for (const r of failures) {
-      console.log(`  [${r.provider}] ${r.caseId}${r.error ? ` ERROR: ${r.error}` : ""}`);
+      const safetyTag = r.safety ? " [SAFETY]" : "";
+      console.log(`  [${r.provider}] ${r.caseId}${safetyTag}${r.error ? ` ERROR: ${r.error}` : ""}`);
       for (const ch of r.caseScore.checks.filter((c) => !c.pass)) {
         console.log(`    ✗ ${ch.type}: ${ch.detail}`);
       }
@@ -236,11 +289,13 @@ async function main(): Promise<void> {
   for (const evalCase of DATASET) {
     const r = await runOneCase(mock, evalCase, "mock");
     allResults.push(r);
-    const icon = r.caseScore.pass ? "✓" : "✗";
+    const icon = !r.failed ? "✓" : "✗";
     process.stdout.write(`  ${icon} ${evalCase.id}\n`);
   }
 
   // ── Real providers (opt-in) ────────────────────────────────────────────────
+  let realProviderRan = false;
+
   if (USE_REAL_PROVIDERS) {
     for (const { provider, model, envKey } of PROVIDER_MODELS) {
       const key = process.env[envKey];
@@ -249,12 +304,6 @@ async function main(): Promise<void> {
         continue;
       }
       console.log(`\nRunning ${DATASET.length} cases against ${provider} (${model})...`);
-      // llmForModel resolves credentials from env/DB; with EVAL_REAL_PROVIDERS=1 and a key set,
-      // it will return the real LLM. We force the env key so the DB lookup also sees it.
-      process.env[envKey] = key;
-      // Also set the provider-specific operator key env var that resolveLlmCredential reads.
-      const providerEnvKey = `${provider.toUpperCase()}_API_KEY`;
-      if (providerEnvKey !== envKey) process.env[providerEnvKey] = key;
 
       // chatProviderForModel confirms the model routes to the right provider.
       const detectedProvider = chatProviderForModel(model);
@@ -263,27 +312,66 @@ async function main(): Promise<void> {
         continue;
       }
 
-      const llm = llmForModel(model);
-      // If key resolution failed (DB / resolveLlmCredential), llmForModel returns MockLLM.
-      if (llm.modelName === "mock") {
-        console.log(`  Skipping ${provider}: key present in env but llmForModel returned mock (DB resolution issue)`);
+      // Build the LLM directly from the verified env key, bypassing resolveLlmCredential
+      // and the LLM_OPERATOR_FALLBACK gate. The eval runner is not a tenant — it uses the
+      // key we just verified is present in the environment, regardless of fallback policy.
+      // We temporarily force LLM_OPERATOR_FALLBACK=on so resolveLlmCredential picks up the
+      // env key even when the operator has disabled the fallback for production tenant traffic.
+      const savedFallback = process.env.LLM_OPERATOR_FALLBACK;
+      process.env.LLM_OPERATOR_FALLBACK = "on";
+      let llm: ChatLLM;
+      try {
+        llm = llmForModel(model, undefined, {});
+      } finally {
+        if (savedFallback === undefined) {
+          delete process.env.LLM_OPERATOR_FALLBACK;
+        } else {
+          process.env.LLM_OPERATOR_FALLBACK = savedFallback;
+        }
+      }
+      if (llm instanceof MockLLM) {
+        console.log(`  Skipping ${provider}: key present in env but credential resolution failed`);
         continue;
       }
 
+      realProviderRan = true;
       for (const evalCase of DATASET) {
         const r = await runOneCase(llm, evalCase, provider);
         allResults.push(r);
-        const icon = r.caseScore.pass ? "✓" : "✗";
+        const icon = !r.failed ? "✓" : "✗";
         process.stdout.write(`  ${icon} ${evalCase.id}\n`);
       }
+    }
+
+    // Fail closed when --real-providers was requested but no provider actually ran.
+    // This guards against misconfigured CI where all keys are missing/misnamed.
+    if (!realProviderRan) {
+      console.error(
+        "FAIL: --real-providers was requested but no real provider ran (all keys missing or models mismatched).\n" +
+        "Set at least one of: " + PROVIDER_MODELS.map((p) => p.envKey).join(", ")
+      );
+      process.exit(1);
     }
   }
 
   printSummaryTable(allResults);
 
-  // ── Threshold check ────────────────────────────────────────────────────────
+  // ── Safety-case gate ───────────────────────────────────────────────────────
+  // Safety cases (no-execute / advice-refusal) must pass regardless of aggregate.
+  const safetyFailures = allResults.filter((r) => r.safety && r.failed);
+  if (safetyFailures.length > 0) {
+    console.error(
+      `FAIL: ${safetyFailures.length} safety case(s) failed — these are hard requirements:\n` +
+      safetyFailures.map((r) => `  [${r.provider}] ${r.caseId}`).join("\n")
+    );
+    process.exit(1);
+  }
+
+  // ── Threshold check (includes judge scores via `failed`) ──────────────────
+  // Score is computed from deterministic caseScore only (as before); the gate also
+  // checks `failed` which incorporates judge verdicts.
   const overallScore = allResults.reduce((s, r) => s + r.caseScore.score, 0) / allResults.length;
-  const overallPass = allResults.filter((r) => r.caseScore.pass).length;
+  const overallPass = allResults.filter((r) => !r.failed).length;
   const overallFail = allResults.length - overallPass;
 
   console.log(`══ Overall  pass=${overallPass}/${allResults.length}  score=${(overallScore * 100).toFixed(1)}%  threshold=${(PASS_THRESHOLD * 100).toFixed(0)}% ══\n`);
@@ -294,7 +382,8 @@ async function main(): Promise<void> {
   }
 
   if (overallFail > 0) {
-    console.warn(`WARNING: ${overallFail} case(s) failed but overall score is above threshold.`);
+    console.error(`FAIL: ${overallFail} case(s) failed (including judge verdicts) even though overall score is above threshold.`);
+    process.exit(1);
   }
 
   console.log("PASS");

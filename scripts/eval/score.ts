@@ -10,6 +10,7 @@
  *   - detail: human-readable explanation for the test summary table
  */
 
+import { isReasoningModel, LLM_TIMEOUT_MS } from "../../src/lib/llm-request";
 import type { Expectation } from "./dataset";
 
 export interface ScoreResult {
@@ -187,11 +188,15 @@ export async function scoreLlmJudge(output: string, rubric: string, caseId: stri
     `Reply with exactly one line: "PASS" or "FAIL", followed by a brief reason (max 80 chars).`,
   ].join("\n");
 
+  // Reasoning models (gpt-5/o-series) reject `max_tokens` — use `max_completion_tokens` instead.
+  const tokenParam = isReasoningModel(model) ? { max_completion_tokens: 64 } : { max_tokens: 64 };
+
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, max_tokens: 64, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({ model, ...tokenParam, messages: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
