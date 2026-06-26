@@ -9,6 +9,7 @@
 
 import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
+import { fetchDailyOHLC } from "../history";
 import { retrieveContextDetailed } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
@@ -113,12 +114,39 @@ export function buildProductionDeps(): ToolDeps {
       const fallback: ChatQuote = { symbol, price_usd: 0, as_of: "", source: "none" };
       try {
         const policy = getPolicy(userId);
-        const account = policy.accountNumber;
-        if (!account) return { ...fallback, error: "NO_ACCOUNT" };
-        const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(account, [symbol]);
-        const q = quotes[symbol];
-        if (!q || typeof q.price !== "number") return { ...fallback, error: "NO_QUOTE" };
-        return { symbol, price_usd: q.price, as_of: q.asOf ?? new Date().toISOString(), source: q.provider ?? "broker" };
+        let price: number | undefined;
+        let asOf: string | undefined;
+        let source: string | undefined;
+        // 1) Account-aware broker quote, when an account is selected. Its own try/catch so a broker
+        // failure (auth, data plan, network) FALLS THROUGH to the market-data fallback below instead
+        // of aborting the whole quote.
+        if (policy.accountNumber) {
+          try {
+            const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(policy.accountNumber, [symbol]);
+            const q = quotes[symbol];
+            if (q && typeof q.price === "number" && q.price > 0) {
+              price = q.price;
+              asOf = q.asOf;
+              source = q.provider ?? "broker";
+            }
+          } catch {
+            /* fall through to the keyless market-data fallback */
+          }
+        }
+        // 2) Keyless market-data fallback (recent daily close). Works with NO account selected and when
+        // the broker feed is empty (after hours / free IEX tier), so "what's X at" still gets answered
+        // instead of returning NO_QUOTE.
+        if (price == null) {
+          const bars = await fetchDailyOHLC(symbol, Date.now(), userId);
+          const last = bars && bars.length ? bars[bars.length - 1] : undefined;
+          if (last && typeof last.close === "number" && last.close > 0) {
+            price = last.close;
+            asOf = last.time != null ? String(last.time) : undefined;
+            source = "yahoo-finance-delayed";
+          }
+        }
+        if (price == null) return { ...fallback, error: "NO_QUOTE" };
+        return { symbol, price_usd: price, as_of: asOf ?? new Date().toISOString(), source: source ?? "delayed" };
       } catch {
         return { ...fallback, error: "QUOTE_FAILED" };
       }

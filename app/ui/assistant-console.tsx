@@ -185,6 +185,7 @@ export function AssistantView({
   // never flash "no key" before the check resolves); after load, false = no usable key for that provider.
   const [providerStatus, setProviderStatus] = useState<Partial<Record<ChatProviderId, boolean>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const dest = destination(executionState);
 
   useEffect(() => {
@@ -339,7 +340,11 @@ export function AssistantView({
         <div className="flex items-center gap-2">
           <select
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={(e) => {
+              setModel(e.target.value);
+              // Move focus straight to the prompt box so the user can type right after picking a model.
+              inputRef.current?.focus();
+            }}
             className="max-w-[15rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
             title="Chat model — pick any provider. Providers without a key are marked “no key” and disabled; manage keys in Settings → Connections."
           >
@@ -435,6 +440,7 @@ export function AssistantView({
       <div className="border-t border-line p-3">
         <div className="flex items-end gap-2">
           <textarea
+            ref={inputRef}
             className={cn(inputClass, "min-h-[2.5rem] flex-1 resize-none")}
             rows={1}
             placeholder="Ask a question, or describe an order to draft…"

@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Chat quote robustness (gateway-agnostic fallback) + focus prompt after model pick
+Branch `fix/chat-quote-fallback-and-focus` (throwaway worktree `~/apps/trading-ag13`). Follow-up to
+#174 after VZ still showed `NO_QUOTE`. (1) `getQuote` (`src/lib/chat/orchestrator.ts`) now has the
+keyless `fetchDailyOHLC` fallback at the CHAT layer too, with the broker call in its OWN try/catch (a
+broker throw falls through to the fallback instead of `QUOTE_FAILED`) and no more `NO_ACCOUNT` hard-fail
+(price questions answer without an account). (2) Picking a model now focuses the prompt box
+(`inputRef` + `select.onChange` → `focus()`). **Diagnosis of the lingering NO_QUOTE:** in this worktree
+`politeFetchJson` Yahoo → 429 and Stooq → rate-limited, and there's NO Massive key here, so the keyless
+fallback can't resolve locally; on the operator's box `fetchDailyOHLC` hits **Massive (paid) first** and
+returns data, so the quote resolves there (raw fetch + the `fillMissingQuotesWithClose` unit test
+confirm the logic). Verify: tsc ✓ · 1253/1253 ✓ · build ✓ · chat 200 (live PRICE not confirmable
+locally — Yahoo 429s this IP, no Massive key; confirm on the Massive box). See
+`docs/rollouts/2026-06-26-chat-quote-robustness-and-model-focus.md`.
+
 ## 2026-06-25 — Chat Markdown rendering + keyless quote fallback (fixes the 0.5-XOM block)
 Branch `feat/chat-md-quotes-notional` (throwaway worktree `~/apps/trading-ag13`). Three operator-
 reported fixes. (1) **Quote fallback (root cause):** the `$9,007,199,254,740,991` block was exactly
