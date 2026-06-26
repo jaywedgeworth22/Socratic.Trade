@@ -19,6 +19,17 @@ mode's only actor gate is `checkHumanActor` — no separate write-perm gate, so 
 merged. Verify: npm ci · tsc clean · **1428 tests pass (148 files)** · build green · full trio via land.sh. NEXT
 (post-merge): trigger Codex on an open PR, confirm the run passes the actor gate and resolves ≥1 thread. See
 `docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
+## 2026-06-26 — Improvement program: STATUS + CODEX HANDOFF (read this first)
+**Authoritative handoff:** `docs/rollouts/2026-06-26-improvement-program-handoff.md` (full per-item status +
+remaining work + merge mechanics). Summary: **12/14 items DONE** — merged PRs #186 risk-breaker, #190 four-side
+P&L, #187 RAG filters, #191 embed disclosures, #193 scheduler lease, #195 reasoning-diversity, #197 staleness
+gate, #192 langfuse evals, #196 hybrid BM25. **Remaining:** PR #199 coarse-credit (IN REVIEW — code done +
+dual-opus-reviewed, needs Codex-thread resolution + merge); multi-query/RRF (#2, NOT STARTED — last item,
+reuses `rrfFuse`); a final consolidation docs PR; the karpathy/autoresearch research read. **SKIP:**
+Self-RAG/HyDE/sentence-window/contextual-compression (documented). **Blocker:** the `autofix` CI bot
+(claude-code-action) is broken (Bun/tsconfig internal error) → it no longer resolves Codex review threads, and
+the branch policy requires all conversations resolved, so every PR must be resolved by hand until it's fixed
+(separate task spawned). See the handoff note's "Merge mechanics" for the resolve-threads command.
 
 ## 2026-06-26 — Improvement program #5: Langfuse offline eval/regression harness (items #6+#7 DONE)
 Branch `agent/claude-langfuse-evals`. New `scripts/eval/{dataset,score,run-offline}.ts` + `test/eval-offline.test.ts`
