@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Improvement program #3: four-side P&L + notional reset tests (item #2 DONE)
+Branch `agent/claude-risk-pnl-tests`. Completed item #2. Added 8 tests (test-only, no production change):
+`calculatePnl` realized-P&L now covers short round-trip (returnPct + side), partial cover with residual
+mark-to-market, partial-then-full sell, the all-four-side same-symbol interleave (the critical FIFO/sign
+case — sell consumes only longs, cover only shorts, no $0 cross-consumption), both flat-close mirrors
+(cover-no-short, sell-no-long), and a mixed residual long+short aggregation; plus a daily-notional
+cross-boundary case (orders age out of the day + rolling windows when queried with a far-future `now`).
+Authored + adversarially verified by a model-tiered subagent team (one author, two independent verifiers
+re-deriving every value from first principles, one with a no-import Node script) — **no production bug
+found**; the short/cover/notional money-path math is correct. **Stale-plan correction:** daily-notional
+*accounting/reset* was already covered by `daily-notional-reset.test.ts` (T6/T13) — only the cross-boundary
+case was genuinely missing. Verify: 45 tests in the two files pass · full trio via land.sh. Next: remaining
+program items driven by a model-tiered subagent team (langfuse-evals, RAG hybrid/embed, diversity/staleness,
+opus DO-items).
+
 ## 2026-06-26 — Improvement program #2: wire RAG metadata filters + minScore floor (items #1/#6 DONE)
 Branch `agent/claude-rag-wire-filters`. `buildExtraFilters` + `minScore` were built in `vector-db.ts` but
 every caller passed `undefined` (dead code). Added `defaultMinScore()` (env `VECTOR_MIN_SCORE`, default 0.30,

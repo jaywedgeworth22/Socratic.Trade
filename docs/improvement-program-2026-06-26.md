@@ -25,7 +25,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 ## Item status
 | # | Item | Spec | Status | Files (primary) |
 |---|---|---|---|---|
-| 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **risk-breaker.test.ts DONE (13 tests)**; short/cover P&L + daily-notional tests PENDING | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts`, `test/daily-notional-reset.test.ts` |
+| 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **DONE** — risk-breaker (13) ✅; calculatePnl four-side realized-P&L + notional cross-boundary (8 added) ✅. No production bugs found (adversarially verified). | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts` ✅, `test/daily-notional-reset.test.ts` ✅ |
 | 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | TODO | `scripts/eval/*` (dataset, scoring, run-offline, run-providers), `test/eval-offline.test.ts` |
 | 1+#6 | **Wire RAG metadata filters + minScore floor** | ready | **DONE** (PR after #186) — `defaultMinScore()` (env `VECTOR_MIN_SCORE`=0.30) wired into strategy + chat retrieval; **buildExtraFilters made CASING-TOLERANT** (stored doc_type is inconsistent: sec-filings "10-K" vs sec8k "8-k" — a single-casing filter would have silently excluded 10-K/10-Q; fixed) | `vector-db.ts`, `strategy.ts`, `chat/orchestrator.ts`, `.env.example`, `test/vector-db-retrieval.test.ts` |
 | 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
@@ -46,9 +46,15 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   excluded all uppercase-stored 10-K/10-Q chunks (sec-filings writes "10-K", sec8k writes "8-k", Pinecone
   `$in` is exact-match). Made `buildExtraFilters` casing-tolerant (each type → original+lower+upper, deduped).
   Advisory path only; no flag.
-- **risk-tests (M, no flag):** risk-breaker.test.ts ✅ done. Remaining: short/cover realized-P&L across all
-  four `OrderSide`s in `performance.test.ts`, and daily-notional accounting/reset in a new test (the
-  CLAUDE.md "verify all four sides explicitly" gap).
+- **risk-tests (M, no flag) — DONE:** risk-breaker.test.ts ✅ (PR #186). `calculatePnl` four-side realized-P&L
+  + the notional cross-boundary case ✅ (this PR). **Stale-plan correction:** daily-notional *accounting/reset*
+  was NOT a gap — `daily-notional-reset.test.ts` already covered buy/short-counted vs sell/cover-exempt,
+  tenant isolation, fallback, and the NY-midnight boundary math (T6/T13). The genuine `calculatePnl` gap was
+  the realized-P&L side coverage (only long-FIFO + basic short/cover existed); added short returnPct/side,
+  partial cover, partial-then-full sell, the all-four-side interleave (the critical FIFO/sign case), both
+  flat-close mirrors, and a mixed residual long+short mark-to-market. The only notional addition was a
+  cross-boundary (orders-age-out) case. All values adversarially re-derived from first principles; no
+  production bug found (the CLAUDE.md "verify all four sides explicitly" code is correct).
 - **staleness-gate (M, flag):** add a per-data-class max-staleness threshold + a policy setting; enforce at
   proposal review so the strategy can't act on stale-but-cached data (today freshness is only a label).
 - **langfuse-evals (M):** Langfuse already a dep; seed dataset + offline runner replaying across the 6

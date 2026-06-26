@@ -510,6 +510,151 @@ describe("calculatePnl — short/cover", () => {
     expect(pnl.openLots).toHaveLength(1);
     expect(pnl.openLots[0].side).toBe("long");
   });
+
+  it("a short round-trip realizes a profit AND a +returnPct when cover price < short price", () => {
+    // short 1@100, cover 1@90 → realized 1*(100-90)=+10; returnPct (100-90)/100*100=+10%.
+    const fills: FillEvent[] = [
+      fill({ id: "a-sh", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "a-cv", side: "cover", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(10);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(10);
+    expect(pnl.openLots).toHaveLength(0);
+  });
+
+  it("a short round-trip realizes a loss AND a -returnPct when cover price > short price", () => {
+    // short 1@100, cover 1@130 → realized 1*(100-130)=-30; returnPct (100-130)/100*100=-30%.
+    const fills: FillEvent[] = [
+      fill({ id: "a-sh2", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "a-cv2", side: "cover", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(-30);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(-30);
+  });
+
+  it("a cover that partially closes a short realizes on the matched chunk; the residual short marks to market", () => {
+    // short 3@100, cover 1@90 → matched 1: realized 1*(100-90)=+10; returnPct (100-90)/100*100=+10%.
+    // residual short = 3-1 = 2 @ 100; at current 120 unrealized = 2*(100-120) = -40 (short loses as price rises).
+    const fills: FillEvent[] = [
+      fill({ id: "b-sh", side: "short", quantity: 3, price: 100, notional: 300, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "b-cv", side: "cover", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 120 });
+    expect(pnl.realized).toBeCloseTo(10);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(10);
+    expect(pnl.unrealized).toBeCloseTo(-40);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("short");
+    expect(pnl.openLots[0].quantity).toBeCloseTo(-2); // signed: residual short is negative
+  });
+
+  it("a long closed by a partial-then-full sell sequence realizes each chunk with the right returnPct", () => {
+    // buy 3@100.
+    // sell 1@130 → matched 1: realized 1*(130-100)=+30; returnPct (130-100)/100*100=+30%.
+    // sell 2@90  → matched 2: realized 2*(90-100)=-20; returnPct (90-100)/100*100=-10%.
+    // total realized = +30 + (-20) = +10; both closed lots are LONG; nothing left open.
+    const fills: FillEvent[] = [
+      fill({ id: "c-b", side: "buy", quantity: 3, price: 100, notional: 300, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "c-s1", side: "sell", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:02.000Z" }),
+      fill({ id: "c-s2", side: "sell", quantity: 2, price: 90, notional: 180, filledAt: "2026-06-15T00:00:03.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(10);
+    expect(pnl.closedLots).toHaveLength(2);
+    expect(pnl.closedLots.map((l) => l.side)).toEqual(["long", "long"]);
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(30);
+    expect(pnl.closedLots[1].returnPct).toBeCloseTo(-10);
+    expect(pnl.openLots).toHaveLength(0);
+  });
+
+  it("an interleaved buy/short/sell/cover on the SAME symbol never cross-consumes lots (the critical FIFO/sign case)", () => {
+    // Time order, all AAPL:
+    //   buy   1@100  → long lot {q1, p100}
+    //   short 1@120  → short lot {q1, p120}
+    //   sell  1@130  → closes ONLY the long lot: realized 1*(130-100)=+30; returnPct +30%; side "long".
+    //   cover 1@110  → closes ONLY the short lot: realized 1*(120-110)=+10; returnPct (120-110)/120*100=+8.333%; side "short".
+    // total realized = +30 + +10 = +40. If sell had consumed the short (or cover the long) at $0,
+    // realized would be wrong AND a real open lot would be silently erased — this asserts neither happens.
+    const fills: FillEvent[] = [
+      fill({ id: "d-b", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "d-sh", side: "short", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T00:00:02.000Z" }),
+      fill({ id: "d-s", side: "sell", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:03.000Z" }),
+      fill({ id: "d-cv", side: "cover", quantity: 1, price: 110, notional: 110, filledAt: "2026-06-15T00:00:04.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(40);
+    expect(pnl.closedLots).toHaveLength(2);
+    // The sell closed the long (FIFO chronological), the cover closed the short — never the reverse.
+    expect(pnl.closedLots[0].side).toBe("long");
+    expect(pnl.closedLots[0].pnl).toBeCloseTo(30);
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(30);
+    expect(pnl.closedLots[1].side).toBe("short");
+    expect(pnl.closedLots[1].pnl).toBeCloseTo(10);
+    expect(pnl.closedLots[1].returnPct).toBeCloseTo(8.3333, 3);
+    expect(pnl.openLots).toHaveLength(0); // both real lots accounted for, none erased or stranded
+  });
+
+  it("a cover with no open short contributes 0 realized and leaves the open long untouched (wrong-side/flat close)", () => {
+    // buy 1@100 (open long), then cover 1@90 with NO open short → matches nothing → 0 realized, no closed lot.
+    // The long lot is unchanged and still marks to market: at current 110 unrealized = 1*(110-100)=+10.
+    const fills: FillEvent[] = [
+      fill({ id: "e-b", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "e-cv", side: "cover", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 110 });
+    expect(pnl.realized).toBeCloseTo(0);
+    expect(pnl.closedLots).toHaveLength(0);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("long");
+    expect(pnl.openLots[0].quantity).toBeCloseTo(1); // long lot untouched, not consumed at $0
+    expect(pnl.openLots[0].entryPrice).toBeCloseTo(100);
+    expect(pnl.unrealized).toBeCloseTo(10);
+  });
+
+  it("a sell with no open long contributes 0 realized and leaves the open short untouched (mirror of the cover case)", () => {
+    // Symmetric counterpart to the cover-with-no-short case: short 1@100 (open short), then sell 1@90 with
+    // NO open long → wantSide "long" matches nothing → 0 realized, no closed lot, short lot intact.
+    // At current 80 the short marks to market with the short sign: unrealized = 1*(100-80)=+20 (short profits as price falls).
+    const fills: FillEvent[] = [
+      fill({ id: "f-sh", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "f-s", side: "sell", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 80 });
+    expect(pnl.realized).toBeCloseTo(0);
+    expect(pnl.closedLots).toHaveLength(0);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("short");
+    expect(pnl.openLots[0].quantity).toBeCloseTo(-1); // short lot untouched, signed qty negative, not consumed at $0
+    expect(pnl.openLots[0].entryPrice).toBeCloseTo(100);
+    expect(pnl.unrealized).toBeCloseTo(20);
+  });
+
+  it("aggregates unrealized across a residual long AND short on the SAME symbol with correct signs", () => {
+    // Both sides left open on AAPL (calculatePnl keeps them as independent same-symbol lots; it does not net):
+    //   buy   2@100 → long  {q2, p100}
+    //   short 1@200 → short {q1, p200}
+    // At current 150: long unrealized = 2*(150-100)=+100; short unrealized = 1*(200-150)=+50; total +150. realized 0.
+    const fills: FillEvent[] = [
+      fill({ id: "g-b", side: "buy", quantity: 2, price: 100, notional: 200, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "g-sh", side: "short", quantity: 1, price: 200, notional: 200, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 150 });
+    expect(pnl.realized).toBeCloseTo(0);
+    expect(pnl.openLots).toHaveLength(2);
+    const long = pnl.openLots.find((l) => l.side === "long");
+    const short = pnl.openLots.find((l) => l.side === "short");
+    expect(long?.quantity).toBeCloseTo(2); // signed positive for the long
+    expect(short?.quantity).toBeCloseTo(-1); // signed negative for the short
+    expect(pnl.unrealized).toBeCloseTo(150); // +100 long + +50 short, mixed signs aggregated correctly
+  });
 });
 
 describe("recordFillFromProposal — T9 short/cover boundaries", () => {
