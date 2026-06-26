@@ -570,8 +570,11 @@ export async function retrieveContextDetailed(
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
   const wantRerank = rerankEnabled();
-  // Over-fetch when we'll post-filter (as-of) or rerank, so the final top-`limit` is high quality.
-  const fetchK = options?.asOf || wantRerank ? overFetchK(limit) : limit;
+  // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
+  // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
+  // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
+  // limit+1 is never in the pool and the recall gap the flag targets can't be recovered.
+  const fetchK = options?.asOf || wantRerank || hybridRetrievalEnabled() ? overFetchK(limit) : limit;
   const extraFilter = buildExtraFilters(options);
 
   try {

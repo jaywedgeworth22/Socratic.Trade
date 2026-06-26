@@ -182,14 +182,21 @@ export function fuseHybrid(query: string, matches: any[]): any[] {
     const scores = bm25Scores(query, docs);
 
     // Build bm25Ids sorted by score descending; stable tie-break by original dense index.
-    const indexed = scores.map((score, i) => ({ score, i }));
+    // Only POSITIVE-score (actually-matching) docs go in the lexical list — otherwise every
+    // non-matching candidate would still receive a sparse-list RRF boost, diluting the exact-term
+    // recall this fusion is meant to add (a lexical hit at dense rank 3 could lose to an unrelated
+    // dense rank-1 doc that matched zero query terms). When nothing matches lexically, the lexical
+    // list is empty and rrfFuse falls back to pure dense order.
+    const indexed = scores
+      .map((score, i) => ({ score, i }))
+      .filter(({ score }) => score > 0);
     indexed.sort((a, b) => {
       const diff = b.score - a.score;
       return diff !== 0 ? diff : a.i - b.i; // tie-break: original dense order
     });
     const bm25Ids = indexed.map(({ i }) => effectiveIds[i]!);
 
-    // RRF fusion.
+    // RRF fusion. With an empty bm25Ids (no lexical matches) this returns dense order unchanged.
     const fusedIds = rrfFuse([denseIds, bm25Ids]);
 
     // Reconstruct matches in fused order.
