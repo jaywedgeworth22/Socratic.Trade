@@ -34,7 +34,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 | 5 | **Market-data staleness gate** | ready | TODO (shares strategy.ts/types.ts) | `types.ts`, `policy.ts`, `defaults.ts`, `strategy.ts`, `market.ts`, `app/api/policy/route.ts` |
 | 2 | **Query expansion / multi-query / RRF (RAG-Fusion)** | ready (opus) | TODO — see "Opus specs" below | retrieval path in `vector-db.ts` + `strategy.ts`, `test/vector-db-fusion.test.ts` |
 | 7/#4 | **Coarse credit assignment + attribution** | ready (opus) | TODO — see "Opus specs" below | `performance.ts`, `types.ts`, `strategy-tuning.ts`, `strategy.ts`, `backtest.ts`, `db-fills.ts` |
-| 3/#3 | **Durable/locked autonomy scheduler** | ready (opus) | TODO — see "Opus specs" below | new `scheduler-lease.ts`, `scheduler.ts`, `health`/`ready` routes |
+| 3/#3 | **Durable/locked autonomy scheduler** | ready (opus) | **DONE** — CAS lease in `settings` KV (no migration); tick per-account body gated behind `SCHEDULER_SINGLE_LEADER` (default OFF, byte-for-byte off-path); fail-closed; SIGTERM/SIGINT/beforeExit release; lease surfaced on /health + /ready; 9 tests. Opus-designed + dual opus review (correctness + money-safety). | new `scheduler-lease.ts`, `scheduler.ts`, `health`/`ready` routes, `.env.example`, `test/scheduler-lease.test.ts` |
 | 5 | **Reconsider Self-RAG / HyDE / sentence-window / contextual compression** | ready (opus) | **DECISION: SKIP all four now** — see "Opus specs" below | n/a |
 | 9 | **karpathy/autoresearch review** | research | the planner agent MISREAD this as an "autonomous tuning loop" feature — IGNORE that; treat as a research read only (retry pending) | n/a |
 
@@ -95,6 +95,11 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   gap:** `runStrategyOnce` already holds a cross-process lock, but the synthetic-stop monitor in the tick body
   (`scheduler.ts:~200`) can place broker exit orders and is only in-process guarded → two processes double-fire.
   SKIP (separate PRs): the `acquireStrategyLock` TOCTOU rewrite (money-path) and a durable external scheduler.
+  **DONE as specified.** Implemented `acquireLease`/`renewLease`/`releaseLease`/`getLease` +
+  `acquireOrRenewLeadership` (renew-then-acquire); gate placed before the per-account loop (synthetic-stop
+  monitor + strategy runs); fail-closed; TTL default 90s (1.5 ticks). The one-tick cross-process TOCTOU is
+  unchanged (same as `acquireStrategyLock`, left per spec) — TTL-steal + the per-process `stopMonitorInFlight`
+  guard + flag-default-OFF make a real double-exit vanishingly unlikely; a true atomic fix is the deferred PR.
 - **rag-selfrag-hyde-decision (S) — DECISION: SKIP all four now.** The recall gap HyDE/Self-RAG/sentence-
   window/contextual-compression address is already covered by domain-tuned `voyage-finance-2` embeddings + the
   hard symbol metadata filter (`vector-db.ts:572`) + the cross-encoder reranker + over-fetch. Strategy queries
