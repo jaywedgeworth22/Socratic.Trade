@@ -2,6 +2,7 @@ import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-da
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
 import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { fuseHybrid } from "./rag/hybrid";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -102,6 +103,13 @@ function rerankModel(): string {
 /** How many candidates to pull from Pinecone before reranking/as-of filtering down to `limit`. */
 function overFetchK(limit: number): number {
   return Math.min(Math.max(limit * 5, limit), 50);
+}
+
+/** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
+ *  When OFF, the retrieval path is byte-for-byte the current dense-only flow. */
+function hybridRetrievalEnabled(): boolean {
+  const v = String(process.env.HYBRID_RETRIEVAL ?? "false").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -644,7 +652,15 @@ export async function retrieveContextDetailed(
     if (options?.asOf) {
       pool = pool.filter((match) => isWithinAsOf(match.metadata as Record<string, unknown> | undefined, options.asOf));
     }
-    const ordered = wantRerank && pool.length > limit ? await rerankMatches(voyage, query, pool, limit) : pool;
+    // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
+    // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
+    // overFetchK or the Pinecone query — purely a post-retrieval reranking step.
+    const fusedPool = hybridRetrievalEnabled() && pool.length > 1
+      ? fuseHybrid(query, pool)
+      : pool;
+    const ordered = wantRerank && fusedPool.length > limit
+      ? await rerankMatches(voyage, query, fusedPool, limit)
+      : fusedPool;
     return ordered
       .slice(0, limit)
       .map(matchToChunk)
