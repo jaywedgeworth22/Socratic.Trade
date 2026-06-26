@@ -31,7 +31,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 | 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
 | 3 | **Embed congressional + insider disclosures into vector store** | ready | **DONE** — `disclosure-rag.ts` converts congress trades + insider filings → RAG docs (doc_type `congress-trade`/`insider-filing`, `acceptance_datetime`=disclosure/filing date for the as-of guard) → `storeContexts`; flag `RAG_EMBED_DISCLOSURES` (default OFF); 22 tests | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `.env.example`, `test/disclosure-rag.test.ts` |
 | 8 | **Reasoning/template-collapse diversity check on rationales** | ready | **DONE** — `rationale-diversity.ts` (multiset char-trigram Jaccard) computes per-run `{meanPairwiseSimilarity, maxPairwiseSimilarity, collapsed}`; wired into `runStrategyOnce` after the proposal set is finalized, attached to `StrategyResult` + `audit("rationale_diversity")`; advisory-only (no flag, never blocks/alters proposals); 30 tests | new `rationale-diversity.ts`, `strategy.ts`, `types.ts`, `test/rationale-diversity.test.ts` |
-| 5 | **Market-data staleness gate** | ready | TODO (shares strategy.ts/types.ts) | `types.ts`, `policy.ts`, `defaults.ts`, `strategy.ts`, `market.ts`, `app/api/policy/route.ts` |
+| 5 | **Market-data staleness gate** | ready | **DONE** — `maxQuoteAgeSec`/`maxFundamentalsAgeSec` on `TradingPolicy`; OPENING-only fail-safe gate in `evaluateTradeProposal` (stale/missing timestamp → block; reads `marketScan` asOf + `generatedAt`); default OFF; 9 tests. No defaults/market/strategy change needed (asOf already flows). Opus design + dual opus review. | `types.ts`, `policy.ts`, `app/api/policy/route.ts`, `test/staleness-gate.test.ts` |
 | 2 | **Query expansion / multi-query / RRF (RAG-Fusion)** | ready (opus) | TODO — see "Opus specs" below | retrieval path in `vector-db.ts` + `strategy.ts`, `test/vector-db-fusion.test.ts` |
 | 7/#4 | **Coarse credit assignment + attribution** | ready (opus) | TODO — see "Opus specs" below | `performance.ts`, `types.ts`, `strategy-tuning.ts`, `strategy.ts`, `backtest.ts`, `db-fills.ts` |
 | 3/#3 | **Durable/locked autonomy scheduler** | ready (opus) | **DONE** — CAS lease in `settings` KV (no migration); tick per-account body gated behind `SCHEDULER_SINGLE_LEADER` (default OFF, byte-for-byte off-path); fail-closed; SIGTERM/SIGINT/beforeExit release; lease surfaced on /health + /ready; 9 tests. Opus-designed + dual opus review (correctness + money-safety). | new `scheduler-lease.ts`, `scheduler.ts`, `health`/`ready` routes, `.env.example`, `test/scheduler-lease.test.ts` |
@@ -55,7 +55,13 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   flat-close mirrors, and a mixed residual long+short mark-to-market. The only notional addition was a
   cross-boundary (orders-age-out) case. All values adversarially re-derived from first principles; no
   production bug found (the CLAUDE.md "verify all four sides explicitly" code is correct).
-- **staleness-gate (M, flag):** add a per-data-class max-staleness threshold + a policy setting; enforce at
+- **staleness-gate (M, flag) — DONE:** `maxQuoteAgeSec`/`maxFundamentalsAgeSec` on `TradingPolicy` (default
+  unset = OFF). OPENING-only fail-safe gate in `evaluateTradeProposal`: quote age from
+  `marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from
+  `MarketScan.generatedAt`; `age > threshold` (strict) or missing/unparseable timestamp → block with a clear
+  reason — but only inside the gate-on branch. Pure read + reason-push; never approves/mutates/sizes; exits
+  never gated; off-path byte-for-byte. No defaults/market/strategy change needed (asOf already flows onto
+  `quotesBySymbol`; the gate reads `context.marketScan` at check time). Original spec note (superseded):
   proposal review so the strategy can't act on stale-but-cached data (today freshness is only a label).
 - **langfuse-evals (M):** Langfuse already a dep; seed dataset + offline runner replaying across the 6
   providers + deterministic & LLM-judge scoring → catches prompt/RAG/provider regressions.
