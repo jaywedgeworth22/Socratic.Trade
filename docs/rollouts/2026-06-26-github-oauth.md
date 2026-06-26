@@ -49,6 +49,30 @@ Added a new test: `valid Auth.js JWT for non-primary non-allowlisted user → 40
 request time, so secrets injected via Infisical after a build are immediately
 reflected.
 
+## Identity-source tracking fix (Codex P1 follow-up)
+
+Second Codex P1 review found a subtler bug: when both `CF_ACCESS_TRUST_EMAIL_HEADER=1` and
+`AUTH_SECRET` are set, a request that bypasses Cloudflare (no CF header) falls through to
+the Auth.js cookie path. The old `isEmailAllowed` checked the CF *config flag* rather than
+whether CF actually provided the identity for that request — so a non-primary OAuth user who
+reached the origin directly would be admitted when `ALLOWED_EMAILS` was empty.
+
+Fixed by:
+1. Adding a `fromCf: boolean` parameter to `isEmailAllowed`.
+2. Tracking identity source in `middleware()`: `fromCf = true` only when `getCfEmail()` returns
+   a value (i.e. the CF header was present and trusted).
+3. `isEmailAllowed` defers to CF's allowlist only when `fromCf === true`.
+
+Added regression test: `Auth.js JWT for non-primary user → 403 even when CF_ACCESS flag is on`.
+
+### Verification (post identity-source fix)
+
+```
+npx tsc --noEmit   # clean
+npm test           # 1253/1253 passed
+npm run build      # clean
+```
+
 ## Operator notes
 
 - Add `user@example.com`-style addresses to `ALLOWED_EMAILS` for any non-primary

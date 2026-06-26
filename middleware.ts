@@ -61,12 +61,13 @@ function isAuthConfigured(): boolean {
   return process.env.CF_ACCESS_TRUST_EMAIL_HEADER === "1" || !!process.env.AUTH_SECRET;
 }
 
-function isEmailAllowed(email: string): boolean {
+function isEmailAllowed(email: string, fromCf: boolean): boolean {
   if (PRIMARY_SET.has(email)) return true; // primary operator + aliases
-  // Empty ALLOWED_EMAILS defers to the upstream CF Access gate (which enforces its own
-  // allowlist). When using Auth.js without CF Access, empty means "only the primary user" —
-  // otherwise any OAuth provider account (e.g. any GitHub user) would be admitted.
-  if (ALLOWED.length === 0) return process.env.CF_ACCESS_TRUST_EMAIL_HEADER === "1";
+  // Empty ALLOWED_EMAILS defers to the upstream CF Access gate ONLY when CF actually
+  // provided the identity for this request. When the identity came from an Auth.js session
+  // cookie (even if CF_ACCESS_TRUST_EMAIL_HEADER is configured), empty means "only the
+  // primary user" — otherwise any OAuth account bypassing CF can reach the origin.
+  if (ALLOWED.length === 0) return fromCf;
   return ALLOWED.includes(email);
 }
 
@@ -110,8 +111,18 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // --- Identity resolution ---
 
+  // Track the identity source so isEmailAllowed can distinguish CF-provided identities
+  // (where empty ALLOWED_EMAILS defers to CF's own allowlist) from Auth.js session
+  // identities (where empty ALLOWED_EMAILS means "only the primary user").
+  let trustedEmail: string | null = null;
+  let fromCf = false;
+
   // Source 1: Cloudflare Access header.
-  let trustedEmail: string | null = getCfEmail(req);
+  const cfEmail = getCfEmail(req);
+  if (cfEmail) {
+    trustedEmail = cfEmail;
+    fromCf = true;
+  }
 
   // Source 2: Auth.js v5 session JWT (verified with the shared edge-safe helper).
   if (!trustedEmail && process.env.AUTH_SECRET) {
@@ -127,7 +138,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // --- Authorization ---
 
   if (trustedEmail) {
-    if (!isEmailAllowed(trustedEmail)) {
+    if (!isEmailAllowed(trustedEmail, fromCf)) {
       // Authenticated upstream, but not permitted in this app.
       return pathname.startsWith("/api/")
         ? new NextResponse("Forbidden", { status: 403 })

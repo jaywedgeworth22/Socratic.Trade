@@ -160,6 +160,26 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(403);
   });
 
+  it("Auth.js JWT for non-primary user → 403 even when CF_ACCESS flag is on (dual-source fix)", async () => {
+    // Regression test for the identity-source confusion bug:
+    // CF is configured (flag=1) but the request bypassed CF and came in with only an Auth.js
+    // session cookie. The old code checked the CF flag in isEmailAllowed, which was wrong —
+    // it allowed any OAuth user who bypassed CF. The fix tracks per-request fromCf=false.
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1"); // CF configured, but no CF header sent
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("any-oauth-user@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+      // deliberately no cf-access-authenticated-user-email header
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(403);
+  });
+
   it("expired or tampered Auth.js session JWT → fail closed (401)", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
     vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
