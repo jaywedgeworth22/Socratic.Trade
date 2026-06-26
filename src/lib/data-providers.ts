@@ -529,9 +529,13 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         }
         if (Object.keys(e).length > 0) {
           result[symbol] = e;
-          // Honor the shared, configurable enrichment TTL (NEWS_CACHE_TTL_MS) like the
-          // other slow-moving providers, so lowering/disabling it forces fresher App A reads.
-          writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, now + ttlMs());
+          // A PARTIAL hit — one endpoint had fresh data, the other none (e.g. fundamentals
+          // landed but the analyst push is minutes behind) — must not be cached as complete
+          // under the full TTL, or the late-arriving half can't surface for hours. Cache the
+          // partial briefly (negative TTL); cache a complete both-halves row at the full TTL.
+          const partial = (freshFunds.length > 0) !== (freshAnalysts.length > 0);
+          const expiry = now + (partial ? CONGRESS_NEG_TTL_MS : ttlMs());
+          writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, expiry);
         } else if (!transportError) {
           // Negative cache ONLY a genuine "App A had nothing fresh" — never a transport
           // error. Remember the miss briefly so repeated scans don't re-hit both
@@ -770,6 +774,16 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
             analystKeyOwner[k] = name;
           }
         }
+      }
+
+      // A "congress.trade"-keyed entry is a SOURCE-UNKNOWN blended aggregate (App A's
+      // donated analyst[] rows carry no per-provider source). When granular per-source
+      // votes exist alongside it, those supersede it — counting the aggregate too would
+      // double-count the same upstream FMP/Finnhub/Yahoo consensus. Drop it in that case;
+      // keep it only when it's the lone analyst signal.
+      if (analystBySource["congress.trade"] && Object.keys(analystBySource).length > 1) {
+        delete analystBySource["congress.trade"];
+        delete analystKeyOwner["congress.trade"];
       }
 
       // Blend analyst scores across all sources that reported one.
@@ -1673,10 +1687,32 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
+    // Per-symbol coverage-hint skip flags (short-circuit only). Shared by the cache-hit
+    // path AND the fetch path so a cached FMP row is trimmed the same way a fresh fetch is.
+    const skipFlagsFor = (symbol: string) => {
+      const covered = context?.coveredFields?.[symbol];
+      // P/E is first-wins (App A registered first wins anyway); analyst consensus is
+      // blended, so skip it only when App A's analyst genuinely came from FMP; targets
+      // are first-wins but skip the call only when App A covers all four.
+      const skipPe = covered?.has("peRatio") ?? false;
+      const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[symbol] === this.name;
+      const skipTargets = ["targetMean", "targetHigh", "targetLow", "targetMedian"].every((k) => covered?.has(k));
+      return { skipPe, skipConsensus, skipTargets };
+    };
     for (const symbol of normalized) {
       const cached = readEnrichmentCache("fmp", symbol, this.userId, consented, now);
-      if (cached) result[symbol] = cached.data;
-      else misses.push(symbol);
+      if (cached) {
+        // A cache hit bypasses the fetch-path skip logic, so apply the hint here too:
+        // if App A covers FMP's OWN consensus with a fresher row, drop the cached FMP
+        // analyst (analystBySource merges last-writer-wins, so a stale cached fmp entry
+        // would otherwise overwrite App A's fresher fmp-keyed analyst in the blend).
+        if (skipFlagsFor(symbol).skipConsensus && cached.data.analystBySource) {
+          const { analystBySource, analystRating, analystScore, ...rest } = cached.data;
+          result[symbol] = rest;
+        } else {
+          result[symbol] = cached.data;
+        }
+      } else misses.push(symbol);
     }
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
@@ -1686,19 +1722,9 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // Coverage hint (short-circuit only): when a free upstream (App A) already
           // supplied P/E, analyst consensus, or price targets for this symbol, skip the
           // matching FMP SUB-call — but always keep fetching insider/senate, which App A
-          // never supplies, so nothing FMP uniquely provides is lost.
-          const covered = context?.coveredFields?.[symbol];
-          // P/E is a first-wins scalar: if App A has any valid P/E, FMP's would lose the
-          // merge anyway, so skipping ratios-ttm is safe regardless of App A's source.
-          const skipPe = covered?.has("peRatio") ?? false;
-          // Analyst consensus is BLENDED across sources: only skip grades-consensus when
-          // App A's analyst actually came from FMP (else FMP's distinct vote must still be
-          // fetched and blended — App A holding a Yahoo/Finnhub consensus doesn't cover it).
-          const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[symbol] === this.name;
-          // Targets are first-wins scalars: skip the price-target call only when App A
-          // covers ALL FOUR (a partial App A target row would still let FMP fill the rest).
-          const skipTargets =
-            ["targetMean", "targetHigh", "targetLow", "targetMedian"].every((k) => covered?.has(k));
+          // never supplies, so nothing FMP uniquely provides is lost. (Same flags are
+          // applied to cache hits above.)
+          const { skipPe, skipConsensus, skipTargets } = skipFlagsFor(symbol);
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
           const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;

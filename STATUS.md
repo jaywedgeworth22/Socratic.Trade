@@ -8,8 +8,9 @@ steps materially change.
 Branch `claude/crossapp-consumer-reads-y8ojii`. Added the App B half of the
 fundamentals/analyst data-sharing: `getAppAFundamentals()` / `getAppAAnalyst()` in
 `congress-trade-client.ts` and a `CongressTradeEnrichmentProvider` registered ahead
-of the paid fundamentals providers in `data-providers.ts`, **gated OFF by
-`CONGRESS_TRADE_READS_ENABLED`**. Congress.Trade now serves the matching
+of the paid fundamentals providers in `data-providers.ts`, **gated OFF by its OWN
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`** (separate from the price-read
+`CONGRESS_TRADE_READS_ENABLED`). Congress.Trade now serves the matching
 `/api/market/fundamentals/:ticker` + `/api/market/analyst/:ticker` reader routes.
 Supplies only fundamentals/analyst (no price) so quote ordering is unchanged; no new
 `SymbolEnrichment` field. tsc clean, 1184 tests pass, build OK. Next: flag flip to

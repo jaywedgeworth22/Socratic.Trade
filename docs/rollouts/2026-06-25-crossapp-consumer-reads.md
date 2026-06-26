@@ -152,6 +152,23 @@ Three new valid P2s (the rest of the batch were duplicate/outdated threads for i
 - **Stale PLAN.md flag (line 77)** — the roadmap still said the tier is gated by `CONGRESS_TRADE_READS_ENABLED`;
   updated to `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (+ `NEWS_CACHE_TTL_MS` caching).
 
+## Codex review round 9 (PR #160, commit a603d08)
+Four more valid P2s — two were real bugs introduced by the round 5–7 changes:
+- **Cache hit bypassed the coverage hint (FMP)** — the hint only gated the fetch path, so an FMP cache
+  HIT returned its cached `analystBySource.fmp` and (last-writer-wins) overwrote App A's fresher fmp-keyed
+  analyst. **Fixed**: extracted `skipFlagsFor()` shared by both paths; on a cache hit, when App A covers
+  FMP's own consensus, the cached FMP analyst fields are stripped so App A's survive.
+- **Partial App A hit cached as complete** — when one endpoint had fresh data and the other none (analyst
+  push lagging fundamentals), the partial row was cached at the full TTL, hiding the late half for hours.
+  **Fixed**: a partial hit (fundamentals XOR analyst present) is cached at the short negative TTL; only a
+  both-halves row gets the full TTL.
+- **Donated aggregate double-counted** — App A's donated `analyst[]` rows carry no per-provider source, so
+  they key under `congress.trade`; with the short-circuit off, the direct providers also blend the same
+  upstream consensus. **Fixed**: the cascade drops a `congress.trade` aggregate vote when granular
+  per-source votes exist (keeps it only as the lone signal). +2 tests.
+- **STATUS.md handoff flag** — the opening current-state line still said `CONGRESS_TRADE_READS_ENABLED`;
+  updated to the separate `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (price/history cache-aside) **and**
   `CONGRESS_TRADE_FUNDAMENTALS_ENABLED=on` (the fundamentals/analyst tier — gated SEPARATELY since the

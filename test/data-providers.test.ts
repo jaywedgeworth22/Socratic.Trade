@@ -988,6 +988,29 @@ describe("CascadingEnrichmentProvider.activeSources (honest source attribution)"
     expect(cascade.activeSources).not.toContain("congress.trade");
   });
 
+  it("drops the source-less congress.trade aggregate when granular votes exist (no double-count)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { "congress.trade": { score: 90, label: "Strong Buy" } } } }),
+      stub("fmp", { AAPL: { analystBySource: { fmp: { score: 20, label: "Sell" } } } }),
+      stub("finnhub", { AAPL: { analystBySource: { finnhub: { score: 40, label: "Hold" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    // Aggregate dropped → blend is fmp(20)+finnhub(40)=30, NOT (90+20+40)/3=50.
+    expect(out.AAPL.analystScore).toBe(30);
+    expect(out.AAPL.analystBySource && Object.keys(out.AAPL.analystBySource).sort()).toEqual(["finnhub", "fmp"]);
+    expect(cascade.activeSources).not.toContain("congress.trade");
+  });
+
+  it("keeps the congress.trade aggregate when it is the only analyst signal", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { "congress.trade": { score: 90, label: "Strong Buy" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.analystScore).toBe(90);
+    expect(out.AAPL.analystBySource && Object.keys(out.AAPL.analystBySource)).toEqual(["congress.trade"]);
+    expect(cascade.activeSources).toEqual(["congress.trade"]);
+  });
+
   it("credits BOTH providers when their analyst entries are distinct sources", async () => {
     const cascade = new CascadingEnrichmentProvider([
       stub("congress.trade", { AAPL: { analystBySource: { "yahoo-finance": { score: 80, label: "Buy" } } } }),
