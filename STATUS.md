@@ -14,6 +14,16 @@ doesn't change overFetchK or the Pinecone query. **Scoped infra-free** (no Pinec
 reindex — that needs reprovisioning I can't autonomously verify; deferred). Advisory RAG, not money-path. Built
 by a model-tiered subagent team (all sonnet); review all-green, no fixes. 29 tests; tsc clean post-merge.
 Verify: 40 tests (hybrid + retrieval) · full trio via land.sh.
+## 2026-06-26 — Improvement program #7: rationale-diversity / template-collapse check (item #8 DONE)
+Branch `agent/claude-reasoning-diversity`. New `src/lib/rationale-diversity.ts` — multiset character-trigram
+Jaccard over normalized proposal rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity,
+collapsed, threshold}` (collapsed = mean pairwise > 0.85). Wired into `runStrategyOnce` after the proposal set
+is finalized; attached to `StrategyResult` (optional, non-breaking) + persisted via `audit("rationale_diversity")`;
+`console.warn` on collapse. **Advisory-only, no flag** — pure with no side effects beyond the audit write; it
+NEVER blocks, drops, or modifies a proposal. Catches an LLM emitting canned boilerplate regardless of the
+symbol/data. Built by a model-tiered subagent team (all sonnet recon→design→impl→review); review all-green, no
+fixes. 30 tests; tsc clean post-merge. Verify: 45 tests (diversity + persistence-notification) · full trio via
+land.sh.
 
 ## 2026-06-26 — LLM-required gate: strategy + chat fail loud (no silent rule-based fallback)
 Branch `claude/llm-required-gate` (PR open). No resolvable LLM credential (own key OR operator failover) →
