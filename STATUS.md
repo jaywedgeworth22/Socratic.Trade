@@ -17,6 +17,43 @@ load, before any order attempt. (4) **UI translation:** `humanizeBrokerError()` 
 "Robinhood MCP HTTP 401" proposal error strings to the friendlier message in the Decisions tab.
 Verify: tsc ✓ · 1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-robinhood-auth-ux.md`.
 
+## 2026-06-26 — Stop-execution capability correction (copy) + verified broker matrix
+Branch `agent/claude-stop-execution`. Retracts a wrong Phase-3 claim ("no broker holds trailing stops").
+Diverse adversarial verification (84 agents, primary docs, 2 skeptics/claim — workflow `wf_e5bf1b0a-04d`):
+native trailing is the COMMON case (Alpaca/Robinhood/Schwab/Fidelity/IBKR/E*TRADE/Webull/Public), but for
+THIS app's two live integrations — Alpaca REST supports native trailing yet the app never emits it (OrderType
+lacks `trailing_stop`); Robinhood's Trading MCP exposes only market/limit/stop_market/stop_limit (NO trail,
+NO bracket). Fixed stops are static prices → should rest at the broker (Alpaca brackets already do; RH MCP
+`stop_market` can, gated off pending live verify). THIS PR = UI copy fix only. Follow-up (money-path, own
+PRs): (1) native Alpaca trailing, (2) broker-held fixed stop by default where the integration rests one,
+(3) app-managed fast loop (60s, broker+Massive prices) as FALLBACK for Test sim / RH trailing — avoid
+double-exit with broker-held stops. tsc clean · build via land.sh. See
+`docs/rollouts/2026-06-26-stop-execution-capability-correction.md`.
+
+## 2026-06-26 — Root fix: dashboard accounts fall back to stored connected accounts
+Branch `fix/dashboard-accounts-fallback` (throwaway worktree `~/apps/trading-ag13`). Follow-up to #183.
+`snapshot.accounts` is built from a live `gateway.getAccounts()` that degrades to `[]` on a transient
+broker/MCP enumeration miss, making the configured account vanish (the cause behind the #183 badge
+warning). Now `dashboard.ts` backfills any stored connected account (`listConnectedAccounts`) the live
+list didn't return, deriving `agenticAllowed` via new exported helper `connectedAccountAgenticFallback`
+(Robinhood → only `brokerage` defaults allowed, IRA/Roth not; Alpaca/Alpaca-MCP/Test → all allowed).
+Live entries win; only missing account numbers are added. Net: the active account always resolves to a
+definitive readiness status; execution gates stay strict/fail-closed. Verify: tsc ✓ · 1256/1256 ✓
+(new `test/dashboard-agentic-fallback.test.ts`) · build ✓. See
+`docs/rollouts/2026-06-26-dashboard-accounts-fallback.md`.
+
+## 2026-06-26 — Fix: Brokerage readiness badge showed the opposite (false "not available")
+Branch `fix/brokerage-readiness-false-warning` (throwaway worktree `~/apps/trading-ag13`). The header
+Brokerage badge warned "not currently available for agentic execution" for the active, autonomous,
+live Robinhood account. Cause: the badge keyed on `selectedBrokerAccount?.agenticAllowed === true`, but
+`selectedBrokerAccount` comes from a live `gateway.getAccounts()` that degrades to `[]` on a transient
+RH-MCP enumeration miss → undefined → false hard-warning (account-number matching was fine). Fix
+(`app/dashboard-client.tsx`): warn only on an EXPLICIT `agenticAllowed === false`; undefined (couldn't
+enumerate) → ok + soft "could not re-verify" note. Execution gates left strict (fail-closed), so safety
+unchanged — only the informational badge stopped false-alarming. Verify: tsc ✓ · 1254/1254 ✓ · build ✓.
+Follow-up: make `dashboard.ts` fall back to stored connected accounts when live getAccounts is empty.
+See `docs/rollouts/2026-06-26-brokerage-readiness-false-warning.md`.
+
 ## 2026-06-26 — Provider logo assets + ntfy "recommended/free" + prod restart for Twilio
 Branch `feat/provider-logos-ntfy-recommended` (throwaway worktree `~/apps/trading-ag13`). (1) Committed
 the 6 operator-supplied provider logos to `public/model-logos/{openai,anthropic,xai,gemini,mistral,
@@ -180,6 +217,20 @@ full `npm run build` clean (new tab compiles) · trio via land.sh. NOTE: interac
 preview tool is bound to the main worktree (4001), not this ad-hoc worktree; verification rests on tsc+build+
 strict primitive reuse. Recommend a live Settings → Risk & Safety walkthrough on the running instance.
 See `docs/rollouts/2026-06-25-settings-overhaul.md`.
+
+## 2026-06-25 — App A handoff: new analytics endpoints + adjusted-close push fix
+Branch `claude/magical-faraday-uce1uy`. Implements App A (congress.trade) handoff from `1cdd5ecf-appBhandoff.md`.
+**Read side** — three new endpoints wired into `congress-trade-client.ts`: `getAppAConviction` (composite 0–100
+conviction score per ticker, `GET /api/analytics/conviction`), `getAppATickerBacktest` (post-buy return stats
+per ticker, `GET /api/analytics/ticker/{T}/backtest`), `getAppAConflicts` (committee conflict-of-interest
+trades, `GET /api/analytics/conflicts`). All three are gated on `CONGRESS_ANALYTICS_ENABLED` (default off).
+**Overlay** — `CongressAnalytics` type gains `convictionScore`, `convictionDirection`, `conflictCount`; the daily
+`refreshCongressAnalytics` now fetches conviction + conflicts in parallel with the leaderboard/cluster/member
+calls and wires both into the per-ticker overlay. **Write side** — `history.ts` Yahoo fetch now prefers
+`indicators.adjclose[0].adjclose` (split+dividend-adjusted) over raw `quote.close`, so prices pushed to App A
+via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1228/1228 tests. **Deferred
+(need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
+See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
 
 ## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
 Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up

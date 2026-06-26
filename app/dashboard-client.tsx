@@ -1072,12 +1072,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     },
     {
       label: executionState.label,
-      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed === true,
+      // Only a broker that EXPLICITLY reports agenticAllowed=false is a hard block. `selectedBrokerAccount`
+      // is undefined when the live account list couldn't be fetched (a transient broker/MCP enumeration
+      // miss — gateway.getAccounts() failing degrades to [] in the snapshot). Don't false-alarm "not
+      // available" in that case: the account is configured + active, and the execution path fails closed
+      // on its own if the broker is genuinely unreachable. (Bug: showed the opposite of the real status.)
+      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed !== false,
       detail: executionState.usesLocalSimulation
         ? "Test mode uses local simulated fills."
-        : selectedBrokerAccount?.agenticAllowed === true
-          ? "Selected broker account is available for agentic execution."
-          : "Selected broker account is not currently available for agentic execution.",
+        : selectedBrokerAccount?.agenticAllowed === false
+          ? "Selected broker account is not available for agentic execution."
+          : selectedBrokerAccount
+            ? "Selected broker account is available for agentic execution."
+            : "Could not re-verify the account with the broker just now; agentic execution uses the selected account.",
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
     },
@@ -3821,9 +3828,13 @@ function SettingsContent({
                 <NumberField label="Take-profit trim %" value={policy.riskRules.takeProfitTrimPct ?? 50} min={1} max={100} step={5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitTrimPct: v } })} />
               </div>
               <p className="text-xs text-faint">
-                <strong>Trailing stops are app-managed on every broker</strong> — no broker holds them, so they only
-                fire while this app/scheduler is running. <strong>Take-profit trim %</strong> = how much of a position
-                to sell when it hits the take-profit target (the rest rides; laddered per target band).
+                A fixed stop-loss % is a <strong>static price</strong> (entry minus the %), so it rests at the broker
+                24/7 where the integration allows it — see &quot;Stop support&quot; below. <strong>Trailing</strong> stops,
+                by contrast, are <strong>currently app-managed</strong> (they fire only while this app/scheduler runs):
+                most brokers — incl. Alpaca and Robinhood — support trailing natively, but the app doesn&apos;t place
+                native trailing orders yet, and Robinhood&apos;s trading API the app uses can&apos;t carry them at all.
+                <strong> Take-profit trim %</strong> = how much of a position to sell at the take-profit target (the rest
+                rides; laddered per target band).
               </p>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
                 <span>
@@ -3857,7 +3868,7 @@ function SettingsContent({
                 ) : (
                   <span className="block"><strong>All stops are simulated by the app</strong> in Test/paper — nothing rests at a broker. Connect a live Alpaca/Robinhood account for broker-held protection.</span>
                 )}
-                <span className="mt-1 block text-faint">Across every broker, app-managed stops (trailing, beta/ATR, fixed %, take-profit trims) only fire while this app is running.</span>
+                <span className="mt-1 block text-faint">Anything <em>not</em> resting at the broker (trailing, beta/ATR, take-profit trims — and fixed % on brokers without a resting stop) is app-managed and only fires while this app is running.</span>
               </div>
             </div>
 
