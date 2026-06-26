@@ -14,6 +14,19 @@ real providers opt-in (`EVAL_REAL_PROVIDERS=1`), Langfuse logging gated on env; 
 model-tiered subagent team (all sonnet: recon→design→impl→review). Verify: 49 tests + CLI smoke run green ·
 full trio via land.sh. Next: scheduler CAS lease (money-path, opus-reviewed) lands next; then the sequential
 strategy.ts/types.ts + vector-db.ts clusters.
+## 2026-06-26 — Improvement program #9: market-data staleness gate (item #5 DONE)
+Branch `agent/claude-staleness-gate`. **Money-path-adjacent (blocks proposals).** Added `maxQuoteAgeSec` /
+`maxFundamentalsAgeSec` to `TradingPolicy` (default unset = OFF). `evaluateTradeProposal` now blocks an OPENING
+proposal whose backing market data is older than the threshold: quote age from
+`marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from `MarketScan.generatedAt`;
+`age > threshold` (strict) OR a missing/unparseable timestamp → push a `staleness_gate:` reason → block. FAIL-SAFE
+(stale → block, never the reverse); exits (sell/cover) never gated; pure read + reason-push (no sizing/mutation);
+off-path byte-for-byte. `app/api/policy/route.ts` validates non-negative+finite and stripNullsDeep makes a
+cleared field = off. No defaults/market/strategy change needed (asOf already flows onto `quotesBySymbol`). Built
+by a model-tiered team: sonnet recon/impl, **opus design + dual opus review** (correctness + money-safety), both
+all-green. 9 tests; tsc clean. Verify: 57 tests (staleness + policy) · full trio via land.sh. Next (last two,
+sequential on strategy.ts): coarse-credit attribution, then multi-query/RRF.
+
 ## 2026-06-26 — Improvement program #7: rationale-diversity / template-collapse check (item #8 DONE)
 Branch `agent/claude-reasoning-diversity`. New `src/lib/rationale-diversity.ts` — multiset character-trigram
 Jaccard over normalized proposal rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity,
