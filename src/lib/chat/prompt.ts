@@ -2,7 +2,7 @@
 // system prompt, memory format, and schemas are versioned together; bump this on any change
 // and re-run the no-execute eval suite (test/atlas-golden-eval.test.ts).
 
-export const PROMPT_VERSION = "agentic-chat@0.6.0";
+export const PROMPT_VERSION = "agentic-chat@0.7.0";
 
 export const DISCLAIMER = "This is general information, not personalized financial advice.";
 
@@ -12,6 +12,8 @@ export const SYSTEM_PROMPT = [
   "CAPABILITIES",
   "- Explain financial concepts, quotes, and market data in plain language.",
   "- Use the provided tools for any live data or document knowledge; answer factual questions only from tool results.",
+  "- You CAN see the recent conversation history — the last several turns are included with each message. Use them",
+  "  to follow up and resolve references. Do NOT claim you have no memory of the chat or that history is unavailable.",
   "",
   "HARD BOUNDARIES (never violate)",
   "- You CANNOT place, modify, cancel, or execute trades, and you have no tool that does.",

@@ -4,14 +4,67 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-06-26 — GitHub OAuth as alternative sign-in provider + security + dynamic login
-Branch `claude/wonderful-wozniak-xploaq`. Added GitHub OAuth alongside Google OAuth.
-Security fix (Codex P1): empty `ALLOWED_EMAILS` with Auth.js (no CF Access) now defaults to
-primary-only, not allow-all — prevents any GitHub account from signing in without an explicit
-allowlist entry. Static prerender fix (Codex P2): `app/login/page.tsx` is now `force-dynamic`
-so provider availability reflects runtime env vars, not build-time bakes. Added 2 new middleware
-tests. Verify: tsc ✓ · 1252/1252 ✓ · build ✓ · /login is now ƒ (dynamic).
-See `docs/rollouts/2026-06-26-github-oauth.md`.
+## 2026-06-26 — Per-turn model logging (admin transcript + hover) + fresher chat quote
+Branch `feat/chat-model-transcript-and-fresh-quote` (throwaway worktree `~/apps/trading-ag13`).
+(1) `chat_turns` gains a `model` column (migration v5); the orchestrator records the model on each
+assistant turn + returns it on the reply. NEW **admin transcript view** (`/admin/transcript`) shows the
+conversation with a model badge per assistant reply; the chat bubble shows `Answered by <model>` on
+hover. (2) **Fresher quote:** `getQuote` now prefers Yahoo live `regularMarketPrice` + real
+`regularMarketTime` ("yahoo-finance") before the daily-bar close — fixes the "as of yesterday"
+staleness (old path used the last non-null daily bar, which lags intraday). (3) **History prompt fix:**
+added a CAPABILITIES line so the model stops falsely claiming "no memory" (the last ~10 turns ARE
+replayed, per-user, model-agnostic — switching models mid-chat keeps history); PROMPT_VERSION 0.6→0.7.
+Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live reply.model + chat-history model + `/admin/transcript`
+200 (fresher-quote not locally verifiable — Yahoo 429s this host; works on the Massive/Yahoo box).
+**Answered (not built):** alerts fire (60s scheduler) + webhook works, push/email/SMS real but need
+keys+prefs; fancier logo/price-tier dropdown + DeepSeek provider = offered follow-ups. See
+`docs/rollouts/2026-06-26-chat-model-transcript-and-fresh-quote.md`.
+
+## 2026-06-26 — Chat quote robustness (gateway-agnostic fallback) + focus prompt after model pick
+Branch `fix/chat-quote-fallback-and-focus` (throwaway worktree `~/apps/trading-ag13`). Follow-up to
+#174 after VZ still showed `NO_QUOTE`. (1) `getQuote` (`src/lib/chat/orchestrator.ts`) now has the
+keyless `fetchDailyOHLC` fallback at the CHAT layer too, with the broker call in its OWN try/catch (a
+broker throw falls through to the fallback instead of `QUOTE_FAILED`) and no more `NO_ACCOUNT` hard-fail
+(price questions answer without an account). (2) Picking a model now focuses the prompt box
+(`inputRef` + `select.onChange` → `focus()`). **Diagnosis of the lingering NO_QUOTE:** in this worktree
+`politeFetchJson` Yahoo → 429 and Stooq → rate-limited, and there's NO Massive key here, so the keyless
+fallback can't resolve locally; on the operator's box `fetchDailyOHLC` hits **Massive (paid) first** and
+returns data, so the quote resolves there (raw fetch + the `fillMissingQuotesWithClose` unit test
+confirm the logic). Verify: tsc ✓ · 1253/1253 ✓ · build ✓ · chat 200 (live PRICE not confirmable
+locally — Yahoo 429s this IP, no Massive key; confirm on the Massive box). See
+`docs/rollouts/2026-06-26-chat-quote-robustness-and-model-focus.md`.
+
+## 2026-06-25 — Chat Markdown rendering + keyless quote fallback (fixes the 0.5-XOM block)
+Branch `feat/chat-md-quotes-notional` (throwaway worktree `~/apps/trading-ag13`). Three operator-
+reported fixes. (1) **Quote fallback (root cause):** the `$9,007,199,254,740,991` block was exactly
+`Number.MAX_SAFE_INTEGER` — the "can't price → fail closed" sentinel. The chat quote AND the pre-trade
+notional both read only Alpaca bid/ask (0/empty after hours / free IEX). New
+`fillMissingQuotesWithClose` (`src/lib/alpaca.ts`) fills unpriced symbols with a keyless `fetchDailyOHLC`
+close (`yahoo-finance-delayed`), wired into `getEquityQuotes` so both paths recover; gateway now stores
+`userId`. (2) **Honest no-price UX** (`from-draft`): on the sentinel, return one clear "couldn't get a
+price for X" reason + `estimatedNotional: undefined` instead of the quadrillion-dollar cap wall. (3)
+**Markdown:** assistant messages render full Markdown+GFM via `react-markdown`+`remark-gfm`
+(`app/ui/markdown.tsx`), HTML-escaped (no rehype-raw); user messages stay plain. **Deferred:** dollar-
+amount ("buy $150 of X") chat orders — broker/review/types already support `dollarAmount`, but wiring it
+through draft→proposal→execution needs its own PR. Verify: tsc ✓ · build ✓ · full suite ✓ (1253) ·
+live dashboard 200 + chat mock 200 (Alpaca fallback not exercisable locally — Test mode). (A Markdown
+render test was dropped: the repo's oxc transformer honors tsconfig `jsx: preserve` and can't transform
+an imported `.tsx` in vitest; Markdown is covered by build + live + react-markdown's escaping.) See
+`docs/rollouts/2026-06-25-chat-markdown-and-quote-fallback.md`.
+
+## 2026-06-26 — GitHub OAuth + Apple Sign In + auth security hardening
+Branch `claude/wonderful-wozniak-xploaq`. Three auth features + two Codex P1 security fixes.
+**GitHub OAuth:** added GitHub as a second sign-in option alongside Google so a deployment without
+GCP credentials can still use Auth.js. **Security P1 (Codex):** empty `ALLOWED_EMAILS` with Auth.js
+(no CF Access) now defaults to primary-only, not allow-all — prevents any GitHub account from signing
+in without an explicit allowlist entry. **Identity-source fix (Codex P1):** `isEmailAllowed` now
+takes a `fromCf: boolean` parameter tracked per-request in middleware — CF-defer only applies when CF
+actually provided the header, not just when the CF config flag is on. **Apple Sign In:** added Apple
+as a third OAuth option (`AUTH_APPLE_ID`/`AUTH_APPLE_SECRET`); warns in the UI when Apple is the only
+provider (Apple only sends email on first authorization — session expiry would lock users out).
+**GitHub verified-email:** `signIn` callback calls `/user/emails` independently and verifies the
+`verified` flag; fails closed on any API error. Verify: tsc ✓ · 1253/1253 ✓ · build ✓ · /login ƒ
+(Dynamic). See `docs/rollouts/2026-06-26-github-oauth.md` and `docs/rollouts/2026-06-26-apple-login.md`.
 
 ## 2026-06-26 — Cutover script prompts for the Infisical token
 Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,
