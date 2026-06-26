@@ -52,7 +52,7 @@ tokens.
   conflation; documented `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) as the primary
   bootstrap.
 
-### Security hardening (Codex review #177 rounds 2–4)
+### Security hardening (Codex review #177 rounds 2–5)
 
 Round 2:
 - **Mint via env, not argv:** both `mintToken` (runner) and `mint_token` (cutover) now pass the
@@ -82,6 +82,14 @@ Round 4:
   `CLIENT_ID`-without-secret; a lone `INFISICAL_CLIENT_SECRET` (no id) plus a stale `INFISICAL_TOKEN`
   in `deploy.env` would fall back to the expiring token and persist *that*. The app path now does the
   same full XOR check as the runner/shared paths — either half without the other dies.
+
+Round 5:
+- **Sanitize the cutover's own `infisical` children.** When invoked the documented way
+  (`INFISICAL_CLIENT_SECRET=… bash …` / exported), `infisical_app`/`infisical_shared` set the token but
+  the exported long-lived Client Secret was still inherited by every `infisical secrets`/`secrets set`
+  verify/import child. New `infisical_tok` helper runs them via `env -u …` so they authenticate with
+  only the short-lived token — same scoping as the runner's `childEnv`. This completes secret-scoping
+  across every child-process surface (runner app launch, runner export, cutover verify/import).
 
 ## Files
 

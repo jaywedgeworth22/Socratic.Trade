@@ -79,6 +79,18 @@ read_envfile_var() {
   ( set +u +e; . "$ENV_FILE" >/dev/null 2>&1; eval "printf '%s' \"\${$1-}\"" )
 }
 
+# Run `infisical` authenticated by ONLY the given short-lived token, with the long-lived
+# client secrets / shared creds stripped from the child env (they aren't needed once a
+# token is minted) — mirrors the runner's childEnv scoping so the verify/import children
+# never inherit an exported Client Secret.
+infisical_tok() {  # $1=access token; remaining args → infisical
+  local _tok="$1"; shift
+  env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET \
+      -u INFISICAL_SHARED_CLIENT_ID -u INFISICAL_SHARED_CLIENT_SECRET -u INFISICAL_SHARED_TOKEN \
+      -u INFISICAL_UNIVERSAL_AUTH_CLIENT_ID -u INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET \
+      INFISICAL_TOKEN="$_tok" infisical "$@"
+}
+
 # ── Preconditions ─────────────────────────────────────────────────────────────
 command -v infisical >/dev/null 2>&1 || die "Infisical CLI not found. Install it: brew install infisical/get-cli/infisical (or npm i -g @infisical/cli)"
 command -v pm2 >/dev/null 2>&1 || die "pm2 not found on PATH."
@@ -138,7 +150,7 @@ if [ -n "$APP_CLIENT_ID" ] && [ -n "$APP_CLIENT_SECRET" ]; then
   log "Authenticating app identity (universal auth)…"
   APP_TOKEN="$(mint_token "$APP_CLIENT_ID" "$APP_CLIENT_SECRET" app)"
 fi
-infisical_app() { INFISICAL_TOKEN="$APP_TOKEN" infisical "$@"; }
+infisical_app() { infisical_tok "$APP_TOKEN" "$@"; }
 
 # Partial shared identity (only one half of the pair) is a HARD ERROR — fail closed,
 # mirroring the app path, rather than silently restarting prod without shared secrets.
@@ -165,7 +177,7 @@ if [ "$SHARED_ENABLED" -eq 1 ] && [ -n "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CL
   log "Authenticating shared identity (universal auth)…"
   SHARED_TOKEN="$(mint_token "$SHARED_CLIENT_ID" "$SHARED_CLIENT_SECRET" shared)"
 fi
-infisical_shared() { INFISICAL_TOKEN="$SHARED_TOKEN" infisical "$@"; }
+infisical_shared() { infisical_tok "$SHARED_TOKEN" "$@"; }
 
 # ── Verify access before changing anything ────────────────────────────────────
 log "Verifying Infisical access (project $PROJECT_ID, env $ENV_NAME)…"
