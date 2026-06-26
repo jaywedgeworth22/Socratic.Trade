@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Improvement program #4: embed congress/insider disclosures into RAG (item #3 DONE)
+Branch `agent/claude-rag-embed-disclosures`. New `src/lib/web-sources/disclosure-rag.ts` converts structured
+congress trades + insider filings into natural-language RAG docs and upserts them via the existing
+`storeContexts` path (vector-db loaded by dynamic import so Voyage/Pinecone only load when enabled). Sets
+`acceptance_datetime` = `disclosedAt ?? tradedAt` (congress) / `filedAt` (insider) so the point-in-time as-of
+guard never leaks a future disclosure; doc_type `congress-trade`/`insider-filing` (lowercase). Flag
+`RAG_EMBED_DISCLOSURES` (default OFF); fire-and-forget hook in `runDueRefreshes`. Built by a model-tiered
+subagent team (sonnet recon→design→impl→review); 22 hermetic tests (vector-db upsert mocked); tsc clean.
+Follow-up: re-embeds the whole dataset each refresh (deterministic upsert id → no dupes, redundant embed
+cost) — a fresh-delta pass is a cheap later optimization. Verify: 22 tests pass · full trio via land.sh.
+
 ## 2026-06-26 — Improvement program #3: four-side P&L + notional reset tests (item #2 DONE)
 Branch `agent/claude-risk-pnl-tests`. Completed item #2. Added 8 tests (test-only, no production change):
 `calculatePnl` realized-P&L now covers short round-trip (returnPct + side), partial cover with residual
