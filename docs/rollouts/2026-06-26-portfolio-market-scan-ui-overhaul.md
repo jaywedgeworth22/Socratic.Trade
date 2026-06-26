@@ -124,6 +124,12 @@ Intentionally NOT changed (both are explicit owner requests, noted on the PR):
   alpaca-mcp accounts remain editable.
 Re-verified: tsc clean · **1351/1351** tests · build OK.
 
+Fourth Codex round (1 P2): the near-future tightening in round 3 fixed the **congress** path but left the
+symmetric **insider** `saneFilingDate` with the ±3-day skew, so a Form 4 dated tomorrow still passed.
+Applied the same strictly-after-today rejection to `saneFilingDate` (drops future/near-future/rolled-over
+`periodOfReport`/`signatureDate`/`filedAt`); added a regression test in `test/web-sources-sec.test.ts`.
+Re-verified: tsc clean · **1352/1352** tests · build OK.
+
 ## Follow-ups
 - The Alpaca mismatch fix addresses spurious/formatting mismatches; if a genuine wrong-number is stored
   the run still surfaces the actionable message (by design). A deeper trace of where the run sources the

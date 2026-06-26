@@ -112,7 +112,11 @@ function saneFilingDate(value: string | undefined, now: number = Date.now()): st
   const iso = `${m[1]}-${m[2]}-${m[3]}`;
   const ts = d.getTime();
   if (!Number.isFinite(ts)) return undefined;
-  if (ts > now + 3 * 24 * 60 * 60_000) return undefined; // absurd future (allow small skew)
+  // A Form 4 reports a transaction that already happened, so its date is a timezone-less calendar
+  // date that can't be after today — reject anything strictly future (no ±3-day skew; lexicographic
+  // compare is valid for YYYY-MM-DD).
+  const todayIso = new Date(now).toISOString().slice(0, 10);
+  if (iso > todayIso) return undefined;
   if (ts < Date.parse("2000-01-01")) return undefined; // absurd past
   return iso;
 }
