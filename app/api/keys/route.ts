@@ -60,6 +60,14 @@ const API_KEY_CATALOG = [
     docsUrl: "https://console.mistral.ai/api-keys/"
   },
   {
+    service: "deepseek",
+    label: "DeepSeek",
+    category: "LLM",
+    required: false,
+    unlocks: "DeepSeek models (deepseek-chat, deepseek-reasoner) for trade proposals, strategy analysis, and the Assistant.",
+    docsUrl: "https://platform.deepseek.com/api-keys"
+  },
+  {
     service: "finnhub",
     label: "Finnhub",
     category: "Market data",

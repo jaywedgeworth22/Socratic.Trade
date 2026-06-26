@@ -4,6 +4,16 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — DeepSeek as 6th LLM provider
+Branch `claude/magical-faraday-uce1uy`. Adds DeepSeek (OpenAI-compatible) as a 6th provider across the
+full routing stack: `LlmEndpoint.provider` union, `resolveLlmEndpoint` deepseek branch (regex `^deepseek`,
+env `DEEPSEEK_API_KEY`/`DEEPSEEK_API_URL`, default `https://api.deepseek.com/v1/chat/completions`),
+`ChatProvider`/`chatProviderForModel`/`openAiCompatChatUrl`/`makeOpenAITransport`/`OpenAILLM` constructor,
+`LlmProviderName`/`providerLabel`/`providerFromText` in llm-errors, `API_KEY_ENV_MAP`, aliases, and
+`LOCAL_ENV_MIGRATION_SERVICES` in db-api-keys, catalog entry in api/keys/route.ts, green+red team optgroups
+in dashboard-client.tsx (`deepseek-chat` and `deepseek-reasoner`), and `.env.example`. tsc ✓ · 1243/1243 ✓ · build ✓.
+See `docs/rollouts/2026-06-26-deepseek-provider.md`.
+
 ## 2026-06-25 — App A handoff: new analytics endpoints + adjusted-close push fix
 Branch `claude/magical-faraday-uce1uy`. Implements App A (congress.trade) handoff from `1cdd5ecf-appBhandoff.md`.
 **Read side** — three new endpoints wired into `congress-trade-client.ts`: `getAppAConviction` (composite 0–100

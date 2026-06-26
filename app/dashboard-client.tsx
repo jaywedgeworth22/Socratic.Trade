@@ -3319,6 +3319,10 @@ function StrategyStudio({
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
                 </optgroup>
+                <optgroup label="DeepSeek — requires DeepSeek key in Connections">
+                  <option value="deepseek-chat">deepseek-chat — balanced DeepSeek model</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — stronger reasoning</option>
+                </optgroup>
               </select>
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
@@ -3343,6 +3347,10 @@ function StrategyStudio({
                   <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                </optgroup>
+                <optgroup label="DeepSeek — requires DeepSeek key in Connections">
+                  <option value="deepseek-chat">deepseek-chat — balanced DeepSeek model</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — stronger reasoning, adversarial critique</option>
                 </optgroup>
               </select>
             </Field>

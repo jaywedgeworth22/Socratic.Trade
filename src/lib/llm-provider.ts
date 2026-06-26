@@ -4,7 +4,7 @@ import { resolveOpenAiModel, type OpenAiTransport } from "./llm-request";
 export type LlmTeamRole = "green" | "red" | "support";
 
 export interface LlmEndpoint {
-  provider: "openai" | "xai" | "gemini" | "mistral";
+  provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek";
   url: string;
   key?: string;
   model: string;
@@ -33,6 +33,7 @@ export function resolveLlmEndpoint(
   defaultOpenAiUrl: string = "https://api.openai.com/v1/responses",
   role: LlmTeamRole = "green"
 ): LlmEndpoint {
+
   const model = resolveRoleModel(policy, role);
 
   if (/^grok/i.test(model)) {
@@ -74,6 +75,22 @@ export function resolveLlmEndpoint(
     const cred = resolveLlmCredential("mistral", userId);
     return {
       provider: "mistral",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^deepseek/i.test(model)) {
+    const url =
+      process.env.DEEPSEEK_API_URL?.trim() ||
+      "https://api.deepseek.com/v1/chat/completions";
+    const cred = resolveLlmCredential("deepseek", userId);
+    return {
+      provider: "deepseek",
       url,
       key: cred.key,
       model,
