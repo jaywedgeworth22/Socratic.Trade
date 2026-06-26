@@ -244,10 +244,14 @@ function saneIsoDate(value: string, now: number): string | undefined {
 function normalizeTradeDate(value: string | undefined, now: number): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
-  const direct = saneIsoDate(trimmed, now);
-  if (direct) return direct;
   const mdy = toIsoDate(trimmed);
-  return mdy ? saneIsoDate(mdy, now) : undefined;
+  const iso = saneIsoDate(trimmed, now) ?? (mdy ? saneIsoDate(mdy, now) : undefined);
+  if (!iso) return undefined;
+  // A congressional trade/disclosure DATE is a timezone-less calendar date, so `saneIsoDate`'s small
+  // (±3 day) future skew — meant for timestamps — is too lax here: even tomorrow is impossible.
+  // Reject anything strictly after today (lexicographic compare is valid for YYYY-MM-DD).
+  const todayIso = new Date(now).toISOString().slice(0, 10);
+  return iso > todayIso ? undefined : iso;
 }
 
 /** Parse the Apify `johnvc` actor's dataset items into CongressTrade rows (pure). */

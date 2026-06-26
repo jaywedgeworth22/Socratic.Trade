@@ -108,6 +108,22 @@ round-trip, rejecting `2026-02-30`/`2026-04-31`/`2025-02-29`/`2026-13-01` while 
 (`2024-02-29`). Added a regression test in `test/congress-trade-events.test.ts`.
 Re-verified: tsc clean · **1351/1351** tests · build OK.
 
+Third Codex round (5 P2s on the full re-review). Fixed:
+- **formatDateRange** (dashboard): date-only ISO strings were parsed as UTC midnight then formatted in
+  local time, rendering one day early in US time zones — now formats with `timeZone: "UTC"`.
+- **normalizeTradeDate** (congress): `saneIsoDate`'s ±3-day timestamp skew let a near-future trade date
+  (tomorrow/+3d) through; trade/disclosure calendar dates can't be future, so anything strictly after
+  today is now rejected (regression test added).
+- **Edit-Account env** (dashboard): leaving the API key blank ("leave blank to keep") on an existing
+  account re-inferred `environment` from the blank key and could flip a PK-inferred paper account to
+  live on a label-only edit; we now keep the stored environment unless a key is actually (re)entered.
+Intentionally NOT changed (both are explicit owner requests, noted on the PR):
+- Live Brokerage portfolio chip stays green (owner asked for it; the prominent top account-mode banner
+  remains the primary real-money cue).
+- The "Connect Alpaca MCP" add button stays removed (owner asked to hide the MCP option); existing
+  alpaca-mcp accounts remain editable.
+Re-verified: tsc clean · **1351/1351** tests · build OK.
+
 ## Follow-ups
 - The Alpaca mismatch fix addresses spurious/formatting mismatches; if a genuine wrong-number is stored
   the run still surfaces the actionable message (by design). A deeper trace of where the run sources the

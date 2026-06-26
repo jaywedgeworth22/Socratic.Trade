@@ -101,6 +101,10 @@ describe("coerceCongressTrade — App A /api/transactions confirmed shape", () =
     // NOT slip in under the disclosure date.
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2030-01-01" })).toBeNull();
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2030-01-01", disclosedAt: "2026-06-01" })).toBeNull();
+    // Even a NEAR-future date (within saneIsoDate's ±3-day timestamp skew) is impossible for a
+    // timezone-less trade date, so it's rejected too.
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: tomorrow })).toBeNull();
     // Impossible calendar dates that Date.parse would roll over (Feb 30 -> Mar 2) are rejected.
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-02-30" })).toBeNull();
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-04-31" })).toBeNull();

@@ -2575,18 +2575,20 @@ function formatDateRange(isoDates: string[]): string {
     .filter((d) => !isNaN(d.getTime()))
     .sort((a, b) => a.getTime() - b.getTime());
   if (dates.length === 0) return "";
+  // Date-only ISO strings parse as UTC midnight, so format in UTC too — otherwise US time zones
+  // (west of UTC) render the day before, e.g. "2026-06-26" -> "Jun 25".
   const fmt = (d: Date, includeYear: boolean) =>
-    d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(includeYear ? { year: "numeric" } : {}) });
+    d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", ...(includeYear ? { year: "numeric" } : {}) });
   const min = dates[0];
   const max = dates[dates.length - 1];
   if (min.getTime() === max.getTime()) {
     return fmt(min, true);
   }
-  if (min.getFullYear() === max.getFullYear()) {
+  if (min.getUTCFullYear() === max.getUTCFullYear()) {
     return `${fmt(min, false)} – ${fmt(max, true)}`;
   }
   const fmtMonth = (d: Date) =>
-    d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "numeric" });
   return `${fmtMonth(min)} – ${fmtMonth(max)}`;
 }
 
@@ -5358,7 +5360,14 @@ function IntegrationsSection({
         toast.error("Account Number is required for Alpaca.");
         return;
       }
-      draft.environment = inferAlpacaEnvironment(draft);
+      // When editing an existing account and leaving the API key blank ("leave blank to keep"), the
+      // secret is preserved server-side — so DON'T re-infer the environment from the now-blank key
+      // (that could flip a PK-inferred paper account to live on a label-only edit). Keep the stored
+      // environment; only re-infer when a key is actually (re)entered or for a brand-new account.
+      const keepingHiddenSecret = Boolean(draft.id) && !draft.apiKey?.trim();
+      draft.environment = keepingHiddenSecret
+        ? draft.environment || inferAlpacaEnvironment(draft)
+        : inferAlpacaEnvironment(draft);
     } else {
       draft.environment = draft.environment || "live";
     }
