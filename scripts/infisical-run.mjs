@@ -96,11 +96,12 @@ function mintToken(clientId, clientSecret, label) {
     ["login", "--method=universal-auth", "--silent", "--plain"],
     {
       encoding: "utf8",
+      // Sanitized base + ONLY this identity's pair, so the app mint never sees the shared
+      // Client Secret (and vice versa) and no secret lands on argv.
       env: {
-        ...process.env,
+        ...sanitizedBase({}),
         INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: clientId,
         INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: clientSecret,
-        INFISICAL_DISABLE_UPDATE_CHECK: "true",
       },
     }
   );
@@ -132,17 +133,29 @@ function resolveToken(a, label) {
   return null;
 }
 
+// Every Infisical credential var. Stripped from any subprocess env we build so a child
+// only ever receives the exact credential it needs (no cross-identity / stale leakage).
+const CREDENTIAL_ENV_KEYS = [
+  "INFISICAL_TOKEN",
+  "INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET",
+  "INFISICAL_SHARED_CLIENT_ID", "INFISICAL_SHARED_CLIENT_SECRET", "INFISICAL_SHARED_TOKEN",
+  "INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
+];
+
+// A copy of process.env with all Infisical credentials removed — the base for any
+// subprocess we spawn, onto which we add only the one credential that call needs.
+function sanitizedBase(extra) {
+  const env = { ...process.env, ...extra };
+  for (const k of CREDENTIAL_ENV_KEYS) delete env[k];
+  env.INFISICAL_DISABLE_UPDATE_CHECK = env.INFISICAL_DISABLE_UPDATE_CHECK || "true";
+  return env;
+}
+
 // Build a child/CLI env that authenticates purely via the resolved token, and never
 // leaks the machine-identity Client Secret(s) into the spawned process.
 function childEnv(extra, token) {
-  const env = { ...process.env, ...extra };
-  for (const k of [
-    "INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET",
-    "INFISICAL_SHARED_CLIENT_ID", "INFISICAL_SHARED_CLIENT_SECRET", "INFISICAL_SHARED_TOKEN",
-    "INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
-  ]) delete env[k];
-  if (token) env.INFISICAL_TOKEN = token; else delete env.INFISICAL_TOKEN;
-  env.INFISICAL_DISABLE_UPDATE_CHECK = env.INFISICAL_DISABLE_UPDATE_CHECK || "true";
+  const env = sanitizedBase(extra);
+  if (token) env.INFISICAL_TOKEN = token;
   return env;
 }
 

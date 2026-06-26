@@ -131,15 +131,26 @@ fi
 
 export INFISICAL_DISABLE_UPDATE_CHECK=true
 
+# All creds are now copied into the script's own APP_*/SHARED_* vars, so drop the
+# operator-supplied credential ENV vars from this shell. Subsequent children (the mint
+# login, verify/import, the health-check loop, and --scrub) then never inherit a long-lived
+# secret; the PM2 start re-sources what it needs from deploy.env in its own subshell.
+unset INFISICAL_CLIENT_ID INFISICAL_CLIENT_SECRET INFISICAL_TOKEN \
+      INFISICAL_SHARED_CLIENT_ID INFISICAL_SHARED_CLIENT_SECRET INFISICAL_SHARED_TOKEN \
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET || true
+
 # Exchange a machine-identity Client ID + Client Secret for a short-lived access
 # token (universal auth). `--plain --silent` prints just the raw token, which the
 # CLI's secrets/export read via INFISICAL_TOKEN.
 mint_token() {  # $1=client_id $2=client_secret $3=label → prints the access token
-  # Creds go via the env (INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET), NOT argv, so the
-  # long-lived Client Secret never shows up in `ps`/`/proc/<pid>/cmdline`.
+  # Strip ALL Infisical credential vars from the login child and pass ONLY this identity's
+  # pair via universal-auth env vars (not argv), so the app mint never sees the shared
+  # Client Secret (and vice versa) and the secret never appears in `ps`.
   local tok
-  tok="$(INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$1" INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$2" \
-         infisical login --method=universal-auth --silent --plain 2>/dev/null)" \
+  tok="$(env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET -u INFISICAL_TOKEN \
+             -u INFISICAL_SHARED_CLIENT_ID -u INFISICAL_SHARED_CLIENT_SECRET -u INFISICAL_SHARED_TOKEN \
+             INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$1" INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$2" \
+             infisical login --method=universal-auth --silent --plain 2>/dev/null)" \
     || die "universal-auth login failed for the $3 identity. Check the Client ID + Client Secret pairing/access (each secret only works with its OWN identity's Client ID; watch for rotation/lockout)."
   [ -n "$tok" ] || die "universal-auth login for the $3 identity returned an empty token."
   printf '%s' "$tok"
@@ -252,9 +263,12 @@ fi
 # ── (3) Switch the PM2 process to launch via Infisical ────────────────────────
 if [ "$DO_RESTART" -eq 1 ]; then
   log "Switching PM2 '$APP' to 'npm run start:secrets'…"
-  # shellcheck disable=SC1090
-  set -a; . "$ENV_FILE"; set +a            # export the bootstrap into this shell
+  # Source the bootstrap ONLY inside this subshell — pm2 --update-env captures it for the
+  # managed process, but it never lands in the parent shell (so the health-check/scrub
+  # commands below don't inherit the long-lived Client Secret).
   ( cd "$DIR"
+    # shellcheck disable=SC1090
+    set -a; . "$ENV_FILE"; set +a
     pm2 delete "$APP" >/dev/null 2>&1 || true
     pm2 start npm --name "$APP" --update-env --cwd "$DIR" -- run start:secrets
     pm2 save )

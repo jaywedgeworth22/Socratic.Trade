@@ -52,7 +52,7 @@ tokens.
   conflation; documented `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) as the primary
   bootstrap.
 
-### Security hardening (Codex review #177 rounds 2–5)
+### Security hardening (Codex review #177 rounds 2–6)
 
 Round 2:
 - **Mint via env, not argv:** both `mintToken` (runner) and `mint_token` (cutover) now pass the
@@ -88,8 +88,17 @@ Round 5:
   (`INFISICAL_CLIENT_SECRET=… bash …` / exported), `infisical_app`/`infisical_shared` set the token but
   the exported long-lived Client Secret was still inherited by every `infisical secrets`/`secrets set`
   verify/import child. New `infisical_tok` helper runs them via `env -u …` so they authenticate with
-  only the short-lived token — same scoping as the runner's `childEnv`. This completes secret-scoping
-  across every child-process surface (runner app launch, runner export, cutover verify/import).
+  only the short-lived token — same scoping as the runner's `childEnv`.
+
+Round 6 (cross-identity + parent-shell isolation):
+- **Per-identity login env.** Each `infisical login` mint now runs from a sanitized base plus ONLY its
+  own universal-auth pair — runner via `sanitizedBase()` (a shared `CREDENTIAL_ENV_KEYS` strip), cutover
+  via `env -u …` — so the app mint never sees the shared Client Secret and vice versa.
+- **Cutover parent shell sanitized.** After the creds are copied into the script's own
+  `APP_*`/`SHARED_*` vars, the operator-supplied credential ENV vars are `unset`, and the restart
+  sources `deploy.env` **inside the PM2 subshell** — so the health-check loop and `--scrub` never
+  inherit the long-lived secret; only the PM2 start does. Secret-scoping is now complete across every
+  child-process AND parent-shell surface.
 
 ## Files
 
