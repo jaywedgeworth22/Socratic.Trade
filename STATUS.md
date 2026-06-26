@@ -24,6 +24,58 @@ Accounts/Edit-Account copy/required/hidden/full-width + **Hide Test account** to
 Verify: tsc clean · **1271/1271** tests · `npm run build` OK. Not browser-verified (no preview here).
 Next: live mobile walkthrough; deeper trace of the autonomous account-number provenance if mismatches
 persist. See `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+## 2026-06-26 — Codex Autofix follow-up: make it RESOLVE threads, not just fix code (CI/automation)
+Branch `claude/codex-autofix-resolve-threads` (PR open). After #201 unblocked the actor gate, end-to-end
+verification on throwaway PR #202 confirmed the autofix **passes the gate and fixes** Codex's findings
+(it fixed both planted bugs + pushed `[codex-autofix] …`) — but it resolved **0/2** threads: a code fix
+only makes a Codex thread `outdated`, never `resolved`, and GitHub's "require conversation resolution"
+gate needs explicit resolution. So a working-but-non-resolving autofix would still block PRs the moment
+that gate is re-enabled. (The live `main` ruleset currently has `required_review_thread_resolution:
+false` — only `verify` is required — likely toggled off as a stopgap while the bot was broken.) Fix:
+added prompt **step 7** instructing the autofix to RESOLVE every Codex thread it addressed (or that is
+outdated/already-fixed) via the GraphQL `resolveReviewThread` mutation, leaving maintainer-question
+threads open; the workflow already has `pull-requests: write`. Verify: YAML parse OK · full trio via
+land.sh. NEXT (post-merge): re-verify on a fresh throwaway PR that threads now show `resolved`, then the
+owner can re-enable `required_review_thread_resolution`. See
+`docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
+
+## 2026-06-26 — Fix: Codex Autofix workflow failing-fast on the bot-actor gate (CI/automation)
+Branch `claude/pensive-morse-77574e` (PR open). The `Codex Autofix` workflow (`anthropics/claude-code-action@v1`,
+added PR #188) was failing on **every** PR in ~11s, so Codex's inline comments never got auto-addressed/resolved
+→ PRs stuck `mergeStateStatus: BLOCKED` ("All comments must be resolved") even with `verify` green. Root cause:
+the action's agent-mode **human-actor gate** aborts on any non-`User` trigger ("Workflow initiated by non-human
+actor: chatgpt-codex-connector … Add bot to allowed_bots list") and the workflow set no `allowed_bots` (every
+failed run logged `ALLOWED_BOTS:` empty). The "directory mismatch … tsconfig.json" string is a **red herring** —
+a `#` comment the action echoes in its run script, not the error (the underlying Bun bug is already fixed
+upstream). Fix: add `allowed_bots: "chatgpt-codex-connector[bot]"` to the action step (explicit bot, not `*`; the
+job `if:` already restricts triggers to that bot). Verified against pinned action source `v1`→`78a7209`: agent
+mode's only actor gate is `checkHumanActor` — no separate write-perm gate, so this one input is the complete fix.
+**Behavioral note:** review/comment/dispatch events run the workflow def from `main`, so the fix is inert until
+merged. Verify: npm ci · tsc clean · **1428 tests pass (148 files)** · build green · full trio via land.sh. NEXT
+(post-merge): trigger Codex on an open PR, confirm the run passes the actor gate and resolves ≥1 thread. See
+`docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
+## 2026-06-26 — Improvement program: STATUS + CODEX HANDOFF (read this first)
+**Authoritative handoff:** `docs/rollouts/2026-06-26-improvement-program-handoff.md` (full per-item status +
+remaining work + merge mechanics). Summary: **12/14 items DONE** — merged PRs #186 risk-breaker, #190 four-side
+P&L, #187 RAG filters, #191 embed disclosures, #193 scheduler lease, #195 reasoning-diversity, #197 staleness
+gate, #192 langfuse evals, #196 hybrid BM25. **Remaining:** PR #199 coarse-credit (IN REVIEW — code done +
+dual-opus-reviewed, needs Codex-thread resolution + merge); multi-query/RRF (#2, NOT STARTED — last item,
+reuses `rrfFuse`); a final consolidation docs PR; the karpathy/autoresearch research read. **SKIP:**
+Self-RAG/HyDE/sentence-window/contextual-compression (documented). **Blocker:** the `autofix` CI bot
+(claude-code-action) is broken (Bun/tsconfig internal error) → it no longer resolves Codex review threads, and
+the branch policy requires all conversations resolved, so every PR must be resolved by hand until it's fixed
+(separate task spawned). See the handoff note's "Merge mechanics" for the resolve-threads command.
+
+## 2026-06-26 — Improvement program #5: Langfuse offline eval/regression harness (items #6+#7 DONE)
+Branch `agent/claude-langfuse-evals`. New `scripts/eval/{dataset,score,run-offline}.ts` + `test/eval-offline.test.ts`
++ `npm run eval:offline`. 15-case seed dataset; 6 deterministic scorers (contains/notContains/regex/notRegex/
+equals/jsonShape) + an LLM-judge that no-ops offline; offline runner replays through the REAL provider registry
+(`chatProviderForModel`/`llmForModel` + `MockLLM` from `chat/llm.ts`) — MockLLM by default (hermetic, no keys),
+real providers opt-in (`EVAL_REAL_PROVIDERS=1`), Langfuse logging gated on env; exit-1 below a 0.75 threshold.
+`npm run eval:offline` → 15/15 PASS (100%); 49 hermetic tests; tsc clean. Tooling, not money-path. Built by a
+model-tiered subagent team (all sonnet: recon→design→impl→review). Verify: 49 tests + CLI smoke run green ·
+full trio via land.sh. Next: scheduler CAS lease (money-path, opus-reviewed) lands next; then the sequential
+strategy.ts/types.ts + vector-db.ts clusters.
 ## 2026-06-26 — Improvement program #9: market-data staleness gate (item #5 DONE)
 Branch `agent/claude-staleness-gate`. **Money-path-adjacent (blocks proposals).** Added `maxQuoteAgeSec` /
 `maxFundamentalsAgeSec` to `TradingPolicy` (default unset = OFF). `evaluateTradeProposal` now blocks an OPENING

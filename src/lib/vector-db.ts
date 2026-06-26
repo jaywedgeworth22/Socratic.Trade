@@ -2,6 +2,7 @@ import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-da
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
 import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { fuseHybrid } from "./rag/hybrid";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -102,6 +103,13 @@ function rerankModel(): string {
 /** How many candidates to pull from Pinecone before reranking/as-of filtering down to `limit`. */
 function overFetchK(limit: number): number {
   return Math.min(Math.max(limit * 5, limit), 50);
+}
+
+/** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
+ *  When OFF, the retrieval path is byte-for-byte the current dense-only flow. */
+function hybridRetrievalEnabled(): boolean {
+  const v = String(process.env.HYBRID_RETRIEVAL ?? "false").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -562,8 +570,11 @@ export async function retrieveContextDetailed(
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
   const wantRerank = rerankEnabled();
-  // Over-fetch when we'll post-filter (as-of) or rerank, so the final top-`limit` is high quality.
-  const fetchK = options?.asOf || wantRerank ? overFetchK(limit) : limit;
+  // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
+  // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
+  // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
+  // limit+1 is never in the pool and the recall gap the flag targets can't be recovered.
+  const fetchK = options?.asOf || wantRerank || hybridRetrievalEnabled() ? overFetchK(limit) : limit;
   const extraFilter = buildExtraFilters(options);
 
   try {
@@ -644,7 +655,15 @@ export async function retrieveContextDetailed(
     if (options?.asOf) {
       pool = pool.filter((match) => isWithinAsOf(match.metadata as Record<string, unknown> | undefined, options.asOf));
     }
-    const ordered = wantRerank && pool.length > limit ? await rerankMatches(voyage, query, pool, limit) : pool;
+    // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
+    // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
+    // overFetchK or the Pinecone query — purely a post-retrieval reranking step.
+    const fusedPool = hybridRetrievalEnabled() && pool.length > 1
+      ? fuseHybrid(query, pool)
+      : pool;
+    const ordered = wantRerank && fusedPool.length > limit
+      ? await rerankMatches(voyage, query, fusedPool, limit)
+      : fusedPool;
     return ordered
       .slice(0, limit)
       .map(matchToChunk)
