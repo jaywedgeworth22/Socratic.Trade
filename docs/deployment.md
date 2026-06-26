@@ -34,8 +34,9 @@ runbook: `docs/secrets.md`; this is the deploy-side summary.
     `39d93bb7-76f9-498c-8b50-a7def52e072f`), machine identity `agentic-trading`.
   - Shared App-A/B (congress-trade) secrets → **`shared-at-ct`**
     (`shared-at-ct-tg-v7`, `18f563a3-9c88-454c-96eb-28fc9678f3ba`), machine
-    identity `shared-at-ct`. Reference these into the app project (Infisical
-    cross-project references) or pull them in a second pass.
+    identity `shared-at-ct`. Set `INFISICAL_SHARED_TOKEN` (+ optional
+    `INFISICAL_SHARED_PROJECT_ID`) and the runner pulls both projects, merging with
+    the **app project winning** any overlapping key (shared is the fallback).
 - **Bootstrap** (the only secrets-related values on the box — *exported* in the
   shell/PM2 env, never in a file): `INFISICAL_TOKEN` (machine-identity
   universal-auth token — the client **secret** never goes in the repo),
