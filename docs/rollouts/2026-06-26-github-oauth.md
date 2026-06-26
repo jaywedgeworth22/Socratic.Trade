@@ -16,11 +16,18 @@ provision and covers the common case where operators have GitHub but not a GCP p
 ## Files
 
 - `src/lib/auth/auth.ts` — conditionally registers Google and/or GitHub providers based
-  on which env vars are present. Both can be active simultaneously.
-- `app/login/page.tsx` — renders sign-in buttons for whichever providers are configured;
-  updated "no provider" hint to mention both Google and GitHub.
-- `.env.example` — documents `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` with GitHub OAuth App
-  setup instructions (Settings → Developer settings → OAuth Apps).
+  on which env vars are present; `signIn` callback rejects GitHub sessions with no email.
+- `app/login/page.tsx` — `export const dynamic = "force-dynamic"` added; renders sign-in
+  buttons for whichever providers are configured; updated "no provider" hint.
+- `.env.example` — documents `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` with setup instructions;
+  updated `ALLOWED_EMAILS` comment to clarify CF vs Auth.js behavior.
+- `middleware.ts` — `isEmailAllowed` now accepts `fromCf: boolean`; identity source tracked
+  per request so CF-defer only fires when CF actually provided the header.
+- `test/middleware-auth.test.ts` — added three new tests: primary user JWT (200), allowlisted
+  non-primary JWT (200), non-primary non-allowlisted JWT (403), and dual-source regression
+  (Auth.js session bypassing CF → 403 even when CF flag is on).
+- `STATUS.md` — updated with GitHub OAuth feature and security fix status.
+- `docs/rollouts/2026-06-26-github-oauth.md` — this file.
 
 ## Verification
 

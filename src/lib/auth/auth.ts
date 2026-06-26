@@ -39,6 +39,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     decode: decodeSessionToken
   },
   callbacks: {
+    // Gate GitHub sign-ins on a non-null email. GitHub's /user endpoint only surfaces
+    // the user's publicly visible email, which GitHub restricts to verified addresses —
+    // but if the user has no public email set, profile.email is null and the session
+    // would have no email to check against the allowlist.
+    async signIn({ account, profile }: { account?: { provider?: string } | null; profile?: { email?: string | null } }) {
+      if (account?.provider === "github") {
+        return !!(profile?.email);
+      }
+      return true;
+    },
     // Persist the email in the JWT so it survives across requests without a DB lookup.
     jwt({ token, profile }: { token: JWT; profile?: { email?: string | null } }) {
       if (profile?.email) {
