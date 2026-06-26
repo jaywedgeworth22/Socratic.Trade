@@ -259,6 +259,13 @@ function showStoppedProposalActionToast() {
   toast.warning(STOPPED_PROPOSAL_ACTION_TITLE, { description: STOPPED_PROPOSAL_ACTION_DESCRIPTION });
 }
 
+function humanizeBrokerError(msg: string): string {
+  if (/robinhood mcp http 401/i.test(msg)) return "Robinhood session expired — reconnect in Settings → Connections";
+  if (/robinhood.*not connected/i.test(msg)) return "Robinhood not connected — reconnect in Settings → Connections";
+  if (/robinhood.*session expired/i.test(msg)) return "Robinhood session expired — reconnect in Settings → Connections";
+  return msg;
+}
+
 function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
   return (
     snapshot.connectedAccounts?.find((account) => account.id === snapshot.policy.connectedAccountId) ??
@@ -1073,7 +1080,14 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           : "Selected broker account is not currently available for agentic execution.",
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
-    }
+    },
+    ...(policy.activeBroker === "robinhood" && !snapshot.robinhoodMcpConnected ? [{
+      label: "Robinhood",
+      ok: false,
+      detail: "Robinhood MCP session not connected — reconnect your account in Connections.",
+      actionLabel: "Connections",
+      onAction: () => setAccountsOpen(true)
+    }] : [])
   ];
 
   const safetyBanner = executionBanner(executionState);
@@ -1878,7 +1892,7 @@ function DecisionView({
                   )}
                   {item.errorMessage && (
                     <p className="mt-2 rounded-md border border-warn/30 bg-warn/10 px-2 py-1 text-[11px] text-muted">
-                      <span className="font-semibold">Order error: </span>{item.errorMessage}
+                      <span className="font-semibold">Order error: </span>{humanizeBrokerError(item.errorMessage)}
                     </p>
                   )}
                 </div>

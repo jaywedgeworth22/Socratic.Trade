@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Fix: Robinhood auth UX (early exit + readiness chip + error translation)
+Branch `claude/wonderful-wozniak-xploaq`. Three UX improvements for the "Robinhood not connected"
+state. (1) **Early exit:** `callRobinhoodMcpMethod` now throws "Robinhood not connected" before
+making any HTTP request when no OAuth token is stored — prevents the silent no-auth request that
+previously reached the API and always 401'd. (2) **Friendlier errors:** 401 response now produces
+"Robinhood session expired — reconnect in Settings → Connections" instead of the raw
+"Robinhood MCP HTTP 401: authentication required". (3) **Readiness chip:** a new
+`robinhoodMcpConnected` field in the dashboard snapshot drives a conditional "⚠ Robinhood" chip
+in the ReadinessStrip when `activeBroker === "robinhood"` and no token is stored — visible on page
+load, before any order attempt. (4) **UI translation:** `humanizeBrokerError()` maps already-stored
+"Robinhood MCP HTTP 401" proposal error strings to the friendlier message in the Decisions tab.
+Verify: tsc ✓ · 1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-robinhood-auth-ux.md`.
+
 ## 2026-06-26 — Notification delivery-channels UI (email/SMS/push) + Send-test
 Branch `feat/notify-delivery-channels-ui` (throwaway worktree `~/apps/trading-ag13`). The new
 multi-channel notify system (`notify.ts` + `notification_prefs`) had a backend + API

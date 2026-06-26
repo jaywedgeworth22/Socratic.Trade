@@ -100,6 +100,8 @@ export interface DashboardSnapshot {
     configured: boolean;
     enabledEvents: string[];
   };
+  /** True when activeBroker is not Robinhood, or when it is and an OAuth token is stored. */
+  robinhoodMcpConnected: boolean;
 }
 
 export type SortDir = "asc" | "desc";
