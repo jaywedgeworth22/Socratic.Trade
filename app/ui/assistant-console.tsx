@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import type { ExecutionState } from "@/lib/execution-mode";
 import { humanizeLlmError } from "@/lib/llm-errors";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
+import { Markdown } from "./markdown";
 import { cn } from "./cn";
 
 interface ChatDraft {
@@ -387,7 +388,11 @@ export function AssistantView({
         {messages.map((m) => (
           <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
             <div className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}>
-              <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+              {m.role === "assistant" ? (
+                <Markdown>{m.text}</Markdown>
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+              )}
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {m.citations.map((c, i) =>
