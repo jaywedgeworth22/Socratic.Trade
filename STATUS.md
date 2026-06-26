@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Fix: Brokerage readiness badge showed the opposite (false "not available")
+Branch `fix/brokerage-readiness-false-warning` (throwaway worktree `~/apps/trading-ag13`). The header
+Brokerage badge warned "not currently available for agentic execution" for the active, autonomous,
+live Robinhood account. Cause: the badge keyed on `selectedBrokerAccount?.agenticAllowed === true`, but
+`selectedBrokerAccount` comes from a live `gateway.getAccounts()` that degrades to `[]` on a transient
+RH-MCP enumeration miss → undefined → false hard-warning (account-number matching was fine). Fix
+(`app/dashboard-client.tsx`): warn only on an EXPLICIT `agenticAllowed === false`; undefined (couldn't
+enumerate) → ok + soft "could not re-verify" note. Execution gates left strict (fail-closed), so safety
+unchanged — only the informational badge stopped false-alarming. Verify: tsc ✓ · 1254/1254 ✓ · build ✓.
+Follow-up: make `dashboard.ts` fall back to stored connected accounts when live getAccounts is empty.
+See `docs/rollouts/2026-06-26-brokerage-readiness-false-warning.md`.
+
 ## 2026-06-26 — Provider logo assets + ntfy "recommended/free" + prod restart for Twilio
 Branch `feat/provider-logos-ntfy-recommended` (throwaway worktree `~/apps/trading-ag13`). (1) Committed
 the 6 operator-supplied provider logos to `public/model-logos/{openai,anthropic,xai,gemini,mistral,
