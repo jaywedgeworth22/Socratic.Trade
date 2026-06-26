@@ -4,6 +4,24 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Chat Markdown rendering + keyless quote fallback (fixes the 0.5-XOM block)
+Branch `feat/chat-md-quotes-notional` (throwaway worktree `~/apps/trading-ag13`). Three operator-
+reported fixes. (1) **Quote fallback (root cause):** the `$9,007,199,254,740,991` block was exactly
+`Number.MAX_SAFE_INTEGER` — the "can't price → fail closed" sentinel. The chat quote AND the pre-trade
+notional both read only Alpaca bid/ask (0/empty after hours / free IEX). New
+`fillMissingQuotesWithClose` (`src/lib/alpaca.ts`) fills unpriced symbols with a keyless `fetchDailyOHLC`
+close (`yahoo-finance-delayed`), wired into `getEquityQuotes` so both paths recover; gateway now stores
+`userId`. (2) **Honest no-price UX** (`from-draft`): on the sentinel, return one clear "couldn't get a
+price for X" reason + `estimatedNotional: undefined` instead of the quadrillion-dollar cap wall. (3)
+**Markdown:** assistant messages render full Markdown+GFM via `react-markdown`+`remark-gfm`
+(`app/ui/markdown.tsx`), HTML-escaped (no rehype-raw); user messages stay plain. **Deferred:** dollar-
+amount ("buy $150 of X") chat orders — broker/review/types already support `dollarAmount`, but wiring it
+through draft→proposal→execution needs its own PR. Verify: tsc ✓ · build ✓ · full suite ✓ (1253) ·
+live dashboard 200 + chat mock 200 (Alpaca fallback not exercisable locally — Test mode). (A Markdown
+render test was dropped: the repo's oxc transformer honors tsconfig `jsx: preserve` and can't transform
+an imported `.tsx` in vitest; Markdown is covered by build + live + react-markdown's escaping.) See
+`docs/rollouts/2026-06-25-chat-markdown-and-quote-fallback.md`.
+
 ## 2026-06-26 — Cutover script prompts for the Infisical token
 Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,
 `read -rs`) for the app + shared tokens when they're not in the env / `deploy.env` and stdin is a TTY,
