@@ -101,7 +101,12 @@ three Codex P2 review comments:
   new "hidden" state (it always meant a *visible* compact banner). New `execution-banner-mode` key is
   the source of truth; legacy prefs migrate to **compact**, so upgrading users never lose the
   Test/Paper/Brokerage safety banner without explicitly choosing Hidden.
-Re-verified: tsc clean · **1350/1350** tests · build OK.
+Second Codex round (P2, both date helpers): `saneIsoDate`/`saneFilingDate` used `Date.parse(iso)`,
+which rolls impossible dates over to a valid timestamp (e.g. `2026-02-30` → Mar 2) and returned the
+impossible original. Both now build the UTC date from the parsed components and require it to
+round-trip, rejecting `2026-02-30`/`2026-04-31`/`2025-02-29`/`2026-13-01` while keeping real leap days
+(`2024-02-29`). Added a regression test in `test/congress-trade-events.test.ts`.
+Re-verified: tsc clean · **1351/1351** tests · build OK.
 
 ## Follow-ups
 - The Alpaca mismatch fix addresses spurious/formatting mismatches; if a genuine wrong-number is stored

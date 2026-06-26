@@ -96,6 +96,18 @@ describe("coerceCongressTrade — App A /api/transactions confirmed shape", () =
     expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-13-45" })).toBeNull();
   });
 
+  it("rejects future-dated and impossible (rolled-over) trade dates", () => {
+    // A future trade date is a data error even when a valid disclosure date is present — the row must
+    // NOT slip in under the disclosure date.
+    expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2030-01-01" })).toBeNull();
+    expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2030-01-01", disclosedAt: "2026-06-01" })).toBeNull();
+    // Impossible calendar dates that Date.parse would roll over (Feb 30 -> Mar 2) are rejected.
+    expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-02-30" })).toBeNull();
+    expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-04-31" })).toBeNull();
+    // A real past date still passes through unchanged.
+    expect(coerceCongressTrade({ ticker: "T", txType: "P", txDate: "2026-06-01" })?.tradedAt).toBe("2026-06-01");
+  });
+
   it("skips option trades and very-low-confidence rows (App B is equity-only)", () => {
     expect(coerceCongressTrade({ ticker: "AAPL", txType: "P", txDate: "2026-06-01", isOption: true })).toBeNull();
     expect(coerceCongressTrade({ ticker: "AAPL", txType: "P", txDate: "2026-06-01", confidence: 0.1 })).toBeNull();

@@ -102,8 +102,15 @@ function saneFilingDate(value: string | undefined, now: number = Date.now()): st
   if (!value) return undefined;
   const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return undefined;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // Reject impossible calendar dates that would otherwise roll over to a valid timestamp (e.g.
+  // "2026-02-30" -> Mar 2): build the UTC date from the components and require it to round-trip.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined;
   const iso = `${m[1]}-${m[2]}-${m[3]}`;
-  const ts = Date.parse(iso);
+  const ts = d.getTime();
   if (!Number.isFinite(ts)) return undefined;
   if (ts > now + 3 * 24 * 60 * 60_000) return undefined; // absurd future (allow small skew)
   if (ts < Date.parse("2000-01-01")) return undefined; // absurd past
