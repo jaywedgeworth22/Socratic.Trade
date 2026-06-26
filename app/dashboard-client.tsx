@@ -98,6 +98,7 @@ import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
+import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
@@ -1064,12 +1065,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     },
     {
       label: executionState.label,
-      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed === true,
+      // Only a broker that EXPLICITLY reports agenticAllowed=false is a hard block. `selectedBrokerAccount`
+      // is undefined when the live account list couldn't be fetched (a transient broker/MCP enumeration
+      // miss — gateway.getAccounts() failing degrades to [] in the snapshot). Don't false-alarm "not
+      // available" in that case: the account is configured + active, and the execution path fails closed
+      // on its own if the broker is genuinely unreachable. (Bug: showed the opposite of the real status.)
+      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed !== false,
       detail: executionState.usesLocalSimulation
         ? "Test mode uses local simulated fills."
-        : selectedBrokerAccount?.agenticAllowed === true
-          ? "Selected broker account is available for agentic execution."
-          : "Selected broker account is not currently available for agentic execution.",
+        : selectedBrokerAccount?.agenticAllowed === false
+          ? "Selected broker account is not available for agentic execution."
+          : selectedBrokerAccount
+            ? "Selected broker account is available for agentic execution."
+            : "Could not re-verify the account with the broker just now; agentic execution uses the selected account.",
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
     }
@@ -3323,6 +3331,10 @@ function StrategyStudio({
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
                 </optgroup>
+                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
+                </optgroup>
               </select>
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
@@ -3347,6 +3359,10 @@ function StrategyStudio({
                   <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                </optgroup>
+                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
                 </optgroup>
               </select>
             </Field>
@@ -4279,6 +4295,14 @@ function SettingsContent({
                 );
               })}
             </div>
+          </div>
+          <div className="border-t border-line pt-3">
+            <span className="mb-1.5 block text-xs font-medium text-muted">Direct delivery (email · SMS · push)</span>
+            <p className="mb-2 text-[11px] text-faint">
+              Send price-alert and event notifications straight to you. Email/SMS require the operator to have configured the
+              provider keys (Resend / Twilio); toggle a channel, enter your target, then Send test to verify delivery.
+            </p>
+            <DeliveryChannelsPanel />
           </div>
         </div>
       )}

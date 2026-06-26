@@ -94,6 +94,7 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   xai: "XAI_API_KEY",
   gemini: "GEMINI_API_KEY",
   mistral: "MISTRAL_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
   finnhub: "FINNHUB_API_KEY",
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
@@ -137,6 +138,8 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   google_gemini_api_key: "gemini",
   mistral: "mistral",
   mistral_api_key: "mistral",
+  deepseek: "deepseek",
+  deepseek_api_key: "deepseek",
   marketstack_api_key: "marketstack",
   tradier_api_key: "tradier",
   fred_api_key: "fred",
@@ -390,7 +393,7 @@ export function keyFingerprint(key: string | undefined): string | undefined {
  * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
  * when the failover is enabled.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
+export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
@@ -408,7 +411,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
-const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
 
 /**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
@@ -1000,6 +1003,7 @@ interface RawChatTurnRow {
   citations: string;
   intent: string | null;
   redacted: number;
+  model: string | null;
   created_at: string;
 }
 
@@ -1020,6 +1024,7 @@ function mapChatTurn(row: RawChatTurnRow): ChatTurn {
     citations,
     intent: row.intent,
     redacted: row.redacted === 1,
+    model: row.model ?? null,
     createdAt: row.created_at
   };
 }
@@ -1027,9 +1032,9 @@ function mapChatTurn(row: RawChatTurnRow): ChatTurn {
 export function insertChatTurn(turn: ChatTurn): ChatTurn {
   getDb()
     .prepare(
-      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.createdAt);
+    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.model ?? null, turn.createdAt);
   return turn;
 }
 

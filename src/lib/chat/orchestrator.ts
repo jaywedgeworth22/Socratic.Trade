@@ -9,6 +9,8 @@
 
 import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
+import { fetchDailyOHLC } from "../history";
+import { fetchYahooFinanceQuote } from "../yahoo-finance";
 import { retrieveContextDetailed } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
@@ -86,6 +88,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     const draftCall = result.toolCalls?.find((c) => c.name === "draft_order" && c.result && !c.result.error);
     const draft = (draftCall?.result as ChatDraft) ?? null;
 
+    const usedModel = model.modelName;
     const reply: ChatReply = {
       text,
       draft,
@@ -93,13 +96,15 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       usedMemories: memories.map((m) => ({ subject: m.subject, value: m.value, hard: m.hard })),
       memory: { written: mem.written.length, held: mem.held.length },
       intent: classifyIntent(message).intent,
-      promptVersion: PROMPT_VERSION
+      promptVersion: PROMPT_VERSION,
+      model: usedModel
     };
     appendTurn(userId, {
       role: "assistant",
       text: reply.text,
       citations: reply.citations.map((c) => c.chunk_id ?? c.source),
-      intent: reply.intent
+      intent: reply.intent,
+      model: usedModel
     });
     audit("chat.reply", { userId, has_draft: !!draft, citations: reply.citations.length }, userId);
     return reply;
@@ -113,12 +118,49 @@ export function buildProductionDeps(): ToolDeps {
       const fallback: ChatQuote = { symbol, price_usd: 0, as_of: "", source: "none" };
       try {
         const policy = getPolicy(userId);
-        const account = policy.accountNumber;
-        if (!account) return { ...fallback, error: "NO_ACCOUNT" };
-        const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(account, [symbol]);
-        const q = quotes[symbol];
-        if (!q || typeof q.price !== "number") return { ...fallback, error: "NO_QUOTE" };
-        return { symbol, price_usd: q.price, as_of: q.asOf ?? new Date().toISOString(), source: q.provider ?? "broker" };
+        let price: number | undefined;
+        let asOf: string | undefined;
+        let source: string | undefined;
+        // 1) Account-aware broker quote, when an account is selected. Its own try/catch so a broker
+        // failure (auth, data plan, network) FALLS THROUGH to the market-data fallback below instead
+        // of aborting the whole quote.
+        if (policy.accountNumber) {
+          try {
+            const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(policy.accountNumber, [symbol]);
+            const q = quotes[symbol];
+            if (q && typeof q.price === "number" && q.price > 0) {
+              price = q.price;
+              asOf = q.asOf;
+              source = q.provider ?? "broker";
+            }
+          } catch {
+            /* fall through to the keyless market-data fallback */
+          }
+        }
+        // 2) Live market-data quote (Yahoo regularMarketPrice + its real timestamp). Preferred over the
+        // daily-bar close so the "as of" reflects today's price, not the last completed daily bar
+        // (which is often yesterday until the current session's bar posts).
+        if (price == null) {
+          const yq = await fetchYahooFinanceQuote(symbol);
+          if (yq && yq.price > 0) {
+            price = yq.price;
+            asOf = yq.asOf;
+            source = "yahoo-finance";
+          }
+        }
+        // 3) Daily-close fallback (recent close) — last resort when no live quote is available. Works
+        // with NO account selected too, so "what's X at" still gets answered instead of NO_QUOTE.
+        if (price == null) {
+          const bars = await fetchDailyOHLC(symbol, Date.now(), userId);
+          const last = bars && bars.length ? bars[bars.length - 1] : undefined;
+          if (last && typeof last.close === "number" && last.close > 0) {
+            price = last.close;
+            asOf = last.time != null ? String(last.time) : undefined;
+            source = "yahoo-finance-delayed";
+          }
+        }
+        if (price == null) return { ...fallback, error: "NO_QUOTE" };
+        return { symbol, price_usd: price, as_of: asOf ?? new Date().toISOString(), source: source ?? "delayed" };
       } catch {
         return { ...fallback, error: "QUOTE_FAILED" };
       }

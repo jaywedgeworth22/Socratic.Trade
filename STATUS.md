@@ -37,6 +37,123 @@ per-project identities, token-drop, exit-code propagation) ✓ · tsc ✓ · **1
 Operator unblock for the in-flight cutover: `unset INFISICAL_SHARED_TOKEN` then re-run (app verify
 already passes). See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
 
+## 2026-06-26 — Fix: Brokerage readiness badge showed the opposite (false "not available")
+Branch `fix/brokerage-readiness-false-warning` (throwaway worktree `~/apps/trading-ag13`). The header
+Brokerage badge warned "not currently available for agentic execution" for the active, autonomous,
+live Robinhood account. Cause: the badge keyed on `selectedBrokerAccount?.agenticAllowed === true`, but
+`selectedBrokerAccount` comes from a live `gateway.getAccounts()` that degrades to `[]` on a transient
+RH-MCP enumeration miss → undefined → false hard-warning (account-number matching was fine). Fix
+(`app/dashboard-client.tsx`): warn only on an EXPLICIT `agenticAllowed === false`; undefined (couldn't
+enumerate) → ok + soft "could not re-verify" note. Execution gates left strict (fail-closed), so safety
+unchanged — only the informational badge stopped false-alarming. Verify: tsc ✓ · 1254/1254 ✓ · build ✓.
+Follow-up: make `dashboard.ts` fall back to stored connected accounts when live getAccounts is empty.
+See `docs/rollouts/2026-06-26-brokerage-readiness-false-warning.md`.
+
+## 2026-06-26 — Provider logo assets + ntfy "recommended/free" + prod restart for Twilio
+Branch `feat/provider-logos-ntfy-recommended` (throwaway worktree `~/apps/trading-ag13`). (1) Committed
+the 6 operator-supplied provider logos to `public/model-logos/{openai,anthropic,xai,gemini,mistral,
+deepseek}.svg` — completes the #181 `ModelPicker` (was falling back to initial chips; couldn't commit
+them before because the SVGs were in iCloud Drive, macOS EPERM). (2) ntfy: delivery panel
+(`delivery-channels.tsx`) now shows a "Recommended · free" badge on the Push channel (ntfy already
+worked as the default push). (3) **Ops (not code):** added Twilio to Infisical → restarted PM2 `trading`
+(prod :4000) `--update-env` so `start:secrets` loaded `TWILIO_*`; health 200, `pm2 save`d — SMS now shows
+available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · all 6 `/model-logos/*.svg` serve
+200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
+for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
+
+## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
+Branch `feat/deepseek-ntfy-price-tiers` (throwaway worktree `~/apps/trading-ag13`). (1) **DeepSeek** =
+6th provider (chat + strategy), same OpenAI-compatible wiring as gemini/mistral: db-api-keys
+(`DEEPSEEK_API_KEY` + aliases + union + migration), `resolveLlmEndpoint` deepseek branch
+(`api.deepseek.com`), `chat/llm.ts` unions + `chatProviderForModel`/`openAiCompatChatUrl`, providers
+route, keys catalog (with China-data note), llm-usage pricing, llm-errors labels, Strategy Studio
+optgroups. Chat offers `deepseek-chat` (V3, tool-capable) + `deepseek-reasoner` (R1). (2) **Custom model
+picker** (`app/ui/model-picker.tsx`) replaces the chat native `<select>`: provider **logos** (white tile;
+colored-initial fallback) + **$/$$/$$$ price tiers** + "no key" availability. Logos load from
+`public/model-logos/<provider>.svg` — **assets NOT committed** (operator's SVGs are in iCloud Drive,
+which macOS blocks the app from reading: EPERM). Operator drops 6 SVGs in (names in
+`public/model-logos/README.md`) and they appear with no code change. (3) **ntfy** already works (default
+push, no key) via #180 panel — improved the hint. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live
+`/api/chat/providers`+`/api/keys` list DeepSeek, deepseek-chat 200 graceful, dashboard 200. NOT verified:
+custom-dropdown visuals + logos (client-only + no assets). See
+`docs/rollouts/2026-06-26-deepseek-model-picker-ntfy.md`.
+
+## 2026-06-26 — Notification delivery-channels UI (email/SMS/push) + Send-test
+Branch `feat/notify-delivery-channels-ui` (throwaway worktree `~/apps/trading-ag13`). The new
+multi-channel notify system (`notify.ts` + `notification_prefs`) had a backend + API
+(`GET/POST /api/notifications`, `POST /api/notifications/test`) but **no UI** — Settings only edited the
+legacy `policy.notificationSettings` webhook, so alerts sent nothing via email/SMS even with Resend
+configured (channels list was always empty). Added `app/ui/delivery-channels.tsx`
+(`DeliveryChannelsPanel`) under Settings → Notifications → "Direct delivery": per-channel toggle
+(disabled + "not configured" until the operator sets the provider key) + target input + **Save** +
+**Send test** (shows per-channel sent/skipped/failed). No backend change. **Operator setup (secrets stay
+out of chat/repo):** Email/Resend already set → works now; SMS needs `TWILIO_ACCOUNT_SID` /
+`TWILIO_AUTH_TOKEN` / `TWILIO_FROM` in Infisical + restart, then enable SMS + enter mobile in the UI.
+Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live `/api/notifications` GET/POST + `/test` + dashboard 200
+(email "not_configured" locally — no key here; available on the box). See
+`docs/rollouts/2026-06-26-notify-delivery-channels-ui.md`.
+
+## 2026-06-26 — Fix: broker fallback + scan timeout (Robinhood 401 + "couldn't reach" errors)
+Branch `fix/broker-fallback-scan-timeout`. Two operator-reported bugs. (1) **Broker fallback:**
+`getBrokerGateway` previously fell through to Robinhood for any `activeBroker` value that wasn't
+"alpaca"/"alpaca-mcp"/"test" — including `undefined`. Users with a missing or unrecognized
+`activeBroker` silently got the Robinhood gateway, triggering "Robinhood MCP HTTP 401:
+authentication required" errors in proposals even without a Robinhood account. Fix: only return
+Robinhood gateway for `activeBroker === "robinhood"`; everything else falls back to test. (2)
+**Scan timeout:** `scanMarket` had no timeout guard — if Yahoo Finance or Massive hung (rate-limit,
+outage), the reverse proxy would abort the connection after ~30 s and the browser saw a
+network-level error ("Couldn't reach the scan service"). Fix: 25 s `Promise.race` timeout so the
+route returns a JSON 500 with a clear message rather than a silent proxy abort. Verify: tsc ✓ ·
+1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-broker-fallback-scan-timeout.md`.
+
+## 2026-06-26 — Per-turn model logging (admin transcript + hover) + fresher chat quote
+Branch `feat/chat-model-transcript-and-fresh-quote` (throwaway worktree `~/apps/trading-ag13`).
+(1) `chat_turns` gains a `model` column (migration v5); the orchestrator records the model on each
+assistant turn + returns it on the reply. NEW **admin transcript view** (`/admin/transcript`) shows the
+conversation with a model badge per assistant reply; the chat bubble shows `Answered by <model>` on
+hover. (2) **Fresher quote:** `getQuote` now prefers Yahoo live `regularMarketPrice` + real
+`regularMarketTime` ("yahoo-finance") before the daily-bar close — fixes the "as of yesterday"
+staleness (old path used the last non-null daily bar, which lags intraday). (3) **History prompt fix:**
+added a CAPABILITIES line so the model stops falsely claiming "no memory" (the last ~10 turns ARE
+replayed, per-user, model-agnostic — switching models mid-chat keeps history); PROMPT_VERSION 0.6→0.7.
+Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live reply.model + chat-history model + `/admin/transcript`
+200 (fresher-quote not locally verifiable — Yahoo 429s this host; works on the Massive/Yahoo box).
+**Answered (not built):** alerts fire (60s scheduler) + webhook works, push/email/SMS real but need
+keys+prefs; fancier logo/price-tier dropdown + DeepSeek provider = offered follow-ups. See
+`docs/rollouts/2026-06-26-chat-model-transcript-and-fresh-quote.md`.
+
+## 2026-06-26 — Chat quote robustness (gateway-agnostic fallback) + focus prompt after model pick
+Branch `fix/chat-quote-fallback-and-focus` (throwaway worktree `~/apps/trading-ag13`). Follow-up to
+#174 after VZ still showed `NO_QUOTE`. (1) `getQuote` (`src/lib/chat/orchestrator.ts`) now has the
+keyless `fetchDailyOHLC` fallback at the CHAT layer too, with the broker call in its OWN try/catch (a
+broker throw falls through to the fallback instead of `QUOTE_FAILED`) and no more `NO_ACCOUNT` hard-fail
+(price questions answer without an account). (2) Picking a model now focuses the prompt box
+(`inputRef` + `select.onChange` → `focus()`). **Diagnosis of the lingering NO_QUOTE:** in this worktree
+`politeFetchJson` Yahoo → 429 and Stooq → rate-limited, and there's NO Massive key here, so the keyless
+fallback can't resolve locally; on the operator's box `fetchDailyOHLC` hits **Massive (paid) first** and
+returns data, so the quote resolves there (raw fetch + the `fillMissingQuotesWithClose` unit test
+confirm the logic). Verify: tsc ✓ · 1253/1253 ✓ · build ✓ · chat 200 (live PRICE not confirmable
+locally — Yahoo 429s this IP, no Massive key; confirm on the Massive box). See
+`docs/rollouts/2026-06-26-chat-quote-robustness-and-model-focus.md`.
+
+## 2026-06-25 — Chat Markdown rendering + keyless quote fallback (fixes the 0.5-XOM block)
+Branch `feat/chat-md-quotes-notional` (throwaway worktree `~/apps/trading-ag13`). Three operator-
+reported fixes. (1) **Quote fallback (root cause):** the `$9,007,199,254,740,991` block was exactly
+`Number.MAX_SAFE_INTEGER` — the "can't price → fail closed" sentinel. The chat quote AND the pre-trade
+notional both read only Alpaca bid/ask (0/empty after hours / free IEX). New
+`fillMissingQuotesWithClose` (`src/lib/alpaca.ts`) fills unpriced symbols with a keyless `fetchDailyOHLC`
+close (`yahoo-finance-delayed`), wired into `getEquityQuotes` so both paths recover; gateway now stores
+`userId`. (2) **Honest no-price UX** (`from-draft`): on the sentinel, return one clear "couldn't get a
+price for X" reason + `estimatedNotional: undefined` instead of the quadrillion-dollar cap wall. (3)
+**Markdown:** assistant messages render full Markdown+GFM via `react-markdown`+`remark-gfm`
+(`app/ui/markdown.tsx`), HTML-escaped (no rehype-raw); user messages stay plain. **Deferred:** dollar-
+amount ("buy $150 of X") chat orders — broker/review/types already support `dollarAmount`, but wiring it
+through draft→proposal→execution needs its own PR. Verify: tsc ✓ · build ✓ · full suite ✓ (1253) ·
+live dashboard 200 + chat mock 200 (Alpaca fallback not exercisable locally — Test mode). (A Markdown
+render test was dropped: the repo's oxc transformer honors tsconfig `jsx: preserve` and can't transform
+an imported `.tsx` in vitest; Markdown is covered by build + live + react-markdown's escaping.) See
+`docs/rollouts/2026-06-25-chat-markdown-and-quote-fallback.md`.
+
 ## 2026-06-26 — Cutover script prompts for the Infisical token
 Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,
 `read -rs`) for the app + shared tokens when they're not in the env / `deploy.env` and stdin is a TTY,
