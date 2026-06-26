@@ -432,14 +432,9 @@ async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTu
           { role: "system", content: systemPrompt },
           { role: "user", content: JSON.stringify(context) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "strategy_tuning",
-            strict: true,
-            schema
-          }
-        }
+        response_format: provider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "strategy_tuning", strict: true, schema } }
       }
       : {
         model,

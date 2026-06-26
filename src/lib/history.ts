@@ -34,6 +34,8 @@ interface YahooChartResponse {
           close?: Array<number | null>;
           volume?: Array<number | null>;
         }>;
+        /** Split-and-dividend-adjusted closes — prefer these over quote.close for multi-year returns. */
+        adjclose?: Array<{ adjclose?: Array<number | null> }>;
       };
     }>;
   };
@@ -252,17 +254,35 @@ async function fetchYahoo(symbol: string): Promise<OHLCBar[] | null> {
     const result = json?.chart?.result?.[0];
     const ts = result?.timestamp ?? [];
     const q = result?.indicators?.quote?.[0];
-    const close = q?.close ?? [];
-    if (ts.length === 0 || close.length === 0) return null;
+    const rawClose = q?.close ?? [];
+    // Prefer split+dividend-adjusted closes (adjclose) for correct multi-year returns.
+    // Fall back to raw close if adjclose is absent or length-mismatched.
+    const adjCloseArr = result?.indicators?.adjclose?.[0]?.adjclose ?? [];
+    const useAdjusted = adjCloseArr.length === ts.length;
+    if (ts.length === 0 || rawClose.length === 0) return null;
     const bars: OHLCBar[] = [];
     for (let i = 0; i < ts.length; i++) {
-      const c = close[i];
+      const rawC = rawClose[i] ?? null;
+      // Per-bar fallback: if adjclose entry is null/non-finite use rawC so Yahoo gaps
+      // in adjclose don't cause bars with valid rawclose to be silently dropped.
+      const adjEntry = useAdjusted ? (adjCloseArr[i] ?? null) : null;
+      const usingAdj = typeof adjEntry === "number" && Number.isFinite(adjEntry);
+      const c = usingAdj ? adjEntry : rawC;
       if (typeof c !== "number" || !Number.isFinite(c)) continue; // skip null/holiday gaps
+      // Scale O/H/L by adjclose/rawclose so all four OHLC values stay on the same basis.
+      // Candle consistency: close cannot fall outside [low, high] after ex-dividend adjustments.
+      let o = numOrUndef(q?.open?.[i]);
+      let h = numOrUndef(q?.high?.[i]);
+      let l = numOrUndef(q?.low?.[i]);
+      if (usingAdj && typeof rawC === "number" && Number.isFinite(rawC) && rawC !== 0) {
+        const factor = c / rawC;
+        if (o !== undefined) o = o * factor;
+        if (h !== undefined) h = h * factor;
+        if (l !== undefined) l = l * factor;
+      }
       bars.push({
         time: ts[i] * 1000, // seconds → ms epoch
-        open: numOrUndef(q?.open?.[i]),
-        high: numOrUndef(q?.high?.[i]),
-        low: numOrUndef(q?.low?.[i]),
+        open: o, high: h, low: l,
         close: c,
         volume: numOrUndef(q?.volume?.[i])
       });

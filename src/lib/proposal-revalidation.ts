@@ -259,7 +259,9 @@ export async function revalidatePendingProposals(input: {
             { role: "system", content: systemPrompt },
             { role: "user", content: JSON.stringify(userContent) }
           ],
-          response_format: { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
+          response_format: provider === "deepseek"
+            ? { type: "json_object" }
+            : { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
         }
       : {
           model,

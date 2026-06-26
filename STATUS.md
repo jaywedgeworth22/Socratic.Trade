@@ -178,6 +178,20 @@ preview tool is bound to the main worktree (4001), not this ad-hoc worktree; ver
 strict primitive reuse. Recommend a live Settings → Risk & Safety walkthrough on the running instance.
 See `docs/rollouts/2026-06-25-settings-overhaul.md`.
 
+## 2026-06-25 — App A handoff: new analytics endpoints + adjusted-close push fix
+Branch `claude/magical-faraday-uce1uy`. Implements App A (congress.trade) handoff from `1cdd5ecf-appBhandoff.md`.
+**Read side** — three new endpoints wired into `congress-trade-client.ts`: `getAppAConviction` (composite 0–100
+conviction score per ticker, `GET /api/analytics/conviction`), `getAppATickerBacktest` (post-buy return stats
+per ticker, `GET /api/analytics/ticker/{T}/backtest`), `getAppAConflicts` (committee conflict-of-interest
+trades, `GET /api/analytics/conflicts`). All three are gated on `CONGRESS_ANALYTICS_ENABLED` (default off).
+**Overlay** — `CongressAnalytics` type gains `convictionScore`, `convictionDirection`, `conflictCount`; the daily
+`refreshCongressAnalytics` now fetches conviction + conflicts in parallel with the leaderboard/cluster/member
+calls and wires both into the per-ticker overlay. **Write side** — `history.ts` Yahoo fetch now prefers
+`indicators.adjclose[0].adjclose` (split+dividend-adjusted) over raw `quote.close`, so prices pushed to App A
+via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1228/1228 tests. **Deferred
+(need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
+See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
+
 ## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
 Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up
 to #167. (1) **Strategy loop** now spans all five providers: `resolveLlmEndpoint` gained Gemini +
