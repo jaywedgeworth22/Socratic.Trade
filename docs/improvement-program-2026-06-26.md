@@ -25,16 +25,16 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 ## Item status
 | # | Item | Spec | Status | Files (primary) |
 |---|---|---|---|---|
-| 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **risk-breaker.test.ts DONE (13 tests)**; short/cover P&L + daily-notional tests PENDING | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts`, `test/daily-notional-reset.test.ts` |
+| 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **DONE** — risk-breaker (13) ✅; calculatePnl four-side realized-P&L + notional cross-boundary (8 added) ✅. No production bugs found (adversarially verified). | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts` ✅, `test/daily-notional-reset.test.ts` ✅ |
 | 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | TODO | `scripts/eval/*` (dataset, scoring, run-offline, run-providers), `test/eval-offline.test.ts` |
 | 1+#6 | **Wire RAG metadata filters + minScore floor** | ready | **DONE** (PR after #186) — `defaultMinScore()` (env `VECTOR_MIN_SCORE`=0.30) wired into strategy + chat retrieval; **buildExtraFilters made CASING-TOLERANT** (stored doc_type is inconsistent: sec-filings "10-K" vs sec8k "8-k" — a single-casing filter would have silently excluded 10-K/10-Q; fixed) | `vector-db.ts`, `strategy.ts`, `chat/orchestrator.ts`, `.env.example`, `test/vector-db-retrieval.test.ts` |
 | 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
-| 3 | **Embed congressional + insider disclosures into vector store** | ready | TODO | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `sec-filings.ts`, `.env.example` |
-| 8 | **Reasoning/template-collapse diversity check on rationales** | ready | TODO (shares strategy.ts/types.ts) | new `rationale-diversity.ts`, `db-proposals.ts`, `strategy.ts`, `types.ts` |
-| 5 | **Market-data staleness gate** | ready | TODO (shares strategy.ts/types.ts) | `types.ts`, `policy.ts`, `defaults.ts`, `strategy.ts`, `market.ts`, `app/api/policy/route.ts` |
+| 3 | **Embed congressional + insider disclosures into vector store** | ready | **DONE** — `disclosure-rag.ts` converts congress trades + insider filings → RAG docs (doc_type `congress-trade`/`insider-filing`, `acceptance_datetime`=disclosure/filing date for the as-of guard) → `storeContexts`; flag `RAG_EMBED_DISCLOSURES` (default OFF); 22 tests | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `.env.example`, `test/disclosure-rag.test.ts` |
+| 8 | **Reasoning/template-collapse diversity check on rationales** | ready | **DONE** — `rationale-diversity.ts` (multiset char-trigram Jaccard) computes per-run `{meanPairwiseSimilarity, maxPairwiseSimilarity, collapsed}`; wired into `runStrategyOnce` after the proposal set is finalized, attached to `StrategyResult` + `audit("rationale_diversity")`; advisory-only (no flag, never blocks/alters proposals); 30 tests | new `rationale-diversity.ts`, `strategy.ts`, `types.ts`, `test/rationale-diversity.test.ts` |
+| 5 | **Market-data staleness gate** | ready | **DONE** — `maxQuoteAgeSec`/`maxFundamentalsAgeSec` on `TradingPolicy`; OPENING-only fail-safe gate in `evaluateTradeProposal` (stale/missing timestamp → block; reads `marketScan` asOf + `generatedAt`); default OFF; 9 tests. No defaults/market/strategy change needed (asOf already flows). Opus design + dual opus review. | `types.ts`, `policy.ts`, `app/api/policy/route.ts`, `test/staleness-gate.test.ts` |
 | 2 | **Query expansion / multi-query / RRF (RAG-Fusion)** | ready (opus) | TODO — see "Opus specs" below | retrieval path in `vector-db.ts` + `strategy.ts`, `test/vector-db-fusion.test.ts` |
 | 7/#4 | **Coarse credit assignment + attribution** | ready (opus) | TODO — see "Opus specs" below | `performance.ts`, `types.ts`, `strategy-tuning.ts`, `strategy.ts`, `backtest.ts`, `db-fills.ts` |
-| 3/#3 | **Durable/locked autonomy scheduler** | ready (opus) | TODO — see "Opus specs" below | new `scheduler-lease.ts`, `scheduler.ts`, `health`/`ready` routes |
+| 3/#3 | **Durable/locked autonomy scheduler** | ready (opus) | **DONE** — CAS lease in `settings` KV (no migration); tick per-account body gated behind `SCHEDULER_SINGLE_LEADER` (default OFF, byte-for-byte off-path); fail-closed; SIGTERM/SIGINT/beforeExit release; lease surfaced on /health + /ready; 9 tests. Opus-designed + dual opus review (correctness + money-safety). | new `scheduler-lease.ts`, `scheduler.ts`, `health`/`ready` routes, `.env.example`, `test/scheduler-lease.test.ts` |
 | 5 | **Reconsider Self-RAG / HyDE / sentence-window / contextual compression** | ready (opus) | **DECISION: SKIP all four now** — see "Opus specs" below | n/a |
 | 9 | **karpathy/autoresearch review** | research | the planner agent MISREAD this as an "autonomous tuning loop" feature — IGNORE that; treat as a research read only (retry pending) | n/a |
 
@@ -46,18 +46,41 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   excluded all uppercase-stored 10-K/10-Q chunks (sec-filings writes "10-K", sec8k writes "8-k", Pinecone
   `$in` is exact-match). Made `buildExtraFilters` casing-tolerant (each type → original+lower+upper, deduped).
   Advisory path only; no flag.
-- **risk-tests (M, no flag):** risk-breaker.test.ts ✅ done. Remaining: short/cover realized-P&L across all
-  four `OrderSide`s in `performance.test.ts`, and daily-notional accounting/reset in a new test (the
-  CLAUDE.md "verify all four sides explicitly" gap).
-- **staleness-gate (M, flag):** add a per-data-class max-staleness threshold + a policy setting; enforce at
+- **risk-tests (M, no flag) — DONE:** risk-breaker.test.ts ✅ (PR #186). `calculatePnl` four-side realized-P&L
+  + the notional cross-boundary case ✅ (this PR). **Stale-plan correction:** daily-notional *accounting/reset*
+  was NOT a gap — `daily-notional-reset.test.ts` already covered buy/short-counted vs sell/cover-exempt,
+  tenant isolation, fallback, and the NY-midnight boundary math (T6/T13). The genuine `calculatePnl` gap was
+  the realized-P&L side coverage (only long-FIFO + basic short/cover existed); added short returnPct/side,
+  partial cover, partial-then-full sell, the all-four-side interleave (the critical FIFO/sign case), both
+  flat-close mirrors, and a mixed residual long+short mark-to-market. The only notional addition was a
+  cross-boundary (orders-age-out) case. All values adversarially re-derived from first principles; no
+  production bug found (the CLAUDE.md "verify all four sides explicitly" code is correct).
+- **staleness-gate (M, flag) — DONE:** `maxQuoteAgeSec`/`maxFundamentalsAgeSec` on `TradingPolicy` (default
+  unset = OFF). OPENING-only fail-safe gate in `evaluateTradeProposal`: quote age from
+  `marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from
+  `MarketScan.generatedAt`; `age > threshold` (strict) or missing/unparseable timestamp → block with a clear
+  reason — but only inside the gate-on branch. Pure read + reason-push; never approves/mutates/sizes; exits
+  never gated; off-path byte-for-byte. No defaults/market/strategy change needed (asOf already flows onto
+  `quotesBySymbol`; the gate reads `context.marketScan` at check time). Original spec note (superseded):
   proposal review so the strategy can't act on stale-but-cached data (today freshness is only a label).
 - **langfuse-evals (M):** Langfuse already a dep; seed dataset + offline runner replaying across the 6
   providers + deterministic & LLM-judge scoring → catches prompt/RAG/provider regressions.
-- **rag-embed-congress-insider (M, flag):** vectorize congress/insider (currently structured-only) so
-  "congressional-context retrieval" is real RAG; reuse `rag/chunk.ts` + the SEC ingestion pattern.
+- **rag-embed-congress-insider (M, flag) — DONE:** `web-sources/disclosure-rag.ts` turns structured congress
+  trades + insider filings into natural-language RAG docs and upserts via `storeContexts` (reuses the
+  embedding stack; loaded by dynamic import so the heavy Voyage/Pinecone deps only load when the flag is on).
+  `acceptance_datetime` = `disclosedAt ?? tradedAt` (congress) / `filedAt` (insider) so the point-in-time
+  as-of guard never leaks a future disclosure. doc_type lowercase canonical. Flag `RAG_EMBED_DISCLOSURES`
+  (default OFF); fire-and-forget hook in `runDueRefreshes`. Deviation: short 1-2 sentence disclosures are sent
+  directly (not through `rag/chunk.ts`) — the chunker targets long docs. **Follow-up:** embeds the whole
+  dataset each refresh (deterministic upsert id → no dupes, but redundant embed cost); a fresh-delta-only
+  pass is a cheap later optimization.
 - **rag-hybrid-bm25 (M, flag):** Pinecone sparse-dense; needs a reindex (admin route). Land after wire-filters.
-- **reasoning-diversity (M, flag):** similarity metric over proposal rationales to flag boilerplate/
-  input-agnostic output across a run.
+- **reasoning-diversity (M) — DONE:** `rationale-diversity.ts` — multiset character-trigram Jaccard over
+  normalized rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity, collapsed, threshold}`
+  (`collapsed` = mean > 0.85). Wired into `runStrategyOnce` after the proposal set is finalized; attached to
+  `StrategyResult` (optional, non-breaking) + persisted via `audit("rationale_diversity")`; `console.warn` on
+  collapse. **Advisory-only, no flag** (pure, no side effects beyond the audit write) — never blocks, drops,
+  or modifies a proposal. 30 tests.
 
 ## Opus specs (the 4 hardest designs — recovered from the re-run)
 - **rag-multiquery-rrf (M, flag) — DO IT, two stages.** Stage 1: template-mode multi-query + Reciprocal Rank
@@ -82,6 +105,11 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   gap:** `runStrategyOnce` already holds a cross-process lock, but the synthetic-stop monitor in the tick body
   (`scheduler.ts:~200`) can place broker exit orders and is only in-process guarded → two processes double-fire.
   SKIP (separate PRs): the `acquireStrategyLock` TOCTOU rewrite (money-path) and a durable external scheduler.
+  **DONE as specified.** Implemented `acquireLease`/`renewLease`/`releaseLease`/`getLease` +
+  `acquireOrRenewLeadership` (renew-then-acquire); gate placed before the per-account loop (synthetic-stop
+  monitor + strategy runs); fail-closed; TTL default 90s (1.5 ticks). The one-tick cross-process TOCTOU is
+  unchanged (same as `acquireStrategyLock`, left per spec) — TTL-steal + the per-process `stopMonitorInFlight`
+  guard + flag-default-OFF make a real double-exit vanishingly unlikely; a true atomic fix is the deferred PR.
 - **rag-selfrag-hyde-decision (S) — DECISION: SKIP all four now.** The recall gap HyDE/Self-RAG/sentence-
   window/contextual-compression address is already covered by domain-tuned `voyage-finance-2` embeddings + the
   hard symbol metadata filter (`vector-db.ts:572`) + the cross-encoder reranker + over-fetch. Strategy queries

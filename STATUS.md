@@ -24,6 +24,79 @@ Accounts/Edit-Account copy/required/hidden/full-width + **Hide Test account** to
 Verify: tsc clean · **1271/1271** tests · `npm run build` OK. Not browser-verified (no preview here).
 Next: live mobile walkthrough; deeper trace of the autonomous account-number provenance if mismatches
 persist. See `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+## 2026-06-26 — Improvement program #9: market-data staleness gate (item #5 DONE)
+Branch `agent/claude-staleness-gate`. **Money-path-adjacent (blocks proposals).** Added `maxQuoteAgeSec` /
+`maxFundamentalsAgeSec` to `TradingPolicy` (default unset = OFF). `evaluateTradeProposal` now blocks an OPENING
+proposal whose backing market data is older than the threshold: quote age from
+`marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from `MarketScan.generatedAt`;
+`age > threshold` (strict) OR a missing/unparseable timestamp → push a `staleness_gate:` reason → block. FAIL-SAFE
+(stale → block, never the reverse); exits (sell/cover) never gated; pure read + reason-push (no sizing/mutation);
+off-path byte-for-byte. `app/api/policy/route.ts` validates non-negative+finite and stripNullsDeep makes a
+cleared field = off. No defaults/market/strategy change needed (asOf already flows onto `quotesBySymbol`). Built
+by a model-tiered team: sonnet recon/impl, **opus design + dual opus review** (correctness + money-safety), both
+all-green. 9 tests; tsc clean. Verify: 57 tests (staleness + policy) · full trio via land.sh. Next (last two,
+sequential on strategy.ts): coarse-credit attribution, then multi-query/RRF.
+
+## 2026-06-26 — Improvement program #7: rationale-diversity / template-collapse check (item #8 DONE)
+Branch `agent/claude-reasoning-diversity`. New `src/lib/rationale-diversity.ts` — multiset character-trigram
+Jaccard over normalized proposal rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity,
+collapsed, threshold}` (collapsed = mean pairwise > 0.85). Wired into `runStrategyOnce` after the proposal set
+is finalized; attached to `StrategyResult` (optional, non-breaking) + persisted via `audit("rationale_diversity")`;
+`console.warn` on collapse. **Advisory-only, no flag** — pure with no side effects beyond the audit write; it
+NEVER blocks, drops, or modifies a proposal. Catches an LLM emitting canned boilerplate regardless of the
+symbol/data. Built by a model-tiered subagent team (all sonnet recon→design→impl→review); review all-green, no
+fixes. 30 tests; tsc clean post-merge. Verify: 45 tests (diversity + persistence-notification) · full trio via
+land.sh.
+
+## 2026-06-26 — LLM-required gate: strategy + chat fail loud (no silent rule-based fallback)
+Branch `claude/llm-required-gate` (PR open). No resolvable LLM credential (own key OR operator failover) →
+the two LLM-driven actions ERROR instead of silently degrading: `/api/strategy/run` + `/api/chat` return
+412 ("Connect an LLM provider in Settings…"), `proposeTrades` throws `LlmCredentialRequiredError` (the
+rule-based `fallbackProposal` is deleted), and a `llmConfigured` snapshot flag disables the buttons.
+Everything else (dashboard/scan/config/Test-sim) stays keyless. New `src/lib/llm-required.ts` +
+`userHasAnyLlmCredential()` in `db-api-keys`. Verify: npm ci · tsc · 723 tests · build — all green. NEXT
+(owner decision pending): make the Red Team mandatory — (a) any failure → hard error/no proposal, or (b)
+error only the silent Bull-only path while keeping high-conviction→human-approval. See
+`docs/rollouts/2026-06-26-llm-required-gate.md`.
+## 2026-06-26 — Improvement program #6: single-leader scheduler CAS lease (item #3 durable-scheduler DONE)
+Branch `agent/claude-scheduler-lease`. **Money-path.** New `src/lib/scheduler-lease.ts`: a compare-and-swap
+lease in the existing `settings` KV (key `scheduler:lease`, NO migration), mirroring `acquireStrategyLock`
+(transaction-wrapped read+conditional-upsert). `acquireLease` wins on absent/malformed/expired/own-owner;
+`renewLease` only by current owner; `releaseLease` owner-checked + never throws; `getLease` adds ageMs/expired;
+fail-closed (exception → false → non-leader → no money-path body). `scheduler.ts` gates the per-account tick
+body (synthetic-stop monitor + strategy runs) behind `SCHEDULER_SINGLE_LEADER` (default OFF — flag OFF
+short-circuits, lease never touched, behavior byte-for-byte unchanged). SIGTERM/SIGINT/beforeExit release the
+lease. Lease surfaced additively on /health + /ready. Closes the double-fire gap: two processes could both run
+the synthetic-stop monitor (places broker EXIT orders) since it was only in-process guarded. Built by a
+model-tiered team: sonnet recon/impl, **opus design + dual opus review** (correctness + money-safety) — both
+all-green. One-tick cross-process TOCTOU remains (same as acquireStrategyLock, deferred per spec); TTL-steal +
+per-process guard + flag-OFF mitigate. 9 tests; tsc clean. Verify: 9 tests pass · full trio via land.sh.
+
+## 2026-06-26 — Improvement program #4: embed congress/insider disclosures into RAG (item #3 DONE)
+Branch `agent/claude-rag-embed-disclosures`. New `src/lib/web-sources/disclosure-rag.ts` converts structured
+congress trades + insider filings into natural-language RAG docs and upserts them via the existing
+`storeContexts` path (vector-db loaded by dynamic import so Voyage/Pinecone only load when enabled). Sets
+`acceptance_datetime` = `disclosedAt ?? tradedAt` (congress) / `filedAt` (insider) so the point-in-time as-of
+guard never leaks a future disclosure; doc_type `congress-trade`/`insider-filing` (lowercase). Flag
+`RAG_EMBED_DISCLOSURES` (default OFF); fire-and-forget hook in `runDueRefreshes`. Built by a model-tiered
+subagent team (sonnet recon→design→impl→review); 22 hermetic tests (vector-db upsert mocked); tsc clean.
+Follow-up: re-embeds the whole dataset each refresh (deterministic upsert id → no dupes, redundant embed
+cost) — a fresh-delta pass is a cheap later optimization. Verify: 22 tests pass · full trio via land.sh.
+
+## 2026-06-26 — Improvement program #3: four-side P&L + notional reset tests (item #2 DONE)
+Branch `agent/claude-risk-pnl-tests`. Completed item #2. Added 8 tests (test-only, no production change):
+`calculatePnl` realized-P&L now covers short round-trip (returnPct + side), partial cover with residual
+mark-to-market, partial-then-full sell, the all-four-side same-symbol interleave (the critical FIFO/sign
+case — sell consumes only longs, cover only shorts, no $0 cross-consumption), both flat-close mirrors
+(cover-no-short, sell-no-long), and a mixed residual long+short aggregation; plus a daily-notional
+cross-boundary case (orders age out of the day + rolling windows when queried with a far-future `now`).
+Authored + adversarially verified by a model-tiered subagent team (one author, two independent verifiers
+re-deriving every value from first principles, one with a no-import Node script) — **no production bug
+found**; the short/cover/notional money-path math is correct. **Stale-plan correction:** daily-notional
+*accounting/reset* was already covered by `daily-notional-reset.test.ts` (T6/T13) — only the cross-boundary
+case was genuinely missing. Verify: 45 tests in the two files pass · full trio via land.sh. Next: remaining
+program items driven by a model-tiered subagent team (langfuse-evals, RAG hybrid/embed, diversity/staleness,
+opus DO-items).
 
 ## 2026-06-26 — Improvement program #2: wire RAG metadata filters + minScore floor (items #1/#6 DONE)
 Branch `agent/claude-rag-wire-filters`. `buildExtraFilters` + `minScore` were built in `vector-db.ts` but

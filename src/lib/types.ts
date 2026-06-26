@@ -529,6 +529,19 @@ export interface TradingPolicy {
   volPanicVvixThreshold?: number;
   /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
   volPanicSkewThreshold?: number;
+  /**
+   * Market-data staleness gate (fail-safe, additive, DEFAULT OFF). Enforced at proposal REVIEW for
+   * OPENING orders only — exits are never blocked. When set (> 0), an opening proposal whose backing
+   * market data is older than the threshold is BLOCKED. Fail-safe direction only: stale → block; a
+   * missing timestamp is treated as stale (block) ONLY when the gate is enabled. Undefined or <= 0
+   * disables (no behavior change). Read from the run's MarketScan timestamps; never fabricated.
+   */
+  /** Max age (seconds) of the per-symbol quote (MarketScan.quotesBySymbol[sym].asOf, fallback the
+   *  candidate's asOf). Undefined/<=0 disables. */
+  maxQuoteAgeSec?: number;
+  /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
+   *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
+  maxFundamentalsAgeSec?: number;
 }
 
 export interface TradeProposal {
@@ -1211,4 +1224,23 @@ export interface LearnedContextPendingRow {
   createdAt: string;
   status: LearnedContextPendingStatus;
   resolvedAt: string | null;
+}
+
+/**
+ * Advisory result from the per-run rationale-diversity check (improvement-program item #8).
+ *
+ * Populated after proposals are generated; never blocks, drops, or modifies any proposal.
+ * Persisted via `audit("rationale_diversity", ...)` and optionally attached to `StrategyResult`.
+ */
+export interface RationaleDiversity {
+  /** Number of rationale strings evaluated. */
+  count: number;
+  /** Mean pairwise character-trigram Jaccard similarity across all N*(N-1)/2 pairs, in [0, 1]. */
+  meanPairwiseSimilarity: number;
+  /** Maximum pairwise similarity observed across any single pair, in [0, 1]. */
+  maxPairwiseSimilarity: number;
+  /** True when meanPairwiseSimilarity exceeds `threshold` — indicates likely template collapse. */
+  collapsed: boolean;
+  /** Similarity threshold used to set `collapsed` (default 0.85). */
+  threshold: number;
 }
