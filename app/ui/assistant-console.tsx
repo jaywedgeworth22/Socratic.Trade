@@ -10,6 +10,7 @@ import { AlertTriangle, Check, Loader2, Send, ShieldCheck, Sparkles, X } from "l
 import { toast } from "sonner";
 import type { ExecutionState } from "@/lib/execution-mode";
 import { humanizeLlmError } from "@/lib/llm-errors";
+import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
 import { Markdown } from "./markdown";
 import { ModelPicker, type ModelGroup } from "./model-picker";
@@ -196,6 +197,13 @@ export function AssistantView({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const dest = destination(executionState);
 
+  // Gate chat when NO real LLM provider has a usable key (mirrors the /api/chat 412). The offline Mock
+  // model is the only keyless path, so it's never gated. providerStatus is {} until loaded → treat as
+  // available so we don't flash the gate before the check resolves (fail open, like the picker).
+  const isMockModel = model.trim().toLowerCase() === "mock";
+  const providerKeys = Object.keys(providerStatus);
+  const noLlmConfigured = !isMockModel && providerKeys.length > 0 && providerKeys.every((p) => providerStatus[p] === false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -214,10 +222,12 @@ export function AssistantView({
   }, []);
 
   // Which providers have a usable key (so the picker can mark/disable ones that don't). Fail open:
-  // on error, leave statuses unset → every provider stays selectable.
+  // on error, leave statuses unset → every provider stays selectable. Re-checked on window focus and
+  // tab visibility so that connecting a key in Settings (then returning to this tab) immediately
+  // unlocks chat — otherwise providerStatus would stay stale until a full reload.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const refresh = async () => {
       try {
         const res = await fetch("/api/chat/providers");
         if (!res.ok) return;
@@ -226,9 +236,16 @@ export function AssistantView({
       } catch {
         /* availability is best-effort; default to all selectable */
       }
-    })();
+    };
+    void refresh();
+    const onFocus = () => void refresh();
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
@@ -247,6 +264,10 @@ export function AssistantView({
   const send = useCallback(async (override?: string) => {
     const message = (typeof override === "string" ? override : input).trim();
     if (!message || sending) return;
+    if (noLlmConfigured) {
+      toast.error(LLM_REQUIRED_CHAT_MESSAGE);
+      return;
+    }
     setInput("");
     const stamp = Date.now();
     setMessages((m) => [...m, { id: `u-${stamp}`, role: "user", text: message }]);
@@ -268,7 +289,7 @@ export function AssistantView({
     } finally {
       setSending(false);
     }
-  }, [input, model, sending]);
+  }, [input, model, sending, noLlmConfigured]);
 
   async function checkPolicy(msgId: string, draft: ChatDraft) {
     patchDraft(msgId, { phase: "checking" });
@@ -375,7 +396,7 @@ export function AssistantView({
                   <button
                     key={s.prompt}
                     onClick={() => void send(s.prompt)}
-                    disabled={sending}
+                    disabled={sending || noLlmConfigured}
                     className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg transition hover:border-accent hover:bg-surface-2 disabled:opacity-50"
                   >
                     <span className="text-[10px] uppercase tracking-wide text-muted">{s.category}</span>
@@ -437,13 +458,19 @@ export function AssistantView({
       </div>
 
       <div className="border-t border-line p-3">
+        {noLlmConfigured && (
+          <p className="mb-2 flex items-center gap-1.5 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+            <AlertTriangle size={14} /> {LLM_REQUIRED_CHAT_MESSAGE}
+          </p>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
             className={cn(inputClass, "min-h-[2.5rem] flex-1 resize-none")}
             rows={1}
-            placeholder="Ask a question, or describe an order to draft…"
+            placeholder={noLlmConfigured ? "Connect an LLM provider in Settings to chat…" : "Ask a question, or describe an order to draft…"}
             value={input}
+            disabled={noLlmConfigured}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -452,7 +479,7 @@ export function AssistantView({
               }
             }}
           />
-          <Button onClick={() => void send()} disabled={sending || !input.trim()} size="md">
+          <Button onClick={() => void send()} disabled={sending || !input.trim() || noLlmConfigured} size="md">
             <Send size={15} /> Send
           </Button>
         </div>

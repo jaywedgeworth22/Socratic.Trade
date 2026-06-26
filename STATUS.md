@@ -4,6 +4,16 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — LLM-required gate: strategy + chat fail loud (no silent rule-based fallback)
+Branch `claude/llm-required-gate` (PR open). No resolvable LLM credential (own key OR operator failover) →
+the two LLM-driven actions ERROR instead of silently degrading: `/api/strategy/run` + `/api/chat` return
+412 ("Connect an LLM provider in Settings…"), `proposeTrades` throws `LlmCredentialRequiredError` (the
+rule-based `fallbackProposal` is deleted), and a `llmConfigured` snapshot flag disables the buttons.
+Everything else (dashboard/scan/config/Test-sim) stays keyless. New `src/lib/llm-required.ts` +
+`userHasAnyLlmCredential()` in `db-api-keys`. Verify: npm ci · tsc · 723 tests · build — all green. NEXT
+(owner decision pending): make the Red Team mandatory — (a) any failure → hard error/no proposal, or (b)
+error only the silent Bull-only path while keeping high-conviction→human-approval. See
+`docs/rollouts/2026-06-26-llm-required-gate.md`.
 ## 2026-06-26 — Improvement program #6: single-leader scheduler CAS lease (item #3 durable-scheduler DONE)
 Branch `agent/claude-scheduler-lease`. **Money-path.** New `src/lib/scheduler-lease.ts`: a compare-and-swap
 lease in the existing `settings` KV (key `scheduler:lease`, NO migration), mirroring `acquireStrategyLock`
