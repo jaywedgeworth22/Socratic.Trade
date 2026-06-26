@@ -48,7 +48,6 @@ Live entries win; only missing account numbers are added. Net: the active accoun
 definitive readiness status; execution gates stay strict/fail-closed. Verify: tsc ✓ · 1256/1256 ✓
 (new `test/dashboard-agentic-fallback.test.ts`) · build ✓. See
 `docs/rollouts/2026-06-26-dashboard-accounts-fallback.md`.
->>>>>>> origin/main
 
 ## 2026-06-26 — Fix: Brokerage readiness badge showed the opposite (false "not available")
 Branch `fix/brokerage-readiness-false-warning` (throwaway worktree `~/apps/trading-ag13`). The header
