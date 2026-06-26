@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-25 — Chat model picker: real key-availability + clean provider labels
+Branch `feat/chat-model-availability` (throwaway worktree `~/apps/trading-ag13`), refinement of
+#167/#169. (1) Dropped "(needs X key)" / "requires X key" labels from the chat picker AND Strategy
+Studio Green/Red dropdowns — OpenAI is no longer treated as special. (2) Removed the failover/
+operator-backup wording from the Green Team hint (the app just works; we don't narrate the fallback
+key). (3) New `GET /api/chat/providers` returns booleans-only per provider via `resolveLlmCredential`
+(same usable-or-not check as `llmForModel`); the Assistant fetches it and labels any provider without a
+resolvable key "— no key" + disables its options (fail-open until loaded; Mock always available). With
+keys present for all five, every group is clean + selectable. Verify: tsc ✓ · 1246/1246 ✓ · build ✓ ·
+live `/api/chat/providers` (only-OpenAI-keyed → openai:true, rest false) + dashboard 200. See
+`docs/rollouts/2026-06-25-chat-model-availability-and-clean-labels.md`.
+
 ## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
 Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up
 to #167. (1) **Strategy loop** now spans all five providers: `resolveLlmEndpoint` gained Gemini +
