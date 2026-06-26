@@ -52,7 +52,7 @@ tokens.
   conflation; documented `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) as the primary
   bootstrap.
 
-### Security hardening (Codex review #177 rounds 2–3)
+### Security hardening (Codex review #177 rounds 2–4)
 
 Round 2:
 - **Mint via env, not argv:** both `mintToken` (runner) and `mint_token` (cutover) now pass the
@@ -76,6 +76,12 @@ Round 3:
   signal, with `REQUIRE_SECRETS_MANAGER=1`) but the `infisical` CLI is missing or no complete
   credential is present, `deploy.yml` now errors instead of doing a silent plain build that would then
   restart a `start:secrets` service that can't boot.
+
+Round 4:
+- **Cutover: fail closed on a lone app Client Secret.** The app validation previously caught only
+  `CLIENT_ID`-without-secret; a lone `INFISICAL_CLIENT_SECRET` (no id) plus a stale `INFISICAL_TOKEN`
+  in `deploy.env` would fall back to the expiring token and persist *that*. The app path now does the
+  same full XOR check as the runner/shared paths — either half without the other dies.
 
 ## Files
 

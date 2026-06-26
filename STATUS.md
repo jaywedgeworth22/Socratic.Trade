@@ -19,7 +19,8 @@ token automatically:
   scopes the bootstrap to the build/restart subshells so the long-lived secret never reaches `npm ci`.
   Round 3: sanitize the `infisical export` subprocess env; fail closed on partial runner creds (app
   always, shared when overlay on); deploy fails on a present-but-unusable bootstrap instead of a silent
-  plain build.)
+  plain build. Round 4: cutover fails closed on a lone app Client Secret + stale token (full XOR check,
+  matching the runner/shared paths) so it never persists an expiring token.)
 - `scripts/infisical-prod-cutover.sh` — prompts for Client ID (visible) + Client Secret (hidden),
   persists the long-lived creds to `deploy.env` (not an expiring token), **detects a 64-hex
   Client-Secret-in-a-token-field and dies with a clear message**, and hardens the shared block under

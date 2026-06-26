@@ -103,11 +103,15 @@ if [ -n "$APP_CLIENT_ID" ] && [ -z "$APP_CLIENT_SECRET" ] && [ -t 0 ]; then
 fi
 
 # Validate app credentials + catch the Client-Secret-as-token mistake.
+# Partial app identity (one half of the pair without the other) fails closed even when a
+# stale INFISICAL_TOKEN is present, so we never persist an expiring token when the operator
+# attempted the non-expiring Client ID/Secret pair (mirrors the runner/shared checks).
+if { [ -n "$APP_CLIENT_ID" ] && [ -z "$APP_CLIENT_SECRET" ]; } \
+   || { [ -z "$APP_CLIENT_ID" ] && [ -n "$APP_CLIENT_SECRET" ]; }; then
+  die "Partial app identity: set BOTH INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET (or neither, to use a pre-minted INFISICAL_TOKEN)."
+fi
 if [ -z "$APP_CLIENT_ID" ] && [ -z "$APP_TOKEN" ]; then
   die "No app credentials. Provide INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET (preferred) or a pre-minted INFISICAL_TOKEN. A bare 'VAR=value' on its own line is not inherited — pass it inline on the command, 'export' it, or run interactively to be prompted."
-fi
-if [ -n "$APP_CLIENT_ID" ] && [ -z "$APP_CLIENT_SECRET" ]; then
-  die "Got an app Client ID but no Client Secret. Set INFISICAL_CLIENT_SECRET (or run interactively to be prompted)."
 fi
 if [ -z "$APP_CLIENT_ID" ] && looks_like_client_secret "$APP_TOKEN"; then
   die "INFISICAL_TOKEN looks like a 64-char Client SECRET, not an access token — that is the 'malformed token' 403. Provide INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET instead; the script exchanges them for a token automatically."
