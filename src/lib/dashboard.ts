@@ -14,7 +14,8 @@ import {
   listFillEvents,
   listConnectedAccounts,
   ensureTestAccount,
-  getActiveConnectedAccount
+  getActiveConnectedAccount,
+  userHasAnyLlmCredential
 } from "./db";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
@@ -227,6 +228,10 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       ...(currentUserEmail ? { email: currentUserEmail } : {}),
       isAdmin: isAdminEmail(currentUserEmail)
     },
+    // Whether at least one LLM provider has a resolvable credential for this user (own key OR operator
+    // failover). The two LLM-driven actions (Run once / chat) are gated on this; everything else works
+    // keyless. The client uses it to disable "Run once" with an actionable message before the 412.
+    llmConfigured: userHasAnyLlmCredential(userId),
     policy,
     strategyPrompt: getStrategyPrompt(userId),
     accounts,
