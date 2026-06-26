@@ -60,6 +60,17 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          # This workflow EXISTS to respond to a bot. claude-code-action's default
+          # human-actor gate aborts (~11s) on any non-User trigger with
+          # "Workflow initiated by non-human actor: chatgpt-codex-connector ...
+          # Add bot to allowed_bots list or use '*' to allow all bots." That gate
+          # was the real failure — NOT the "directory mismatch ... tsconfig.json"
+          # text, which is just a comment the action echoes in its run script.
+          # Allow ONLY the Codex reviewer (not '*'); the job's `if:` already
+          # restricts triggers to chatgpt-codex-connector[bot], so this is the
+          # exact complement. The action normalizes by lowercasing + stripping a
+          # trailing "[bot]", so this value matches the actor exactly.
+          allowed_bots: "chatgpt-codex-connector[bot]"
           # The whole policy lives in the prompt so behavior is auditable in-repo.
           prompt: |
             You are the autonomous fixer that responds to the Codex PR reviewer
