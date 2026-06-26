@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Improvement program #2: wire RAG metadata filters + minScore floor (items #1/#6 DONE)
+Branch `agent/claude-rag-wire-filters`. `buildExtraFilters` + `minScore` were built in `vector-db.ts` but
+every caller passed `undefined` (dead code). Added `defaultMinScore()` (env `VECTOR_MIN_SCORE`, default 0.30,
+clamped [0,1]); wired `{docType, minScore}` into the strategy per-symbol RAG call and forwarded the chat
+intent's `doc_type` + minScore in `chat/orchestrator.ts` (it extracted doc_type then dropped it). **Caught a
+landmine in the spec:** stored `doc_type` casing is inconsistent (sec-filings "10-K" vs sec8k "8-k") and
+Pinecone `$in` is exact-match, so the spec's lowercase filter would have silently excluded all 10-K/10-Q —
+made `buildExtraFilters` casing-tolerant instead. Advisory path only; no flag. Also recovered the 4 opus
+specs (multi-query/RRF, coarse-credit, scheduler-lease, Self-RAG=SKIP) → appended to the program doc, so the
+handoff plan is now complete. Verify: tsc clean · 21 tests (vector-db-retrieval + chat-orchestrator) pass ·
+full trio via land.sh. Next: langfuse-evals, then rag-hybrid-bm25 / rag-embed-congress-insider (Batch 3).
+
 ## 2026-06-26 — Improvement program kickoff: risk-breaker tests + tracking doc (item #2 partial)
 Branch `agent/claude-risk-tests`. First PR of a 14-item improvement program (RAG / learning-loop / risk /
 observability) — see `docs/improvement-program-2026-06-26.md` for the full plan, per-item specs, sequenced
