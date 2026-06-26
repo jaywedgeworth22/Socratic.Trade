@@ -529,6 +529,19 @@ export interface TradingPolicy {
   volPanicVvixThreshold?: number;
   /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
   volPanicSkewThreshold?: number;
+  /**
+   * Market-data staleness gate (fail-safe, additive, DEFAULT OFF). Enforced at proposal REVIEW for
+   * OPENING orders only — exits are never blocked. When set (> 0), an opening proposal whose backing
+   * market data is older than the threshold is BLOCKED. Fail-safe direction only: stale → block; a
+   * missing timestamp is treated as stale (block) ONLY when the gate is enabled. Undefined or <= 0
+   * disables (no behavior change). Read from the run's MarketScan timestamps; never fabricated.
+   */
+  /** Max age (seconds) of the per-symbol quote (MarketScan.quotesBySymbol[sym].asOf, fallback the
+   *  candidate's asOf). Undefined/<=0 disables. */
+  maxQuoteAgeSec?: number;
+  /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
+   *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
+  maxFundamentalsAgeSec?: number;
 }
 
 export interface TradeProposal {
