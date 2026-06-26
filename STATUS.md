@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Improvement program #8: hybrid dense+BM25 retrieval (item #4 DONE, infra-free)
+Branch `agent/claude-rag-hybrid`. New `src/lib/rag/hybrid.ts` (pure, dependency-free): `tokenize`, `bm25Scores`
+(standard BM25 k1=1.5/b=0.75, +1-smoothed IDF, avgDl guard), `rrfFuse` (Reciprocal Rank Fusion, general N
+lists — **reused by the multiquery item**), `fuseHybrid`. Wired into `retrieveContextDetailed`: when
+`HYBRID_RETRIEVAL=on`, reorder the dense candidate pool by RRF(dense, BM25) AFTER the minScore + as-of filters
+and BEFORE the cross-encoder rerank. Default OFF → `fusedPool === pool`, byte-for-byte the current dense flow;
+doesn't change overFetchK or the Pinecone query. **Scoped infra-free** (no Pinecone sparse-dense index / admin
+reindex — that needs reprovisioning I can't autonomously verify; deferred). Advisory RAG, not money-path. Built
+by a model-tiered subagent team (all sonnet); review all-green, no fixes. 29 tests; tsc clean post-merge.
+Verify: 40 tests (hybrid + retrieval) · full trio via land.sh.
+
 ## 2026-06-26 — LLM-required gate: strategy + chat fail loud (no silent rule-based fallback)
 Branch `claude/llm-required-gate` (PR open). No resolvable LLM credential (own key OR operator failover) →
 the two LLM-driven actions ERROR instead of silently degrading: `/api/strategy/run` + `/api/chat` return

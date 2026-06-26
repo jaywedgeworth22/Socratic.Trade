@@ -28,7 +28,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 | 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **DONE** — risk-breaker (13) ✅; calculatePnl four-side realized-P&L + notional cross-boundary (8 added) ✅. No production bugs found (adversarially verified). | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts` ✅, `test/daily-notional-reset.test.ts` ✅ |
 | 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | TODO | `scripts/eval/*` (dataset, scoring, run-offline, run-providers), `test/eval-offline.test.ts` |
 | 1+#6 | **Wire RAG metadata filters + minScore floor** | ready | **DONE** (PR after #186) — `defaultMinScore()` (env `VECTOR_MIN_SCORE`=0.30) wired into strategy + chat retrieval; **buildExtraFilters made CASING-TOLERANT** (stored doc_type is inconsistent: sec-filings "10-K" vs sec8k "8-k" — a single-casing filter would have silently excluded 10-K/10-Q; fixed) | `vector-db.ts`, `strategy.ts`, `chat/orchestrator.ts`, `.env.example`, `test/vector-db-retrieval.test.ts` |
-| 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
+| 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | **DONE** — infra-free: BM25 over the dense candidate pool, RRF-fused (after minScore+as-of, before rerank); flag `HYBRID_RETRIEVAL` (default OFF, byte-for-byte off-path). Reusable `rrfFuse` helper (multiquery reuses it). NO Pinecone sparse index needed (deferred). 29 tests | new `src/lib/rag/hybrid.ts`, `vector-db.ts`, `.env.example`, `test/vector-db-hybrid.test.ts` |
 | 3 | **Embed congressional + insider disclosures into vector store** | ready | **DONE** — `disclosure-rag.ts` converts congress trades + insider filings → RAG docs (doc_type `congress-trade`/`insider-filing`, `acceptance_datetime`=disclosure/filing date for the as-of guard) → `storeContexts`; flag `RAG_EMBED_DISCLOSURES` (default OFF); 22 tests | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `.env.example`, `test/disclosure-rag.test.ts` |
 | 8 | **Reasoning/template-collapse diversity check on rationales** | ready | TODO (shares strategy.ts/types.ts) | new `rationale-diversity.ts`, `db-proposals.ts`, `strategy.ts`, `types.ts` |
 | 5 | **Market-data staleness gate** | ready | TODO (shares strategy.ts/types.ts) | `types.ts`, `policy.ts`, `defaults.ts`, `strategy.ts`, `market.ts`, `app/api/policy/route.ts` |
@@ -68,7 +68,13 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   directly (not through `rag/chunk.ts`) — the chunker targets long docs. **Follow-up:** embeds the whole
   dataset each refresh (deterministic upsert id → no dupes, but redundant embed cost); a fresh-delta-only
   pass is a cheap later optimization.
-- **rag-hybrid-bm25 (M, flag):** Pinecone sparse-dense; needs a reindex (admin route). Land after wire-filters.
+- **rag-hybrid-bm25 (M, flag) — DONE (infra-free):** Original plan was Pinecone sparse-dense + admin reindex,
+  but that needs index reprovisioning that can't be autonomously verified. Shipped a no-infra equivalent
+  instead: `src/lib/rag/hybrid.ts` computes BM25 over the over-fetched dense candidate pool's text and
+  RRF-fuses it with the dense cosine ranking — inserted AFTER the minScore + as-of filters and BEFORE the
+  cross-encoder rerank. `rrfFuse` is a general N-list helper (the **multiquery item reuses it**). Flag
+  `HYBRID_RETRIEVAL` (default OFF → `fusedPool === pool`, byte-for-byte unchanged). Deferred follow-up: a true
+  Pinecone sparse-dense index with corpus-wide IDF (current IDF is pool-local, fine for relative ranking).
 - **reasoning-diversity (M, flag):** similarity metric over proposal rationales to flag boilerplate/
   input-agnostic output across a run.
 
