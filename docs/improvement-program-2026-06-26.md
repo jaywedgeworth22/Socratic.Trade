@@ -26,7 +26,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 | # | Item | Spec | Status | Files (primary) |
 |---|---|---|---|---|
 | 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **DONE** — risk-breaker (13) ✅; calculatePnl four-side realized-P&L + notional cross-boundary (8 added) ✅. No production bugs found (adversarially verified). | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts` ✅, `test/daily-notional-reset.test.ts` ✅ |
-| 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | TODO | `scripts/eval/*` (dataset, scoring, run-offline, run-providers), `test/eval-offline.test.ts` |
+| 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | **DONE** — 15-case dataset + 6 deterministic scorers + optional LLM-judge + offline runner (MockLLM default, real-providers opt-in via `EVAL_REAL_PROVIDERS=1`, Langfuse gated on env); `npm run eval:offline` → 15/15 PASS; 49 hermetic tests | `scripts/eval/{dataset,score,run-offline}.ts`, `test/eval-offline.test.ts`, `package.json` |
 | 1+#6 | **Wire RAG metadata filters + minScore floor** | ready | **DONE** (PR after #186) — `defaultMinScore()` (env `VECTOR_MIN_SCORE`=0.30) wired into strategy + chat retrieval; **buildExtraFilters made CASING-TOLERANT** (stored doc_type is inconsistent: sec-filings "10-K" vs sec8k "8-k" — a single-casing filter would have silently excluded 10-K/10-Q; fixed) | `vector-db.ts`, `strategy.ts`, `chat/orchestrator.ts`, `.env.example`, `test/vector-db-retrieval.test.ts` |
 | 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
 | 3 | **Embed congressional + insider disclosures into vector store** | ready | TODO | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `sec-filings.ts`, `.env.example` |
@@ -57,8 +57,13 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   production bug found (the CLAUDE.md "verify all four sides explicitly" code is correct).
 - **staleness-gate (M, flag):** add a per-data-class max-staleness threshold + a policy setting; enforce at
   proposal review so the strategy can't act on stale-but-cached data (today freshness is only a label).
-- **langfuse-evals (M):** Langfuse already a dep; seed dataset + offline runner replaying across the 6
-  providers + deterministic & LLM-judge scoring → catches prompt/RAG/provider regressions.
+- **langfuse-evals (M) — DONE:** `scripts/eval/dataset.ts` (15 cases: chat/quote/alert/order/watchlist/kb/
+  positions/advice/views) + `score.ts` (6 deterministic scorers: contains/notContains/regex/notRegex/equals/
+  jsonShape + LLM-judge that no-ops when `EVAL_JUDGE_API_KEY` absent) + `run-offline.ts` (MockLLM default;
+  real providers opt-in `EVAL_REAL_PROVIDERS=1`; Langfuse gated on `LANGFUSE_PUBLIC_KEY`; exit-1 below 0.75).
+  `npm run eval:offline` → 15/15, 100%. 49 hermetic tests (no network/keys). Reuses the real provider registry
+  (`chatProviderForModel`/`llmForModel`) + `MockLLM` from `chat/llm.ts`. Real-provider replay across all 6
+  (openai/anthropic/xai/gemini/mistral/deepseek) is wired but opt-in.
 - **rag-embed-congress-insider (M, flag):** vectorize congress/insider (currently structured-only) so
   "congressional-context retrieval" is real RAG; reuse `rag/chunk.ts` + the SEC ingestion pattern.
 - **rag-hybrid-bm25 (M, flag):** Pinecone sparse-dense; needs a reindex (admin route). Land after wire-filters.

@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Improvement program #5: Langfuse offline eval/regression harness (items #6+#7 DONE)
+Branch `agent/claude-langfuse-evals`. New `scripts/eval/{dataset,score,run-offline}.ts` + `test/eval-offline.test.ts`
++ `npm run eval:offline`. 15-case seed dataset; 6 deterministic scorers (contains/notContains/regex/notRegex/
+equals/jsonShape) + an LLM-judge that no-ops offline; offline runner replays through the REAL provider registry
+(`chatProviderForModel`/`llmForModel` + `MockLLM` from `chat/llm.ts`) — MockLLM by default (hermetic, no keys),
+real providers opt-in (`EVAL_REAL_PROVIDERS=1`), Langfuse logging gated on env; exit-1 below a 0.75 threshold.
+`npm run eval:offline` → 15/15 PASS (100%); 49 hermetic tests; tsc clean. Tooling, not money-path. Built by a
+model-tiered subagent team (all sonnet: recon→design→impl→review). Verify: 49 tests + CLI smoke run green ·
+full trio via land.sh. Next: scheduler CAS lease (money-path, opus-reviewed) lands next; then the sequential
+strategy.ts/types.ts + vector-db.ts clusters.
+
 ## 2026-06-26 — Improvement program #3: four-side P&L + notional reset tests (item #2 DONE)
 Branch `agent/claude-risk-pnl-tests`. Completed item #2. Added 8 tests (test-only, no production change):
 `calculatePnl` realized-P&L now covers short round-trip (returnPct + side), partial cover with residual

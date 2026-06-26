@@ -19,7 +19,8 @@
     "gitleaks": "gitleaks detect --source . --verbose",
     "litestream:replicate": "bash scripts/run-litestream.sh",
     "litestream:restore": "bash scripts/litestream-restore.sh",
-    "litestream:dry-run": "litestream databases -config litestream.yml"
+    "litestream:dry-run": "litestream databases -config litestream.yml",
+    "eval:offline": "npx tsx scripts/eval/run-offline.ts"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
