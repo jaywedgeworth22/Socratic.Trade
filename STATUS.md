@@ -15,6 +15,18 @@ strategy path was already correct (`withLlmRequestBounds`). Verify: tsc ✓ (aft
 a stale `.next/dev/` validator) · 1247/1247 ✓ · build ✓. See
 `docs/rollouts/2026-06-25-chat-reasoning-max-completion-tokens.md`.
 
+## 2026-06-25 — Chat model picker: real key-availability + clean provider labels
+Branch `feat/chat-model-availability` (throwaway worktree `~/apps/trading-ag13`), refinement of
+#167/#169. (1) Dropped "(needs X key)" / "requires X key" labels from the chat picker AND Strategy
+Studio Green/Red dropdowns — OpenAI is no longer treated as special. (2) Removed the failover/
+operator-backup wording from the Green Team hint (the app just works; we don't narrate the fallback
+key). (3) New `GET /api/chat/providers` returns booleans-only per provider via `resolveLlmCredential`
+(same usable-or-not check as `llmForModel`); the Assistant fetches it and labels any provider without a
+resolvable key "— no key" + disables its options (fail-open until loaded; Mock always available). With
+keys present for all five, every group is clean + selectable. Verify: tsc ✓ · 1246/1246 ✓ · build ✓ ·
+live `/api/chat/providers` (only-OpenAI-keyed → openai:true, rest false) + dashboard 200. See
+`docs/rollouts/2026-06-25-chat-model-availability-and-clean-labels.md`.
+
 ## 2026-06-25 — Settings overhaul: Risk & Safety tab (Phase 3 — COMPLETES the program)
 Branch `agent/claude-settings-ui`. Final phase of `docs/settings-and-universe-overhaul-plan.md`
 (Phases 1/2/4 merged: #156/#162/#163). New **Risk & Safety** settings tab surfaces the ~17

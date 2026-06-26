@@ -100,13 +100,17 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
 
 // Chat-model selector: pick any of the five providers. The chosen model is sent as a per-request
 // `model` hint to /api/chat, which routes it to the right provider by name (claude-*→Anthropic,
-// grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, else OpenAI). The matching provider key must be
-// set in Settings → Connections; OpenAI is the operator default. A few recommended models per
+// grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, else OpenAI). A few recommended models per
 // provider, spanning cost ↔ capability. Selection is sticky via localStorage (no DB migration).
-const CHAT_MODEL_GROUPS: Array<{ label: string; options: Array<{ value: string; label: string }> }> = [
+// Per-provider key availability is fetched from /api/chat/providers; a provider without a usable key
+// is labeled "— no key" and its options disabled (offline Mock is always available).
+type ChatProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral";
+
+const CHAT_MODEL_GROUPS: Array<{ label: string; provider?: ChatProviderId; options: Array<{ value: string; label: string }> }> = [
   { label: "Offline", options: [{ value: "mock", label: "Mock — deterministic, no key" }] },
   {
     label: "OpenAI",
+    provider: "openai",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest" },
       { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default" },
@@ -114,7 +118,8 @@ const CHAT_MODEL_GROUPS: Array<{ label: string; options: Array<{ value: string; 
     ]
   },
   {
-    label: "Anthropic (needs Anthropic key)",
+    label: "Anthropic",
+    provider: "anthropic",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast & low cost" },
       { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — stronger reasoning" },
@@ -122,14 +127,16 @@ const CHAT_MODEL_GROUPS: Array<{ label: string; options: Array<{ value: string; 
     ]
   },
   {
-    label: "xAI / Grok (needs xAI key)",
+    label: "xAI (Grok)",
+    provider: "xai",
     options: [
       { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost" },
       { value: "grok-4.3", label: "grok-4.3 — stronger, large context" }
     ]
   },
   {
-    label: "Google Gemini (needs Gemini key)",
+    label: "Google Gemini",
+    provider: "gemini",
     options: [
       { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost" },
       { value: "gemini-2.5-flash", label: "gemini-2.5-flash — balanced, long context" },
@@ -137,7 +144,8 @@ const CHAT_MODEL_GROUPS: Array<{ label: string; options: Array<{ value: string; 
     ]
   },
   {
-    label: "Mistral (needs Mistral key)",
+    label: "Mistral",
+    provider: "mistral",
     options: [
       { value: "mistral-small-latest", label: "mistral-small-latest — lowest cost" },
       { value: "mistral-medium-latest", label: "mistral-medium-latest — balanced" },
@@ -172,6 +180,9 @@ export function AssistantView({
     }
     return defaultModel ?? DEFAULT_CHAT_MODEL;
   });
+  // Per-provider key availability for the picker. undefined = not yet loaded (treat as available so we
+  // never flash "no key" before the check resolves); after load, false = no usable key for that provider.
+  const [providerStatus, setProviderStatus] = useState<Partial<Record<ChatProviderId, boolean>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const dest = destination(executionState);
 
@@ -185,6 +196,25 @@ export function AssistantView({
         if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text })));
       } catch {
         /* history is best-effort */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Which providers have a usable key (so the picker can mark/disable ones that don't). Fail open:
+  // on error, leave statuses unset → every provider stays selectable.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/chat/providers");
+        if (!res.ok) return;
+        const body = (await res.json()) as { providers?: Partial<Record<ChatProviderId, boolean>> };
+        if (!cancelled && body.providers) setProviderStatus(body.providers);
+      } catch {
+        /* availability is best-effort; default to all selectable */
       }
     })();
     return () => {
@@ -310,15 +340,20 @@ export function AssistantView({
             value={model}
             onChange={(e) => setModel(e.target.value)}
             className="max-w-[15rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-            title="Chat model — pick any provider. The matching key must be set in Settings → Connections (OpenAI is the default)."
+            title="Chat model — pick any provider. Providers without a key are marked “no key” and disabled; manage keys in Settings → Connections."
           >
-            {CHAT_MODEL_GROUPS.map((g) => (
-              <optgroup key={g.label} label={g.label}>
-                {g.options.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </optgroup>
-            ))}
+            {CHAT_MODEL_GROUPS.map((g) => {
+              // A provider with an explicit `false` status has no usable key — label it and disable
+              // its options. `undefined` (not yet loaded) or no provider (Offline) stays available.
+              const missing = g.provider ? providerStatus[g.provider] === false : false;
+              return (
+                <optgroup key={g.label} label={missing ? `${g.label} — no key` : g.label}>
+                  {g.options.map((o) => (
+                    <option key={o.value} value={o.value} disabled={missing}>{o.label}</option>
+                  ))}
+                </optgroup>
+              );
+            })}
           </select>
           <Chip tone={dest.tone}>{dest.text}</Chip>
         </div>
