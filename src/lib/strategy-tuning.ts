@@ -12,6 +12,7 @@ import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llm
 import { policyUniverseSymbolCount } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
@@ -489,7 +490,7 @@ async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTu
 
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(`Strategy tuning request failed with ${response.status}: ${detail.slice(0, 500)}`);
+        throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
       }
 
       const payload = await response.json();

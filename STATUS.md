@@ -18,6 +18,34 @@ preview tool is bound to the main worktree (4001), not this ad-hoc worktree; ver
 strict primitive reuse. Recommend a live Settings → Risk & Safety walkthrough on the running instance.
 See `docs/rollouts/2026-06-25-settings-overhaul.md`.
 
+## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
+Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up
+to #167. (1) **Strategy loop** now spans all five providers: `resolveLlmEndpoint` gained Gemini +
+Mistral branches (OpenAI-compatible chat/completions, env-overridable `GEMINI_API_URL`/
+`MISTRAL_API_URL`); Strategy Studio Green + Red Team dropdowns gained Gemini + Mistral optgroups. So
+proposal gen, Red Team, tuning, revalidation, and post-mortems can all run on any provider. (2) **All
+five env keys are operator-funded backups; the user's own key wins** (unchanged `resolveLlmCredential`
+model — now documented in `.env.example` + the Green Team hint; ANTHROPIC/GEMINI/MISTRAL keys added).
+(3) **Plain-English errors:** new pure `src/lib/llm-errors.ts` `humanizeLlmError(raw,{provider,status})`
+maps 401/403/404/429/5xx/timeout/context errors to short provider-named sentences (raw text fallback);
+wired into the chat client, green proposal path + tuning (thrown), Red Team `reason`, and revalidation/
+post-mortem logs. (4) **MockLLM labels every reply** with a `"Mock Response: "` prefix (idempotent) so
+mock can't be mistaken for a real model. Verify: tsc ✓ · 1243/1243 ✓ · build ✓ · live mock-label +
+graceful keyless-gemini + dashboard-200 checks. See
+`docs/rollouts/2026-06-25-llm-providers-strategy-and-plain-english-errors.md`.
+
+## 2026-06-25 — Infisical app+shared project overlay (app wins)
+Branch `claude/infisical-shared-overlay`. The runner pulled from ONE project, so `shared-at-ct`
+(App-A/B) secrets never reached the app. `scripts/infisical-run.mjs` now, when
+`INFISICAL_SHARED_PROJECT_ID` is set, fetches BOTH projects via `infisical export` (each with its own
+identity token) and merges `{...process.env, ...shared, ...app}` — **app wins** overlaps; shared is
+the fallback; precedence is runner-controlled (not CLI-dependent). Single-project keeps the proven
+`infisical run` path. `scripts/infisical-prod-cutover.sh` writes `INFISICAL_SHARED_PROJECT_ID`/
+`INFISICAL_SHARED_TOKEN` to deploy.env + verifies shared access; `.env.example`/docs document it.
+Verified deterministically with a fake `infisical` shim (real CLI absent): app value wins the overlap,
+shared-only/app-only keys present, exit code propagates. Verify: node --check + bash -n OK · build ✓ ·
+tsc ✓ · 1228/1228 tests. See `docs/rollouts/2026-06-25-infisical-shared-project-overlay.md`.
+
 ## 2026-06-25 — Assistant chat across all five LLM providers
 Branch `feat/chat-multi-provider` (throwaway worktree `~/apps/trading-ag13`). The Assistant chat now
 spans **OpenAI · Anthropic · xAI (Grok) · Google Gemini · Mistral**, with a few recommended models

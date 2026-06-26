@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2, Send, ShieldCheck, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import type { ExecutionState } from "@/lib/execution-mode";
+import { humanizeLlmError } from "@/lib/llm-errors";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
 import { cn } from "./cn";
 
@@ -78,11 +79,10 @@ async function readPlainError(res: Response, fallback: string): Promise<Error> {
   } catch {
     if (message.startsWith("<")) message = "";
   }
-  if (/Incorrect API key provided/i.test(message) && /console\.x\.ai|x\.ai/i.test(message)) {
-    message = "The xAI API key was rejected. Open Settings -> Connections to update the xAI key, or choose an OpenAI model in Strategy Studio.";
-  } else if (/Incorrect API key provided/i.test(message) && /openai|platform\.openai/i.test(message)) {
-    message = "The OpenAI API key was rejected. Open Settings -> Connections to update the OpenAI key, or choose a model your key can access in Strategy Studio.";
-  }
+  // Turn a raw provider error (e.g. "gemini 401: API key not valid") into a plain-English,
+  // provider-aware sentence. The provider + HTTP status are parsed from the message text itself
+  // (the route's own status is 500, so we don't pass it).
+  if (message) message = humanizeLlmError(message);
   return new Error(message || `${fallback} (${res.status}).`);
 }
 

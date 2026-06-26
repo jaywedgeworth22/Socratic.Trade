@@ -175,9 +175,21 @@ function bestSentence(text: string, query: string): string {
   return best.trim();
 }
 
+/** Prefix marking every Mock reply so the user can never mistake it for a real model's answer. */
+const MOCK_PREFIX = "Mock Response: ";
+function labelMock(text: string): string {
+  return text.startsWith(MOCK_PREFIX) ? text : `${MOCK_PREFIX}${text}`;
+}
+
 /** Deterministic offline stand-in, shaped exactly like a real tool-use loop. */
 export class MockLLM implements ChatLLM {
-  async run({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
+  /** Public entry: produce the deterministic answer, then label it so it's clearly a mock response. */
+  async run(args: LlmRunArgs): Promise<LlmResult> {
+    const result = await this.answer(args);
+    return { ...result, text: labelMock(result.text) };
+  }
+
+  private async answer({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
     const cls = classifyIntent(message);
     const toolCalls: ToolCall[] = [];
 
@@ -519,8 +531,9 @@ function openAiCompatChatUrl(provider: "openai" | "xai" | "gemini" | "mistral"):
   return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 }
 
-/** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). */
-function makeOpenAITransport(url: string): OpenAITransport {
+/** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
+ *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
+function makeOpenAITransport(url: string, provider: "openai" | "xai" | "gemini" | "mistral"): OpenAITransport {
   return async (body: any, apiKey: string) => {
     const res = await llmFetch(url, {
       method: "POST",
@@ -529,7 +542,7 @@ function makeOpenAITransport(url: string): OpenAITransport {
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
-      throw new Error(`llm ${res.status}: ${detail.slice(0, 300)}`);
+      throw new Error(`${provider} ${res.status}: ${detail.slice(0, 300)}`);
     }
     return res.json();
   };
@@ -556,7 +569,7 @@ export function llmForModel(
   if (provider === "anthropic") {
     return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage);
   }
-  const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider));
+  const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
   return new OpenAILLM(key, trimmed, transport, usage, provider);
 }
 

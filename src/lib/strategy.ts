@@ -31,6 +31,7 @@ import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -1886,7 +1887,7 @@ async function proposeTrades(input: {
 
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
+        throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
       }
       const payload = await response.json();
       recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
