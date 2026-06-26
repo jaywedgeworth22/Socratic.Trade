@@ -63,7 +63,10 @@ function isAuthConfigured(): boolean {
 
 function isEmailAllowed(email: string): boolean {
   if (PRIMARY_SET.has(email)) return true; // primary operator + aliases
-  if (ALLOWED.length === 0) return true; // defer to the upstream gateway (Cloudflare Access)
+  // Empty ALLOWED_EMAILS defers to the upstream CF Access gate (which enforces its own
+  // allowlist). When using Auth.js without CF Access, empty means "only the primary user" —
+  // otherwise any OAuth provider account (e.g. any GitHub user) would be admitted.
+  if (ALLOWED.length === 0) return process.env.CF_ACCESS_TRUST_EMAIL_HEADER === "1";
   return ALLOWED.includes(email);
 }
 

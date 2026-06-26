@@ -1,9 +1,14 @@
 // Minimal login page — redirects unauthenticated users here when authConfigured=true.
 // Supports Google and/or GitHub OAuth. When neither Auth.js nor CF Access is
 // configured, this page is unreachable (middleware falls back to PRIMARY_EMAIL).
+//
+// force-dynamic: provider availability is read from process.env at request time so
+// secrets injected after build (e.g. via Infisical at start:secrets) are reflected
+// immediately without a rebuild.
 
 import { signIn } from "../../src/lib/auth/auth";
 
+export const dynamic = "force-dynamic";
 export const metadata = { title: "Sign in" };
 
 const googleConfigured = !!(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET);

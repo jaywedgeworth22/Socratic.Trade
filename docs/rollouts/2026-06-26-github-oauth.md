@@ -30,9 +30,30 @@ npm test           # 1250/1250 passed
 npm run build      # clean, /login compiled as static
 ```
 
-## Follow-ups
+## Security fix (Codex P1)
 
-- The GitHub OAuth callback URL must be added in the GitHub OAuth App settings:
+`middleware.ts` `isEmailAllowed` previously treated empty `ALLOWED_EMAILS` as
+"allow all" (designed for CF Access, which enforces its own allowlist). With
+Auth.js + GitHub, any GitHub account holder could sign in. Fixed: empty
+`ALLOWED_EMAILS` now only defers to the upstream gateway when
+`CF_ACCESS_TRUST_EMAIL_HEADER=1`; without CF Access, only `PRIMARY_USER_EMAIL`
+(and its aliases) and explicitly listed `ALLOWED_EMAILS` are admitted.
+
+Added a new test: `valid Auth.js JWT for non-primary non-allowlisted user → 403`.
+
+## Static prerender fix (Codex P2)
+
+`app/login/page.tsx` was prerendered as static HTML (`○`) at build time, so
+`AUTH_GITHUB_*` checks were frozen at build time. Added `export const dynamic =
+"force-dynamic"` — the page is now server-rendered (`ƒ`) and reads env vars at
+request time, so secrets injected via Infisical after a build are immediately
+reflected.
+
+## Operator notes
+
+- Add `user@example.com`-style addresses to `ALLOWED_EMAILS` for any non-primary
+  users who should have access (comma-separated).
+- The GitHub OAuth callback URL must be set in the GitHub OAuth App:
   `https://<your-domain>/api/auth/callback/github`
 - Infisical: add `AUTH_GITHUB_ID` and `AUTH_GITHUB_SECRET` to the `agentic-trading`
   project when provisioning.

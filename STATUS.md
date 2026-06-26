@@ -4,13 +4,13 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-06-26 — GitHub OAuth as alternative sign-in provider
-Branch `claude/wonderful-wozniak-xploaq`. Added GitHub OAuth alongside Google OAuth so the
-login page is usable even when only one provider is configured. `src/lib/auth/auth.ts` now
-conditionally registers Google/GitHub based on which env vars are present (both, either, or
-neither). `app/login/page.tsx` renders whichever buttons are active; falls back to an improved
-"no provider" message that names both options. `.env.example` documents the new
-`AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` vars with setup instructions. Verify: tsc ✓ · 1250/1250 ✓ · build ✓.
+## 2026-06-26 — GitHub OAuth as alternative sign-in provider + security + dynamic login
+Branch `claude/wonderful-wozniak-xploaq`. Added GitHub OAuth alongside Google OAuth.
+Security fix (Codex P1): empty `ALLOWED_EMAILS` with Auth.js (no CF Access) now defaults to
+primary-only, not allow-all — prevents any GitHub account from signing in without an explicit
+allowlist entry. Static prerender fix (Codex P2): `app/login/page.tsx` is now `force-dynamic`
+so provider availability reflects runtime env vars, not build-time bakes. Added 2 new middleware
+tests. Verify: tsc ✓ · 1252/1252 ✓ · build ✓ · /login is now ƒ (dynamic).
 See `docs/rollouts/2026-06-26-github-oauth.md`.
 
 ## 2026-06-26 — Cutover script prompts for the Infisical token

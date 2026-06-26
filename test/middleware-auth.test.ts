@@ -111,12 +111,29 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
   });
 
   // ── Test 3: Auth.js session JWT → trusted ────────────────────────────────────
-  it("valid Auth.js session JWT → trusted, forwarded", async () => {
+  it("valid Auth.js session JWT for primary user → trusted, forwarded", async () => {
     const secret = "test-secret-at-least-32-bytes-long!!";
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
     vi.stubEnv("AUTH_SECRET", secret);
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
     vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("owner@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
+    expect(fwd).toBe("owner@example.com");
+  });
+
+  it("valid Auth.js session JWT for allowlisted non-primary user → trusted, forwarded", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "user@example.com");
     const jwt = await mintSessionJwt("user@example.com", secret);
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/dashboard", {
@@ -126,6 +143,21 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
     const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
     expect(fwd).toBe("user@example.com");
+  });
+
+  it("valid Auth.js JWT for non-primary non-allowlisted user → 403 (Auth.js without CF Access)", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("stranger@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(403);
   });
 
   it("expired or tampered Auth.js session JWT → fail closed (401)", async () => {
