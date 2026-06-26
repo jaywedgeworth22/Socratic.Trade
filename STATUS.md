@@ -4,6 +4,38 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Infisical universal auth: Client ID + Client Secret (no more token confusion)
+Branch `claude/practical-mendel-cqtduf`. Root-caused the operator's "malformed token" 403 + 401s:
+the docs/script labeled `INFISICAL_TOKEN` as "the client SECRET", so a 64-char machine-identity
+**Client Secret** was pasted where a short-lived **access token** belongs. Fix makes the **Client ID +
+Client Secret** (universal auth, long-lived) the primary credential everywhere, exchanged for a fresh
+token automatically:
+- `scripts/infisical-run.mjs` — accepts `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) and
+  **mints a short-lived token** per project via `infisical login --method=universal-auth … --plain`
+  (app vs shared identities kept distinct; Client Secret never leaked to the app process); token
+  remains a fallback. (Codex review #177 P1: switched from env-var auto-auth to explicit minting; P2:
+  the cutover fails closed on a malformed shared token instead of silently deploying app-only. Round 2:
+  mint via env not argv (no Client Secret in `ps`); fail closed on a partial shared identity; deploy.yml
+  scopes the bootstrap to the build/restart subshells so the long-lived secret never reaches `npm ci`.
+  Round 3: sanitize the `infisical export` subprocess env; fail closed on partial runner creds (app
+  always, shared when overlay on); deploy fails on a present-but-unusable bootstrap instead of a silent
+  plain build. Round 4: cutover fails closed on a lone app Client Secret + stale token (full XOR check,
+  matching the runner/shared paths) so it never persists an expiring token. Round 5: cutover's own
+  `infisical secrets`/`secrets set` verify/import children are run via `env -u` so they auth with only
+  the short-lived token. Round 6: per-identity login env (app mint never sees the shared secret &
+  vice-versa) via `sanitizedBase()`/`env -u`; cutover unsets operator creds after copying to script
+  vars and sources `deploy.env` only inside the PM2 subshell — scoping now complete across every
+  child-process AND parent-shell surface.)
+- `scripts/infisical-prod-cutover.sh` — prompts for Client ID (visible) + Client Secret (hidden),
+  persists the long-lived creds to `deploy.env` (not an expiring token), **detects a 64-hex
+  Client-Secret-in-a-token-field and dies with a clear message**, and hardens the shared block under
+  `set -u` (the operator hit `SHARED_PROJECT_ID: unbound variable`).
+- `deploy.yml` build-secrets gate now also fires on client creds; `.env.example` + `docs/secrets.md` +
+  `docs/deployment.md` corrected (token ≠ Client Secret).
+Verify: `node --check` ✓ · `bash -n` ✓ · fake-`infisical`-shim tests (UA mapping, app-wins overlap,
+per-project identities, token-drop, exit-code propagation) ✓ · tsc ✓ · **1250/1250** ✓ · build ✓.
+Operator unblock for the in-flight cutover: `unset INFISICAL_SHARED_TOKEN` then re-run (app verify
+already passes). See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
 ## 2026-06-26 — Stop-execution capability correction (copy) + verified broker matrix
 Branch `agent/claude-stop-execution`. Retracts a wrong Phase-3 claim ("no broker holds trailing stops").
 Diverse adversarial verification (84 agents, primary docs, 2 skeptics/claim — workflow `wf_e5bf1b0a-04d`):

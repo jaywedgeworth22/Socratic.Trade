@@ -15,6 +15,14 @@ change. Infisical is the **only** secrets-manager path the app supports.
 secrets, and injects them into the process env **before** Next boots. The runner also sets
 `SECRETS_SOURCE=infisical`.
 
+**Auth (per project):** the runner authenticates the machine identity with its **Client ID + Client
+Secret** (universal auth, long-lived) — set `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET` and it
+exchanges them for a fresh access token on every launch via `infisical login --method=universal-auth
+… --plain`, then passes that token to `infisical run`/`export` (nothing expires between deploys). A
+pre-minted `INFISICAL_TOKEN` (a short-lived JWT) is still accepted as a fallback. **The Client Secret
+is not the access token** — pasting a 64-char Client Secret into `INFISICAL_TOKEN` is the "malformed
+token" 403; use the Client ID + Secret pair instead.
+
 Precedence: injected secrets are in `process.env` before Next loads `.env.local`, and Next never
 overrides an already-set var — so the manager always wins over any leftover `.env.local`.
 
@@ -26,7 +34,8 @@ be served from a forgotten `.env.local`. Default off → no effect on local dev,
 
 ## One-time migration from `.env.local` → Infisical (operator)
 **TL;DR — run `scripts/infisical-prod-cutover.sh` on the box** (idempotent; needs your
-machine-identity `INFISICAL_TOKEN`). It automates steps 2–3 below: writes the bootstrap to
+machine-identity `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET`, or run it interactively and it
+prompts — Client Secret hidden). It automates steps 2–3 below: writes the bootstrap to
 `~/.config/agentic-trading/deploy.env`, imports `.env.local` into Infisical, switches PM2 `trading`
 to `start:secrets`, verifies the app boots, and (with `--scrub`) trims `.env.local`. Afterward
 `deploy.yml` sources that bootstrap and builds via Infisical automatically (it falls back to a plain
@@ -41,18 +50,24 @@ infisical init                                # link a project + env
 infisical secrets set --env=prod --path=/ $(grep -vE '^\s*#|^\s*$' .env.local | xargs)
 #   …or: Infisical dashboard → project → Secrets → "Import .env" → upload .env.local
 ```
-Then create a **Machine Identity** (Project → Access Control) and on the box set the bootstrap. App
-secrets live in the **`agentic-trading`** project; shared App-A/B (congress-trade) secrets live in
-**`shared-at-ct`** (`18f563a3-9c88-454c-96eb-28fc9678f3ba`). To pull both, give the cutover script a
-second identity via `INFISICAL_SHARED_TOKEN` (and optionally `INFISICAL_SHARED_PROJECT_ID`): the
-runner fetches both projects with `infisical export` and merges them with the **app project winning**
-any overlapping key (shared is the fallback).
+Then create a **Machine Identity** (Project → Access Control) with the **Universal Auth** method and
+copy its **Client ID** (a UUID — not secret) and a **Client Secret** (a 64-char string — secret,
+never committed). App secrets live in the **`agentic-trading`** project; shared App-A/B
+(congress-trade) secrets live in **`shared-at-ct`** (`18f563a3-9c88-454c-96eb-28fc9678f3ba`). To pull
+both, give the cutover script a SECOND identity via `INFISICAL_SHARED_CLIENT_ID` +
+`INFISICAL_SHARED_CLIENT_SECRET` (and optionally `INFISICAL_SHARED_PROJECT_ID`): the runner fetches
+both projects with `infisical export` and merges them with the **app project winning** any overlapping
+key (shared is the fallback). On the box set the bootstrap:
 ```bash
-export INFISICAL_TOKEN='<machine-identity universal-auth token>'   # the client SECRET, never committed
+export INFISICAL_CLIENT_ID='<machine-identity Client ID>'          # a UUID; identifier, not a secret
+export INFISICAL_CLIENT_SECRET='<machine-identity Client Secret>'  # the 64-char secret; never committed
 export INFISICAL_PROJECT_ID='39d93bb7-76f9-498c-8b50-a7def52e072f' # agentic-trading (agentic-trading-s-xn-n)
 export INFISICAL_ENV='prod'
 export REQUIRE_SECRETS_MANAGER=1
 ```
+The **Client Secret is not an access token** — the runner exchanges the Client ID + Secret for a
+short-lived token at each launch, so nothing in `deploy.env` expires. (A pre-minted `INFISICAL_TOKEN`
+is accepted as a fallback, but it expires — see the identity's Access Token TTL.)
 Switch the launch command, verify, then scrub `.env.local`:
 - **PM2:** the cutover script re-creates the `trading` process to run `npm run start:secrets`; with
   the bootstrap in `~/.config/agentic-trading/deploy.env`, `deploy.yml` keeps it on that path (and
