@@ -37,6 +37,19 @@ per-project identities, token-drop, exit-code propagation) ✓ · tsc ✓ · **1
 Operator unblock for the in-flight cutover: `unset INFISICAL_SHARED_TOKEN` then re-run (app verify
 already passes). See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
 
+## 2026-06-26 — Root fix: dashboard accounts fall back to stored connected accounts
+Branch `fix/dashboard-accounts-fallback` (throwaway worktree `~/apps/trading-ag13`). Follow-up to #183.
+`snapshot.accounts` is built from a live `gateway.getAccounts()` that degrades to `[]` on a transient
+broker/MCP enumeration miss, making the configured account vanish (the cause behind the #183 badge
+warning). Now `dashboard.ts` backfills any stored connected account (`listConnectedAccounts`) the live
+list didn't return, deriving `agenticAllowed` via new exported helper `connectedAccountAgenticFallback`
+(Robinhood → only `brokerage` defaults allowed, IRA/Roth not; Alpaca/Alpaca-MCP/Test → all allowed).
+Live entries win; only missing account numbers are added. Net: the active account always resolves to a
+definitive readiness status; execution gates stay strict/fail-closed. Verify: tsc ✓ · 1256/1256 ✓
+(new `test/dashboard-agentic-fallback.test.ts`) · build ✓. See
+`docs/rollouts/2026-06-26-dashboard-accounts-fallback.md`.
+>>>>>>> origin/main
+
 ## 2026-06-26 — Fix: Brokerage readiness badge showed the opposite (false "not available")
 Branch `fix/brokerage-readiness-false-warning` (throwaway worktree `~/apps/trading-ag13`). The header
 Brokerage badge warned "not currently available for agentic execution" for the active, autonomous,
@@ -198,6 +211,20 @@ full `npm run build` clean (new tab compiles) · trio via land.sh. NOTE: interac
 preview tool is bound to the main worktree (4001), not this ad-hoc worktree; verification rests on tsc+build+
 strict primitive reuse. Recommend a live Settings → Risk & Safety walkthrough on the running instance.
 See `docs/rollouts/2026-06-25-settings-overhaul.md`.
+
+## 2026-06-25 — App A handoff: new analytics endpoints + adjusted-close push fix
+Branch `claude/magical-faraday-uce1uy`. Implements App A (congress.trade) handoff from `1cdd5ecf-appBhandoff.md`.
+**Read side** — three new endpoints wired into `congress-trade-client.ts`: `getAppAConviction` (composite 0–100
+conviction score per ticker, `GET /api/analytics/conviction`), `getAppATickerBacktest` (post-buy return stats
+per ticker, `GET /api/analytics/ticker/{T}/backtest`), `getAppAConflicts` (committee conflict-of-interest
+trades, `GET /api/analytics/conflicts`). All three are gated on `CONGRESS_ANALYTICS_ENABLED` (default off).
+**Overlay** — `CongressAnalytics` type gains `convictionScore`, `convictionDirection`, `conflictCount`; the daily
+`refreshCongressAnalytics` now fetches conviction + conflicts in parallel with the leaderboard/cluster/member
+calls and wires both into the per-ticker overlay. **Write side** — `history.ts` Yahoo fetch now prefers
+`indicators.adjclose[0].adjclose` (split+dividend-adjusted) over raw `quote.close`, so prices pushed to App A
+via `congress-share.ts` are adjusted when Yahoo is the source. tsc clean · 1228/1228 tests. **Deferred
+(need data sourcing):** ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap (priority #5).
+See `docs/rollouts/2026-06-25-app-a-handoff-integration.md`.
 
 ## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
 Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up

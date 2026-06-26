@@ -74,6 +74,19 @@ scope, timeline, or approach changed.
   previously null, are now ALSO fillable via the opt-in FMP `price-target-consensus` provider
   (`FMP_PRICE_TARGETS_ENABLED`) — **BUILT 2026-06-25**; they thread through the enrichment
   surface onto the quote and into `marketQuoteToAnalyst`.
+- **congress.trade — App A handoff: new analytics endpoints + adjusted-close fix** (2026-06-25,
+  `docs/rollouts/2026-06-25-app-a-handoff-integration.md`): consumes three new App A endpoints
+  now live/merging (App A PRs #77/#79/#80): `GET /api/analytics/conviction` (composite 0–100
+  conviction score, gated by `CONGRESS_ANALYTICS_ENABLED`), `GET /api/analytics/ticker/{T}/backtest`
+  (per-ticker post-buy return stats, on-demand), and `GET /api/analytics/conflicts` (committee
+  conflict-of-interest disclosures). Conviction + conflictCount wired into the daily
+  `refreshCongressAnalytics` parallel fetch and the `CongressAnalytics` overlay. Yahoo adjusted-close
+  fix: `fetchYahoo` now prefers `indicators.adjclose` (split+dividend-adjusted) over raw close for
+  correct multi-year returns pushed to App A. **2026-06-26 update:** conviction + conflict bulletins
+  now emitted in `web-sources/index.ts`; `congressAnalyticsScore` gates on `convictionDirection=BUY`
+  and adds a `convictionBoost` so conviction-only tickers reach the scan candidate set. **Deferred:**
+  ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
+  for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
 ## Build Order
 
