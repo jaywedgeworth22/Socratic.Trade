@@ -40,13 +40,15 @@ export function outlierInterestScore(sig?: SymbolWebSignal): number {
 /** 0–100 outlier weight from App A's aggregate congressional analytics; 0 unless there is net buying. */
 export function congressAnalyticsScore(a?: SymbolWebSignal["congressAnalytics"]): number {
   if (!a) return 0;
-  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0;
+  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0 || a.convictionDirection === "BUY";
   if (!netBuying) return 0; // net selling / neutral is not a long-side outlier
   const flowBoost = (a.netFlowUsd ?? 0) > 0 ? Math.min(20, Math.log10(Math.max(1, a.netFlowUsd ?? 0)) * 3) : 0;
   const clusterBoost = a.cluster ? 15 : 0;
   const memberBoost = (a.memberCount ?? 0) >= 2 ? Math.min(10, (a.memberCount ?? 0) * 2) : 0;
   const qualityBoost = a.topMemberScore ? Math.min(15, a.topMemberScore * 0.15) : 0;
-  return Math.min(95, 50 + flowBoost + clusterBoost + memberBoost + qualityBoost);
+  // Conviction-only tickers (not in leaderboard) would otherwise score 0 on flow/sentiment alone.
+  const convictionBoost = a.convictionScore != null ? Math.min(20, a.convictionScore * 0.2) : 0;
+  return Math.min(95, 50 + flowBoost + clusterBoost + memberBoost + qualityBoost + convictionBoost);
 }
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";

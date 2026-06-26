@@ -190,6 +190,12 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
           (typeof a.netFlowUsd === "number" ? `, net $${Math.round(a.netFlowUsd).toLocaleString()}` : "")
       );
     }
+    if (a.convictionScore !== null && a.convictionScore !== undefined && a.convictionDirection) {
+      entry.bulletins.push(`Congress conviction: ${a.convictionDirection} score ${a.convictionScore}/100`);
+    }
+    if ((a.conflictCount ?? 0) > 0) {
+      entry.bulletins.push(`Congress conflict: ${a.conflictCount} conflicted trade${a.conflictCount === 1 ? "" : "s"}`);
+    }
   }
   const insider = insiderEnabled() ? getInsiderSignals(symbols, now) : {};
   for (const [symbol, signal] of Object.entries(insider)) {

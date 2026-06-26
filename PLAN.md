@@ -79,8 +79,11 @@ existing behavior; no phase scope, timeline, or approach changed.
   conflict-of-interest disclosures). Conviction + conflictCount wired into the daily
   `refreshCongressAnalytics` parallel fetch and the `CongressAnalytics` overlay. Yahoo adjusted-close
   fix: `fetchYahoo` now prefers `indicators.adjclose` (split+dividend-adjusted) over raw close for
-  correct multi-year returns pushed to App A. **Deferred:** ticker-change/delisting map (App A priority
-  #3); bulk-snapshot bootstrap; downstream scan scoring for conviction/conflict signals.
+  correct multi-year returns pushed to App A. **2026-06-26 update:** conviction + conflict bulletins
+  now emitted in `web-sources/index.ts`; `congressAnalyticsScore` gates on `convictionDirection=BUY`
+  and adds a `convictionBoost` so conviction-only tickers reach the scan candidate set. **Deferred:**
+  ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
+  for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
 ## Build Order
 
