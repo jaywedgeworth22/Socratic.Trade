@@ -4,6 +4,24 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Cutover crash root cause: macOS bash 3.2 mis-parses a multibyte char next to `$VAR`
+Branch `claude/practical-mendel-cqtduf`. The operator's `scripts/infisical-prod-cutover.sh: line 200:
+SHARED_PROJECT_ID?: unbound variable` was **neither** a `set -u` default gap (line 43 always defaults
+the var) **nor** a hand-edit — the box's file (`d103766`) matched `origin/main` byte-for-byte (`git
+diff` clean). Real cause: line 200 was the *only* line with a non-ASCII `…` (U+2026) **directly
+adjacent** to `$SHARED_PROJECT_ID`. Apple's `/bin/bash` 3.2.57 (what `bash script` runs on the Mac box;
+prompt is zsh `%`) mis-parses the multibyte bytes into the identifier → an unbound name the terminal
+renders with a stray `?`. Lines 161/188/194 also have `…` but not adjacent to a var, so they printed
+fine first — exactly the symptom the operator saw. Reproduced locally with the real bytes under bash
+5.2 (UTF-8 + C): bound prints fine, unset gives a *clean* `SHARED_PROJECT_ID:` name — the `?` only
+comes from old bash. **Fix:** ASCII-converted the whole script (`…`→`...`, `—`/`─`→`-`, `→`→`->`); 33
+char-swap lines, zero logic change, `bash -n` ✓, 0 non-ASCII bytes left; verified no other
+`scripts/*.sh` has the dangerous `$VAR`+multibyte adjacency. Added an AGENTS.md trap (keep operator
+`*.sh` ASCII). **Correction:** the earlier `unset INFISICAL_SHARED_TOKEN` advice was a red herring for
+*this* crash. Operator: `git pull` (or let the next deploy `git reset --hard`) then re-run with the app
++ shared Client ID/Secret pairs; still rotate the two compromised Client Secrets; don't `--scrub` until
+the app boots healthy. See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
+
 ## 2026-06-26 — Infisical universal auth: Client ID + Client Secret (no more token confusion)
 Branch `claude/practical-mendel-cqtduf`. Root-caused the operator's "malformed token" 403 + 401s:
 the docs/script labeled `INFISICAL_TOKEN` as "the client SECRET", so a 64-char machine-identity
