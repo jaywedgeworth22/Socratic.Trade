@@ -183,6 +183,7 @@ function labelMock(text: string): string {
 
 /** Deterministic offline stand-in, shaped exactly like a real tool-use loop. */
 export class MockLLM implements ChatLLM {
+  readonly modelName = "mock";
   /** Public entry: produce the deterministic answer, then label it so it's clearly a mock response. */
   async run(args: LlmRunArgs): Promise<LlmResult> {
     const result = await this.answer(args);
@@ -311,6 +312,10 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 export class AnthropicLLM implements ChatLLM {
   constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
 
+  get modelName(): string {
+    return this.model;
+  }
+
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     const messages: any[] = [];
     let promptTokens = 0;
@@ -419,6 +424,10 @@ export class OpenAILLM implements ChatLLM {
     // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
     private provider: "openai" | "xai" | "gemini" | "mistral" = "openai"
   ) {}
+
+  get modelName(): string {
+    return this.model;
+  }
 
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     // Build OpenAI messages array. Prior user/assistant turns first, then the current message.

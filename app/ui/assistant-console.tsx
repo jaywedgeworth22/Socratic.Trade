@@ -39,11 +39,13 @@ interface ChatReply {
   draft: ChatDraft | null;
   citations: Citation[];
   intent: string;
+  model?: string;
 }
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  model?: string;
   citations?: Citation[];
   draft?: ChatDraft | null;
 }
@@ -194,8 +196,8 @@ export function AssistantView({
       try {
         const res = await fetch("/api/chat-history?limit=50");
         if (!res.ok) return;
-        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string }> };
-        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text })));
+        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string; model?: string | null }> };
+        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text, model: t.model ?? undefined })));
       } catch {
         /* history is best-effort */
       }
@@ -252,7 +254,7 @@ export function AssistantView({
       if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;
       const id = `a-${stamp}`;
-      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft }]);
+      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft, model: reply.model }]);
       if (reply.draft) setDrafts((d) => ({ ...d, [id]: { phase: "draft" } }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Chat request failed.");
@@ -392,7 +394,10 @@ export function AssistantView({
         )}
         {messages.map((m) => (
           <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}>
+            <div
+              className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}
+              title={m.role === "assistant" && m.model ? `Answered by ${m.model}` : undefined}
+            >
               {m.role === "assistant" ? (
                 <Markdown>{m.text}</Markdown>
               ) : (

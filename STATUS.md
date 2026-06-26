@@ -4,6 +4,22 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Per-turn model logging (admin transcript + hover) + fresher chat quote
+Branch `feat/chat-model-transcript-and-fresh-quote` (throwaway worktree `~/apps/trading-ag13`).
+(1) `chat_turns` gains a `model` column (migration v5); the orchestrator records the model on each
+assistant turn + returns it on the reply. NEW **admin transcript view** (`/admin/transcript`) shows the
+conversation with a model badge per assistant reply; the chat bubble shows `Answered by <model>` on
+hover. (2) **Fresher quote:** `getQuote` now prefers Yahoo live `regularMarketPrice` + real
+`regularMarketTime` ("yahoo-finance") before the daily-bar close — fixes the "as of yesterday"
+staleness (old path used the last non-null daily bar, which lags intraday). (3) **History prompt fix:**
+added a CAPABILITIES line so the model stops falsely claiming "no memory" (the last ~10 turns ARE
+replayed, per-user, model-agnostic — switching models mid-chat keeps history); PROMPT_VERSION 0.6→0.7.
+Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · live reply.model + chat-history model + `/admin/transcript`
+200 (fresher-quote not locally verifiable — Yahoo 429s this host; works on the Massive/Yahoo box).
+**Answered (not built):** alerts fire (60s scheduler) + webhook works, push/email/SMS real but need
+keys+prefs; fancier logo/price-tier dropdown + DeepSeek provider = offered follow-ups. See
+`docs/rollouts/2026-06-26-chat-model-transcript-and-fresh-quote.md`.
+
 ## 2026-06-26 — Chat quote robustness (gateway-agnostic fallback) + focus prompt after model pick
 Branch `fix/chat-quote-fallback-and-focus` (throwaway worktree `~/apps/trading-ag13`). Follow-up to
 #174 after VZ still showed `NO_QUOTE`. (1) `getQuote` (`src/lib/chat/orchestrator.ts`) now has the
