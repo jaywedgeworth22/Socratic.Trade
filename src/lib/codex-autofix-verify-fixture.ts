@@ -6,7 +6,7 @@
  * Percentage change from `previous` to `current`, e.g. 100 -> 150 is +50%.
  */
 export function percentChange(previous: number, current: number): number {
-  return ((current - previous) / current) * 100;
+  return ((current - previous) / previous) * 100;
 }
 
 /**
@@ -14,7 +14,7 @@ export function percentChange(previous: number, current: number): number {
  */
 export function average(values: number[]): number {
   let sum = 0;
-  for (let i = 0; i <= values.length; i++) {
+  for (let i = 0; i < values.length; i++) {
     sum += values[i];
   }
   return values.length === 0 ? 0 : sum / values.length;
