@@ -117,11 +117,17 @@ export function parseForm4Xml(xml: string, ctx: { accession: string }): InsiderF
   const symbol = normalizeSymbol(symbolRaw);
   if (!/^[A-Z][A-Z.\-]{0,5}$/.test(symbol)) return null;
   const owner = (xml.match(/<rptOwnerName>([\s\S]*?)<\/rptOwnerName>/)?.[1] ?? "Insider").replace(/\s+/g, " ").trim();
-  // Prefer a sane (non-future) reported/period date; fall through to signature date, then today.
-  const filedAt =
-    saneFilingDate(xml.match(/<periodOfReport>([\s\S]*?)<\/periodOfReport>/)?.[1]?.trim()) ||
-    saneFilingDate(xml.match(/<signatureDate>[\s\S]*?<value>([\s\S]*?)<\/value>/)?.[1]?.trim()) ||
-    new Date().toISOString().slice(0, 10);
+  // A date field that is SUPPLIED but future-dated or otherwise garbage is a data error — DROP the
+  // filing rather than silently re-anchoring it to the signature date or today (which would surface
+  // an impossible future transaction as current insider activity). Fall through only when a field is
+  // simply absent; default to today only when no date was supplied at all.
+  const periodRaw = xml.match(/<periodOfReport>([\s\S]*?)<\/periodOfReport>/)?.[1]?.trim();
+  const sigRaw = xml.match(/<signatureDate>[\s\S]*?<value>([\s\S]*?)<\/value>/)?.[1]?.trim();
+  const period = periodRaw ? saneFilingDate(periodRaw) : undefined;
+  if (periodRaw && !period) return null;
+  const sig = sigRaw ? saneFilingDate(sigRaw) : undefined;
+  if (sigRaw && !sig) return null;
+  const filedAt = period || sig || new Date().toISOString().slice(0, 10);
 
   let buyTx = 0;
   let sellTx = 0;

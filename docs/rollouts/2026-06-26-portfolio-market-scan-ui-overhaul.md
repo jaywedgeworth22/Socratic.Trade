@@ -88,6 +88,21 @@ S&P 500 + Nasdaq 100 = **515** confirmed correct (deduped union: 502 + 101 − 8
 - Sharing-default flip is an explicit owner request; only fact-tier structural market facts are ever
   shared (PII excluded, risk/strategy directives never auto-shared).
 
+## Update — merged `main` + Codex review (PR #198)
+Merged `origin/main` (clean, no conflicts) so the PR became mergeable and CI could run (a conflicted
+PR can't build its merge ref, so CI never starts — that was why no `verify` run appeared). Addressed
+three Codex P2 review comments:
+- **congress.ts** `coerceCongressTrade`: a SUPPLIED-but-future/unparseable `tradedAt` (or
+  `disclosedAt`) now rejects the whole row instead of falling back to the other date — previously a
+  future-dated trade could still enter under its disclosure date.
+- **sec.ts** `parseForm4Xml`: a SUPPLIED-but-future/garbage `periodOfReport`/`signatureDate` now drops
+  the filing instead of silently re-anchoring to today.
+- **dashboard-client.tsx** banner mode: stop reading the legacy `execution-banner-hidden` key as the
+  new "hidden" state (it always meant a *visible* compact banner). New `execution-banner-mode` key is
+  the source of truth; legacy prefs migrate to **compact**, so upgrading users never lose the
+  Test/Paper/Brokerage safety banner without explicitly choosing Hidden.
+Re-verified: tsc clean · **1350/1350** tests · build OK.
+
 ## Follow-ups
 - The Alpaca mismatch fix addresses spurious/formatting mismatches; if a genuine wrong-number is stored
   the run still surfaces the actionable message (by design). A deeper trace of where the run sources the

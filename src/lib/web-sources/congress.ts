@@ -653,12 +653,19 @@ export function coerceCongressTrade(raw: unknown): CongressTrade | null {
   if (!side) return null;
 
   const now = Date.now();
-  const tradedAt = normalizeTradeDate(pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]), now);
-  const disclosedAt = normalizeTradeDate(pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]), now);
+  const rawTradedAt = pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]);
+  const rawDisclosedAt = pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]);
+  const tradedAt = normalizeTradeDate(rawTradedAt, now);
+  const disclosedAt = normalizeTradeDate(rawDisclosedAt, now);
+  // A date field that was SUPPLIED but is unparseable ("2026-13-45") or FUTURE-dated is a
+  // data-quality error — reject the whole row rather than silently falling back to the other date,
+  // which would otherwise let a future-dated trade in under its disclosure date. Only fall back when
+  // a field was simply absent.
+  if (rawTradedAt && !tradedAt) return null;
+  if (rawDisclosedAt && !disclosedAt) return null;
   const anchor = tradedAt ?? disclosedAt;
-  // Reject a trade with no usable date, an unparseable one ("not-a-date", "2026-13-45"), or a
-  // FUTURE-dated one (a trade can't occur after today — an unambiguous data-quality error) at
-  // ingestion, so garbage never accumulates and the disclosedAt-windowed signal stays correct.
+  // Reject a trade with no usable date at all so garbage never accumulates and the
+  // disclosedAt-windowed signal stays correct.
   if (!anchor) return null;
 
   // Match the senate prefix (senate/senator) at the START — substring .includes("sen") would

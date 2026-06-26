@@ -146,6 +146,11 @@ type AccountDeletionPreview = {
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
 const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
+// New source-of-truth for the 3-way banner mode. The legacy keys above were both boolean and only
+// ever produced a VISIBLE banner (compact), so they must NOT be read as the new "hidden" state —
+// they migrate to compact instead (see the read effect) so upgrading users never lose the safety
+// banner without explicitly choosing Hidden.
+const EXECUTION_BANNER_MODE_KEY = "execution-banner-mode";
 type ExecutionBannerMode = "full" | "compact" | "hidden";
 const HIDE_TEST_ACCOUNT_KEY = "hide-test-account";
 const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
@@ -608,8 +613,20 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const saved = localStorage.getItem(TICKER_LOGO_DISPLAY_KEY);
       if (isTickerLogoDisplay(saved)) setTickerLogoDisplay(saved);
-      setExecutionBannerHidden(localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true");
-      setCompactExecutionBanner(localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true");
+      const bannerMode = localStorage.getItem(EXECUTION_BANNER_MODE_KEY);
+      if (bannerMode === "full" || bannerMode === "compact" || bannerMode === "hidden") {
+        setCompactExecutionBanner(bannerMode === "compact");
+        setExecutionBannerHidden(bannerMode === "hidden");
+      } else {
+        // Migrate legacy prefs: BOTH the legacy compact key AND the legacy "hidden" key map to compact
+        // (the old build kept the safety banner visible in both cases), so upgrading users never lose
+        // the Test/Paper/Brokerage banner until they explicitly pick the new Hidden option.
+        const legacyCompact =
+          localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true" ||
+          localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true";
+        setCompactExecutionBanner(legacyCompact);
+        setExecutionBannerHidden(false);
+      }
       setHideTestAccount(localStorage.getItem(HIDE_TEST_ACCOUNT_KEY) === "true");
     } catch {
       /* ignore storage failures */
@@ -636,8 +653,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     setExecutionBannerHidden(hidden);
     setCompactExecutionBanner(compact);
     try {
+      // Persist to the new mode key only; keep the legacy compact key in sync for backward-compat
+      // and clear the legacy hidden key so it can never be misread as the new Hidden state.
+      localStorage.setItem(EXECUTION_BANNER_MODE_KEY, next);
       localStorage.setItem(EXECUTION_BANNER_COMPACT_KEY, String(compact));
-      localStorage.setItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY, String(hidden));
+      localStorage.removeItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY);
     } catch {
       /* ignore storage failures */
     }
