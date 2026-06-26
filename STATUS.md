@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Fix: Codex Autofix workflow failing-fast on the bot-actor gate (CI/automation)
+Branch `claude/pensive-morse-77574e` (PR open). The `Codex Autofix` workflow (`anthropics/claude-code-action@v1`,
+added PR #188) was failing on **every** PR in ~11s, so Codex's inline comments never got auto-addressed/resolved
+→ PRs stuck `mergeStateStatus: BLOCKED` ("All comments must be resolved") even with `verify` green. Root cause:
+the action's agent-mode **human-actor gate** aborts on any non-`User` trigger ("Workflow initiated by non-human
+actor: chatgpt-codex-connector … Add bot to allowed_bots list") and the workflow set no `allowed_bots` (every
+failed run logged `ALLOWED_BOTS:` empty). The "directory mismatch … tsconfig.json" string is a **red herring** —
+a `#` comment the action echoes in its run script, not the error (the underlying Bun bug is already fixed
+upstream). Fix: add `allowed_bots: "chatgpt-codex-connector[bot]"` to the action step (explicit bot, not `*`; the
+job `if:` already restricts triggers to that bot). Verified against pinned action source `v1`→`78a7209`: agent
+mode's only actor gate is `checkHumanActor` — no separate write-perm gate, so this one input is the complete fix.
+**Behavioral note:** review/comment/dispatch events run the workflow def from `main`, so the fix is inert until
+merged. Verify: npm ci · tsc clean · **1428 tests pass (148 files)** · build green · full trio via land.sh. NEXT
+(post-merge): trigger Codex on an open PR, confirm the run passes the actor gate and resolves ≥1 thread. See
+`docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
 ## 2026-06-26 — Improvement program: STATUS + CODEX HANDOFF (read this first)
 **Authoritative handoff:** `docs/rollouts/2026-06-26-improvement-program-handoff.md` (full per-item status +
 remaining work + merge mechanics). Summary: **12/14 items DONE** — merged PRs #186 risk-breaker, #190 four-side
