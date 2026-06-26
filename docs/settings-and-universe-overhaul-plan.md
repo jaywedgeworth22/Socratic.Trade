@@ -28,7 +28,7 @@ and ~17 enforced policy settings have **no UI** plus several silent priorities.
   trim only fires after the gain advances another `takeProfitPct` band. This is why it's its own PR.
 - Tests: trim fraction, ratchet (no double-trim same tick/band), full-exit at 100, short cover symmetry.
 
-## Phase 3 — Settings overhaul (largest)
+## Phase 3 — Settings overhaul (largest) ✅ (`docs/rollouts/2026-06-25-settings-overhaul.md`)
 Make the editor honest: surface what's enforced, label interactions, and prevent mis-set combos.
 - **Expose the ~17 enforced-but-invisible fields:** drawdown/daily-loss breaker, vol-panic brake group,
   gross/net exposure caps (the silent 80%), short sub-limits (`shortStopLossPct` etc.), `trailingStopPct`,

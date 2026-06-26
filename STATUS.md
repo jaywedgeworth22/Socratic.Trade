@@ -16,6 +16,20 @@ keys present for all five, every group is clean + selectable. Verify: tsc ✓ ·
 live `/api/chat/providers` (only-OpenAI-keyed → openai:true, rest false) + dashboard 200. See
 `docs/rollouts/2026-06-25-chat-model-availability-and-clean-labels.md`.
 
+## 2026-06-25 — Settings overhaul: Risk & Safety tab (Phase 3 — COMPLETES the program)
+Branch `agent/claude-settings-ui`. Final phase of `docs/settings-and-universe-overhaul-plan.md`
+(Phases 1/2/4 merged: #156/#162/#163). New **Risk & Safety** settings tab surfaces the ~17
+enforced-but-invisible guards (drawdown/daily-loss circuit breakers, vol-panic brake, gross/net exposure
+caps, trailing/ATR stops, take-profit trim %, short-selling sub-limits, permitted order types, extended-hours
+order permission, ADV cap, marketable-limit entries, synthetic-stop extended-hours, universe floor) +
+a per-broker stop-support panel. Honest-interaction fixes: `$⇄%` either-or note, beta-base stop clarification,
+Alpaca-only bracket label, shorting-requires-shortStopLossPct warning, fixed the dangling "separate order
+permission" text. API validation added for the new fields (`app/api/policy/route.ts`). Verify: tsc clean ·
+full `npm run build` clean (new tab compiles) · trio via land.sh. NOTE: interactive browser check not run —
+preview tool is bound to the main worktree (4001), not this ad-hoc worktree; verification rests on tsc+build+
+strict primitive reuse. Recommend a live Settings → Risk & Safety walkthrough on the running instance.
+See `docs/rollouts/2026-06-25-settings-overhaul.md`.
+
 ## 2026-06-25 — Five-provider LLM in strategy too + plain-English errors + labeled mock
 Branch `feat/llm-providers-strategy-and-errors` (throwaway worktree `~/apps/trading-ag13`), follow-up
 to #167. (1) **Strategy loop** now spans all five providers: `resolveLlmEndpoint` gained Gemini +
