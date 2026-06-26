@@ -17,8 +17,18 @@ import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
+import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
+
+/**
+ * Returns true iff SCHEDULER_SINGLE_LEADER is set to a truthy value.
+ * Truthy: "1", "true", "on", "yes" (case-insensitive, trimmed). Default OFF.
+ */
+function singleLeaderEnabled(): boolean {
+  const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
+}
 
 let timer: NodeJS.Timeout | null = null;
 // Schedule state is per (userId, connectedAccountId): each connected account runs autonomously on
@@ -86,6 +96,22 @@ export function getSchedulerState(userId: string = "local", connectedAccountId?:
 
 export function startScheduler(): void {
   if (timer) return; // guard against double-start
+
+  // Register SIGTERM / SIGINT / beforeExit handlers (once per process lifetime) to release the
+  // scheduler lease on clean shutdown so a stopped process frees the lease immediately rather than
+  // waiting for TTL expiry. Guarded by a globalThis flag so HMR re-eval can't double-register.
+  // These are registered unconditionally (cheap); releaseLease() no-ops when this process never
+  // acquired the lease (flag OFF ⇒ no lease row owned by us).
+  const shutdownHost = globalThis as unknown as { __schedulerLeaseShutdownRegistered?: boolean };
+  if (!shutdownHost.__schedulerLeaseShutdownRegistered) {
+    shutdownHost.__schedulerLeaseShutdownRegistered = true;
+    const release = () => {
+      try { releaseLease(LEASE_OWNER); } catch { /* never throw on shutdown */ }
+    };
+    process.once("SIGTERM", release);
+    process.once("SIGINT", release);
+    process.on("beforeExit", release);
+  }
 
   // Boot interlock runs once, before any tick, so a restored/copied DB cannot resume live
   // execution unattended.
@@ -155,6 +181,15 @@ async function tick(): Promise<void> {
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
 
   try {
+    // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
+    // true/on/yes), only the lease holder runs the per-account tick body (synthetic-stop monitor
+    // + strategy runs) — preventing duplicate broker EXIT orders on multi-process deploys.
+    // When the flag is OFF, singleLeaderEnabled() short-circuits to false, acquireOrRenewLeadership
+    // is never called, the lease row is never touched, and the body below runs exactly as today.
+    if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
+      return; // not the leader this tick — no side effects
+    }
+
     // --- Per-Account Scheduling ---
     // Each connected account is scheduled independently: its own per-account policy
     // (systemState, cadence, broker) drives whether/when it runs. Autonomy is opt-in per
