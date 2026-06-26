@@ -35,10 +35,23 @@ LLM-driven action — failing loud (and telling the user to connect a provider) 
   behaviors (`red-team`, `p0-safety-fixes`, `strategy-tuning`, `proposal-revalidation`) are unaffected —
   those paths are unchanged.
 
+## Codex review fixes (2026-06-26)
+- **P1 — tests:** `test/persistence-notification.test.ts` had two no-key `runStrategyOnce` cases asserting
+  `completed`; they now seed `OPENAI_API_KEY="test-openai-key"` + stub `api.openai.com` to return 0
+  proposals so the run completes (mirrors the existing "sends retrieved context" test). This is what made
+  CI `verify` fail while a local run with ambient keys passed.
+- **Gate the resolved model's provider, not "any provider":** `app/api/chat/route.ts` now gates on
+  `resolveLlmCredential(resolveChatProvider(model/provider), userId)` (via `chatProviderForModel`), and
+  `app/api/strategy/run/route.ts` on `resolveLlmEndpoint(getPolicy(userId), userId).key` — closing the
+  hole where an Anthropic-only user on the default OpenAI model passed and chat silently fell to MockLLM.
+- **UI:** `app/dashboard-client.tsx` Run-once button + command palette now use `runOnceBlockedReason`
+  (`enableBlockedReason ?? llmGateReason`) so the button disables with the message; `app/ui/assistant-console.tsx`
+  re-fetches `/api/chat/providers` on window focus / tab visibility so connecting a key unlocks chat without reload.
+
 ## Follow-ups
-- **Red Team mandatory (separate, NOT in this PR — owner decision pending):** make the Bear/Red-Team a
-  hard requirement (drop the Bull-only fallback). Choose between: (a) ANY Red Team failure → hard error /
-  no proposal, vs (b) turn only the silent Bull-only generation path into an error while keeping the
-  existing high-conviction → human-approval fail-closed. Will also need updating `red-team.test.ts` /
-  `p0-safety-fixes.test.ts`.
+- **Red Team mandatory (owner DECIDED 2026-06-26 — implementing next on this branch):** mode-aware — propose
+  mode keeps human-approval (with an unmissable site + per-proposal warning); autonomous mode executes only
+  **de-risk** proposals (sell a held long / cover a held short) and logs risk-adding ones as "not completed —
+  no Red Team" without executing; notifications fire on all three branches. See the `red-team-mandatory-policy`
+  memory note. Will also touch `red-team.test.ts` / `p0-safety-fixes.test.ts`.
 - Add a focused automated test for the gate (no-LLM → 412 on both routes; `proposeTrades` throws).

@@ -974,6 +974,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   // message — matching the /api/strategy/run 412 — rather than firing a run that only errors deep inside.
   // The flag is optional on older payloads; treat a missing value as configured so we never false-block.
   const llmGateReason = snapshot.llmConfigured === false ? "Connect an LLM provider in Settings to run a strategy session." : undefined;
+  // "Run once" requires BOTH setup (account + universe) AND a resolvable LLM credential — either
+  // missing should disable the button with its own actionable message, so the run never fires only to
+  // hit the /api/strategy/run 412. Setup is the more fundamental blocker, so it takes precedence in copy.
+  const runOnceBlockedReason = enableBlockedReason ?? llmGateReason;
   const allowedUniverse = policyUniverseSymbolCount(policy);
   const allowedCount = allowedUniverse.count;
   
@@ -1103,7 +1107,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
     { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
     { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
-    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!enableBlockedReason) void runStrategy(); else routeSetupBlocker(enableBlockedReason); } },
+    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!runOnceBlockedReason) void runStrategy(); else routeSetupBlocker(runOnceBlockedReason); } },
     { id: "sign-out", label: "Sign out", hint: signedInEmail ?? "Current session", icon: <LogOut size={15} />, run: () => { window.location.href = "/logout"; } },
   ];
 
@@ -1239,13 +1243,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               onClick={() => setLearnedQueueOpen(true)}
             />
             <Button
-              variant={enableBlockedReason ? "ghost" : "primary"}
+              variant={runOnceBlockedReason ? "ghost" : "primary"}
               className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
               aria-label="Run strategy once"
-              title={enableBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
+              title={runOnceBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
               onClick={() => {
-                if (enableBlockedReason) {
-                  routeSetupBlocker(enableBlockedReason);
+                if (runOnceBlockedReason) {
+                  routeSetupBlocker(runOnceBlockedReason);
                   return;
                 }
                 void runStrategy();

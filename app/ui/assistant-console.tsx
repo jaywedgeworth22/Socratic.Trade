@@ -222,10 +222,12 @@ export function AssistantView({
   }, []);
 
   // Which providers have a usable key (so the picker can mark/disable ones that don't). Fail open:
-  // on error, leave statuses unset → every provider stays selectable.
+  // on error, leave statuses unset → every provider stays selectable. Re-checked on window focus and
+  // tab visibility so that connecting a key in Settings (then returning to this tab) immediately
+  // unlocks chat — otherwise providerStatus would stay stale until a full reload.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const refresh = async () => {
       try {
         const res = await fetch("/api/chat/providers");
         if (!res.ok) return;
@@ -234,9 +236,16 @@ export function AssistantView({
       } catch {
         /* availability is best-effort; default to all selectable */
       }
-    })();
+    };
+    void refresh();
+    const onFocus = () => void refresh();
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
