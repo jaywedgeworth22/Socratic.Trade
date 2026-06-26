@@ -173,6 +173,18 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_account_deletion_audit_subject ON account_deletion_audit (subject_hash, completed_at);
       `);
     }
+  },
+  {
+    // Record which model produced each assistant chat turn, so the transcript / admin view / hover can
+    // show "via <model>". Idempotent — skips the column when already present.
+    version: 5,
+    name: "chat_turns_model",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(chat_turns)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "model")) {
+        database.exec("ALTER TABLE chat_turns ADD COLUMN model TEXT");
+      }
+    }
   }
 ];
 
@@ -555,6 +567,7 @@ function migrate(database: Database.Database): void {
       citations TEXT NOT NULL DEFAULT '[]',
       intent TEXT,
       redacted INTEGER NOT NULL DEFAULT 0,
+      model TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);

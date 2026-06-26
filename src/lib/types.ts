@@ -1108,6 +1108,8 @@ export interface ChatTurn {
   intent: string | null;
   /** True when redact-on-write stripped a secret/PII from `text` before persistence. */
   redacted: boolean;
+  /** Model that produced this turn (assistant turns only, e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). */
+  model?: string | null;
   createdAt: string;
 }
 

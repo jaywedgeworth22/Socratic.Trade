@@ -80,6 +80,9 @@ export interface LlmResult {
 
 export interface ChatLLM {
   run(args: LlmRunArgs): Promise<LlmResult>;
+  /** The model id this LLM speaks to (e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). Recorded on
+   *  each assistant turn and shown in the transcript / hover so the user can see who answered. */
+  readonly modelName?: string;
 }
 
 export interface ChatReply {
@@ -90,4 +93,6 @@ export interface ChatReply {
   memory: { written: number; held: number };
   intent: string;
   promptVersion: string;
+  /** Model that produced this reply (so the UI can tag the message without a refetch). */
+  model?: string;
 }

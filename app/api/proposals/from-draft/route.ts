@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   const hourly = notionalInLastMinutes(policy.accountNumber, 60, now, userId);
   // NB: this is a PREVIEW evaluation (no full market scan); the authoritative gate runs again inside
   // executeProposal at approve time against fresh data.
-  const decision = evaluateTradeProposal(proposal, {
+  let decision = evaluateTradeProposal(proposal, {
     policy,
     portfolio,
     positions,
@@ -93,7 +93,21 @@ export async function POST(request: Request) {
     isLiveExecution: executionMode === "broker/live",
     now
   });
-  const estimatedNotional = review?.estimatedNotional;
+  let estimatedNotional = review?.estimatedNotional;
+
+  // Honest pricing: when the pre-trade review couldn't get a price it returns the over-cap sentinel
+  // (Number.MAX_SAFE_INTEGER), which would otherwise show the user a nonsensical multi-quadrillion
+  // notional and a wall of cap violations. Replace that with the real cause.
+  if (estimatedNotional === Number.MAX_SAFE_INTEGER) {
+    decision = {
+      ...decision,
+      approved: false,
+      reasons: [
+        `Couldn't get a current price for ${proposal.symbol} right now, so I can't size or risk-check this order. Try again in a moment, or specify a limit price.`
+      ]
+    };
+    estimatedNotional = undefined;
+  }
 
   if (body.dryRun) {
     return NextResponse.json({ dryRun: true, decision, estimatedNotional, proposal });

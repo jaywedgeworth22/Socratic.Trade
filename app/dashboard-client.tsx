@@ -98,6 +98,7 @@ import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
 import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
+import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
 import { SymbolDrilldown } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
@@ -125,7 +126,7 @@ type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
-type SettingsSection = "operate" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
+type SettingsSection = "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
 type AccountDeletionPreview = {
   userId: string;
   email?: string;
@@ -732,7 +733,10 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       const response = await fetch("/api/policy", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...snapshot.policy, ...patch })
+        // Serialize `undefined` as `null` so CLEARING an optional field reaches the server (JSON.stringify
+        // would otherwise drop the key, and the server's `...current` merge would restore the old value —
+        // making "blank = off" silently fail). The route strips these nulls back to absent (clears the field).
+        body: JSON.stringify({ ...snapshot.policy, ...patch }, (_key, value) => (value === undefined ? null : value))
       });
       if (!response.ok) {
         throw await responseError(response, "Policy update failed");
@@ -2861,6 +2865,7 @@ function StrategyView({
           <EditableParam label="Symbol cap" relValue={policy.maxSymbolExposurePct} onCommitAbs={() => {}} onCommitRel={(v) => updatePolicy({ maxSymbolExposurePct: v })} defaultMode="rel" />
           <EditableParam label="Stop loss" absValue={policy.riskRules.stopLossNotional} relValue={policy.riskRules.stopLossPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} defaultMode="rel" />
           <EditableParam label="Take profit" absValue={policy.riskRules.takeProfitNotional} relValue={policy.riskRules.takeProfitPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} defaultMode="rel" />
+          <p className="col-span-2 -mt-0.5 text-xs text-faint">Tap <span className="tnum">$⇄%</span> to switch a cap between a dollar amount and a % of NAV — each control holds <strong>one or the other</strong> (setting one clears the other). More guards (drawdown &amp; daily-loss breakers, volatility brake, exposure caps, trailing/ATR stops, short limits, order types, universe floor) live under <strong>Risk &amp; Safety</strong>.</p>
 
           <div className="col-span-2 mt-2 space-y-3">
              <div className="grid grid-cols-2 gap-2">
@@ -2894,28 +2899,28 @@ function StrategyView({
                  Run during extended hours
                </label>
                <p className="text-xs leading-relaxed text-faint">
-                 Allows scheduled or event-triggered strategy runs during 4:00-9:30 AM ET and 4:00-8:00 PM ET. Extended-hours orders still require the separate order permission, and dollar/fractional orders stay regular-hours only.
+                 Allows scheduled or event-triggered strategy runs during 4:00-9:30 AM ET and 4:00-8:00 PM ET. Placing extended-hours ORDERS is a separate switch (Risk &amp; Safety → Order execution → &quot;Allow extended-hours orders&quot;), and dollar/fractional orders stay regular-hours only.
                </p>
              </div>
              <div className="space-y-2 sm:col-span-2">
                <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
                  <span>
                    <span className="block text-sm font-medium text-fg">Enable short selling</span>
-                   <span className="block text-xs text-faint">Requires a connected broker account that supports shorting (e.g. Alpaca); has no effect on accounts without short capability. This lets the agent open short/cover positions.</span>
+                   <span className="block text-xs text-faint">Requires a connected broker account that supports shorting (e.g. Alpaca); has no effect on accounts without short capability. This lets the agent open short/cover positions. A short stop-loss % is <strong>required</strong> (Risk &amp; Safety → Short-selling limits) or every short is rejected.</span>
                  </span>
                  <Switch checked={Boolean(policy.shortSellingEnabled)} onChange={(v) => updatePolicy({ shortSellingEnabled: v })} />
                </label>
                <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
                  <span>
                    <span className="block text-sm font-medium text-fg">Broker-held brackets</span>
-                   <span className="block text-xs text-faint">Attaches native stop-loss/take-profit (OCO) orders at the broker (Alpaca) so protective exits survive local downtime; no effect on brokers without native brackets.</span>
+                   <span className="block text-xs text-faint">Attaches native stop-loss/take-profit (OCO) orders at the broker (Alpaca only) so protective exits survive local downtime, and only when a stop-loss % is set. No effect on Robinhood/Test (see Risk &amp; Safety → Stops &amp; exits for what protects those).</span>
                  </span>
                  <Switch checked={policy.brokerBracketsEnabled !== false} onChange={(v) => updatePolicy({ brokerBracketsEnabled: v })} />
                </label>
                <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
                  <span>
                    <span className="block text-sm font-medium text-fg">Beta-scaled stops</span>
-                   <span className="block text-xs text-faint">Scales stop-loss distance by each name&apos;s beta (wider for volatile names, tighter for stable ones) instead of one flat %.</span>
+                   <span className="block text-xs text-faint">Scales stop-loss distance by each name&apos;s beta (wider for volatile names, tighter for stable ones) instead of one flat %. When on, the Stop loss % above is the BASE — the actual per-name stop is base × beta (clamped 0.5–2.0×), so the displayed % is not the literal stop. ATR stops (Risk &amp; Safety) take precedence when both are on.</span>
                  </span>
                  <Switch checked={Boolean(policy.betaScaledStops)} onChange={(v) => updatePolicy({ betaScaledStops: v })} />
                </label>
@@ -3297,7 +3302,7 @@ function StrategyStudio({
         <div>
           <h4 className="mb-2 text-sm font-semibold text-fg" title="Choose which LLM proposes trades and which LLM critiques them before approval. API keys still live in Settings -> Connections.">Green/Red Team Models</h4>
           <div className="grid gap-3">
-            <Field label="Green Team Model" hint="Primary proposal generator. Each model uses its provider's key from Settings -> Connections (OpenAI / xAI / Google Gemini / Mistral); your own key wins, else the operator key is the backup.">
+            <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
               <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
                 <optgroup label="OpenAI">
                   <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
@@ -3305,19 +3310,23 @@ function StrategyStudio({
                   <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
                   <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
                 </optgroup>
-                <optgroup label="xAI (Grok) — requires xAI key in Connections">
+                <optgroup label="xAI (Grok)">
                   <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
                   <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
                 </optgroup>
-                <optgroup label="Google Gemini — requires Gemini key in Connections">
+                <optgroup label="Google Gemini">
                   <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
                   <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
                   <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
                 </optgroup>
-                <optgroup label="Mistral — requires Mistral key in Connections">
+                <optgroup label="Mistral">
                   <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                </optgroup>
+                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
                 </optgroup>
               </select>
             </Field>
@@ -3330,19 +3339,23 @@ function StrategyStudio({
                   <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
                   <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
                 </optgroup>
-                <optgroup label="xAI (Grok) — requires xAI key in Connections">
+                <optgroup label="xAI (Grok)">
                   <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
                   <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
                 </optgroup>
-                <optgroup label="Google Gemini — requires Gemini key in Connections">
+                <optgroup label="Google Gemini">
                   <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
                   <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
                   <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
                 </optgroup>
-                <optgroup label="Mistral — requires Mistral key in Connections">
+                <optgroup label="Mistral">
                   <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
                   <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
                   <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                </optgroup>
+                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
                 </optgroup>
               </select>
             </Field>
@@ -3578,6 +3591,7 @@ function SettingsContent({
             onChange={(v) => setSection(v as SettingsSection)}
             tabs={[
               { id: "operate", label: "Operate" },
+              { id: "risk", label: "Risk & Safety" },
               { id: "connections", label: "Connections" },
               { id: "display", label: "Display" },
               { id: "tax", label: "Tax" },
@@ -3729,6 +3743,195 @@ function SettingsContent({
           {enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />Setup required: {enableBlockedReason}</p>
           )}
+          </div>
+        )}
+
+        {section === "risk" && (
+          <div className="space-y-4">
+            <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[13px] text-muted">
+              These guards are <strong>enforced by the engine</strong> on every run. Leaving a value blank means
+              that guard is <strong>off</strong> (except where a default is noted). All caps apply to OPENING trades
+              only — a risk-reducing exit is never blocked.
+            </p>
+
+            {/* Account circuit breakers */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Account circuit breakers</div>
+                <p className="mt-0.5 text-xs text-faint">When breached, the system auto-switches to close-only (no new entries) and fires a kill-switch alert. Blank = off.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
+                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
+              </div>
+            </div>
+
+            {/* Volatility panic brake */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <label className="flex items-center justify-between gap-3">
+                <span>
+                  <span className="block text-sm font-semibold text-fg">Volatility panic brake</span>
+                  <span className="block text-xs text-faint">On a VIX / VVIX / Cboe SKEW tail extreme, auto-switch to close-only. On by default. Blank threshold = use the built-in default (40 / 150 / 160).</span>
+                </span>
+                <Switch checked={policy.volPanicBrakeEnabled !== false} onChange={(v) => updatePolicy({ volPanicBrakeEnabled: v })} />
+              </label>
+              {policy.volPanicBrakeEnabled !== false && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <OptionalNumberField label="VIX ≥" value={policy.volPanicVixThreshold} placeholder="40" step={1} onCommit={(v) => updatePolicy({ volPanicVixThreshold: v })} />
+                  <OptionalNumberField label="VVIX ≥" value={policy.volPanicVvixThreshold} placeholder="150" step={1} onCommit={(v) => updatePolicy({ volPanicVvixThreshold: v })} />
+                  <OptionalNumberField label="SKEW ≥" value={policy.volPanicSkewThreshold} placeholder="160" step={1} onCommit={(v) => updatePolicy({ volPanicSkewThreshold: v })} />
+                </div>
+              )}
+            </div>
+
+            {/* Whole-portfolio exposure */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Whole-portfolio exposure caps</div>
+                <p className="mt-0.5 text-xs text-faint">Gross = Σ|position value|; net = Σ position value (directional). <strong>Default 80%</strong> deliberately keeps ~20% cash — raise to 100 to allow full deployment. Mainly bite once shorting is enabled.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <OptionalNumberField label="Max gross exposure %" value={policy.maxGrossExposurePct} placeholder="80" step={1} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v })} />
+                <OptionalNumberField label="Max net exposure %" value={policy.maxNetExposurePct} placeholder="80" step={1} onCommit={(v) => updatePolicy({ maxNetExposurePct: v })} />
+              </div>
+            </div>
+
+            {/* Stops & exits */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Stops &amp; exits</div>
+                <p className="mt-0.5 text-xs text-faint">Stop-loss / take-profit % live under Key Parameters. These tune the additional exit types.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <OptionalNumberField label="Trailing stop %" value={policy.riskRules.trailingStopPct || undefined} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, trailingStopPct: v ?? 0 } })} />
+                <NumberField label="Take-profit trim %" value={policy.riskRules.takeProfitTrimPct ?? 50} min={1} max={100} step={5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitTrimPct: v } })} />
+              </div>
+              <p className="text-xs text-faint">
+                <strong>Trailing stops are app-managed on every broker</strong> — no broker holds them, so they only
+                fire while this app/scheduler is running. <strong>Take-profit trim %</strong> = how much of a position
+                to sell when it hits the take-profit target (the rest rides; laddered per target band).
+              </p>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
+                <span>
+                  <span className="block text-sm font-medium text-fg">ATR (volatility) stops</span>
+                  <span className="block text-xs text-faint">Set the stop distance from the name&apos;s own realized daily range (ATR) instead of a flat %. Falls back to the fixed/beta stop when bars are unavailable.</span>
+                </span>
+                <Switch checked={Boolean(policy.atrStops)} onChange={(v) => updatePolicy({ atrStops: v })} />
+              </label>
+              {policy.atrStops && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <OptionalNumberField label="ATR period (days)" value={policy.riskRules.atrStopPeriod} placeholder="14" step={1} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, atrStopPeriod: v } })} />
+                  <OptionalNumberField label="ATR multiple" value={policy.riskRules.atrStopMultiple} placeholder="2.0" step={0.1} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, atrStopMultiple: v } })} />
+                </div>
+              )}
+              {(activeAccount?.broker === "robinhood") && (
+                <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
+                  <span>
+                    <span className="block text-sm font-medium text-fg">Robinhood broker-held stop</span>
+                    <span className="block text-xs text-faint">Place a resting stop-market at the broker (long positions, live only) so the stop survives app downtime — Robinhood can&apos;t hold OCO brackets.</span>
+                  </span>
+                  <Switch checked={Boolean(policy.robinhoodBrokerStops)} onChange={(v) => updatePolicy({ robinhoodBrokerStops: v })} />
+                </label>
+              )}
+              {/* Per-broker stop-support — what actually protects a position on the active account */}
+              <div className="rounded-lg border border-line bg-surface-1/60 px-3 py-2 text-xs text-muted">
+                <span className="block font-medium text-fg">Stop support on {activeAccount ? (activeAccount.broker === "alpaca" || activeAccount.broker === "alpaca-mcp" ? "Alpaca" : activeAccount.broker === "robinhood" ? "Robinhood" : "Test/paper") : "this account"}:</span>
+                {activeAccount?.broker === "alpaca" || activeAccount?.broker === "alpaca-mcp" ? (
+                  <span className="block">Native <strong>OCO brackets</strong> (broker-held stop-loss + take-profit, survive downtime) when &quot;Broker-held brackets&quot; is on and a stop-loss % is set. Trailing stops are app-managed.</span>
+                ) : activeAccount?.broker === "robinhood" ? (
+                  <span className="block">No OCO brackets. Optional broker-held <strong>protective stop-market</strong> (toggle above, long-only, live). Everything else (trailing, take-profit, beta/ATR) is app-managed. No short selling.</span>
+                ) : (
+                  <span className="block"><strong>All stops are simulated by the app</strong> in Test/paper — nothing rests at a broker. Connect a live Alpaca/Robinhood account for broker-held protection.</span>
+                )}
+                <span className="mt-1 block text-faint">Across every broker, app-managed stops (trailing, beta/ATR, fixed %, take-profit trims) only fire while this app is running.</span>
+              </div>
+            </div>
+
+            {/* Short-selling sub-limits */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Short-selling limits</div>
+                <p className="mt-0.5 text-xs text-faint">Apply only when &quot;Enable short selling&quot; (Operate → Key Parameters) is on. A short stop-loss % is <strong>required</strong> — without it every short is rejected.</p>
+              </div>
+              {policy.shortSellingEnabled && !(policy.riskRules.shortStopLossPct && policy.riskRules.shortStopLossPct > 0) && (
+                <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn"><AlertTriangle size={14} className="mr-1 inline" />Short selling is on but no short stop-loss % is set — every short proposal will be rejected until you set one below.</p>
+              )}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <OptionalNumberField label="Short stop-loss %" value={policy.riskRules.shortStopLossPct} placeholder="required" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, shortStopLossPct: v } })} />
+                <OptionalNumberField label="Max short order ($)" value={policy.maxShortOrderNotional} placeholder="off" step={50} onCommit={(v) => updatePolicy({ maxShortOrderNotional: v })} />
+                <OptionalNumberField label="Max short exposure %" value={policy.maxShortExposurePct} placeholder="off" step={1} onCommit={(v) => updatePolicy({ maxShortExposurePct: v })} />
+              </div>
+            </div>
+
+            {/* Order execution */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Order execution</div>
+                <p className="mt-0.5 text-xs text-faint">What order types are allowed and how entries are routed.</p>
+              </div>
+              {/* Not a <Field> — Field is a <label>, and nesting the per-type checkbox <label>s inside it would make
+                  a stray click on the heading/padding toggle the first checkbox. Use a plain container. */}
+              <div className="block space-y-1.5">
+                <span className="block text-xs font-medium text-muted">Permitted order types</span>
+                <div className="flex flex-wrap gap-3">
+                  {(["market", "limit", "stop_market", "stop_limit"] as const).map((t) => {
+                    const types = policy.permittedOrderTypes ?? ["market", "limit"];
+                    const on = types.includes(t);
+                    return (
+                      <label key={t} className="flex items-center gap-1.5 text-sm text-muted">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => {
+                            const next = e.target.checked ? Array.from(new Set([...types, t])) : types.filter((x) => x !== t);
+                            updatePolicy({ permittedOrderTypes: next });
+                          }}
+                        />
+                        {t.replace("_", "-")}
+                      </label>
+                    );
+                  })}
+                </div>
+                <span className="block text-xs text-faint">A proposal whose type is not permitted is blocked. Most accounts only need market + limit.</span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <OptionalNumberField label="Max order % of ADV" value={policy.maxOrderPctOfAdv} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ maxOrderPctOfAdv: v })} />
+              </div>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
+                <span>
+                  <span className="block text-sm font-medium text-fg">Allow extended-hours ORDERS</span>
+                  <span className="block text-xs text-faint">Permit non-regular-hours order placement. Separate from &quot;Run during extended hours&quot; (which only lets a run start). Dollar/fractional orders stay regular-hours only regardless.</span>
+                </span>
+                <Switch checked={Boolean(policy.permitExtendedHours)} onChange={(v) => updatePolicy({ permitExtendedHours: v })} />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
+                <span>
+                  <span className="block text-sm font-medium text-fg">Marketable limit entries</span>
+                  <span className="block text-xs text-faint">Rewrite opening market orders as a marketable limit (caps slippage). Requires &quot;limit&quot; in permitted order types.</span>
+                </span>
+                <Switch checked={Boolean(policy.marketableLimitEntries)} onChange={(v) => updatePolicy({ marketableLimitEntries: v })} />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
+                <span>
+                  <span className="block text-sm font-medium text-fg">Fire synthetic stops in extended hours</span>
+                  <span className="block text-xs text-faint">Let the app-managed stop monitor place protective exits during pre/post-market. Off = regular hours only.</span>
+                </span>
+                <Switch checked={Boolean(policy.allowExtendedHoursSyntheticStops)} onChange={(v) => updatePolicy({ allowExtendedHoursSyntheticStops: v })} />
+              </label>
+            </div>
+
+            {/* Universe floor (penny / illiquid exclusion) */}
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">Universe floor (exclude penny / illiquid names)</div>
+                <p className="mt-0.5 text-xs text-faint">Filters the SCANNED candidates only. Your explicit Additional Watchlist symbols and current holdings are always exempt. Market-cap / $-volume bounds apply only when that datum is known.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <OptionalNumberField label="Min share price $" value={policy.universeFloor?.minPrice} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minPrice: v } })} />
+                <OptionalNumberField label="Min market cap $" value={policy.universeFloor?.minMarketCapUsd} placeholder="off" step={1_000_000} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minMarketCapUsd: v } })} />
+                <OptionalNumberField label="Min daily $-volume" value={policy.universeFloor?.minDollarVolume} placeholder="off" step={100_000} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minDollarVolume: v } })} />
+              </div>
+            </div>
           </div>
         )}
 
@@ -4085,6 +4288,14 @@ function SettingsContent({
                 );
               })}
             </div>
+          </div>
+          <div className="border-t border-line pt-3">
+            <span className="mb-1.5 block text-xs font-medium text-muted">Direct delivery (email · SMS · push)</span>
+            <p className="mb-2 text-[11px] text-faint">
+              Send price-alert and event notifications straight to you. Email/SMS require the operator to have configured the
+              provider keys (Resend / Twilio); toggle a channel, enter your target, then Send test to verify delivery.
+            </p>
+            <DeliveryChannelsPanel />
           </div>
         </div>
       )}

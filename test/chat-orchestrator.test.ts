@@ -54,6 +54,16 @@ describe("chat orchestrator (MockLLM)", () => {
     expect(listTurns("o3").length).toBeGreaterThanOrEqual(2);
     expect(listMemories("o3").some((m) => m.subject === "no_options")).toBe(true);
   });
+
+  it("records the model on the assistant reply and turn (user turns carry none)", async () => {
+    const r = await orchestrate({ userId: "o_model", message: "AAPL price" });
+    expect(r.model).toBe("mock"); // MockLLM.modelName
+    const turns = listTurns("o_model");
+    const assistant = turns.filter((t) => t.role === "assistant").pop();
+    expect(assistant?.model).toBe("mock");
+    const user = turns.find((t) => t.role === "user");
+    expect(user?.model ?? null).toBeNull();
+  });
 });
 
 describe("chat orchestrator — NOW-tranche fixes (I1/I2/I3)", () => {

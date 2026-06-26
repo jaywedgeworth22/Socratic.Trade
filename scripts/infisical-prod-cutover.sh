@@ -19,8 +19,11 @@
 #   INFISICAL_TOKEN='<machine-identity universal-auth token>' \
 #     bash scripts/infisical-prod-cutover.sh [--scrub] [--no-restart] [--dir DIR] [--app NAME]
 #
-# The token is read from the INFISICAL_TOKEN env var (preferred) or an existing
-# deploy.env. It is never printed and never committed.
+# The token is read from the INFISICAL_TOKEN env var (preferred), an existing
+# deploy.env, or — if neither is set and you're at a terminal — a hidden
+# interactive prompt. It is never printed and never committed. NOTE: a bare
+# `VAR=value` on its own line is NOT exported to this script; pass it inline on
+# the command line, `export` it, or just let the prompt ask.
 #
 # Optional shared project (App-A/B / congress-trade secrets): also export
 # INFISICAL_SHARED_TOKEN (its own machine identity); INFISICAL_SHARED_PROJECT_ID
@@ -61,13 +64,30 @@ command -v infisical >/dev/null 2>&1 || die "Infisical CLI not found. Install it
 command -v pm2 >/dev/null 2>&1 || die "pm2 not found on PATH."
 [ -d "$DIR" ] || die "Deploy dir not found: $DIR (pass --dir)."
 
-# Token: prefer the env var; otherwise reuse one already in deploy.env.
+# ── Token resolution: env var → deploy.env → interactive hidden prompt ────────
+# A bare `VAR=value` on its own line sets a shell variable that is NOT exported,
+# so a child process (this script) never inherits it. We therefore also accept
+# the token via a hidden prompt when stdin is a terminal.
 if [ -z "${INFISICAL_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
   INFISICAL_TOKEN="$(. "$ENV_FILE"; printf '%s' "${INFISICAL_TOKEN:-}")"
 fi
-[ -n "${INFISICAL_TOKEN:-}" ] || die "Set INFISICAL_TOKEN to your machine-identity universal-auth token and re-run."
+if [ -z "${INFISICAL_TOKEN:-}" ] && [ -t 0 ]; then
+  printf '[cutover] App (agentic-trading) machine-identity token (input hidden): ' >&2
+  IFS= read -rs INFISICAL_TOKEN || true; printf '\n' >&2
+fi
+[ -n "${INFISICAL_TOKEN:-}" ] || die "No INFISICAL_TOKEN. Pass it on the SAME line as the command (INFISICAL_TOKEN=... bash scripts/infisical-prod-cutover.sh), 'export' it first, or run interactively to be prompted — a bare 'VAR=value' line on its own is not inherited by this script."
 export INFISICAL_TOKEN INFISICAL_DISABLE_UPDATE_CHECK=true
+
+# Optional shared-project token: env → deploy.env → interactive prompt (Enter skips the overlay).
+if [ -z "$SHARED_TOKEN" ] && [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  SHARED_TOKEN="$(. "$ENV_FILE"; printf '%s' "${INFISICAL_SHARED_TOKEN:-}")"
+fi
+if [ -z "$SHARED_TOKEN" ] && [ -t 0 ]; then
+  printf '[cutover] Shared (shared-at-ct) token — press Enter to skip the overlay (input hidden): ' >&2
+  IFS= read -rs SHARED_TOKEN || true; printf '\n' >&2
+fi
 
 # Verify the identity can actually read the project before changing anything.
 log "Verifying Infisical access (project $PROJECT_ID, env $ENV_NAME)…"

@@ -54,7 +54,9 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gemini-3.5-flash": [0.3, 2.5],
   "mistral-large": [2, 6],
   "mistral-medium": [0.4, 2],
-  "mistral-small": [0.1, 0.3]
+  "mistral-small": [0.1, 0.3],
+  "deepseek-chat": [0.28, 1.1],
+  "deepseek-reasoner": [0.55, 2.19]
 };
 
 function priceForModel(model: string | undefined): [number, number] | undefined {

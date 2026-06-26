@@ -4,6 +4,8 @@ export interface YahooFinanceQuote {
   ask: number;
   prevClose: number;
   volume: number;
+  /** ISO timestamp of the quote (from meta.regularMarketTime) — the real "as of", not a daily-bar date. */
+  asOf?: string;
 }
 
 export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinanceQuote | undefined> {
@@ -23,12 +25,16 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     const prevClose = meta.chartPreviousClose ? Number(meta.chartPreviousClose) : price;
     const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
     const volume = Number(meta.regularMarketVolume ?? quote?.volume?.[0] ?? 0);
+    // regularMarketTime is Unix seconds; convert to ISO for a real "as of" timestamp.
+    const t = Number(meta.regularMarketTime);
+    const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
     return {
       price,
       bid: price * 0.999,
       ask: price * 1.001,
       prevClose,
-      volume
+      volume,
+      asOf
     };
   } catch {
     clearTimeout(timeout);
