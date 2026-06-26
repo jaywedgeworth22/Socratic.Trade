@@ -4,6 +4,15 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — GitHub OAuth as alternative sign-in provider
+Branch `claude/wonderful-wozniak-xploaq`. Added GitHub OAuth alongside Google OAuth so the
+login page is usable even when only one provider is configured. `src/lib/auth/auth.ts` now
+conditionally registers Google/GitHub based on which env vars are present (both, either, or
+neither). `app/login/page.tsx` renders whichever buttons are active; falls back to an improved
+"no provider" message that names both options. `.env.example` documents the new
+`AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` vars with setup instructions. Verify: tsc ✓ · 1250/1250 ✓ · build ✓.
+See `docs/rollouts/2026-06-26-github-oauth.md`.
+
 ## 2026-06-26 — Cutover script prompts for the Infisical token
 Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,
 `read -rs`) for the app + shared tokens when they're not in the env / `deploy.env` and stdin is a TTY,

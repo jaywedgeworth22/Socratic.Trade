@@ -6,26 +6,33 @@
 //
 // Required env vars to ACTIVATE (see .env.example):
 //   AUTH_SECRET        — openssl rand -base64 32
-//   AUTH_GOOGLE_ID     — OAuth 2.0 client ID from Google Cloud Console
-//   AUTH_GOOGLE_SECRET — OAuth 2.0 client secret
 //
-// When these are NOT set the Auth.js path is simply never triggered (authConfigured
-// returns false in middleware.ts and the primary-email fallback remains active).
+// Optional OAuth providers (at least one required for sign-in):
+//   AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET — Google Cloud Console OAuth 2.0 client
+//   AUTH_GITHUB_ID / AUTH_GITHUB_SECRET — GitHub OAuth App (Settings → Developer)
+//
+// When AUTH_SECRET is NOT set the Auth.js path is simply never triggered
+// (authConfigured returns false in middleware.ts and the primary-email fallback
+// remains active).
 
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import GitHub from "next-auth/providers/github";
 import type { JWT } from "next-auth/jwt";
 import type { Session } from "next-auth";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
 
+const providers = [];
+if (process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET) {
+  providers.push(Google({ clientId: process.env.AUTH_GOOGLE_ID, clientSecret: process.env.AUTH_GOOGLE_SECRET }));
+}
+if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
+  providers.push(GitHub({ clientId: process.env.AUTH_GITHUB_ID, clientSecret: process.env.AUTH_GITHUB_SECRET }));
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
-  providers: [
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET
-    })
-  ],
+  providers,
   session: { strategy: "jwt" },
   jwt: {
     encode: encodeSessionToken,
