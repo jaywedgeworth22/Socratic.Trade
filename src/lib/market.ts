@@ -168,7 +168,10 @@ export async function scanMarket(
   // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
   // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
   // throttled and fully self-guarded, so it never delays or breaks a scan. Fire-and-forget.
-  void shareScanRefs(scan);
+  // PRIVACY: holdings are personal account data and are force-included in `topCandidates` so the agent
+  // can exit them — but they must NEVER leave the box. Share only the publicly-ranked candidates.
+  const heldSymbols = new Set(positions.map((p) => normalizeSymbol(p.symbol)).filter(Boolean));
+  void shareScanRefs({ topCandidates: scan.topCandidates.filter((quote) => !heldSymbols.has(quote.symbol)) });
   return scan;
 }
 

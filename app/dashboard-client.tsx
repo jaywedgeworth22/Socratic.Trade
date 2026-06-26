@@ -1231,9 +1231,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 }}
               >
                 <option value="" disabled>Select Account...</option>
-                {snapshot.connectedAccounts?.filter(acc => acc.id === activeAccountId || !hideTestAccount || acc.broker !== "test").map(acc => (
-                  <option key={acc.id} value={acc.id}>{acc.label}</option>
-                ))}
+                {(() => {
+                  const accts = (snapshot.connectedAccounts ?? []).filter(acc => acc.id === activeAccountId || !hideTestAccount || acc.broker !== "test");
+                  // Append the environment only when two accounts would otherwise render the same option
+                  // text — disambiguating identical labels (e.g. two "Alpaca") so a live account is never
+                  // mistaken for paper in this real-money switcher, while distinct labels stay uncluttered.
+                  const labelCounts = new Map<string, number>();
+                  for (const a of accts) labelCounts.set(a.label, (labelCounts.get(a.label) ?? 0) + 1);
+                  return accts.map(acc => {
+                    const ambiguous = (labelCounts.get(acc.label) ?? 0) > 1 && acc.broker !== "test"
+                      && !acc.label.toLowerCase().includes(acc.environment.toLowerCase());
+                    return <option key={acc.id} value={acc.id}>{ambiguous ? `${acc.label} (${acc.environment})` : acc.label}</option>;
+                  });
+                })()}
                 <option value="manage">Manage Accounts...</option>
               </select>
             </div>

@@ -130,6 +130,22 @@ Applied the same strictly-after-today rejection to `saneFilingDate` (drops futur
 `periodOfReport`/`signatureDate`/`filedAt`); added a regression test in `test/web-sources-sec.test.ts`.
 Re-verified: tsc clean · **1352/1352** tests · build OK.
 
+Fifth Codex round (full re-review). Fixed:
+- **Privacy (`market.ts`):** force-included holdings were leaking off-box — `scanMarket` shares
+  `topCandidates` refs with App A, and holdings had been appended to that list. Now the share payload
+  excludes held symbols entirely (holdings are personal account data and never leave the box); they
+  still appear in the in-app candidate set so the agent can exit them.
+- **Account selector (`dashboard`):** dropping the env suffix made two same-labeled accounts (e.g. two
+  "Alpaca") render identical option text — a real-money footgun. Now the environment is appended ONLY
+  when labels collide, so distinct labels stay uncluttered (per the owner request) but ambiguous ones
+  are disambiguated.
+Intentionally kept (explicit owner requests; Codex flagged the trade-off, owner can reverse):
+- Live Brokerage portfolio chip stays green (top banner remains the real-money cue).
+- `contributeShared` defaults ON (only fact-tier structural market facts are shared; PII excluded,
+  risk/strategy directives never auto-shared) — Codex notes this opts users in without an explicit
+  toggle; flagged for owner confirmation.
+Re-verified: tsc clean · **1352/1352** tests · build OK.
+
 ## Follow-ups
 - The Alpaca mismatch fix addresses spurious/formatting mismatches; if a genuine wrong-number is stored
   the run still surfaces the actionable message (by design). A deeper trace of where the run sources the
