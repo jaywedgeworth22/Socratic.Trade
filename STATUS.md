@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Codex Autofix follow-up: make it RESOLVE threads, not just fix code (CI/automation)
+Branch `claude/codex-autofix-resolve-threads` (PR open). After #201 unblocked the actor gate, end-to-end
+verification on throwaway PR #202 confirmed the autofix **passes the gate and fixes** Codex's findings
+(it fixed both planted bugs + pushed `[codex-autofix] …`) — but it resolved **0/2** threads: a code fix
+only makes a Codex thread `outdated`, never `resolved`, and GitHub's "require conversation resolution"
+gate needs explicit resolution. So a working-but-non-resolving autofix would still block PRs the moment
+that gate is re-enabled. (The live `main` ruleset currently has `required_review_thread_resolution:
+false` — only `verify` is required — likely toggled off as a stopgap while the bot was broken.) Fix:
+added prompt **step 7** instructing the autofix to RESOLVE every Codex thread it addressed (or that is
+outdated/already-fixed) via the GraphQL `resolveReviewThread` mutation, leaving maintainer-question
+threads open; the workflow already has `pull-requests: write`. Verify: YAML parse OK · full trio via
+land.sh. NEXT (post-merge): re-verify on a fresh throwaway PR that threads now show `resolved`, then the
+owner can re-enable `required_review_thread_resolution`. See
+`docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
+
 ## 2026-06-26 — Fix: Codex Autofix workflow failing-fast on the bot-actor gate (CI/automation)
 Branch `claude/pensive-morse-77574e` (PR open). The `Codex Autofix` workflow (`anthropics/claude-code-action@v1`,
 added PR #188) was failing on **every** PR in ~11s, so Codex's inline comments never got auto-addressed/resolved

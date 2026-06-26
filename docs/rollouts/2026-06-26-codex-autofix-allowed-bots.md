@@ -71,7 +71,27 @@ PR-branch copy. So this fix is inert on the feature branch and only changes beha
 - Post-merge end-to-end: trigger Codex on an open PR and confirm the autofix run passes the actor gate
   and resolves ≥1 Codex thread. (See STATUS.md for the run link once executed.)
 
+## Follow-up landed same day — make the autofix actually RESOLVE threads (#202 verification finding)
+The allowed_bots fix (#201) was verified end-to-end on throwaway PR #202: Codex flagged two planted
+bugs, the autofix run **passed the actor gate** (log: `Actor chatgpt-codex-connector[bot] is in
+allowed_bots list, skipping human actor check`), fixed both bugs, ran the verify trio, and pushed
+`[codex-autofix] fix percentChange denominator + average off-by-one`. **But it resolved 0/2 threads** —
+a code fix only makes a Codex thread `outdated`, never `resolved`. GitHub's "require conversation
+resolution" gate needs threads explicitly RESOLVED, so a working-but-non-resolving autofix would still
+leave PRs blocked the moment that gate is (re-)enabled. (The live `main` ruleset currently has
+`required_review_thread_resolution: false` — almost certainly toggled off as a stopgap while the bot was
+broken — and only `verify` is a required check.)
+
+Fix: added prompt step 7 instructing the autofix to RESOLVE every Codex thread it addressed (or that is
+outdated/already-fixed) via the GraphQL `resolveReviewThread` mutation, while leaving threads where it
+asked the maintainer a question OPEN. The workflow already has `permissions: pull-requests: write`, which
+is sufficient for `resolveReviewThread`. This closes the loop so the owner can safely re-enable the
+resolution gate. Branch `claude/codex-autofix-resolve-threads`.
+
 ## Follow-ups
-- After merge, watch the first real Codex-triggered run to confirm end-to-end (actor gate passes →
-  threads resolved → PR unblocks). If the bot login ever changes, update the `allowed_bots` value and
-  the `if:` guards together.
+- After this lands, re-verify on a fresh throwaway PR that the autofix now marks the Codex threads
+  `resolved` (not just `outdated`).
+- If the bot login ever changes, update the `allowed_bots` value, the `if:` guards, and the step-7
+  author filter together.
+- Consider re-enabling `required_review_thread_resolution` on the `main` ruleset once the resolve step
+  is confirmed in production (owner decision).
