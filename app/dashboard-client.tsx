@@ -6,8 +6,12 @@ import {
   BrainCircuit,
   Check,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
+  Columns3,
   ExternalLink,
+  Eye,
+  EyeOff,
   Gauge,
   HelpCircle,
   Hourglass,
@@ -25,8 +29,10 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Server,
   Settings as SettingsIcon,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   TrendingUp,
@@ -1424,7 +1430,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Operate, Connections, Display & More" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -1449,11 +1455,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect and switch supported accounts" icon={<Wallet size={18} />} size="lg">
+      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" icon={<Wallet size={18} />} size="lg">
         <IntegrationsSection accounts={snapshot.connectedAccounts || []} policy={policy} onSaved={load} />
       </Modal>
 
-      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="Safety limits, tax logic, pricing & MCP" icon={<HelpCircle size={18} />} size="lg">
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="How it works, safeguards, costs & data sources" icon={<HelpCircle size={18} />} size="xl">
         <HelpContent policy={policy} snapshot={snapshot} />
       </Modal>
 

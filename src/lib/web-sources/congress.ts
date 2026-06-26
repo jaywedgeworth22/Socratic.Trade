@@ -228,6 +228,21 @@ function saneIsoDate(value: string, now: number): string | undefined {
   return iso;
 }
 
+/**
+ * Normalize a raw trade-date string to a sane ISO date, REJECTING future-dated values. A trade
+ * cannot occur after today, so a future date (e.g. a "12/26/2026" parsed from a corrupt source) is
+ * an unambiguous data-quality error — we drop it rather than let it poison the recency window or
+ * surface an impossible date in the UI. Accepts ISO directly or a US MM/DD/YYYY value.
+ */
+function normalizeTradeDate(value: string | undefined, now: number): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const direct = saneIsoDate(trimmed, now);
+  if (direct) return direct;
+  const mdy = toIsoDate(trimmed);
+  return mdy ? saneIsoDate(mdy, now) : undefined;
+}
+
 /** Parse the Apify `johnvc` actor's dataset items into CongressTrade rows (pure). */
 export function parseApifyCongress(items: unknown, now: number = Date.now()): CongressTrade[] {
   if (!Array.isArray(items)) return [];
@@ -637,12 +652,14 @@ export function coerceCongressTrade(raw: unknown): CongressTrade | null {
   else if (sideRaw === "s" || sideRaw.startsWith("s_") || /(sell|sale|dispos)/.test(sideRaw)) side = "sell";
   if (!side) return null;
 
-  const tradedAt = pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]);
-  const disclosedAt = pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]);
+  const now = Date.now();
+  const tradedAt = normalizeTradeDate(pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]), now);
+  const disclosedAt = normalizeTradeDate(pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]), now);
   const anchor = tradedAt ?? disclosedAt;
-  // Reject a trade with no date OR an unparseable one ("not-a-date", "2026-13-45") at ingestion, so
-  // garbage never accumulates in the dataset and the disclosedAt-windowed signal stays correct.
-  if (!anchor || !Number.isFinite(Date.parse(anchor))) return null;
+  // Reject a trade with no usable date, an unparseable one ("not-a-date", "2026-13-45"), or a
+  // FUTURE-dated one (a trade can't occur after today — an unambiguous data-quality error) at
+  // ingestion, so garbage never accumulates and the disclosedAt-windowed signal stays correct.
+  if (!anchor) return null;
 
   // Match the senate prefix (senate/senator) at the START — substring .includes("sen") would
   // misclassify "representative". Anything else (house/rep/unknown) → house.
