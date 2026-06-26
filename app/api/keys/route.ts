@@ -64,8 +64,8 @@ const API_KEY_CATALOG = [
     label: "DeepSeek",
     category: "LLM",
     required: false,
-    unlocks: "DeepSeek models (deepseek-chat, deepseek-reasoner) for trade proposals, strategy analysis, and the Assistant.",
-    docsUrl: "https://platform.deepseek.com/api-keys"
+    unlocks: "DeepSeek models (deepseek-chat / deepseek-reasoner) for the Assistant and strategy. Note: requests are processed on DeepSeek's servers (China).",
+    docsUrl: "https://platform.deepseek.com/api_keys"
   },
   {
     service: "finnhub",

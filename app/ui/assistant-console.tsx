@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import type { ExecutionState } from "@/lib/execution-mode";
 import { humanizeLlmError } from "@/lib/llm-errors";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
+import { Markdown } from "./markdown";
+import { ModelPicker, type ModelGroup } from "./model-picker";
 import { cn } from "./cn";
 
 interface ChatDraft {
@@ -38,11 +40,13 @@ interface ChatReply {
   draft: ChatDraft | null;
   citations: Citation[];
   intent: string;
+  model?: string;
 }
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  model?: string;
   citations?: Citation[];
   draft?: ChatDraft | null;
 }
@@ -98,50 +102,63 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
   { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
 ];
 
-// Chat-model selector: pick any of the five providers. The chosen model is sent as a per-request
-// `model` hint to /api/chat, which routes it to the right provider by name (claude-*→Anthropic,
-// grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, else OpenAI). The matching provider key must be
-// set in Settings → Connections; OpenAI is the operator default. A few recommended models per
-// provider, spanning cost ↔ capability. Selection is sticky via localStorage (no DB migration).
-const CHAT_MODEL_GROUPS: Array<{ label: string; options: Array<{ value: string; label: string }> }> = [
-  { label: "Offline", options: [{ value: "mock", label: "Mock — deterministic, no key" }] },
+// Chat-model selector (custom ModelPicker: provider logos + relative price tiers). The chosen model is
+// sent as a per-request `model` hint to /api/chat, which routes it to the right provider by name
+// (claude-*→Anthropic, grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, deepseek-*→DeepSeek, else
+// OpenAI). Tiers ($/$$/$$$) are relative blended cost. Selection is sticky via localStorage. Per-
+// provider key availability comes from /api/chat/providers; unkeyed providers show "no key" + disabled.
+const CHAT_MODEL_GROUPS: ModelGroup[] = [
+  { provider: "offline", label: "Offline", options: [{ value: "mock", label: "Mock — deterministic, no key", tier: "" }] },
   {
+    provider: "openai",
     label: "OpenAI",
     options: [
-      { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default" },
-      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost" }
+      { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest", tier: "$" },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default", tier: "$$" },
+      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost", tier: "$$$" }
     ]
   },
   {
-    label: "Anthropic (needs Anthropic key)",
+    provider: "anthropic",
+    label: "Anthropic",
     options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast & low cost" },
-      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — stronger reasoning" },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 — strongest, premium" }
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast & low cost", tier: "$$" },
+      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — stronger reasoning", tier: "$$$" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 — strongest, premium", tier: "$$$" }
     ]
   },
   {
-    label: "xAI / Grok (needs xAI key)",
+    provider: "xai",
+    label: "xAI (Grok)",
     options: [
-      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost" },
-      { value: "grok-4.3", label: "grok-4.3 — stronger, large context" }
+      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost", tier: "$" },
+      { value: "grok-4.3", label: "grok-4.3 — stronger, large context", tier: "$$" }
     ]
   },
   {
-    label: "Google Gemini (needs Gemini key)",
+    provider: "gemini",
+    label: "Google Gemini",
     options: [
-      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost" },
-      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — balanced, long context" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — strongest flash" }
+      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost", tier: "$" },
+      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — balanced, long context", tier: "$" },
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — strongest flash", tier: "$" }
     ]
   },
   {
-    label: "Mistral (needs Mistral key)",
+    provider: "mistral",
+    label: "Mistral",
     options: [
-      { value: "mistral-small-latest", label: "mistral-small-latest — lowest cost" },
-      { value: "mistral-medium-latest", label: "mistral-medium-latest — balanced" },
-      { value: "mistral-large-latest", label: "mistral-large-latest — strongest" }
+      { value: "mistral-small-latest", label: "mistral-small-latest — lowest cost", tier: "$" },
+      { value: "mistral-medium-latest", label: "mistral-medium-latest — balanced", tier: "$" },
+      { value: "mistral-large-latest", label: "mistral-large-latest — strongest", tier: "$$" }
+    ]
+  },
+  {
+    provider: "deepseek",
+    label: "DeepSeek",
+    options: [
+      { value: "deepseek-chat", label: "deepseek-chat (V3) — cheap, tool-capable", tier: "$" },
+      { value: "deepseek-reasoner", label: "deepseek-reasoner (R1) — reasoning; limited tools", tier: "$" }
     ]
   }
 ];
@@ -172,7 +189,11 @@ export function AssistantView({
     }
     return defaultModel ?? DEFAULT_CHAT_MODEL;
   });
+  // Per-provider key availability for the picker. undefined = not yet loaded (treat as available so we
+  // never flash "no key" before the check resolves); after load, false = no usable key for that provider.
+  const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const dest = destination(executionState);
 
   useEffect(() => {
@@ -181,10 +202,29 @@ export function AssistantView({
       try {
         const res = await fetch("/api/chat-history?limit=50");
         if (!res.ok) return;
-        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string }> };
-        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text })));
+        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string; model?: string | null }> };
+        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text, model: t.model ?? undefined })));
       } catch {
         /* history is best-effort */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Which providers have a usable key (so the picker can mark/disable ones that don't). Fail open:
+  // on error, leave statuses unset → every provider stays selectable.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/chat/providers");
+        if (!res.ok) return;
+        const body = (await res.json()) as { providers?: Partial<Record<string, boolean>> };
+        if (!cancelled && body.providers) setProviderStatus(body.providers);
+      } catch {
+        /* availability is best-effort; default to all selectable */
       }
     })();
     return () => {
@@ -220,7 +260,7 @@ export function AssistantView({
       if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;
       const id = `a-${stamp}`;
-      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft }]);
+      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft, model: reply.model }]);
       if (reply.draft) setDrafts((d) => ({ ...d, [id]: { phase: "draft" } }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Chat request failed.");
@@ -306,20 +346,17 @@ export function AssistantView({
           <span className="text-xs text-muted">drafts orders you confirm — it never places on its own</span>
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <ModelPicker
+            className="w-[15rem]"
             value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="max-w-[15rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-            title="Chat model — pick any provider. The matching key must be set in Settings → Connections (OpenAI is the default)."
-          >
-            {CHAT_MODEL_GROUPS.map((g) => (
-              <optgroup key={g.label} label={g.label}>
-                {g.options.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            groups={CHAT_MODEL_GROUPS}
+            providerStatus={providerStatus}
+            onChange={(m) => {
+              setModel(m);
+              // Move focus straight to the prompt box so the user can type right after picking a model.
+              inputRef.current?.focus();
+            }}
+          />
           <Chip tone={dest.tone}>{dest.text}</Chip>
         </div>
       </div>
@@ -351,8 +388,15 @@ export function AssistantView({
         )}
         {messages.map((m) => (
           <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}>
-              <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+            <div
+              className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}
+              title={m.role === "assistant" && m.model ? `Answered by ${m.model}` : undefined}
+            >
+              {m.role === "assistant" ? (
+                <Markdown>{m.text}</Markdown>
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+              )}
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {m.citations.map((c, i) =>
@@ -395,6 +439,7 @@ export function AssistantView({
       <div className="border-t border-line p-3">
         <div className="flex items-end gap-2">
           <textarea
+            ref={inputRef}
             className={cn(inputClass, "min-h-[2.5rem] flex-1 resize-none")}
             rows={1}
             placeholder="Ask a question, or describe an order to draft…"

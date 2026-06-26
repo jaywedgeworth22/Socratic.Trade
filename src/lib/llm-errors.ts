@@ -5,7 +5,7 @@
 
 export type LlmProviderName = "OpenAI" | "Anthropic" | "xAI (Grok)" | "Google Gemini" | "Mistral" | "DeepSeek" | "the LLM";
 
-/** Map an internal provider id (openai/xai/gemini/mistral/anthropic) to a display name. */
+/** Map an internal provider id (openai/xai/gemini/mistral/deepseek/anthropic) to a display name. */
 export function providerLabel(provider?: string | null): LlmProviderName {
   switch ((provider ?? "").toLowerCase()) {
     case "xai":

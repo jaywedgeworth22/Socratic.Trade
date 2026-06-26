@@ -9,7 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { llmFetch } from "../llm-request";
+import { llmFetch, isReasoningModel } from "../llm-request";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -22,7 +22,7 @@ export interface LlmUsageOpts {
   context?: string;
 }
 
-/** The six chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
+/** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
 export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
 
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
@@ -183,6 +183,7 @@ function labelMock(text: string): string {
 
 /** Deterministic offline stand-in, shaped exactly like a real tool-use loop. */
 export class MockLLM implements ChatLLM {
+  readonly modelName = "mock";
   /** Public entry: produce the deterministic answer, then label it so it's clearly a mock response. */
   async run(args: LlmRunArgs): Promise<LlmResult> {
     const result = await this.answer(args);
@@ -311,6 +312,10 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 export class AnthropicLLM implements ChatLLM {
   constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
 
+  get modelName(): string {
+    return this.model;
+  }
+
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     const messages: any[] = [];
     let promptTokens = 0;
@@ -420,6 +425,10 @@ export class OpenAILLM implements ChatLLM {
     private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai"
   ) {}
 
+  get modelName(): string {
+    return this.model;
+  }
+
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     // Build OpenAI messages array. Prior user/assistant turns first, then the current message.
     const messages: any[] = [];
@@ -449,11 +458,21 @@ export class OpenAILLM implements ChatLLM {
     const toolCalls: ToolCall[] = [];
     let text = "";
 
+    // OpenAI's reasoning models (gpt-5 / o-series) REJECT `max_tokens` ("use max_completion_tokens
+    // instead") and spend part of the budget on hidden reasoning, so they need both the renamed
+    // param and a higher cap to leave room for a visible answer. Other providers (and OpenAI's
+    // classic models) keep `max_tokens`. Gated on provider too so we never send the OpenAI-only param
+    // to an OpenAI-compatible endpoint (xAI/Gemini/Mistral).
+    const tokenCap =
+      this.provider === "openai" && isReasoningModel(this.model)
+        ? { max_completion_tokens: 4096 }
+        : { max_tokens: 1024 };
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const resp = await this.transport(
         {
           model: this.model,
-          max_tokens: 1024,
+          ...tokenCap,
           messages,
           ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
         },
@@ -523,9 +542,11 @@ export function chatProviderForModel(model: string): ChatProvider {
   return "openai";
 }
 
+/** OpenAI-compatible providers (everyone except Anthropic, which has its own Messages loop). */
+type OpenAiCompatProvider = Exclude<ChatProvider, "anthropic">;
+
 /** Base chat/completions URL for an OpenAI-compatible provider (env override per provider). */
-function openAiCompatChatUrl(provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek"): string {
-  if (provider === "xai") return process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions";
+function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (provider === "xai") return process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions";
   if (provider === "gemini")
     return process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
@@ -535,8 +556,7 @@ function openAiCompatChatUrl(provider: "openai" | "xai" | "gemini" | "mistral" |
 
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
-function makeOpenAITransport(url: string, provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek"): OpenAITransport {
-  return async (body: any, apiKey: string) => {
+function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
     const res = await llmFetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },

@@ -87,6 +87,10 @@ export async function PUT(request: Request) {
   if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
     delete policy.redTeamLlmModel;
   }
+  // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
+  // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
+  // a field actually turns the guard off / reverts it to its default.
+  stripNullsDeep(policy as unknown as Record<string, unknown>);
   const validationError = await validatePolicy(policy, userId);
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
@@ -114,6 +118,29 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.atrStops !== undefined && typeof policy.atrStops !== "boolean") return "atrStops must be a boolean.";
   if (policy.riskRules.atrStopPeriod !== undefined && (!Number.isInteger(policy.riskRules.atrStopPeriod) || policy.riskRules.atrStopPeriod < 5 || policy.riskRules.atrStopPeriod > 100)) return "riskRules.atrStopPeriod must be an integer between 5 and 100.";
   if (policy.riskRules.atrStopMultiple !== undefined && (!Number.isFinite(policy.riskRules.atrStopMultiple) || policy.riskRules.atrStopMultiple <= 0 || policy.riskRules.atrStopMultiple > 10)) return "riskRules.atrStopMultiple must be between 0 (exclusive) and 10.";
+  if (policy.maxGrossExposurePct !== undefined && (!Number.isFinite(policy.maxGrossExposurePct) || policy.maxGrossExposurePct <= 0 || policy.maxGrossExposurePct > 100)) return "maxGrossExposurePct must be between 0 and 100.";
+  if (policy.maxNetExposurePct !== undefined && (!Number.isFinite(policy.maxNetExposurePct) || policy.maxNetExposurePct <= 0 || policy.maxNetExposurePct > 100)) return "maxNetExposurePct must be between 0 and 100.";
+  if (policy.maxShortExposurePct !== undefined && (!Number.isFinite(policy.maxShortExposurePct) || policy.maxShortExposurePct <= 0 || policy.maxShortExposurePct > 100)) return "maxShortExposurePct must be between 0 and 100.";
+  if (policy.maxShortOrderNotional !== undefined && (!Number.isFinite(policy.maxShortOrderNotional) || policy.maxShortOrderNotional <= 0)) return "maxShortOrderNotional must be positive.";
+  if (policy.maxOrderPctOfAdv !== undefined && (!Number.isFinite(policy.maxOrderPctOfAdv) || policy.maxOrderPctOfAdv <= 0 || policy.maxOrderPctOfAdv > 100)) return "maxOrderPctOfAdv must be between 0 and 100.";
+  if (policy.volPanicVixThreshold !== undefined && (!Number.isFinite(policy.volPanicVixThreshold) || policy.volPanicVixThreshold < 0)) return "volPanicVixThreshold must be a non-negative number.";
+  if (policy.volPanicVvixThreshold !== undefined && (!Number.isFinite(policy.volPanicVvixThreshold) || policy.volPanicVvixThreshold < 0)) return "volPanicVvixThreshold must be a non-negative number.";
+  if (policy.volPanicSkewThreshold !== undefined && (!Number.isFinite(policy.volPanicSkewThreshold) || policy.volPanicSkewThreshold < 0)) return "volPanicSkewThreshold must be a non-negative number.";
+  if (policy.permittedOrderTypes !== undefined) {
+    const validTypes = ["market", "limit", "stop_market", "stop_limit"];
+    if (!Array.isArray(policy.permittedOrderTypes) || policy.permittedOrderTypes.some((t) => !validTypes.includes(String(t)))) {
+      return "permittedOrderTypes must be a subset of market, limit, stop_market, stop_limit.";
+    }
+  }
+  if (policy.universeFloor !== undefined) {
+    for (const key of ["minPrice", "minMarketCapUsd", "minDollarVolume"] as const) {
+      const v = policy.universeFloor[key];
+      if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v < 0)) return `universeFloor.${key} must be a non-negative number.`;
+    }
+  }
+  if (policy.riskRules.takeProfitTrimPct !== undefined && (!Number.isFinite(policy.riskRules.takeProfitTrimPct) || policy.riskRules.takeProfitTrimPct <= 0 || policy.riskRules.takeProfitTrimPct > 100)) return "riskRules.takeProfitTrimPct must be between 0 (exclusive) and 100.";
+  if (policy.riskRules.maxDrawdownPct !== undefined && policy.riskRules.maxDrawdownPct > 100) return "riskRules.maxDrawdownPct must be between 0 and 100.";
+  if (policy.riskRules.trailingStopPct !== undefined && policy.riskRules.trailingStopPct > 100) return "riskRules.trailingStopPct must be between 0 and 100.";
   if (policy.maxDailyOrders <= 0) return "maxDailyOrders must be positive.";
   if (policy.marketScanCandidateLimit !== undefined) {
     if (normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit) !== policy.marketScanCandidateLimit) {
@@ -174,6 +201,19 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
     } catch {
       return "Could not verify the selected account right now. Please try again in a moment.";
     }
+  }
+}
+
+/**
+ * Recursively delete keys whose value is `null` from a policy object (in place), so a client clearing an
+ * optional field (sent as `null` to survive JSON) becomes an ABSENT key — i.e. the guard is off / default.
+ * Skips arrays (e.g. permittedOrderTypes, enabledEvents never carry intentional nulls).
+ */
+export function stripNullsDeep(obj: Record<string, unknown>): void {
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    if (value === null) delete obj[key];
+    else if (typeof value === "object" && !Array.isArray(value)) stripNullsDeep(value as Record<string, unknown>);
   }
 }
 

@@ -6,10 +6,9 @@ export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") {
     return getAlpacaGateway(userId);
   }
-  if (policy.activeBroker === "test") {
-    // Local Test broker: real quotes, simulated fills, no real broker connection.
-    return getTestGateway(userId);
+  if (policy.activeBroker === "robinhood") {
+    return getRobinhoodGateway(userId);
   }
-  // Robinhood (MCP-only) is the remaining broker.
-  return getRobinhoodGateway(userId);
+  // "test", undefined, or any unrecognized value → safe local sim.
+  return getTestGateway(userId);
 }
