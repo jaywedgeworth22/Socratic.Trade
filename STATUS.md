@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-26 — Improvement program kickoff: risk-breaker tests + tracking doc (item #2 partial)
+Branch `agent/claude-risk-tests`. First PR of a 14-item improvement program (RAG / learning-loop / risk /
+observability) — see `docs/improvement-program-2026-06-26.md` for the full plan, per-item specs, sequenced
+batches, and status (the handoff source of truth; autonomy now treated as potentially live → risk items
+production-grade). This PR adds the missing `test/risk-breaker.test.ts` (13 tests: pure
+`evaluateDrawdownBreaker` thresholds + drawdown-priority; `accountEquity`; stateful
+`recordAndEvaluateDrawdownBreaker` — HWM ratchets up never down, start-of-day persists intraday + resets
+next day, per-(account,source) scoping, no-op without configured limits). Remaining for item #2: short/cover
+P&L + daily-notional tests. Next: langfuse-evals, rag-wire-filters, then RAG-retrieval/learning/staleness
+clusters; 4 opus specs (multi-query/RRF, coarse-credit, scheduler, Self-RAG decision) being re-designed.
+Verify: 13 tests pass · full trio via land.sh.
+
 ## 2026-06-26 — Infisical universal auth: Client ID + Client Secret (no more token confusion)
 Branch `claude/practical-mendel-cqtduf`. Root-caused the operator's "malformed token" 403 + 401s:
 the docs/script labeled `INFISICAL_TOKEN` as "the client SECRET", so a 64-char machine-identity
