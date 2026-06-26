@@ -4,16 +4,29 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-06-26 — Improvement program #8: hybrid dense+BM25 retrieval (item #4 DONE, infra-free)
-Branch `agent/claude-rag-hybrid`. New `src/lib/rag/hybrid.ts` (pure, dependency-free): `tokenize`, `bm25Scores`
-(standard BM25 k1=1.5/b=0.75, +1-smoothed IDF, avgDl guard), `rrfFuse` (Reciprocal Rank Fusion, general N
-lists — **reused by the multiquery item**), `fuseHybrid`. Wired into `retrieveContextDetailed`: when
-`HYBRID_RETRIEVAL=on`, reorder the dense candidate pool by RRF(dense, BM25) AFTER the minScore + as-of filters
-and BEFORE the cross-encoder rerank. Default OFF → `fusedPool === pool`, byte-for-byte the current dense flow;
-doesn't change overFetchK or the Pinecone query. **Scoped infra-free** (no Pinecone sparse-dense index / admin
-reindex — that needs reprovisioning I can't autonomously verify; deferred). Advisory RAG, not money-path. Built
-by a model-tiered subagent team (all sonnet); review all-green, no fixes. 29 tests; tsc clean post-merge.
-Verify: 40 tests (hybrid + retrieval) · full trio via land.sh.
+## 2026-06-26 — Improvement program #5: Langfuse offline eval/regression harness (items #6+#7 DONE)
+Branch `agent/claude-langfuse-evals`. New `scripts/eval/{dataset,score,run-offline}.ts` + `test/eval-offline.test.ts`
++ `npm run eval:offline`. 15-case seed dataset; 6 deterministic scorers (contains/notContains/regex/notRegex/
+equals/jsonShape) + an LLM-judge that no-ops offline; offline runner replays through the REAL provider registry
+(`chatProviderForModel`/`llmForModel` + `MockLLM` from `chat/llm.ts`) — MockLLM by default (hermetic, no keys),
+real providers opt-in (`EVAL_REAL_PROVIDERS=1`), Langfuse logging gated on env; exit-1 below a 0.75 threshold.
+`npm run eval:offline` → 15/15 PASS (100%); 49 hermetic tests; tsc clean. Tooling, not money-path. Built by a
+model-tiered subagent team (all sonnet: recon→design→impl→review). Verify: 49 tests + CLI smoke run green ·
+full trio via land.sh. Next: scheduler CAS lease (money-path, opus-reviewed) lands next; then the sequential
+strategy.ts/types.ts + vector-db.ts clusters.
+## 2026-06-26 — Improvement program #9: market-data staleness gate (item #5 DONE)
+Branch `agent/claude-staleness-gate`. **Money-path-adjacent (blocks proposals).** Added `maxQuoteAgeSec` /
+`maxFundamentalsAgeSec` to `TradingPolicy` (default unset = OFF). `evaluateTradeProposal` now blocks an OPENING
+proposal whose backing market data is older than the threshold: quote age from
+`marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from `MarketScan.generatedAt`;
+`age > threshold` (strict) OR a missing/unparseable timestamp → push a `staleness_gate:` reason → block. FAIL-SAFE
+(stale → block, never the reverse); exits (sell/cover) never gated; pure read + reason-push (no sizing/mutation);
+off-path byte-for-byte. `app/api/policy/route.ts` validates non-negative+finite and stripNullsDeep makes a
+cleared field = off. No defaults/market/strategy change needed (asOf already flows onto `quotesBySymbol`). Built
+by a model-tiered team: sonnet recon/impl, **opus design + dual opus review** (correctness + money-safety), both
+all-green. 9 tests; tsc clean. Verify: 57 tests (staleness + policy) · full trio via land.sh. Next (last two,
+sequential on strategy.ts): coarse-credit attribution, then multi-query/RRF.
+
 ## 2026-06-26 — Improvement program #7: rationale-diversity / template-collapse check (item #8 DONE)
 Branch `agent/claude-reasoning-diversity`. New `src/lib/rationale-diversity.ts` — multiset character-trigram
 Jaccard over normalized proposal rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity,

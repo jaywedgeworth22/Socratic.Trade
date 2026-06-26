@@ -26,12 +26,12 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 | # | Item | Spec | Status | Files (primary) |
 |---|---|---|---|---|
 | 10/#2 | **risk-breaker + short/cover P&L + notional tests** | ready | **DONE** — risk-breaker (13) ✅; calculatePnl four-side realized-P&L + notional cross-boundary (8 added) ✅. No production bugs found (adversarially verified). | `test/risk-breaker.test.ts` ✅, `test/performance.test.ts` ✅, `test/daily-notional-reset.test.ts` ✅ |
-| 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | TODO | `scripts/eval/*` (dataset, scoring, run-offline, run-providers), `test/eval-offline.test.ts` |
+| 6+7 | **Langfuse offline eval/regression + 6-provider answer-quality suite** | ready | **DONE** — 15-case dataset + 6 deterministic scorers + optional LLM-judge + offline runner (MockLLM default, real-providers opt-in via `EVAL_REAL_PROVIDERS=1`, Langfuse gated on env); `npm run eval:offline` → 15/15 PASS; 49 hermetic tests | `scripts/eval/{dataset,score,run-offline}.ts`, `test/eval-offline.test.ts`, `package.json` |
 | 1+#6 | **Wire RAG metadata filters + minScore floor** | ready | **DONE** (PR after #186) — `defaultMinScore()` (env `VECTOR_MIN_SCORE`=0.30) wired into strategy + chat retrieval; **buildExtraFilters made CASING-TOLERANT** (stored doc_type is inconsistent: sec-filings "10-K" vs sec8k "8-k" — a single-casing filter would have silently excluded 10-K/10-Q; fixed) | `vector-db.ts`, `strategy.ts`, `chat/orchestrator.ts`, `.env.example`, `test/vector-db-retrieval.test.ts` |
-| 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | **DONE** — infra-free: BM25 over the dense candidate pool, RRF-fused (after minScore+as-of, before rerank); flag `HYBRID_RETRIEVAL` (default OFF, byte-for-byte off-path). Reusable `rrfFuse` helper (multiquery reuses it). NO Pinecone sparse index needed (deferred). 29 tests | new `src/lib/rag/hybrid.ts`, `vector-db.ts`, `.env.example`, `test/vector-db-hybrid.test.ts` |
+| 4 | **Hybrid dense+sparse/BM25 retrieval** | ready | TODO (after wire-filters; shares vector-db.ts) | `vector-db.ts`, `app/api/admin/reindex-hybrid/route.ts`, `.env.example` |
 | 3 | **Embed congressional + insider disclosures into vector store** | ready | **DONE** — `disclosure-rag.ts` converts congress trades + insider filings → RAG docs (doc_type `congress-trade`/`insider-filing`, `acceptance_datetime`=disclosure/filing date for the as-of guard) → `storeContexts`; flag `RAG_EMBED_DISCLOSURES` (default OFF); 22 tests | new `web-sources/disclosure-rag.ts`, `web-sources/index.ts`, `.env.example`, `test/disclosure-rag.test.ts` |
 | 8 | **Reasoning/template-collapse diversity check on rationales** | ready | **DONE** — `rationale-diversity.ts` (multiset char-trigram Jaccard) computes per-run `{meanPairwiseSimilarity, maxPairwiseSimilarity, collapsed}`; wired into `runStrategyOnce` after the proposal set is finalized, attached to `StrategyResult` + `audit("rationale_diversity")`; advisory-only (no flag, never blocks/alters proposals); 30 tests | new `rationale-diversity.ts`, `strategy.ts`, `types.ts`, `test/rationale-diversity.test.ts` |
-| 5 | **Market-data staleness gate** | ready | TODO (shares strategy.ts/types.ts) | `types.ts`, `policy.ts`, `defaults.ts`, `strategy.ts`, `market.ts`, `app/api/policy/route.ts` |
+| 5 | **Market-data staleness gate** | ready | **DONE** — `maxQuoteAgeSec`/`maxFundamentalsAgeSec` on `TradingPolicy`; OPENING-only fail-safe gate in `evaluateTradeProposal` (stale/missing timestamp → block; reads `marketScan` asOf + `generatedAt`); default OFF; 9 tests. No defaults/market/strategy change needed (asOf already flows). Opus design + dual opus review. | `types.ts`, `policy.ts`, `app/api/policy/route.ts`, `test/staleness-gate.test.ts` |
 | 2 | **Query expansion / multi-query / RRF (RAG-Fusion)** | ready (opus) | TODO — see "Opus specs" below | retrieval path in `vector-db.ts` + `strategy.ts`, `test/vector-db-fusion.test.ts` |
 | 7/#4 | **Coarse credit assignment + attribution** | ready (opus) | TODO — see "Opus specs" below | `performance.ts`, `types.ts`, `strategy-tuning.ts`, `strategy.ts`, `backtest.ts`, `db-fills.ts` |
 | 3/#3 | **Durable/locked autonomy scheduler** | ready (opus) | **DONE** — CAS lease in `settings` KV (no migration); tick per-account body gated behind `SCHEDULER_SINGLE_LEADER` (default OFF, byte-for-byte off-path); fail-closed; SIGTERM/SIGINT/beforeExit release; lease surfaced on /health + /ready; 9 tests. Opus-designed + dual opus review (correctness + money-safety). | new `scheduler-lease.ts`, `scheduler.ts`, `health`/`ready` routes, `.env.example`, `test/scheduler-lease.test.ts` |
@@ -55,10 +55,21 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   flat-close mirrors, and a mixed residual long+short mark-to-market. The only notional addition was a
   cross-boundary (orders-age-out) case. All values adversarially re-derived from first principles; no
   production bug found (the CLAUDE.md "verify all four sides explicitly" code is correct).
-- **staleness-gate (M, flag):** add a per-data-class max-staleness threshold + a policy setting; enforce at
+- **staleness-gate (M, flag) — DONE:** `maxQuoteAgeSec`/`maxFundamentalsAgeSec` on `TradingPolicy` (default
+  unset = OFF). OPENING-only fail-safe gate in `evaluateTradeProposal`: quote age from
+  `marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from
+  `MarketScan.generatedAt`; `age > threshold` (strict) or missing/unparseable timestamp → block with a clear
+  reason — but only inside the gate-on branch. Pure read + reason-push; never approves/mutates/sizes; exits
+  never gated; off-path byte-for-byte. No defaults/market/strategy change needed (asOf already flows onto
+  `quotesBySymbol`; the gate reads `context.marketScan` at check time). Original spec note (superseded):
   proposal review so the strategy can't act on stale-but-cached data (today freshness is only a label).
-- **langfuse-evals (M):** Langfuse already a dep; seed dataset + offline runner replaying across the 6
-  providers + deterministic & LLM-judge scoring → catches prompt/RAG/provider regressions.
+- **langfuse-evals (M) — DONE:** `scripts/eval/dataset.ts` (15 cases: chat/quote/alert/order/watchlist/kb/
+  positions/advice/views) + `score.ts` (6 deterministic scorers: contains/notContains/regex/notRegex/equals/
+  jsonShape + LLM-judge that no-ops when `EVAL_JUDGE_API_KEY` absent) + `run-offline.ts` (MockLLM default;
+  real providers opt-in `EVAL_REAL_PROVIDERS=1`; Langfuse gated on `LANGFUSE_PUBLIC_KEY`; exit-1 below 0.75).
+  `npm run eval:offline` → 15/15, 100%. 49 hermetic tests (no network/keys). Reuses the real provider registry
+  (`chatProviderForModel`/`llmForModel`) + `MockLLM` from `chat/llm.ts`. Real-provider replay across all 6
+  (openai/anthropic/xai/gemini/mistral/deepseek) is wired but opt-in.
 - **rag-embed-congress-insider (M, flag) — DONE:** `web-sources/disclosure-rag.ts` turns structured congress
   trades + insider filings into natural-language RAG docs and upserts via `storeContexts` (reuses the
   embedding stack; loaded by dynamic import so the heavy Voyage/Pinecone deps only load when the flag is on).
@@ -68,13 +79,7 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
   directly (not through `rag/chunk.ts`) — the chunker targets long docs. **Follow-up:** embeds the whole
   dataset each refresh (deterministic upsert id → no dupes, but redundant embed cost); a fresh-delta-only
   pass is a cheap later optimization.
-- **rag-hybrid-bm25 (M, flag) — DONE (infra-free):** Original plan was Pinecone sparse-dense + admin reindex,
-  but that needs index reprovisioning that can't be autonomously verified. Shipped a no-infra equivalent
-  instead: `src/lib/rag/hybrid.ts` computes BM25 over the over-fetched dense candidate pool's text and
-  RRF-fuses it with the dense cosine ranking — inserted AFTER the minScore + as-of filters and BEFORE the
-  cross-encoder rerank. `rrfFuse` is a general N-list helper (the **multiquery item reuses it**). Flag
-  `HYBRID_RETRIEVAL` (default OFF → `fusedPool === pool`, byte-for-byte unchanged). Deferred follow-up: a true
-  Pinecone sparse-dense index with corpus-wide IDF (current IDF is pool-local, fine for relative ranking).
+- **rag-hybrid-bm25 (M, flag):** Pinecone sparse-dense; needs a reindex (admin route). Land after wire-filters.
 - **reasoning-diversity (M) — DONE:** `rationale-diversity.ts` — multiset character-trigram Jaccard over
   normalized rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity, collapsed, threshold}`
   (`collapsed` = mean > 0.85). Wired into `runStrategyOnce` after the proposal set is finalized; attached to
