@@ -1,0 +1,103 @@
+name: Codex Autofix
+
+# Autonomous responder to the Codex PR reviewer (chatgpt-codex-connector[bot]).
+#
+# Roles are DISTINCT so the two bots never compete to "review first":
+#   • Codex  = reviewer — fires on every push, posts P1/P2 suggestions.
+#   • Claude = fixer    — fires ONLY when Codex posts feedback, addresses it,
+#                         then pushes. The push makes Codex review again →
+#                         clean ping-pong, capped to avoid an infinite loop.
+#
+# Prerequisites (one-time, see the PR description):
+#   1. Secret  ANTHROPIC_API_KEY  (Settings → Secrets and variables → Actions).
+#   2. A token whose pushes RE-TRIGGER CI + Codex. The default GITHUB_TOKEN does
+#      NOT re-trigger workflows, so EITHER install the Claude GitHub App
+#      (github.com/apps/claude) OR add a PAT secret named GH_PAT (repo + workflow
+#      scope). The job below prefers GH_PAT and falls back to GITHUB_TOKEN.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to run the autofix loop on"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+# One run per PR; let an in-flight run finish rather than cancel mid-push.
+concurrency:
+  group: codex-autofix-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  autofix:
+    # Only when the Codex bot posted the feedback (review / inline comment / PR
+    # comment), or a maintainer dispatched it manually. issue_comment must be on
+    # a PR (issue.pull_request != null), never a plain issue.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_review' && github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
+      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.login == 'chatgpt-codex-connector[bot]') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          # The whole policy lives in the prompt so behavior is auditable in-repo.
+          prompt: |
+            You are the autonomous fixer that responds to the Codex PR reviewer
+            (chatgpt-codex-connector[bot]) on THIS pull request. You do NOT review
+            the PR yourself — Codex is the reviewer; you only address its feedback.
+
+            Repo: agentic-trading (Next.js). Verify trio: `npx tsc --noEmit` →
+            `npm test` → `npm run build`. Note: `npm run build` rewrites
+            next-env.d.ts and tsconfig.json — restore them from origin/main before
+            committing (`git checkout origin/main -- next-env.d.ts tsconfig.json`).
+            The git author email MUST be 12656028+jaywedgeworth22@users.noreply.github.com.
+
+            Do this:
+            1. ROUND CAP: count commits on the PR branch whose message contains
+               "[codex-autofix]". If there are already 10 or more, STOP: post one PR
+               comment summarizing the remaining open Codex items and asking the
+               maintainer how to proceed, then end without further changes.
+            2. Read the PR's review threads. Separate OUTDATED threads (anchored to
+               code already changed — usually already fixed) from genuinely NEW,
+               non-outdated Codex items.
+            3. For each NEW item: if it is a clear correctness bug OR a simple
+               cosmetic/doc fix, fix it. If it is ambiguous or architecturally
+               significant, do NOT guess — post a PR comment asking the maintainer,
+               and skip it.
+            4. If `git merge origin/main` is needed (branch behind main), merge it,
+               resolve conflicts (keep BOTH STATUS.md entries), run `npm install`
+               if package.json changed.
+            5. Run the verify trio. Only commit if it passes. Commit message must
+               start with "[codex-autofix] ". Push to the PR branch.
+            6. Update STATUS.md + the relevant docs/rollouts note like the repo's
+               handoff protocol requires.
+            7. When the PR is functional (CI will run on your push) and you have
+               addressed the actionable items, ensure auto-merge is enabled:
+               `gh pr merge <PR> --squash --auto`. Do NOT use --admin and do NOT
+               try to bypass the required `verify` check.
+            8. Be frugal with PR comments — only comment to ask the maintainer a
+               question, to report the round cap was hit, or to flag a finding you
+               are intentionally not fixing. The diff is the record otherwise.
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Edit,Write,Read,Bash"
