@@ -70,7 +70,11 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"
-          if [ -n "${INFISICAL_TOKEN:-}" ] && command -v infisical >/dev/null 2>&1; then
+          # Build with secrets when an Infisical credential is present — either the
+          # machine-identity Client ID + Client Secret (preferred, long-lived) or a
+          # pre-minted INFISICAL_TOKEN. Otherwise plain build (unchanged pre-cutover).
+          if { { [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ]; } || [ -n "${INFISICAL_TOKEN:-}" ]; } \
+               && command -v infisical >/dev/null 2>&1; then
             echo "[deploy] Infisical configured — building with secrets (build:secrets)"
             npm run build:secrets
           else
