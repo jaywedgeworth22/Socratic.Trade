@@ -44,11 +44,12 @@ jobs:
           DIR="${DEPLOY_DIR:-$HOME/apps/trading-live}"
           APP="${PM2_APP:-trading}"
 
-          # Load the Infisical bootstrap if this box has been cut over to Infisical
-          # (written by scripts/infisical-prod-cutover.sh; chmod 600, never committed,
-          # lives outside the repo). Absent → plain build/restart, i.e. unchanged.
+          # The Infisical bootstrap (written by scripts/infisical-prod-cutover.sh; chmod
+          # 600, never committed, lives outside the repo) holds the long-lived
+          # machine-identity Client ID/Secret. It is sourced ONLY inside the build and
+          # restart steps below — never around `npm ci`, so the credential is not exposed
+          # to dependency install/lifecycle scripts. Absent → plain build/restart.
           ENV_FILE="$HOME/.config/agentic-trading/deploy.env"
-          if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; echo "[deploy] loaded Infisical bootstrap from $ENV_FILE"; fi
 
           echo "::group::Update worktree ($DIR -> origin/main)"
           cd "$DIR"
@@ -70,20 +71,33 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"
-          # Build with secrets when an Infisical credential is present — either the
-          # machine-identity Client ID + Client Secret (preferred, long-lived) or a
-          # pre-minted INFISICAL_TOKEN. Otherwise plain build (unchanged pre-cutover).
-          if { { [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ]; } || [ -n "${INFISICAL_TOKEN:-}" ]; } \
-               && command -v infisical >/dev/null 2>&1; then
-            echo "[deploy] Infisical configured — building with secrets (build:secrets)"
-            npm run build:secrets
+          # Source the bootstrap in a SUBSHELL scoped to this step. Build with secrets
+          # when a credential is present — the machine-identity Client ID + Client Secret
+          # (preferred, long-lived) or a pre-minted INFISICAL_TOKEN. Otherwise plain build.
+          if [ -f "$ENV_FILE" ]; then
+            ( set -a; . "$ENV_FILE"; set +a
+              if { { [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ]; } || [ -n "${INFISICAL_TOKEN:-}" ]; } \
+                   && command -v infisical >/dev/null 2>&1; then
+                echo "[deploy] Infisical configured — building with secrets (build:secrets)"
+                npm run build:secrets
+              else
+                echo "[deploy] Infisical bootstrap present but no usable credential — plain build"
+                npm run build
+              fi )
           else
-            echo "[deploy] Infisical not configured — plain build"
+            echo "[deploy] No Infisical bootstrap — plain build"
             npm run build
           fi
           echo "::endgroup::"
 
           echo "::group::Restart PM2 process ($APP)"
-          pm2 restart "$APP" --update-env
+          # PM2 --update-env refreshes the managed process's env from the invoking shell,
+          # so the runtime (npm run start:secrets) gets the bootstrap and mints its own
+          # token. Source it in a subshell scoped to the restart — never globally.
+          if [ -f "$ENV_FILE" ]; then
+            ( set -a; . "$ENV_FILE"; set +a; pm2 restart "$APP" --update-env )
+          else
+            pm2 restart "$APP" --update-env
+          fi
           pm2 save
           echo "::endgroup::"

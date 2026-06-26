@@ -44,11 +44,24 @@ tokens.
   explicitly-set-but-malformed `INFISICAL_SHARED_TOKEN` now fails closed instead of silently
   restarting prod app-only); and hardens the shared overlay so it cleanly skips when not requested (no
   `set -u` unbound-variable crash).
-- **`.github/workflows/deploy.yml`** — the `build:secrets` gate now fires on Client ID + Client Secret
-  (or a token), so a client-creds box still builds with secrets.
+- **`.github/workflows/deploy.yml`** — the `build:secrets` gate fires on Client ID + Client Secret (or
+  a token), so a client-creds box still builds with secrets. The bootstrap is sourced in **subshells
+  scoped to the build and restart steps only — never around `npm ci`**, so the long-lived Client
+  Secret is not exposed to dependency install/lifecycle scripts (Codex review #177 round 2).
 - **`.env.example`, `docs/secrets.md`, `docs/deployment.md`** — corrected the token-vs-Client-Secret
   conflation; documented `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) as the primary
   bootstrap.
+
+### Security hardening (Codex review #177 round 2)
+
+- **Mint via env, not argv:** both `mintToken` (runner) and `mint_token` (cutover) now pass the
+  Client ID/Secret to `infisical login` through `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`…_CLIENT_SECRET`
+  in the child env instead of `--client-secret=` on the command line, so the long-lived secret never
+  appears in `ps`/`/proc/<pid>/cmdline`.
+- **Fail closed on a partial shared identity:** setting only one of
+  `INFISICAL_SHARED_CLIENT_ID`/`INFISICAL_SHARED_CLIENT_SECRET` now dies (mirroring the app path)
+  rather than silently restarting prod without the shared overlay.
+- **Scope the bootstrap away from `npm ci`** (deploy.yml subshells, above).
 
 ## Files
 
@@ -62,6 +75,12 @@ tokens.
 ## Verification
 
 - `node --check scripts/infisical-run.mjs` ✓; `bash -n scripts/infisical-prod-cutover.sh` ✓.
+- **Round-2 hardening, re-proven with shims:** runner mints via env (login `argv` contains no
+  `--client-secret`, creds arrive as `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET`), the minted token
+  flows to run/export, and no Client Secret leaks into the spawned process; cutover fails closed on a
+  partial shared identity and on a Client-Secret-as-token, happy path still writes long-lived creds to
+  `deploy.env`; a deploy.yml simulation confirms `npm ci` sees **no** Client Secret while
+  `build:secrets` + `pm2 restart --update-env` do. `tsc` clean.
 - **Fake `infisical` shim** (real CLI absent in the sandbox): single-project client-creds → CLI gets
   `UA_CLIENT_ID/SECRET`, no `INFISICAL_TOKEN`, `SECRETS_SOURCE=infisical`; token-only → token passed
   through; stale token + client creds → universal auth wins and token is dropped; app+shared overlay →

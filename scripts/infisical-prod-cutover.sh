@@ -119,8 +119,11 @@ export INFISICAL_DISABLE_UPDATE_CHECK=true
 # token (universal auth). `--plain --silent` prints just the raw token, which the
 # CLI's secrets/export read via INFISICAL_TOKEN.
 mint_token() {  # $1=client_id $2=client_secret $3=label → prints the access token
+  # Creds go via the env (INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET), NOT argv, so the
+  # long-lived Client Secret never shows up in `ps`/`/proc/<pid>/cmdline`.
   local tok
-  tok="$(infisical login --method=universal-auth --client-id="$1" --client-secret="$2" --silent --plain 2>/dev/null)" \
+  tok="$(INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$1" INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$2" \
+         infisical login --method=universal-auth --silent --plain 2>/dev/null)" \
     || die "universal-auth login failed for the $3 identity. Check the Client ID + Client Secret pairing/access (each secret only works with its OWN identity's Client ID; watch for rotation/lockout)."
   [ -n "$tok" ] || die "universal-auth login for the $3 identity returned an empty token."
   printf '%s' "$tok"
@@ -132,6 +135,13 @@ if [ -n "$APP_CLIENT_ID" ] && [ -n "$APP_CLIENT_SECRET" ]; then
   APP_TOKEN="$(mint_token "$APP_CLIENT_ID" "$APP_CLIENT_SECRET" app)"
 fi
 infisical_app() { INFISICAL_TOKEN="$APP_TOKEN" infisical "$@"; }
+
+# Partial shared identity (only one half of the pair) is a HARD ERROR — fail closed,
+# mirroring the app path, rather than silently restarting prod without shared secrets.
+if { [ -n "$SHARED_CLIENT_ID" ] && [ -z "$SHARED_CLIENT_SECRET" ]; } \
+   || { [ -z "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; }; then
+  die "Partial shared identity: set BOTH INFISICAL_SHARED_CLIENT_ID and INFISICAL_SHARED_CLIENT_SECRET (or neither, to skip the shared overlay)."
+fi
 
 # Decide whether the shared overlay is requested. An explicitly-set-but-malformed
 # shared token is a HARD ERROR (fail closed) — never silently restart prod app-only

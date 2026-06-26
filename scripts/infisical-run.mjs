@@ -71,12 +71,22 @@ function hasAuth(a) {
 }
 
 // Exchange a machine-identity Client ID + Client Secret for a short-lived access
-// token (universal auth). `--plain --silent` prints just the raw token.
+// token (universal auth). `--plain --silent` prints just the raw token. The creds
+// are passed via the child ENV (INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET), NOT on
+// argv, so the long-lived Client Secret never appears in `ps`/`/proc/<pid>/cmdline`.
 function mintToken(clientId, clientSecret, label) {
   const r = spawnSync(
     "infisical",
-    ["login", "--method=universal-auth", `--client-id=${clientId}`, `--client-secret=${clientSecret}`, "--silent", "--plain"],
-    { encoding: "utf8", env: { ...process.env, INFISICAL_DISABLE_UPDATE_CHECK: "true" } }
+    ["login", "--method=universal-auth", "--silent", "--plain"],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: clientId,
+        INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: clientSecret,
+        INFISICAL_DISABLE_UPDATE_CHECK: "true",
+      },
+    }
   );
   if (r.error) {
     console.error(`[infisical] failed to run 'infisical login' for the ${label} identity:`, r.error.message);
