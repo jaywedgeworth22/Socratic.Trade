@@ -71,18 +71,22 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"
-          # Source the bootstrap in a SUBSHELL scoped to this step. Build with secrets
-          # when a credential is present — the machine-identity Client ID + Client Secret
-          # (preferred, long-lived) or a pre-minted INFISICAL_TOKEN. Otherwise plain build.
+          # Source the bootstrap in a SUBSHELL scoped to this step. deploy.env is the
+          # cutover signal (it carries REQUIRE_SECRETS_MANAGER=1), so when it is present the
+          # secrets path MUST work: a present-but-unusable bootstrap (missing CLI or no
+          # complete credential) is a HARD deploy failure, never a silent plain build — that
+          # would go on to restart a `start:secrets` service that then refuses to boot.
+          # Plain build happens only pre-cutover, when no bootstrap exists.
           if [ -f "$ENV_FILE" ]; then
             ( set -a; . "$ENV_FILE"; set +a
-              if { { [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ]; } || [ -n "${INFISICAL_TOKEN:-}" ]; } \
-                   && command -v infisical >/dev/null 2>&1; then
+              command -v infisical >/dev/null 2>&1 \
+                || { echo "[deploy] ERROR: $ENV_FILE present (box cut over to Infisical) but the infisical CLI is missing." >&2; exit 1; }
+              if { [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ]; } || [ -n "${INFISICAL_TOKEN:-}" ]; then
                 echo "[deploy] Infisical configured — building with secrets (build:secrets)"
                 npm run build:secrets
               else
-                echo "[deploy] Infisical bootstrap present but no usable credential — plain build"
-                npm run build
+                echo "[deploy] ERROR: $ENV_FILE present but no usable Infisical credential (need INFISICAL_CLIENT_ID+INFISICAL_CLIENT_SECRET or INFISICAL_TOKEN)." >&2
+                exit 1
               fi )
           else
             echo "[deploy] No Infisical bootstrap — plain build"

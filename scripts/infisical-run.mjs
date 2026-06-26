@@ -70,6 +70,22 @@ function hasAuth(a) {
   return Boolean((a.clientId && a.clientSecret) || a.token);
 }
 
+// Fail closed on a half-configured universal-auth pair (one of id/secret without the
+// other) — don't silently fall back to a stale token or a cached CLI login while still
+// marking SECRETS_SOURCE=infisical.
+function assertCompletePair(a, label) {
+  if (Boolean(a.clientId) !== Boolean(a.clientSecret)) {
+    const p = label === "shared" ? "_SHARED" : "";
+    console.error(
+      `[infisical] Partial ${label} universal-auth credentials: set BOTH ` +
+      `INFISICAL${p}_CLIENT_ID and INFISICAL${p}_CLIENT_SECRET (or neither).`
+    );
+    process.exit(2);
+  }
+}
+assertCompletePair(appAuth, "app");
+if (sharedProjectId) assertCompletePair(sharedAuthOwn, "shared");
+
 // Exchange a machine-identity Client ID + Client Secret for a short-lived access
 // token (universal auth). `--plain --silent` prints just the raw token. The creds
 // are passed via the child ENV (INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET), NOT on
@@ -193,9 +209,9 @@ function fetchProject(projectId, token, env, path, label) {
     );
     process.exit(2);
   }
-  const spawnEnv = { ...process.env, INFISICAL_TOKEN: token, INFISICAL_DISABLE_UPDATE_CHECK: "true" };
-  delete spawnEnv.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID;
-  delete spawnEnv.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET;
+  // childEnv strips every client secret / universal-auth var so the export subprocess
+  // authenticates with only the short-lived token — same scoping as the app launch.
+  const spawnEnv = childEnv({}, token);
   const r = spawnSync(
     "infisical",
     ["export", "--projectId", projectId, "--env", env, "--path", path, "--format", "dotenv"],

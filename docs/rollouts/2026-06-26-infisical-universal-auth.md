@@ -52,16 +52,30 @@ tokens.
   conflation; documented `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET` (+ shared) as the primary
   bootstrap.
 
-### Security hardening (Codex review #177 round 2)
+### Security hardening (Codex review #177 rounds 2–3)
 
+Round 2:
 - **Mint via env, not argv:** both `mintToken` (runner) and `mint_token` (cutover) now pass the
   Client ID/Secret to `infisical login` through `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`…_CLIENT_SECRET`
   in the child env instead of `--client-secret=` on the command line, so the long-lived secret never
   appears in `ps`/`/proc/<pid>/cmdline`.
-- **Fail closed on a partial shared identity:** setting only one of
+- **Fail closed on a partial shared identity (cutover):** setting only one of
   `INFISICAL_SHARED_CLIENT_ID`/`INFISICAL_SHARED_CLIENT_SECRET` now dies (mirroring the app path)
   rather than silently restarting prod without the shared overlay.
 - **Scope the bootstrap away from `npm ci`** (deploy.yml subshells, above).
+
+Round 3:
+- **Sanitize the `infisical export` subprocess env (runner):** `fetchProject` now builds its env via
+  `childEnv` (which strips every client secret / universal-auth var), so each overlay export
+  authenticates with only the short-lived token — no client secrets in the export child's env.
+- **Fail closed on partial runner credentials:** `infisical-run.mjs` validates the app pair (always)
+  and the shared pair (when the overlay is on) up front — exactly one of id/secret → exit 2, instead
+  of silently falling back to a stale token or a cached CLI login while still setting
+  `SECRETS_SOURCE=infisical`.
+- **Fail the deploy on a present-but-unusable bootstrap:** when `deploy.env` exists (the cutover
+  signal, with `REQUIRE_SECRETS_MANAGER=1`) but the `infisical` CLI is missing or no complete
+  credential is present, `deploy.yml` now errors instead of doing a silent plain build that would then
+  restart a `start:secrets` service that can't boot.
 
 ## Files
 

@@ -16,7 +16,10 @@ token automatically:
   remains a fallback. (Codex review #177 P1: switched from env-var auto-auth to explicit minting; P2:
   the cutover fails closed on a malformed shared token instead of silently deploying app-only. Round 2:
   mint via env not argv (no Client Secret in `ps`); fail closed on a partial shared identity; deploy.yml
-  scopes the bootstrap to the build/restart subshells so the long-lived secret never reaches `npm ci`.)
+  scopes the bootstrap to the build/restart subshells so the long-lived secret never reaches `npm ci`.
+  Round 3: sanitize the `infisical export` subprocess env; fail closed on partial runner creds (app
+  always, shared when overlay on); deploy fails on a present-but-unusable bootstrap instead of a silent
+  plain build.)
 - `scripts/infisical-prod-cutover.sh` — prompts for Client ID (visible) + Client Secret (hidden),
   persists the long-lived creds to `deploy.env` (not an expiring token), **detects a 64-hex
   Client-Secret-in-a-token-field and dies with a clear message**, and hardens the shared block under
