@@ -10,6 +10,7 @@
 import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
 import { fetchDailyOHLC } from "../history";
+import { fetchYahooFinanceQuote } from "../yahoo-finance";
 import { retrieveContextDetailed } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
@@ -87,6 +88,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     const draftCall = result.toolCalls?.find((c) => c.name === "draft_order" && c.result && !c.result.error);
     const draft = (draftCall?.result as ChatDraft) ?? null;
 
+    const usedModel = model.modelName;
     const reply: ChatReply = {
       text,
       draft,
@@ -94,13 +96,15 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       usedMemories: memories.map((m) => ({ subject: m.subject, value: m.value, hard: m.hard })),
       memory: { written: mem.written.length, held: mem.held.length },
       intent: classifyIntent(message).intent,
-      promptVersion: PROMPT_VERSION
+      promptVersion: PROMPT_VERSION,
+      model: usedModel
     };
     appendTurn(userId, {
       role: "assistant",
       text: reply.text,
       citations: reply.citations.map((c) => c.chunk_id ?? c.source),
-      intent: reply.intent
+      intent: reply.intent,
+      model: usedModel
     });
     audit("chat.reply", { userId, has_draft: !!draft, citations: reply.citations.length }, userId);
     return reply;
@@ -133,9 +137,19 @@ export function buildProductionDeps(): ToolDeps {
             /* fall through to the keyless market-data fallback */
           }
         }
-        // 2) Keyless market-data fallback (recent daily close). Works with NO account selected and when
-        // the broker feed is empty (after hours / free IEX tier), so "what's X at" still gets answered
-        // instead of returning NO_QUOTE.
+        // 2) Live market-data quote (Yahoo regularMarketPrice + its real timestamp). Preferred over the
+        // daily-bar close so the "as of" reflects today's price, not the last completed daily bar
+        // (which is often yesterday until the current session's bar posts).
+        if (price == null) {
+          const yq = await fetchYahooFinanceQuote(symbol);
+          if (yq && yq.price > 0) {
+            price = yq.price;
+            asOf = yq.asOf;
+            source = "yahoo-finance";
+          }
+        }
+        // 3) Daily-close fallback (recent close) — last resort when no live quote is available. Works
+        // with NO account selected too, so "what's X at" still gets answered instead of NO_QUOTE.
         if (price == null) {
           const bars = await fetchDailyOHLC(symbol, Date.now(), userId);
           const last = bars && bars.length ? bars[bars.length - 1] : undefined;
