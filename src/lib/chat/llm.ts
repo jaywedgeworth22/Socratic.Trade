@@ -443,8 +443,10 @@ export class OpenAILLM implements ChatLLM {
     messages.push({ role: "user", content: message });
 
     // Convert ChatLLM ToolSchema → OpenAI function-calling format.
+    // deepseek-reasoner does not support function calling per DeepSeek docs.
+    const supportsTools = !/^deepseek-reasoner/i.test(this.model);
     const oaiTools =
-      tools && tools.length
+      supportsTools && tools && tools.length
         ? tools.map((t) => ({
             type: "function",
             function: {

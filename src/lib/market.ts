@@ -40,7 +40,8 @@ export function outlierInterestScore(sig?: SymbolWebSignal): number {
 /** 0–100 outlier weight from App A's aggregate congressional analytics; 0 unless there is net buying. */
 export function congressAnalyticsScore(a?: SymbolWebSignal["congressAnalytics"]): number {
   if (!a) return 0;
-  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0 || a.convictionDirection === "BUY";
+  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0 ||
+    (a.convictionDirection === "BUY" && (a.convictionScore ?? 0) >= 60);
   if (!netBuying) return 0; // net selling / neutral is not a long-side outlier
   const flowBoost = (a.netFlowUsd ?? 0) > 0 ? Math.min(20, Math.log10(Math.max(1, a.netFlowUsd ?? 0)) * 3) : 0;
   const clusterBoost = a.cluster ? 15 : 0;

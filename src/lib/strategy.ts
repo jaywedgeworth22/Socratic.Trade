@@ -1827,14 +1827,9 @@ async function proposeTrades(input: {
           { role: "system", content: systemPrompt },
           { role: "user", content: JSON.stringify(userContent) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "trade_proposals",
-            strict: true,
-            schema
-          }
-        }
+        response_format: provider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "trade_proposals", strict: true, schema } }
       }
       : {
         model,
@@ -2036,14 +2031,9 @@ async function proposeTrades(input: {
           { role: "system", content: bearSystemPrompt },
           { role: "user", content: JSON.stringify(bearUserContent) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "bear_proposals",
-            strict: true,
-            schema: bearSchema
-          }
-        }
+        response_format: bearProvider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "bear_proposals", strict: true, schema: bearSchema } }
       }
       : {
         model: bearModel,
