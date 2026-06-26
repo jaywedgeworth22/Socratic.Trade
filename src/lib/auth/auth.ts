@@ -49,15 +49,29 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     decode: decodeSessionToken
   },
   callbacks: {
-    // Gate GitHub and Apple sign-ins on a non-null email.
-    // - GitHub: /user only surfaces publicly visible emails (GitHub-verified). Null means
-    //   the user has no public email set → no identity to check against the allowlist.
-    // - Apple: only sends the email on the FIRST authorization. If it's null here, the
-    //   user is re-authorizing after their session expired and Apple is no longer sharing
-    //   the email — sign-in fails, as we have no email to verify. See comment above.
-    async signIn({ account, profile }: { account?: { provider?: string } | null; profile?: { email?: string | null } }) {
-      if (account?.provider === "github" || account?.provider === "apple") {
-        return !!(profile?.email);
+    // Gate GitHub and Apple sign-ins.
+    // - GitHub: the built-in provider picks the primary email from /user/emails without
+    //   checking the `verified` flag. We call /user/emails ourselves to confirm the
+    //   selected email is actually verified before allowing the session.
+    // - Apple: only sends the email on the FIRST authorization. If null, the user is
+    //   re-authorizing after their session expired — sign-in fails, no email to verify.
+    async signIn({
+      account,
+      profile
+    }: {
+      account?: { provider?: string; access_token?: string } | null;
+      profile?: { email?: string | null };
+    }) {
+      if (!profile?.email) return account?.provider === "github" || account?.provider === "apple" ? false : true;
+      if (account?.provider === "github" && account.access_token) {
+        const res = await fetch("https://api.github.com/user/emails", {
+          headers: { Authorization: `Bearer ${account.access_token}`, "User-Agent": "authjs" }
+        });
+        if (res.ok) {
+          const emails: Array<{ email: string; verified: boolean }> = await res.json();
+          const match = emails.find((e) => e.email.toLowerCase() === (profile.email as string).toLowerCase());
+          if (!match?.verified) return false;
+        }
       }
       return true;
     },
