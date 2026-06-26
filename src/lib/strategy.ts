@@ -70,7 +70,8 @@ import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
+import { computeRationaleDiversity } from "./rationale-diversity";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -89,6 +90,8 @@ export interface StrategyResult {
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
+  /** Advisory only — rationale-diversity check result (improvement-program item #8). Never affects proposal generation or selection. */
+  rationaleDiversity?: RationaleDiversity;
 }
 
 export interface LiveApprovalConfirmation {
@@ -438,6 +441,15 @@ export async function runStrategyOnce(
       userId
     );
 
+    // Advisory-only rationale-diversity check (improvement-program item #8).
+    // Computed on the final post-debate, post-gate proposal set. NEVER blocks, drops, or modifies proposals.
+    const rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
+    if (rationaleDiversity.collapsed) {
+      console.warn(
+        `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
+      );
+    }
+
     const results: StrategyResult["proposals"] = [];
     for (const proposal of proposals) {
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
@@ -708,6 +720,8 @@ export async function runStrategyOnce(
       .filter(Boolean)
       .join(" ");
 
+    // Persist diversity result as an advisory audit event (no schema migration needed).
+    audit("rationale_diversity", { runId, ...rationaleDiversity }, userId);
     finishStrategyRun(runId, "completed", summary, userId);
     if (!executionState.usesLocalSimulation) {
       recordPortfolioSnapshot({
@@ -736,7 +750,7 @@ export async function runStrategyOnce(
         positions: paperProjection.positions
       });
     }
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber };
+    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection
     generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
