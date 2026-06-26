@@ -329,6 +329,8 @@ describe("chatProviderForModel — model name → provider", () => {
     expect(chatProviderForModel("gemini-2.5-flash")).toBe("gemini");
     expect(chatProviderForModel("mistral-large-latest")).toBe("mistral");
     expect(chatProviderForModel("ministral-3b-latest")).toBe("mistral");
+    expect(chatProviderForModel("deepseek-chat")).toBe("deepseek");
+    expect(chatProviderForModel("deepseek-reasoner")).toBe("deepseek");
     expect(chatProviderForModel("gpt-5.4-mini")).toBe("openai");
     expect(chatProviderForModel("o4-mini")).toBe("openai");
   });
@@ -337,7 +339,7 @@ describe("chatProviderForModel — model name → provider", () => {
 describe("llmForModel — multi-provider routing", () => {
   // Every LLM provider key; the helper below presents exactly one (or none) so we can prove the
   // model routes to its own provider and never silently borrows a different provider's key.
-  const KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY"] as const;
+  const KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
 
   beforeAll(() => {
     process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/chat-llm-model-routing-${Date.now()}.db`;
@@ -378,6 +380,7 @@ describe("llmForModel — multi-provider routing", () => {
     withOnlyKey("XAI_API_KEY", () => expect(llmForModel("grok-4.3", "u_xai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("GEMINI_API_KEY", () => expect(llmForModel("gemini-2.5-flash", "u_gemini")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-latest", "u_mistral")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("DEEPSEEK_API_KEY", () => expect(llmForModel("deepseek-chat", "u_deepseek")).toBeInstanceOf(OpenAILLM));
   });
 
   it("does NOT borrow another provider's key — a non-OpenAI model with only an OpenAI key is MockLLM", () => {
