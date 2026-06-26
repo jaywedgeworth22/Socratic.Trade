@@ -10,6 +10,7 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => ["SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition."],
   retrieveContextDetailed: async () => [{ id: "c1", text: "SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition.", source: "sec", as_of: null, score: 0.9, url: null }],
+  defaultMinScore: () => 0.3,
   storeContext: async () => {},
   storeContexts: async () => {}
 }));

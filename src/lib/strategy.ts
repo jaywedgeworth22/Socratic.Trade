@@ -293,10 +293,16 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     try {
-      const { retrieveContextDetailed } = await import("./vector-db");
+      const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
       const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
       const contexts = await Promise.all(topSymbols.map(sym =>
-        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
+        // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
+        // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
+        // never wired through this call site before. Advisory context only — not a money-path gate.
+        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
+          docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+          minScore: defaultMinScore()
+        })
       ));
       const validContexts = contexts.flat().filter(Boolean);
       if (validContexts.length > 0) {
