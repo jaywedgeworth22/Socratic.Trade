@@ -176,6 +176,16 @@ Four more valid P2s — two were real bugs introduced by the round 5–7 changes
   "complete" at the full TTL, hiding a usable row pushed minutes later. **Fixed**: compute `partial` from
   whether each field group actually *contributed* a value to `e` (FUND_KEYS / ANALYST_KEYS), not row count.
 
+## Codex review round 11 (PR #160, commit 434441f) — two bugs in the round 9–10 caching fixes
+- **Partial App A hit cached despite a transport error** — the positive-cache branch ran before the
+  `!transportError` guard (which only protected the empty branch), so if one endpoint returned data and the
+  other ERRORED, the surviving half was cached, suppressing retry of the failed side for the whole TTL.
+  **Fixed**: the result is still returned for the scan, but it's only *cached* when neither read failed.
+- **Stripped FMP cache hit returned as `{}`** — round 9 strips a cached FMP entry's redundant consensus when
+  App A covers it; if that entry was analyst-only, stripping left `{}` which was returned as a hit, so FMP's
+  unique fields (insider/senate, enabled targets) never refetched until the cache expired. **Fixed**: when
+  stripping leaves nothing useful, fall through to `misses` so FMP refetches its unique fields.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (price/history cache-aside) **and**
   `CONGRESS_TRADE_FUNDAMENTALS_ENABLED=on` (the fundamentals/analyst tier — gated SEPARATELY since the
