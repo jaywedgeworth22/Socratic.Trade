@@ -36,6 +36,22 @@ import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan, TradeProposal } from "./types";
 import { isAdminEmail } from "./auth/admin";
 
+/**
+ * Derive agentic-allowed for a STORED connected account, used as a fallback when the live broker
+ * enumeration is unavailable. Mirrors the live gateways: Robinhood defaults agentic-allowed only for a
+ * standard brokerage account (not IRA/Roth); Alpaca and the local Test gateway report agentic-allowed
+ * for all of their accounts. Exported for unit testing.
+ */
+export function connectedAccountAgenticFallback(account: {
+  broker: string;
+  capabilities?: { accountType?: string };
+}): boolean {
+  if (account.broker === "robinhood") {
+    return (account.capabilities?.accountType ?? "brokerage") === "brokerage";
+  }
+  return true; // alpaca / alpaca-mcp / test gateways report agentic-allowed for all their accounts
+}
+
 export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
   ensureTestAccount(userId);
   const policy = getPolicy(userId);
@@ -45,6 +61,21 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     accounts = await gateway.getAccounts();
   } catch (error) {
     console.warn("Failed to fetch accounts:", error instanceof Error ? error.message : error);
+  }
+  // Resilience: a live getAccounts() that fails or returns empty (a transient broker/MCP enumeration
+  // miss) must not make the configured account vanish from the snapshot — which made the readiness
+  // badge false-warn "not available for agentic execution". Backfill any stored connected account the
+  // live list didn't return, deriving agenticAllowed from the account type so the selected account
+  // always resolves to a definitive status.
+  const liveAccountNumbers = new Set(accounts.map((account) => account.accountNumber));
+  for (const connected of listConnectedAccounts(userId)) {
+    if (!connected.accountNumber || liveAccountNumbers.has(connected.accountNumber)) continue;
+    accounts.push({
+      accountNumber: connected.accountNumber,
+      label: connected.label,
+      agenticAllowed: connectedAccountAgenticFallback(connected),
+      capabilities: connected.capabilities
+    });
   }
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
   let portfolio, positions: any[] = [], orders: any[] = [];
