@@ -7,8 +7,9 @@
 //   5. Return { text, draft?, citations, usedMemories } — never executes a trade.
 // Ported from reference/atlas-public-src/bff/orchestrator.mjs.
 
-import { audit, getPolicy, listPendingProposals } from "../db";
+import { audit, getPolicy, getUserSetting, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
+import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
 import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
@@ -240,6 +241,54 @@ export function buildProductionDeps(): ToolDeps {
       } catch (e) {
         return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
       }
+    },
+    async getPortfolioPnl(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return null;
+      try {
+        // Derive current prices from open positions (marketValue / quantity) so unrealized P&L is real,
+        // without spending extra quote calls.
+        const positions = await getBrokerGateway(policy, userId).getEquityPositions(policy.accountNumber);
+        const currentPrices: Record<string, number> = {};
+        for (const p of positions) {
+          if (p.quantity !== 0 && Number.isFinite(p.marketValue) && Number.isFinite(p.quantity)) {
+            currentPrices[p.symbol] = p.marketValue / p.quantity;
+          }
+        }
+        const s = getPerformanceSummary(policy.accountNumber, currentPrices, userId);
+        return {
+          liveRealizedPnl: s.liveRealizedPnl,
+          paperRealizedPnl: s.paperRealizedPnl,
+          liveUnrealizedPnl: s.liveUnrealizedPnl,
+          paperUnrealizedPnl: s.paperUnrealizedPnl,
+          liveWinRate: s.liveWinRate,
+          paperWinRate: s.paperWinRate
+        };
+      } catch {
+        return null;
+      }
+    },
+    getPerformanceSummary(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return null;
+      const byThesis = getThesisScorecard(policy.accountNumber, undefined, {}, userId).map((r) => ({
+        key: r.thesisTag,
+        trades: r.trades,
+        winRate: r.winRate,
+        avgReturnPct: r.avgReturnPct,
+        totalPnl: r.totalPnl
+      }));
+      const byRegime = getRegimeScorecard(policy.accountNumber, undefined, {}, userId).map((r) => ({
+        key: r.regime,
+        trades: r.trades,
+        winRate: r.winRate,
+        avgReturnPct: r.avgReturnPct,
+        totalPnl: r.totalPnl
+      }));
+      return { byThesis, byRegime };
+    },
+    getReflection(userId) {
+      return getUserSetting<string>(userId, "reflection_summary", "");
     },
     accountLabel: "Test (local)"
   };
