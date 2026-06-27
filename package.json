@@ -20,7 +20,8 @@
     "litestream:replicate": "bash scripts/run-litestream.sh",
     "litestream:restore": "bash scripts/litestream-restore.sh",
     "litestream:dry-run": "litestream databases -config litestream.yml",
-    "eval:offline": "tsx scripts/eval/run-offline.ts"
+    "eval:offline": "tsx scripts/eval/run-offline.ts",
+    "eval:congress-score": "tsx scripts/eval/run-congress-score.ts"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",

@@ -210,6 +210,7 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     if (cv) {
       entry.convictionScore = cv.convictionScore;
       entry.convictionDirection = cv.direction;
+      entry.convictionFallback = cv.fallback;
     }
     const cc = conflictsByTicker.get(sym);
     if (cc) entry.conflictCount = cc;
@@ -221,7 +222,8 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     if (overlay[sym]) continue; // already populated from leaders
     const entry: CongressAnalytics = {
       convictionScore: cv.convictionScore,
-      convictionDirection: cv.direction
+      convictionDirection: cv.direction,
+      convictionFallback: cv.fallback
     };
     if (typeof cv.memberCount === "number") entry.memberCount = cv.memberCount;
     if (typeof cv.tradeCount === "number") entry.tradeCount = cv.tradeCount;
@@ -244,14 +246,23 @@ export async function refreshCongressAnalytics(now: number = Date.now(), force =
     if (typeof c.memberCount === "number") entry.clusterMemberCount = c.memberCount;
     const topMembers = Array.isArray(c.topMembers) ? c.topMembers : [];
     let best = 0;
+    let bestSource: CongressAnalytics["topMemberScoreSource"] | undefined;
     for (const m of topMembers) {
       const filerId = String(m?.filerId ?? "").trim();
       const name = String((m?.fullName || m?.memberName || m?.name) ?? "").trim().toLowerCase();
       // Prefer real skill (alpha vs S&P, by filerId); fall back to activity prominence (by name).
-      const s = (filerId ? skillScores.get(filerId) : undefined) ?? (name ? memberScores.get(name) : undefined);
-      if (typeof s === "number" && s > best) best = s;
+      const skill = filerId ? skillScores.get(filerId) : undefined;
+      const activity = name ? memberScores.get(name) : undefined;
+      const s = skill ?? activity;
+      if (typeof s === "number" && s > best) {
+        best = s;
+        bestSource = skill !== undefined ? "realized_skill" : "activity_prominence";
+      }
     }
-    if (best > 0) entry.topMemberScore = best;
+    if (best > 0) {
+      entry.topMemberScore = best;
+      entry.topMemberScoreSource = bestSource;
+    }
   }
 
   const recordCount = Object.keys(overlay).length;

@@ -45,10 +45,10 @@ App A computes aggregate congressional analytics App B can't derive from raw tra
 `src/lib/web-sources/congress-analytics.ts` refreshes these daily (`getAppATickerLeaderboard` +
 `getAppAClusterBuys` + `getAppAMemberLeaderboard`, `?window=90d`), persists a per-symbol overlay, and
 `getSymbolWebSignals` attaches it as `SymbolWebSignal.congressAnalytics`. `outlierInterestScore`
-(`market.ts`) then folds it into scan candidate selection via `congressAnalyticsScore`: a strong
-**dollar net buy flow** + **cluster buy** + **multiple high-track-record members** can surface a name
-even when the scraped per-member `netSignal` is thin. Net-selling/neutral contributes 0 (long-side
-only). Additive + default-off → no behavior change when off.
+(`market.ts`) then folds it into scan candidate selection through the capped Congress.Trade composite:
+only strong, supported BUY composites can surface a below-cutoff name. Weak/proxy-only analytics remain
+evidence context and do not promote candidates. Net-selling/neutral contributes 0 to long-side outlier
+selection. Additive + default-off → no behavior change when off.
 
 **Member quality — real skill, with an activity fallback (2026-06-25).** App A now exposes
 `GET /api/analytics/member/:filerId/performance` → `{performance:{tradeCount, scoredCount, winRate,
@@ -69,19 +69,40 @@ wired into `congress-trade-client.ts` (all gated on `CONGRESS_ANALYTICS_ENABLED`
   conviction score per ticker (`convictionScore: number | null`, direction-aware BUY/SELL). `null` = thin
   signal (< 3 resolved-side trades); these rows are **excluded** from the overlay map so no-signal tickers
   can't leak into scan candidates via `netSentiment`. Wired into `refreshCongressAnalytics` alongside the
-  existing leaderboard fetch; `CongressAnalytics` gains `convictionScore` + `convictionDirection`.
+  existing leaderboard fetch; `CongressAnalytics` gains `convictionScore`, `convictionDirection`, and
+  `convictionFallback`.
 
 - **`getAppATickerBacktest(ticker, opts)`** → `GET /api/analytics/ticker/{T}/backtest` — per-horizon
   post-buy return stats (`winRate`, `medianReturn`, `medianExcess`, `n`). On-demand only (one call per
   ticker — too expensive to bulk-fetch in the daily refresh); intended for proposal/chat enrichment.
 
 - **`getAppAConflicts(opts)`** → `GET /api/analytics/conflicts?window=&limit=&chamber=&party=` —
-  committee conflict-of-interest disclosures (member sits on a committee overseeing the traded stock's
-  GICS sector). Aggregated to `conflictCount` per ticker in the overlay. Conflict-only tickers (absent
-  from leaderboard and conviction) still get an overlay entry.
+  committee-sector overlap context (member sits on a committee mapped to the traded stock's GICS
+  sector). Aggregated to `conflictCount` per ticker in the overlay. This is context only, not a legal
+  conclusion or accusation of wrongdoing. Conflict-only tickers (absent from leaderboard and conviction)
+  still get an overlay entry.
 
-**Deferred:** downstream scan scoring / evidence bulletins for `convictionScore` + `conflictCount`
-(currently stored in the overlay but not yet read by `congressAnalyticsScore` or emitted as bulletins).
+**Composite score + validation harness (2026-06-27).** App B now folds the App A overlay into a
+direction-aware Congress.Trade composite (`src/lib/congress-score.ts`) with conviction, member/cluster
+breadth, member skill, estimated flow, disclosure freshness, coverage quality, and committee-sector
+overlap context. BUY scores can surface long-side outlier candidates only when the capped composite is
+strong and supported by breadth/flow/cluster/skill evidence; SELL scores are preserved as signed
+evidence but do not create long candidates. Coverage confidence is persisted and caps the final score,
+so one thin but impressive-looking input cannot dominate Market Scan context. The score is stamped onto
+`MarketQuote` and persisted in `signal_snapshot` via `CandidateEvidence`, so forward runs can mature
+into rank-IC/quantile/spread evaluation. Historical/export evaluation lives in
+`src/lib/congress-score-eval.ts` and `npm run eval:congress-score`; see
+`docs/congress-score-evaluation.md` for metrics, go/no-go gates, and the App A export contract needed
+for honest historical validation.
+
+For the export, member skill should be split by filing-date basis vs trade-date basis, buy vs sell
+direction, and 1/3/6/12m horizon. Include `filingAlpha`, `tradeAlpha`, and `decayRatio` so App B can
+evaluate whether the edge survives the disclosure lag rather than inheriting a whole-history leaderboard.
+The App B evaluator now accepts App A PIT rows directly, including nested `labels.horizons[]`,
+cursor-paged exports, and `baselines.appBPreCongressScanScore` / `preCongressScore` for marginal IC.
+For PIT rows, App B anchors observations to `asOf` / disclosure availability, rejects labels whose
+entry date precedes availability, ignores top-level returns when nested horizon labels are present,
+requires `signedScore` or `direction`, and rejects member-skill inputs whose vintage is after `asOf`.
 
 ## 4. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,
