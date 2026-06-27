@@ -47,12 +47,15 @@ function useDismissable(open: boolean, onClose: () => void) {
   return ref;
 }
 
+// Larger modals (Settings, System Help, Accounts) fill the whole screen on mobile so their content
+// is never clipped on the right edge and there is room to lay options out without cramping.
+const MOBILE_FULL = "max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-full max-sm:max-w-none max-sm:rounded-none max-sm:border-0";
 const sizeClass = {
   sm: "max-w-md",
   md: "max-w-xl",
-  lg: "max-w-3xl",
-  xl: "max-w-5xl",
-  full: "max-w-[95vw] h-[95vh]"
+  lg: `max-w-3xl ${MOBILE_FULL}`,
+  xl: `max-w-5xl ${MOBILE_FULL}`,
+  full: `max-w-[95vw] h-[95vh] ${MOBILE_FULL}`
 };
 
 export function Modal({
@@ -83,7 +86,7 @@ export function Modal({
       {open && (
         <motion.div
           ref={constrainRef}
-          className="fixed inset-0 z-[1000] flex items-center justify-center p-4"
+          className="fixed inset-0 z-[1000] flex items-center justify-center p-0 sm:p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

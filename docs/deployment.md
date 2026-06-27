@@ -34,13 +34,17 @@ runbook: `docs/secrets.md`; this is the deploy-side summary.
     `39d93bb7-76f9-498c-8b50-a7def52e072f`), machine identity `agentic-trading`.
   - Shared App-A/B (congress-trade) secrets → **`shared-at-ct`**
     (`shared-at-ct-tg-v7`, `18f563a3-9c88-454c-96eb-28fc9678f3ba`), machine
-    identity `shared-at-ct`. Set `INFISICAL_SHARED_TOKEN` (+ optional
-    `INFISICAL_SHARED_PROJECT_ID`) and the runner pulls both projects, merging with
-    the **app project winning** any overlapping key (shared is the fallback).
-- **Bootstrap** (the only secrets-related values on the box — *exported* in the
-  shell/PM2 env, never in a file): `INFISICAL_TOKEN` (machine-identity
-  universal-auth token — the client **secret** never goes in the repo),
-  `INFISICAL_PROJECT_ID`, `INFISICAL_ENV=prod`.
+    identity `shared-at-ct`. Set `INFISICAL_SHARED_CLIENT_ID` +
+    `INFISICAL_SHARED_CLIENT_SECRET` (+ optional `INFISICAL_SHARED_PROJECT_ID`) and
+    the runner pulls both projects, merging with the **app project winning** any
+    overlapping key (shared is the fallback).
+- **Bootstrap** (the only secrets-related values on the box — written to
+  `deploy.env`/PM2 env, never in the repo): the machine identity's
+  `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET` (universal auth — the runner
+  mints a fresh access token each launch, so nothing expires), `INFISICAL_PROJECT_ID`,
+  `INFISICAL_ENV=prod`. A pre-minted `INFISICAL_TOKEN` is an accepted fallback but
+  expires — the Client Secret is **not** the access token (that mix-up is the
+  "malformed token" 403).
 - **Enforcement (ignore `.env.local`):** set `REQUIRE_SECRETS_MANAGER=1` on the
   box. At boot (`instrumentation.ts` → `assertSecretsManagerIfRequired`,
   `src/lib/secrets-source.ts`) the app **throws unless `SECRETS_SOURCE` is set** —
@@ -56,7 +60,8 @@ runbook: `docs/secrets.md`; this is the deploy-side summary.
   credentials also come from Infisical.
 
 > Production cutover: run `scripts/infisical-prod-cutover.sh` on the box (idempotent;
-> needs your machine-identity `INFISICAL_TOKEN`). It writes the bootstrap to
+> needs your machine-identity `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET`, or
+> run it interactively and it prompts). It writes the bootstrap to
 > `~/.config/agentic-trading/deploy.env`, imports `.env.local` into Infisical, and
 > switches PM2 `trading` to `start:secrets`. From then on `deploy.yml` sources that
 > bootstrap and builds via Infisical automatically — and falls back to a plain

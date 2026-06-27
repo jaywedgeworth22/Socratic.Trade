@@ -11,8 +11,8 @@ The Assistant model dropdown (`app/ui/model-picker.tsx`) loads a logo per provid
 | `mistral.svg` | Mistral |
 | `deepseek.svg` | DeepSeek |
 
-Each logo renders on a white tile (so dark/transparent marks stay visible in any theme). If a file is
-missing, the picker falls back to a colored initial chip — no error — so it works before the SVGs land.
+All six are present (operator-supplied brand marks, used to identify each model's vendor in the picker).
+Each renders on a white tile so dark/transparent marks stay visible in any theme. If a file is ever
+missing, the picker falls back to a colored initial chip — no error.
 
-Drop the brand SVGs in with exactly these filenames (lowercase, `.svg`) and the logos appear with no
-code change.
+To swap a logo, replace the file in place (keep the exact lowercase `.svg` filename) — no code change.

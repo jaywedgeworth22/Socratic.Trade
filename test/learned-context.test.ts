@@ -207,11 +207,11 @@ describe("PHASE 2 (hardening) — legitimate company-fundamental facts stay 'fac
 
 // ── PHASE 3: the store (fact written, risk dropped, chat hard-capped) ───────────
 describe("PHASE 3 — ingestLearned writes facts, drops risk", () => {
-  it("a fact-tier candidate is written as a private row", async () => {
+  it("a fact-tier candidate is written (scope='shared' since contributeShared now defaults on)", async () => {
     const r = await ingestLearned("p3-user", { kind: "decision", subject: "fact:TSM", value: "TSMC is the largest foundry." }, "ingest");
     expect(r.written).not.toBeNull();
     expect(r.tier).toBe("fact");
-    expect(r.written?.scope).toBe("private");
+    expect(r.written?.scope).toBe("shared");
     expect(listLearnedContext("p3-user").some((row) => row.subject === "fact:TSM")).toBe(true);
   });
 

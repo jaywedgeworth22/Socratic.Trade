@@ -195,7 +195,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     accountConfigured: Boolean(accountNumber),
     policy: compactPolicy(policy, executionState),
     strategyPrompt: prompt,
-    performance: compactPerformance(performance, executionState.usesLocalSimulation),
+    performance: compactPerformance(performance, executionState.usesLocalSimulation, getPolicy(userId).tuning?.useEntryRunAttribution ?? false),
     closedLotCount,
     minClosedLotsForWeightShift: minLotsForWeights,
     recentFills: fills.slice(0, 20).map((fill) => compactFill(fill, executionState)),
@@ -267,22 +267,27 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
  * Returns the proposal unchanged when no scoring-weight changes are proposed, or when OOS
  * data is insufficient (< 4 snapshot dates → runWalkForwardOOS returns null).
  */
-/** Keep the proposal (weights intact) but append a caution that the patch was NOT OOS-validated, so
- *  the operator never reads a silent gate-skip as an out-of-sample pass. */
-function withOosUnvalidatedCaution(proposal: StrategyTuningProposal, reason: string): StrategyTuningProposal {
+/**
+ * Handles unvalidated OOS weight changes. When withhold=true (the default), STRIPS proposed
+ * scoringWeights from the patch — strictly more conservative than keeping them. When withhold=false,
+ * restores the prior behavior: keeps weights but appends a caution (opt-out via oosWithholdUnvalidated=false).
+ */
+function withOosUnvalidatedCaution(proposal: StrategyTuningProposal, reason: string, withhold = true): StrategyTuningProposal {
   if (!proposal.proposedPatch.scoringWeights || Object.keys(proposal.proposedPatch.scoringWeights).length === 0) return proposal;
-  return {
-    ...proposal,
-    cautions: [
-      ...proposal.cautions,
-      `Proposed factor-weight changes were NOT out-of-sample validated (${reason}) — they are kept as proposed, so apply with extra care.`
-    ]
-  };
+  const patch = { ...proposal.proposedPatch };
+  if (withhold) delete patch.scoringWeights;
+  const caution = withhold
+    ? `Withheld factor-weight changes: NOT out-of-sample validated (${reason}) — too risky to apply unvalidated weight changes; stripped from the patch.`
+    : `Proposed factor-weight changes were NOT out-of-sample validated (${reason}) — they are kept as proposed, so apply with extra care.`;
+  return { ...proposal, proposedPatch: patch, cautions: [...proposal.cautions, caution] };
 }
 
 async function applyOosGate(proposal: StrategyTuningProposal, userId: string): Promise<StrategyTuningProposal> {
   const proposedWeights = proposal.proposedPatch.scoringWeights;
   if (!proposedWeights || Object.keys(proposedWeights).length === 0) return proposal;
+
+  // Change C: read the withhold flag (default true = strip unvalidated weight changes).
+  const withhold = getPolicy(userId).tuning?.oosWithholdUnvalidated ?? true;
 
   // The status-quo weights this proposal would replace, and the full candidate vector that WOULD be
   // applied. A proposed patch only names the factors it changes, so merge it over the baseline and
@@ -297,12 +302,12 @@ async function applyOosGate(proposal: StrategyTuningProposal, userId: string): P
     oosResult = await runWalkForwardOOS(userId, { candidateWeights, baselineWeights });
   } catch {
     // OOS fetch failed (e.g. network error in test); skip the gate gracefully — but flag non-validation.
-    return withOosUnvalidatedCaution(proposal, "the OOS data fetch failed");
+    return withOosUnvalidatedCaution(proposal, "the OOS data fetch failed", withhold);
   }
 
   if (!oosResult) {
     // Insufficient snapshot history (< 4 dates) to run OOS — skip the gate, but flag non-validation.
-    return withOosUnvalidatedCaution(proposal, "insufficient snapshot history — need ≥4 distinct snapshot dates");
+    return withOosUnvalidatedCaution(proposal, "insufficient snapshot history — need ≥4 distinct snapshot dates", withhold);
   }
 
   // Gate on the CANDIDATE weights vs the CURRENT weights — "does what's proposed beat what's
@@ -312,7 +317,7 @@ async function applyOosGate(proposal: StrategyTuningProposal, userId: string): P
   // proposed weights — the exact bug this fix removes.
   const candidateIC = oosResult.oosICCandidate;
   const baselineIC = oosResult.oosICBaseline;
-  if (candidateIC == null || baselineIC == null) return withOosUnvalidatedCaution(proposal, "the OOS run returned no composite IC");
+  if (candidateIC == null || baselineIC == null) return withOosUnvalidatedCaution(proposal, "the OOS run returned no composite IC", withhold);
   const improves = candidateIC > baselineIC;
   const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}.`;
 
@@ -358,15 +363,21 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
   };
 }
 
-function compactPerformance(performance: PerformanceSummary | undefined, paperMode: boolean) {
+export function compactPerformance(performance: PerformanceSummary | undefined, paperMode: boolean, useEntryAttribution = false) {
   if (!performance) return undefined;
+  const recentAttribution = performance.attribution.slice(-8);
   return {
     realizedPnl: paperMode ? performance.paperRealizedPnl : performance.liveRealizedPnl,
     unrealizedPnl: paperMode ? performance.paperUnrealizedPnl : performance.liveUnrealizedPnl,
     winRate: paperMode ? performance.paperWinRate : performance.liveWinRate,
     averageReturnPct: paperMode ? performance.paperAverageReturnPct : performance.liveAverageReturnPct,
     fillCount: performance.fills.length,
-    recentAttribution: performance.attribution.slice(-8)
+    // Change A (consumer, flag OFF by default): when useEntryAttribution=false (default), strip the new
+    // entry/exit credit fields from the context object so the tuner's serialized input is byte-for-byte
+    // identical to today. When opted in, the extra keys appear for advisory LLM context only (no math change).
+    recentAttribution: useEntryAttribution
+      ? recentAttribution
+      : recentAttribution.map(({ realizedPnlAsEntry: _e, realizedPnlAsExit: _x, ...rest }) => rest)
   };
 }
 
@@ -432,14 +443,9 @@ async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTu
           { role: "system", content: systemPrompt },
           { role: "user", content: JSON.stringify(context) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "strategy_tuning",
-            strict: true,
-            schema
-          }
-        }
+        response_format: provider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "strategy_tuning", strict: true, schema } }
       }
       : {
         model,

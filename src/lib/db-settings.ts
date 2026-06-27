@@ -105,7 +105,7 @@ export function hasDataPoolConsent(userId: string = "local"): boolean {
 // ── Learned-context sharing preferences ──────────────────────────────────────
 // Two independent opt-in/out flags stored as user_settings:
 //   includeShared   (default TRUE)  — the user benefits from the shared fact pool.
-//   contributeShared (default FALSE) — nothing is shared without explicit opt-in.
+//   contributeShared (default TRUE)  — the user contributes their own fact-tier learnings back.
 //
 // Only FACT-tier learned_context rows are ever eligible to become scope='shared'.
 // Risk / strategy-directive rows never reach this path (they go to the pending queue).
@@ -113,7 +113,7 @@ export function hasDataPoolConsent(userId: string = "local"): boolean {
 export interface LearnedContextSharingPrefs {
   /** Read shared facts written by other opted-in users. Default true. */
   includeShared: boolean;
-  /** Contribute this user's own learned facts to the shared pool. Default false. */
+  /** Contribute this user's own learned facts to the shared pool. Default true. */
   contributeShared: boolean;
 }
 
@@ -122,7 +122,7 @@ const LEARNED_CONTEXT_SHARING_KEY = "learned_context_sharing";
 export function getLearnedContextSharing(userId: string): LearnedContextSharingPrefs {
   return getUserSetting<LearnedContextSharingPrefs>(userId, LEARNED_CONTEXT_SHARING_KEY, {
     includeShared: true,
-    contributeShared: false
+    contributeShared: true
   });
 }
 

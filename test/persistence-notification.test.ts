@@ -10,6 +10,7 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => ["SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition."],
   retrieveContextDetailed: async () => [{ id: "c1", text: "SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition.", source: "sec", as_of: null, score: 0.9, url: null }],
+  defaultMinScore: () => 0.3,
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
@@ -182,8 +183,17 @@ describe("persistence and notifications", () => {
 
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
+    // Seed a key + stub the LLM so the run completes (0 proposals). The strategy session now
+    // requires a resolvable LLM credential — without one runStrategyOnce returns "failed" — and
+    // this test only needs the run to complete to assert the audit event was written.
+    process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      if (String(url).includes("api.openai.com")) {
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
       if (String(url).includes("nasdaq.com")) {
         return new Response(
           JSON.stringify({
@@ -244,16 +254,24 @@ describe("persistence and notifications", () => {
       expect(after).toBe(before + 1);
     } finally {
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
     }
   }, 15_000);
 
   it("records a pre-run portfolio snapshot before any proposals execute", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
-    // No OpenAI key → proposeTrades uses fallback (no network call) → run completes as a
-    // no-op. We just need to verify a snapshot was written with the run's runId.
-    delete process.env.OPENAI_API_KEY;
+    // Seed a key + stub the LLM to return 0 proposals → the run completes as a no-op. (The strategy
+    // session now requires a resolvable LLM credential; without one runStrategyOnce returns "failed".)
+    // We just need to verify a pre-run snapshot was written with the run's runId.
+    process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
+      if (href.includes("api.openai.com")) {
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
       if (href.includes("nasdaq.com")) {
         return new Response(
           JSON.stringify({

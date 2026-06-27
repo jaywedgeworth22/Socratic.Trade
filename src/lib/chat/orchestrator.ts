@@ -7,12 +7,16 @@
 //   5. Return { text, draft?, citations, usedMemories } — never executes a trade.
 // Ported from reference/atlas-public-src/bff/orchestrator.mjs.
 
-import { audit, getPolicy, listPendingProposals } from "../db";
+import { audit, getPolicy, getUserSetting, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
+import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
-import { retrieveContextDetailed } from "../vector-db";
+import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
+import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
+import { getEnrichmentProvider } from "../data-providers";
+import { getMarketSignals } from "../market-signals";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
@@ -168,7 +172,14 @@ export function buildProductionDeps(): ToolDeps {
     async searchKnowledge(args, userId) {
       const symbol = args.ticker ? canonicalTicker(args.ticker) : "";
       if (!symbol) return [];
-      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, args.as_of ? { asOf: args.as_of } : undefined);
+      // Forward ALL retrieval options: as-of (point-in-time), the doc_type the intent classifier extracted
+      // (previously dropped here), and the relevance floor. docType matching is casing-tolerant downstream.
+      const options: RetrieveOptions = {
+        ...(args.as_of ? { asOf: args.as_of } : {}),
+        ...(args.doc_type ? { docType: [args.doc_type] } : {}),
+        minScore: defaultMinScore()
+      };
+      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, options);
       // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).
       return chunks.map((c) => ({ chunk_id: c.id, text: c.text, source: c.source ?? "kb", as_of: c.as_of, score: c.score, url: c.url }));
     },
@@ -212,6 +223,72 @@ export function buildProductionDeps(): ToolDeps {
       const policy = getPolicy(userId);
       if (!policy.accountNumber) return [];
       return listPendingProposals(policy.accountNumber, userId);
+    },
+    async getFundamentals(symbol, userId) {
+      try {
+        const provider = getEnrichmentProvider(userId);
+        const map = await provider.enrich([symbol]);
+        const res = map[symbol];
+        if (!res) return { error: "NO_FUNDAMENTALS" };
+        return res;
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getMarketSignals(userId) {
+      try {
+        return await getMarketSignals(userId);
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getPortfolioPnl(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return null;
+      try {
+        // Derive current prices from open positions (marketValue / quantity) so unrealized P&L is real,
+        // without spending extra quote calls.
+        const positions = await getBrokerGateway(policy, userId).getEquityPositions(policy.accountNumber);
+        const currentPrices: Record<string, number> = {};
+        for (const p of positions) {
+          if (p.quantity !== 0 && Number.isFinite(p.marketValue) && Number.isFinite(p.quantity)) {
+            currentPrices[p.symbol] = p.marketValue / p.quantity;
+          }
+        }
+        const s = getPerformanceSummary(policy.accountNumber, currentPrices, userId);
+        return {
+          liveRealizedPnl: s.liveRealizedPnl,
+          paperRealizedPnl: s.paperRealizedPnl,
+          liveUnrealizedPnl: s.liveUnrealizedPnl,
+          paperUnrealizedPnl: s.paperUnrealizedPnl,
+          liveWinRate: s.liveWinRate,
+          paperWinRate: s.paperWinRate
+        };
+      } catch {
+        return null;
+      }
+    },
+    getPerformanceSummary(userId) {
+      const policy = getPolicy(userId);
+      if (!policy.accountNumber) return null;
+      const byThesis = getThesisScorecard(policy.accountNumber, undefined, {}, userId).map((r) => ({
+        key: r.thesisTag,
+        trades: r.trades,
+        winRate: r.winRate,
+        avgReturnPct: r.avgReturnPct,
+        totalPnl: r.totalPnl
+      }));
+      const byRegime = getRegimeScorecard(policy.accountNumber, undefined, {}, userId).map((r) => ({
+        key: r.regime,
+        trades: r.trades,
+        winRate: r.winRate,
+        avgReturnPct: r.avgReturnPct,
+        totalPnl: r.totalPnl
+      }));
+      return { byThesis, byRegime };
+    },
+    getReflection(userId) {
+      return getUserSetting<string>(userId, "reflection_summary", "");
     },
     accountLabel: "Test (local)"
   };

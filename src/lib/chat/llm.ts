@@ -43,7 +43,7 @@ function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: stri
 const MAX_STEPS = 5;
 
 export interface Intent {
-  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "chat";
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "fundamentals" | "market_signals" | "chat";
   symbol?: string;
   alert?: { symbol: string; op: "<" | ">"; price: number };
   order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
@@ -103,6 +103,12 @@ export function classifyIntent(message: string): Intent {
       symbol: sym,
       doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
     };
+  if (/\b(pe ratio|pe|market cap|earnings|analyst|rating|score|consensus|target|price target|beta|dividend|float|week high|week low|debt to equity|fundamentals)\b/.test(lc) && sym) {
+    return { intent: "fundamentals", symbol: sym };
+  }
+  if (/\b(best today|market signals?|breadth|top gainers?|top losers?|market breadth|gainer|loser|movers|volatility indices|vvix|skew)\b/.test(lc)) {
+    return { intent: "market_signals" };
+  }
   if (
     /\b(my (positions?|portfolio|holdings)|how (?:am i|is my account|are my (?:positions|holdings)) doing|how (?:'?s|is) my [a-z. ]*position|my (?:p&l|pnl|p ?and ?l|gains?|losses?))\b/.test(lc)
   )
@@ -193,6 +199,30 @@ export class MockLLM implements ChatLLM {
   private async answer({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
     const cls = classifyIntent(message);
     const toolCalls: ToolCall[] = [];
+
+    if (cls.intent === "fundamentals" && cls.symbol) {
+      const input = { symbol: cls.symbol };
+      const result = await executeTool("get_fundamentals", input);
+      toolCalls.push({ name: "get_fundamentals", input, result });
+      if (result?.error) return { text: `I don't have fundamentals data on that.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      return {
+        text: `Company: ${result.companyName ?? cls.symbol}. PE: ${result.peRatio ?? "n/a"}. Analyst rating: ${result.analystRating ?? "n/a"}.\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: []
+      };
+    }
+
+    if (cls.intent === "market_signals") {
+      const result = await executeTool("get_market_signals", {});
+      toolCalls.push({ name: "get_market_signals", input: {}, result });
+      if (result?.error) return { text: `I couldn't retrieve market signals.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      const gainers = result.marketTopGainers?.map((g: any) => `${g.sym} (+${g.pct}%)`).join(", ") ?? "none";
+      return {
+        text: `Breadth: ${result.marketBreadthPct ?? "n/a"}%. Top Gainers: ${gainers}.\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: []
+      };
+    }
 
     if (cls.intent === "quote" || cls.intent === "advice") {
       const input = { symbol: cls.symbol };
@@ -420,7 +450,7 @@ export class OpenAILLM implements ChatLLM {
     private model: string,
     private transport: OpenAITransport = defaultOpenAITransport,
     private usage: LlmUsageOpts = {},
-    // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral all share this tool loop),
+    // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral/DeepSeek all share this tool loop),
     // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
     private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai"
   ) {}
@@ -443,8 +473,10 @@ export class OpenAILLM implements ChatLLM {
     messages.push({ role: "user", content: message });
 
     // Convert ChatLLM ToolSchema → OpenAI function-calling format.
+    // deepseek-reasoner does not support function calling per DeepSeek docs.
+    const supportsTools = !/^deepseek-reasoner/i.test(this.model);
     const oaiTools =
-      tools && tools.length
+      supportsTools && tools && tools.length
         ? tools.map((t) => ({
             type: "function",
             function: {
@@ -546,8 +578,7 @@ export function chatProviderForModel(model: string): ChatProvider {
 type OpenAiCompatProvider = Exclude<ChatProvider, "anthropic">;
 
 /** Base chat/completions URL for an OpenAI-compatible provider (env override per provider). */
-function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {
-  if (provider === "xai") return process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions";
+function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (provider === "xai") return process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions";
   if (provider === "gemini")
     return process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
@@ -557,8 +588,7 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {
 
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
-function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {
-  return async (body: any, apiKey: string) => {
+function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
     const res = await llmFetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },

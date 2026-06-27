@@ -196,6 +196,21 @@ export interface TuningSettings {
   skipNegativeExpectancy?: boolean;
   /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
   skipNegativeExpectancyEdgePct?: number;
+  /**
+   * When true (DEFAULT), proposed factor-weight changes are WITHHELD (stripped from the patch)
+   * whenever the OOS walk-forward gate could not validate them (data-fetch failure, insufficient
+   * snapshot history, or missing composite IC). When false, the prior behavior is restored:
+   * weights are kept as proposed with a "NOT out-of-sample validated" caution. Default true is
+   * strictly more conservative — it only ever REMOVES unjustified weight moves, never adds one.
+   */
+  oosWithholdUnvalidated?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the tuner's compacted performance context surfaces per-run
+   * ENTRY-run P&L credit (realizedPnlAsEntry) in addition to the existing exit-keyed attribution.
+   * Pure context/advisory data for the LLM; it does NOT alter sizing or weight math. Off by default
+   * so tuning input is byte-for-byte unchanged unless an operator opts in.
+   */
+  useEntryRunAttribution?: boolean;
 }
 
 export interface RiskRules {
@@ -529,6 +544,19 @@ export interface TradingPolicy {
   volPanicVvixThreshold?: number;
   /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
   volPanicSkewThreshold?: number;
+  /**
+   * Market-data staleness gate (fail-safe, additive, DEFAULT OFF). Enforced at proposal REVIEW for
+   * OPENING orders only — exits are never blocked. When set (> 0), an opening proposal whose backing
+   * market data is older than the threshold is BLOCKED. Fail-safe direction only: stale → block; a
+   * missing timestamp is treated as stale (block) ONLY when the gate is enabled. Undefined or <= 0
+   * disables (no behavior change). Read from the run's MarketScan timestamps; never fabricated.
+   */
+  /** Max age (seconds) of the per-symbol quote (MarketScan.quotesBySymbol[sym].asOf, fallback the
+   *  candidate's asOf). Undefined/<=0 disables. */
+  maxQuoteAgeSec?: number;
+  /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
+   *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
+  maxFundamentalsAgeSec?: number;
 }
 
 export interface TradeProposal {
@@ -984,6 +1012,10 @@ export interface FillEvent {
   status: string;
   brokerOrderId?: string;
   raw?: unknown;
+  /** Max Adverse Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mae?: number;
+  /** Max Favorable Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mfe?: number;
   filledAt: string;
 }
 
@@ -998,6 +1030,10 @@ export interface RunAttribution {
   fillCount: number;
   notional: number;
   realizedPnl: number;
+  /** P&L credited to this run as the ENTRY/decision run (sum over lots it opened that later closed). Additive; undefined until any dual-credit accrues. */
+  realizedPnlAsEntry?: number;
+  /** P&L credited to this run as the EXIT/closing run (mirror of the slice of realizedPnl from closing fills). Additive. */
+  realizedPnlAsExit?: number;
 }
 
 /** One point on a benchmark-normalized curve (base date = 100). */
@@ -1211,4 +1247,23 @@ export interface LearnedContextPendingRow {
   createdAt: string;
   status: LearnedContextPendingStatus;
   resolvedAt: string | null;
+}
+
+/**
+ * Advisory result from the per-run rationale-diversity check (improvement-program item #8).
+ *
+ * Populated after proposals are generated; never blocks, drops, or modifies any proposal.
+ * Persisted via `audit("rationale_diversity", ...)` and optionally attached to `StrategyResult`.
+ */
+export interface RationaleDiversity {
+  /** Number of rationale strings evaluated. */
+  count: number;
+  /** Mean pairwise character-trigram Jaccard similarity across all N*(N-1)/2 pairs, in [0, 1]. */
+  meanPairwiseSimilarity: number;
+  /** Maximum pairwise similarity observed across any single pair, in [0, 1]. */
+  maxPairwiseSimilarity: number;
+  /** True when meanPairwiseSimilarity exceeds `threshold` — indicates likely template collapse. */
+  collapsed: boolean;
+  /** Similarity threshold used to set `collapsed` (default 0.85). */
+  threshold: number;
 }
