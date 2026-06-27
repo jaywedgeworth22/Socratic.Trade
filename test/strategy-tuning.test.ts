@@ -96,7 +96,9 @@ describe("proposeStrategyTuning", () => {
       paperMode: true,
       // Classic model: this asserts temperature + exact caps (reasoning bounds → test/llm-request.test.ts).
       llmModel: "gpt-4.1-mini",
-      scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
+      scoringWeights: { ...DEFAULT_POLICY.scoringWeights },
+      // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
+      tuning: { oosWithholdUnvalidated: false }
     });
     // Seed 20 closed lots so the §3.E weight-shift gate passes and the LLM's
     // sanitized scoringWeights survive (the gate is exercised separately below).
@@ -320,7 +322,8 @@ describe("proposeStrategyTuning", () => {
     setStrategyPrompt("CLAMP TEST PROMPT");
     // Use custom weights so we can assert the clamp precisely.
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     // Seed 20 closed lots so the §3.E gate passes.
     let n = 0;
     for (let i = 0; i < 20; i++) {
@@ -366,7 +369,8 @@ describe("localRulesProposal factor scorecard integration", () => {
     delete process.env.OPENAI_API_KEY;
     setStrategyPrompt("FACTOR SCORECARD TEST");
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-FSCORE", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert the weight nudge
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-FSCORE", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     // Seed 20 losing closed lots. All fills have weak/negative outcomes to trigger
     // weakPerformance=true and ensure enoughLotsForWeights=true.
     let t = 0;
@@ -491,7 +495,8 @@ describe("OOS walk-forward gate (Task 1)", () => {
     delete process.env.OPENAI_API_KEY;
     setStrategyPrompt("OOS NULL TEST");
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-NULL", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior (this test documents that opt-out path)
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-NULL", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     let t = 0;
     for (let i = 0; i < 20; i++) {
       const sym = `N${i}`;
@@ -514,7 +519,8 @@ describe("OOS walk-forward gate (Task 1)", () => {
     delete process.env.OPENAI_API_KEY;
     setStrategyPrompt("OOS THROW TEST");
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-THROW", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior (this test documents that opt-out path)
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-THROW", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     let t = 0;
     for (let i = 0; i < 20; i++) {
       const sym = `E${i}`;
@@ -537,7 +543,8 @@ describe("regime-segmented tuning evidence (Task 2)", () => {
     delete process.env.OPENAI_API_KEY;
     setStrategyPrompt("REGIME SEG TEST");
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "REGIME-SEG", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert weights are defined
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "REGIME-SEG", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
 
     // Seed 20+ closed lots with a known regime ("Tech-Bull") so the regime bucket is large enough.
     // Most-recent lot has regime "Tech-Bull" → currentRegime = "Tech-Bull".
@@ -575,7 +582,8 @@ describe("regime-segmented tuning evidence (Task 2)", () => {
     delete process.env.OPENAI_API_KEY;
     setStrategyPrompt("REGIME FALLBACK TEST");
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "REGIME-FB", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert weights are defined
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "REGIME-FB", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
 
     // 20 total lots in mixed regimes (5 "Tech-Bull" + 15 "Choppy"), so Tech-Bull bucket has only 5.
     // Most-recent lot has regime "Tech-Bull" → currentRegime = "Tech-Bull" → bucket = 5 < 20 → fallback.

@@ -196,6 +196,21 @@ export interface TuningSettings {
   skipNegativeExpectancy?: boolean;
   /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
   skipNegativeExpectancyEdgePct?: number;
+  /**
+   * When true (DEFAULT), proposed factor-weight changes are WITHHELD (stripped from the patch)
+   * whenever the OOS walk-forward gate could not validate them (data-fetch failure, insufficient
+   * snapshot history, or missing composite IC). When false, the prior behavior is restored:
+   * weights are kept as proposed with a "NOT out-of-sample validated" caution. Default true is
+   * strictly more conservative — it only ever REMOVES unjustified weight moves, never adds one.
+   */
+  oosWithholdUnvalidated?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the tuner's compacted performance context surfaces per-run
+   * ENTRY-run P&L credit (realizedPnlAsEntry) in addition to the existing exit-keyed attribution.
+   * Pure context/advisory data for the LLM; it does NOT alter sizing or weight math. Off by default
+   * so tuning input is byte-for-byte unchanged unless an operator opts in.
+   */
+  useEntryRunAttribution?: boolean;
 }
 
 export interface RiskRules {
@@ -997,6 +1012,10 @@ export interface FillEvent {
   status: string;
   brokerOrderId?: string;
   raw?: unknown;
+  /** Max Adverse Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mae?: number;
+  /** Max Favorable Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mfe?: number;
   filledAt: string;
 }
 
@@ -1011,6 +1030,10 @@ export interface RunAttribution {
   fillCount: number;
   notional: number;
   realizedPnl: number;
+  /** P&L credited to this run as the ENTRY/decision run (sum over lots it opened that later closed). Additive; undefined until any dual-credit accrues. */
+  realizedPnlAsEntry?: number;
+  /** P&L credited to this run as the EXIT/closing run (mirror of the slice of realizedPnl from closing fills). Additive. */
+  realizedPnlAsExit?: number;
 }
 
 /** One point on a benchmark-normalized curve (base date = 100). */
