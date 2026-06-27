@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — HANDOFF: cutover crash UNRESOLVED + the "bash 3.2" claim below is WRONG
+Branch `claude/practical-mendel-cqtduf`. The operator reproduced the line-200
+`SHARED_PROJECT_ID?: unbound variable` crash under **Homebrew bash 5.3**, so the "macOS bash 3.2"
+root cause in the section directly below (and in PR #194's body / `AGENTS.md` /
+`2026-06-26-infisical-universal-auth.md`) is **not confirmed and probably wrong**. The crash was
+NOT reproduced off-box (real committed bytes of lines 43+200 run fine on sandbox bash 5.2). The
+ASCII fix in PR #194 is harmless hygiene but UNPROVEN against the actual crash. **Next action:**
+run the confirm one-liner and follow the full handoff in
+`docs/rollouts/2026-06-27-cutover-bash-crash-pr194-handoff.md`. Also corrected there: the PR's CI
+was blocked by a `STATUS.md` merge conflict holding the 4 required checks ("awaiting conflict
+resolution"), NOT by "agent pushes don't trigger CI" (that earlier conclusion was wrong);
+re-merging `origin/main` into the branch (commit `6476919`) clears it. Cutover on the box is still
+operator-only and outstanding (incl. rotating the two compromised Client Secrets).
+
 ## 2026-06-26 — Cutover crash root cause: macOS bash 3.2 mis-parses a multibyte char next to `$VAR`
 Branch `claude/practical-mendel-cqtduf`. The operator's `scripts/infisical-prod-cutover.sh: line 200:
 SHARED_PROJECT_ID?: unbound variable` was **neither** a `set -u` default gap (line 43 always defaults
