@@ -734,6 +734,15 @@ covers every stop/exit/breaker/gate. Fixed a stale PLAN.md line (MAE/MFE + OOS v
 Verify: tsc clean · 1125/1126 tests (+12; only the cache-provenance flake) · build green. See
 `docs/rollouts/2026-06-25-atr-stops-and-exit-docs.md`.
 
+## 2026-06-25 — Read-only chat state tools (get_portfolio_pnl / get_performance_summary / get_reflection)
+Branch `claude/chat-readonly-state-tools`. Clean/additive backlog batch — additive, read-only, zero
+execution risk. Added the three remaining grounded read-only chat tools (the first batch already
+shipped): P&L (realized+unrealized+win rate, live/paper, current prices derived from positions),
+performance summary (thesis + regime scorecards), and the post-mortem reflection. Same optional-dep
+pattern (`ToolDef` in `buildTools` + dep in `buildProductionDeps`); each degrades to null/empty when
+unwired. Verify: tsc clean · 1115/1116 tests (+4; only the cache-provenance flake) · build green. See
+`docs/rollouts/2026-06-25-chat-readonly-state-tools.md`.
+
 ## 2026-06-25 — Surface avgDaysHeld / shortTermPct in scorecard tooltips
 Branch `claude/scorecard-turnover-ui`. Clean/additive backlog batch — display-only, no trading-logic
 change. The thesis/regime scorecards already computed `avgDaysHeld`/`shortTermPct` and shipped them in
