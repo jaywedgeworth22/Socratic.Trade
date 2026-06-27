@@ -16,15 +16,21 @@ We checked out the branches for each PR, resolved conflicts locally, verified th
   - Resolved conflicts in `src/lib/chat/orchestrator.ts` and `STATUS.md`
 
 ## Verification
-For each branch, local verification was performed before pushing:
+For each branch, local verification was performed before pushing. Note the full
+verify trio (`tsc` -> `npm test` -> `npm run build`) was run locally only for
+PR #175; for PR #160 and PR #141 only `tsc` + `npm test` were run locally — the
+`npm run build` gate was **not** run locally for those two and is instead
+exercised by the required `verify` CI workflow before either can merge.
 - **PR #175**:
   - `./node_modules/typescript/bin/tsc --noEmit` -> Passed with no type errors.
   - `npm test` -> 1441/1441 passed.
   - `npm run build` -> Production Next.js build completed successfully.
 - **PR #160**:
   - `./node_modules/typescript/bin/tsc --noEmit && npm test` -> 1446/1446 passed.
+  - `npm run build` -> not run locally; covered by the `verify` CI gate.
 - **PR #141**:
   - `./node_modules/typescript/bin/tsc --noEmit && npm test` -> 1442/1442 passed.
+  - `npm run build` -> not run locally; covered by the `verify` CI gate.
 
 ### Production Health Check
 Ran `pm2 list` and `pm2 show trading` to verify production status:
