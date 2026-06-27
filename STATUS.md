@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — ESLint configured + wired into required `verify` CI gate
+Branch `cursor/configure-eslint-f266`. Added `eslint.config.mjs` (flat config
+extending `eslint-config-next` core-web-vitals + typescript), changed the `lint`
+script to `eslint .`, pinned `eslint` to `^9` (ESLint 10 is incompatible with
+`eslint-config-next@16`'s bundled `eslint-plugin-react`, which calls the removed
+`context.getFilename()`), and added `npm run lint` to `.github/workflows/ci.yml`'s
+`verify` job. Baseline: 0 errors / 218 warnings — a pre-existing backlog
+(`@typescript-eslint/no-explicit-any` ×94, `react-hooks/set-state-in-effect` ×20,
+plus a few small rules) is pinned to "warn" so the gate is green today while
+still surfacing the debt; all other Next/TS error-level rules stay on to block
+new regressions. No app code changed. Verified the full CI sequence locally:
+`npm ci` → `npm run lint` (0 errors) → `npx tsc --noEmit` → `npm test` (1444
+passing) → `npm run build`, all green. See
+`docs/rollouts/2026-06-27-configure-eslint.md`.
+
 ## 2026-06-27 — Chat Assistant Enrichment & O-Series Model Pricing
 Branch `agent/antigravity` (`resolve-prod-merge-prs`). Added `get_fundamentals` and `get_market_signals` tools to the chat assistant tool registry, enabling the LLM to access company metrics (P/E ratio, analyst ratings, target prices, etc.) and market-wide gainers/losers/breadth. Added token pricing definitions for OpenAI `o1`, `o1-mini`, `o1-preview`, and `o3-mini` models in `llm-usage.ts`. All 1,440 unit tests passing clean.
 ## 2026-06-27 — Codex autofix (PR #204): align build-verification claims

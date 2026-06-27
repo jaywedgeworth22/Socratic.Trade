@@ -43,13 +43,25 @@ Before every commit/push to the GitHub repo, you MUST update the following:
 
 ## Verify before claiming done
 
-Run all three, in this order, before saying a change is complete:
+Run all four, in this order, before saying a change is complete:
 
 ```bash
+npm run lint       # eslint (flat config); REQUIRED `verify` CI step — fails on errors only
 npx tsc --noEmit   # type errors — fast, do this first
 npm test           # vitest, ~723 tests across 81 files as of 2026-06-21
 npm run build      # full Next.js build; also re-checks types
 ```
+
+`npm run lint` runs `eslint .` against `eslint.config.mjs` (flat config). It is
+pinned to **ESLint 9**, not 10: `eslint-config-next@16` bundles
+`eslint-plugin-react@7.x`, which calls `context.getFilename()` — an API ESLint 10
+removed, so ESLint 10 throws `getFilename is not a function` at load. Keep
+`eslint` on `^9` until a Next/react-plugin release supports ESLint 10. ESLint
+exits non-zero only on **errors**, not warnings; a large grandfathered backlog
+(`@typescript-eslint/no-explicit-any`, `react-hooks/set-state-in-effect`, etc.)
+is intentionally pinned to "warn" in `eslint.config.mjs` so the gate is green
+today while still surfacing the debt — promote those to "error" as you burn them
+down.
 
 `npm run build` deletes and regenerates `.next/`. If a dev server is running
 (via Claude Code's preview tool or otherwise), it will start erroring with
@@ -315,11 +327,13 @@ local multi-worktree/PM2 setup and does NOT apply here.
  port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
  dev` after a build.
 - Standard verification commands live in `README.md`/the "Verify before claiming
- done" section: `npx tsc --noEmit`, `npm test` (vitest), `npm run build`. All
- pass clean in this environment.
-- `next lint` is NOT configured (no eslint config is committed); it drops into
- an interactive setup prompt, so it is not part of verification. Use the
- tsc/test/build trio instead.
+ done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
+ build`. All pass clean in this environment.
+- `npm run lint` is now configured (`eslint.config.mjs`, flat config extending
+ `eslint-config-next`) and is a REQUIRED step in the `verify` CI gate. It is
+ pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s
+ bundled react plugin — see the "Verify before claiming done" section). It fails
+ only on errors; an existing backlog is grandfathered to "warn".
 - No secrets or API keys are required to run the app. It defaults to **Test
  mode** (a local SQLite simulator at `data/app.db`) and the Market Scan pulls
  live Yahoo Finance quotes with no key. `DATABASE_URL` defaults to
