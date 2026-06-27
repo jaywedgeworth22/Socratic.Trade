@@ -322,10 +322,17 @@ local multi-worktree/PM2 setup and does NOT apply here.
 - The Cloud VM is a single `/workspace` checkout. There are no per-agent
  worktrees, no PM2 processes, and no ports 4100/4101/4102/4000 — ignore that
  entire worktree/PM2 table for cloud work.
-- Run the dev server with `npm run dev` (Next.js on `http://127.0.0.1:3000`).
- Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
- port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
- dev` after a build.
+- Run the dev server with `npm run dev` (Next.js on port `3000`).
+  Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
+  port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
+  dev` after a build.
+- When opening the dev server in a browser, use `http://localhost:3000`, NOT
+  `http://127.0.0.1:3000`. Next 16 blocks cross-origin dev resources (the
+  `/_next/webpack-hmr` socket) from the `127.0.0.1` origin by default, so HMR /
+  live-reload breaks and the console logs a "Blocked cross-origin request"
+  warning. The page still server-renders either way; `localhost` just avoids the
+  block without needing an `allowedDevOrigins` code change. `curl`/API checks
+  against `127.0.0.1:3000` are unaffected.
 - Standard verification commands live in `README.md`/the "Verify before claiming
  done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
  build`. All pass clean in this environment.

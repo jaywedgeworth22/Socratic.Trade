@@ -18,6 +18,17 @@ new regressions. No app code changed. Verified the full CI sequence locally:
 `npm ci` → `npm run lint` (0 errors) → `npx tsc --noEmit` → `npm test` (1444
 passing) → `npm run build`, all green. See
 `docs/rollouts/2026-06-27-configure-eslint.md`.
+## 2026-06-27 — Cursor Cloud dev-env verification + browser `localhost` note
+Branch `cursor/setup-dev-environment-f266`. Set up and verified the dev
+environment on a fresh Cursor Cloud VM: `npm install` (811 pkgs, clean),
+`npx tsc --noEmit` (clean), `npm test` (1444 passing), `npm run build` (clean),
+and `npm run dev` serving on port 3000. Confirmed core functionality end-to-end —
+`GET /api/scan` returns 501 live S&P 500 quotes (Yahoo + NASDAQ + FINRA +
+Congress, no API keys), and the dashboard + Market Scan render in-browser.
+Only doc change: AGENTS.md now notes to open the dev server via
+`http://localhost:3000` (not `127.0.0.1`) so Next 16 doesn't block cross-origin
+HMR. No app code changed. See
+`docs/rollouts/2026-06-27-cursor-cloud-dev-env.md`.
 
 ## 2026-06-27 — Chat Assistant Enrichment & O-Series Model Pricing
 Branch `agent/antigravity` (`resolve-prod-merge-prs`). Added `get_fundamentals` and `get_market_signals` tools to the chat assistant tool registry, enabling the LLM to access company metrics (P/E ratio, analyst ratings, target prices, etc.) and market-wide gainers/losers/breadth. Added token pricing definitions for OpenAI `o1`, `o1-mini`, `o1-preview`, and `o3-mini` models in `llm-usage.ts`. All 1,440 unit tests passing clean.
