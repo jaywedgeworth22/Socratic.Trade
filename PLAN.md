@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-26 (`claude/portfolio-market-scan-ui-27azkz`): operator-driven mobile-UX + correctness pass —
+> Portfolio/Readiness/header, Market Scan (icons + universe: top-N + outliers + holdings), Congress/
+> Insider (future-date rejection, Congress.Trade casing, time span), System Help + Settings rework,
+> Accounts/Edit-Account, 3-way banner, Hide-Test-account, shared-pool default ON, Alpaca account-mismatch
+> hardening. No roadmap change; see `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+
 ## Current Status
 
 Hosting topology: production remains `trading.jays.services` on the

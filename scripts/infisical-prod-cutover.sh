@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# One-time production cutover to Infisical — RUN THIS ON THE PRODUCTION BOX.
+# One-time production cutover to Infisical - RUN THIS ON THE PRODUCTION BOX.
 #
 # This performs the host-side steps an agent cannot do remotely (it needs your
 # Infisical machine-identity credentials and reads your live secret values, which
 # never leave the box). It is idempotent and safe to re-run.
 #
-# AUTH — give it the machine identity's **Client ID + Client Secret** (universal
+# AUTH - give it the machine identity's **Client ID + Client Secret** (universal
 # auth, long-lived). The Client Secret is NOT an access token: the script/runner
 # exchange the Client ID + Secret for a short-lived token automatically, so nothing
 # expires in deploy.env. A pre-minted INFISICAL_TOKEN (a temporary JWT) is still
-# accepted but NOT recommended (it expires — see the identity's Access Token TTL).
+# accepted but NOT recommended (it expires - see the identity's Access Token TTL).
 # Per project:
 #   App (agentic-trading): INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET  (or INFISICAL_TOKEN)
 #   Shared (shared-at-ct): INFISICAL_SHARED_CLIENT_ID + INFISICAL_SHARED_CLIENT_SECRET
-#                          (or INFISICAL_SHARED_TOKEN) — OPTIONAL; omit to use one project.
+#                          (or INFISICAL_SHARED_TOKEN) - OPTIONAL; omit to use one project.
 # The app project's values WIN over shared on any overlapping key.
 #
 # It does:
@@ -22,12 +22,12 @@
 #      current .env.local secrets into the Infisical prod env (bootstrap excluded).
 #   3) re-creates the PM2 `trading` process to launch via `npm run start:secrets`,
 #      verifies it boots (with REQUIRE_SECRETS_MANAGER=1 a plain start would refuse),
-#      and — only with --scrub — backs up and trims .env.local to just the bootstrap.
+#      and - only with --scrub - backs up and trims .env.local to just the bootstrap.
 #
 # Usage:
-#   INFISICAL_CLIENT_ID=… INFISICAL_CLIENT_SECRET=… \
+#   INFISICAL_CLIENT_ID=... INFISICAL_CLIENT_SECRET=... \
 #     bash scripts/infisical-prod-cutover.sh [--scrub] [--no-restart] [--dir DIR] [--app NAME]
-#   …or run with no creds set and it prompts (Client Secret hidden).
+#   ...or run with no creds set and it prompts (Client Secret hidden).
 #
 # NOTE: a bare `VAR=value` on its OWN line is NOT exported to this script; put it on
 # the SAME line as the command, `export` it first, or just let the prompt ask.
@@ -81,9 +81,9 @@ read_envfile_var() {
 
 # Run `infisical` authenticated by ONLY the given short-lived token, with the long-lived
 # client secrets / shared creds stripped from the child env (they aren't needed once a
-# token is minted) — mirrors the runner's childEnv scoping so the verify/import children
+# token is minted) - mirrors the runner's childEnv scoping so the verify/import children
 # never inherit an exported Client Secret.
-infisical_tok() {  # $1=access token; remaining args → infisical
+infisical_tok() {  # $1=access token; remaining args -> infisical
   local _tok="$1"; shift
   env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET \
       -u INFISICAL_SHARED_CLIENT_ID -u INFISICAL_SHARED_CLIENT_SECRET -u INFISICAL_SHARED_TOKEN \
@@ -91,12 +91,12 @@ infisical_tok() {  # $1=access token; remaining args → infisical
       INFISICAL_TOKEN="$_tok" infisical "$@"
 }
 
-# ── Preconditions ─────────────────────────────────────────────────────────────
+# -- Preconditions -------------------------------------------------------------
 command -v infisical >/dev/null 2>&1 || die "Infisical CLI not found. Install it: brew install infisical/get-cli/infisical (or npm i -g @infisical/cli)"
 command -v pm2 >/dev/null 2>&1 || die "pm2 not found on PATH."
 [ -d "$DIR" ] || die "Deploy dir not found: $DIR (pass --dir)."
 
-# ── Credential resolution: env → prior deploy.env → interactive prompt ────────
+# -- Credential resolution: env -> prior deploy.env -> interactive prompt --------
 [ -n "$APP_CLIENT_ID" ]        || APP_CLIENT_ID="$(read_envfile_var INFISICAL_CLIENT_ID)"
 [ -n "$APP_CLIENT_SECRET" ]    || APP_CLIENT_SECRET="$(read_envfile_var INFISICAL_CLIENT_SECRET)"
 [ -n "$APP_TOKEN" ]            || APP_TOKEN="$(read_envfile_var INFISICAL_TOKEN)"
@@ -123,10 +123,10 @@ if { [ -n "$APP_CLIENT_ID" ] && [ -z "$APP_CLIENT_SECRET" ]; } \
   die "Partial app identity: set BOTH INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET (or neither, to use a pre-minted INFISICAL_TOKEN)."
 fi
 if [ -z "$APP_CLIENT_ID" ] && [ -z "$APP_TOKEN" ]; then
-  die "No app credentials. Provide INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET (preferred) or a pre-minted INFISICAL_TOKEN. A bare 'VAR=value' on its own line is not inherited — pass it inline on the command, 'export' it, or run interactively to be prompted."
+  die "No app credentials. Provide INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET (preferred) or a pre-minted INFISICAL_TOKEN. A bare 'VAR=value' on its own line is not inherited - pass it inline on the command, 'export' it, or run interactively to be prompted."
 fi
 if [ -z "$APP_CLIENT_ID" ] && looks_like_client_secret "$APP_TOKEN"; then
-  die "INFISICAL_TOKEN looks like a 64-char Client SECRET, not an access token — that is the 'malformed token' 403. Provide INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET instead; the script exchanges them for a token automatically."
+  die "INFISICAL_TOKEN looks like a 64-char Client SECRET, not an access token - that is the 'malformed token' 403. Provide INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET instead; the script exchanges them for a token automatically."
 fi
 
 export INFISICAL_DISABLE_UPDATE_CHECK=true
@@ -142,7 +142,7 @@ unset INFISICAL_CLIENT_ID INFISICAL_CLIENT_SECRET INFISICAL_TOKEN \
 # Exchange a machine-identity Client ID + Client Secret for a short-lived access
 # token (universal auth). `--plain --silent` prints just the raw token, which the
 # CLI's secrets/export read via INFISICAL_TOKEN.
-mint_token() {  # $1=client_id $2=client_secret $3=label → prints the access token
+mint_token() {  # $1=client_id $2=client_secret $3=label -> prints the access token
   # Strip ALL Infisical credential vars from the login child and pass ONLY this identity's
   # pair via universal-auth env vars (not argv), so the app mint never sees the shared
   # Client Secret (and vice versa) and the secret never appears in `ps`.
@@ -158,12 +158,12 @@ mint_token() {  # $1=client_id $2=client_secret $3=label → prints the access t
 
 # Resolve the app access token: mint from client creds, else use a supplied token.
 if [ -n "$APP_CLIENT_ID" ] && [ -n "$APP_CLIENT_SECRET" ]; then
-  log "Authenticating app identity (universal auth)…"
+  log "Authenticating app identity (universal auth)..."
   APP_TOKEN="$(mint_token "$APP_CLIENT_ID" "$APP_CLIENT_SECRET" app)"
 fi
 infisical_app() { infisical_tok "$APP_TOKEN" "$@"; }
 
-# Partial shared identity (only one half of the pair) is a HARD ERROR — fail closed,
+# Partial shared identity (only one half of the pair) is a HARD ERROR - fail closed,
 # mirroring the app path, rather than silently restarting prod without shared secrets.
 if { [ -n "$SHARED_CLIENT_ID" ] && [ -z "$SHARED_CLIENT_SECRET" ]; } \
    || { [ -z "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; }; then
@@ -171,7 +171,7 @@ if { [ -n "$SHARED_CLIENT_ID" ] && [ -z "$SHARED_CLIENT_SECRET" ]; } \
 fi
 
 # Decide whether the shared overlay is requested. An explicitly-set-but-malformed
-# shared token is a HARD ERROR (fail closed) — never silently restart prod app-only
+# shared token is a HARD ERROR (fail closed) - never silently restart prod app-only
 # when the operator asked for the shared App-A/B secrets.
 SHARED_ENABLED=0
 if [ -n "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; then
@@ -185,25 +185,25 @@ fi
 
 # Resolve the shared access token: mint from client creds, else use the supplied token.
 if [ "$SHARED_ENABLED" -eq 1 ] && [ -n "$SHARED_CLIENT_ID" ] && [ -n "$SHARED_CLIENT_SECRET" ]; then
-  log "Authenticating shared identity (universal auth)…"
+  log "Authenticating shared identity (universal auth)..."
   SHARED_TOKEN="$(mint_token "$SHARED_CLIENT_ID" "$SHARED_CLIENT_SECRET" shared)"
 fi
 infisical_shared() { infisical_tok "$SHARED_TOKEN" "$@"; }
 
-# ── Verify access before changing anything ────────────────────────────────────
-log "Verifying Infisical access (project $PROJECT_ID, env $ENV_NAME)…"
+# -- Verify access before changing anything ------------------------------------
+log "Verifying Infisical access (project $PROJECT_ID, env $ENV_NAME)..."
 infisical_app secrets --projectId "$PROJECT_ID" --env "$ENV_NAME" --path "$SECRETS_PATH" >/dev/null \
   || die "Infisical could not read $PROJECT_ID/$ENV_NAME. Check that the Client ID + Client Secret are paired correctly (each secret only works with its OWN identity's Client ID), that the secret isn't rotated or locked out, and that the identity has access to the project."
 log "Infisical access OK."
 
 if [ "$SHARED_ENABLED" -eq 1 ]; then
-  log "Verifying access to shared project $SHARED_PROJECT_ID…"
+  log "Verifying access to shared project $SHARED_PROJECT_ID..."
   infisical_shared secrets --projectId "$SHARED_PROJECT_ID" --env "$ENV_NAME" --path "$SECRETS_PATH" >/dev/null \
-    || die "Shared project $SHARED_PROJECT_ID not readable. Check the shared Client ID + Secret pairing/access. (The app cutover does NOT need this — omit the shared vars to skip the overlay.)"
+    || die "Shared project $SHARED_PROJECT_ID not readable. Check the shared Client ID + Secret pairing/access. (The app cutover does NOT need this - omit the shared vars to skip the overlay.)"
   log "Shared project access OK."
 fi
 
-# ── (2) Persist the bootstrap (chmod 600; never committed) ────────────────────
+# -- (2) Persist the bootstrap (chmod 600; never committed) --------------------
 log "Writing bootstrap to $ENV_FILE"
 mkdir -p "$ENV_DIR"; chmod 700 "$ENV_DIR"
 umask 177
@@ -236,15 +236,15 @@ umask 022
 chmod 600 "$ENV_FILE"
 [ "$SHARED_ENABLED" -eq 1 ] && log "Enabled app+shared overlay (shared project $SHARED_PROJECT_ID; app wins overlaps)."
 
-# ── (2) Import the box's current .env.local into Infisical (values stay local) ─
+# -- (2) Import the box's current .env.local into Infisical (values stay local) -
 ENV_LOCAL="$DIR/.env.local"
 if [ -f "$ENV_LOCAL" ]; then
-  log "Importing secrets from $ENV_LOCAL into Infisical $ENV_NAME (bootstrap vars excluded)…"
+  log "Importing secrets from $ENV_LOCAL into Infisical $ENV_NAME (bootstrap vars excluded)..."
   imported=0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|\#*) continue ;; esac
     key="${line%%=*}"
-    [ "$key" = "$line" ] && continue                 # no '=' → skip
+    [ "$key" = "$line" ] && continue                 # no '=' -> skip
     case "$key" in
       INFISICAL_*|REQUIRE_SECRETS_MANAGER|SECRETS_SOURCE) continue ;;  # bootstrap, not app secrets
     esac
@@ -257,13 +257,13 @@ if [ -f "$ENV_LOCAL" ]; then
   done < "$ENV_LOCAL"
   log "Imported $imported secret(s)."
 else
-  log "No $ENV_LOCAL found — skipping import (assuming secrets are already in Infisical)."
+  log "No $ENV_LOCAL found - skipping import (assuming secrets are already in Infisical)."
 fi
 
-# ── (3) Switch the PM2 process to launch via Infisical ────────────────────────
+# -- (3) Switch the PM2 process to launch via Infisical ------------------------
 if [ "$DO_RESTART" -eq 1 ]; then
-  log "Switching PM2 '$APP' to 'npm run start:secrets'…"
-  # Source the bootstrap ONLY inside this subshell — pm2 --update-env captures it for the
+  log "Switching PM2 '$APP' to 'npm run start:secrets'..."
+  # Source the bootstrap ONLY inside this subshell - pm2 --update-env captures it for the
   # managed process, but it never lands in the parent shell (so the health-check/scrub
   # commands below don't inherit the long-lived Client Secret).
   ( cd "$DIR"
@@ -273,7 +273,7 @@ if [ "$DO_RESTART" -eq 1 ]; then
     pm2 start npm --name "$APP" --update-env --cwd "$DIR" -- run start:secrets
     pm2 save )
 
-  log "Verifying the app booted (REQUIRE_SECRETS_MANAGER=1 makes a non-manager start refuse)…"
+  log "Verifying the app booted (REQUIRE_SECRETS_MANAGER=1 makes a non-manager start refuse)..."
   ok=0
   for _ in $(seq 1 30); do
     if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then ok=1; break; fi
@@ -282,7 +282,7 @@ if [ "$DO_RESTART" -eq 1 ]; then
   if [ "$ok" -eq 1 ]; then
     log "Health check OK ($HEALTH_URL). The app is now sourcing secrets from Infisical."
   else
-    echo "[cutover] WARNING: $HEALTH_URL did not respond in time. Check 'pm2 logs $APP' —" >&2
+    echo "[cutover] WARNING: $HEALTH_URL did not respond in time. Check 'pm2 logs $APP' -" >&2
     echo "          a guard failure prints '[secrets] REQUIRE_SECRETS_MANAGER ...'." >&2
     echo "          NOT scrubbing .env.local. Re-run after fixing." >&2
     exit 1
@@ -291,7 +291,7 @@ else
   log "--no-restart: left PM2 untouched. deploy.yml will switch it on the next deploy (deploy.env present)."
 fi
 
-# ── (3 tail) Scrub .env.local — opt-in, with a backup ─────────────────────────
+# -- (3 tail) Scrub .env.local - opt-in, with a backup -------------------------
 if [ "$DO_SCRUB" -eq 1 ] && [ -f "$ENV_LOCAL" ]; then
   ts="$(date +%Y%m%d-%H%M%S)"
   cp "$ENV_LOCAL" "$ENV_LOCAL.bak.$ts"

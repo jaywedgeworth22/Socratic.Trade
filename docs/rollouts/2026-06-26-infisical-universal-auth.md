@@ -142,3 +142,45 @@ Round 6 (cross-identity + parent-shell isolation):
 - The live Infisical CLI couldn't be exercised here; the universal-auth env-var mechanism is per
   Infisical's CLI docs. Operator should confirm on the box (the hardened script fails loudly if auth
   is wrong, before changing anything).
+
+## Follow-up (same day) — the *actual* root cause of `SHARED_PROJECT_ID?: unbound variable`
+
+The "unset `INFISICAL_SHARED_TOKEN`" unblock above was a **red herring for this specific crash.** After
+this PR landed (box at `d103766`), the operator restored a pristine script (`git diff` clean, identical
+to `origin/main` byte-for-byte) and *still* hit, during the shared-overlay verify:
+
+```
+scripts/infisical-prod-cutover.sh: line 200: SHARED_PROJECT_ID?: unbound variable
+```
+
+**Why it's not what it looks like.**
+- Committed line 43 unconditionally defaults the var: `SHARED_PROJECT_ID="${INFISICAL_SHARED_PROJECT_ID:-18f563a3-…}"`.
+  It is bound before line 200 in *every* committed version (checked back to the first overlay commit
+  `d8fa8a3`); there is no `?`-form anywhere in the file.
+- Reproduced line 200 with the exact bytes from `d103766` under bash 5.2 in UTF-8 *and* C locales:
+  bound → prints fine; unset → `SHARED_PROJECT_ID: unbound variable` with a **clean** name. No bash
+  construct on a modern shell yields a `?` in the name.
+
+**Root cause.** Line 200 was the **only** line in the script with a non-ASCII character (`…`, U+2026 =
+`e2 80 a6`) **directly adjacent** to a `$VAR`: `"...$SHARED_PROJECT_ID…"`. The production box is a Mac,
+so `bash scripts/…` runs Apple's `/bin/bash` **3.2.57**, which mis-parses the multibyte sequence into
+the identifier — producing an unbound name the terminal renders as `SHARED_PROJECT_ID?`. The cutover
+printed lines 161/188/194 first (those also contain `…`, but *not* adjacent to a variable) and then
+died on 200 — precisely the observed symptom. The `?` is the stray byte, the "unbound" is a real
+*different* name, and a clean checkout still fails because the bug is in the shell, not the file.
+
+**Fix.** ASCII-converted `scripts/infisical-prod-cutover.sh` end-to-end (`…`→`...`, `—`→`-`, `─`→`-`,
+`→`→`->`): 33 lines, character-swaps only, **zero logic change**. `grep -cP '[^\x00-\x7F]'` → 0,
+`bash -n` ✓. Swept all `scripts/*.sh` for the `\$\{?\w+\}?[^\x00-\x7F]` adjacency pattern — only this
+one line matched; the other scripts' non-ASCII is decorative box-drawing/em-dashes (not var-adjacent),
+so they don't trip the 3.2 bug. Added a durable trap to `AGENTS.md` (operator/deploy `*.sh` stay ASCII).
+
+**Files:** `scripts/infisical-prod-cutover.sh`, `STATUS.md`, `AGENTS.md`, this note.
+**Verify:** `bash -n scripts/infisical-prod-cutover.sh` ✓ · `grep -cP '[^\x00-\x7F]' scripts/infisical-prod-cutover.sh`
+→ `0` · reproduced the bash error semantics locally with the real bytes (bound vs unset × UTF-8 vs C).
+
+**Operator follow-ups (unchanged + new):**
+- `git pull` in `~/apps/trading-live` (or let the next deploy `git reset --hard origin/main`), then
+  re-run with the app + shared **Client ID/Secret** pairs (overlay on). The crash is gone.
+- Still rotate the two compromised Client Secrets; still don't `--scrub .env.local` until the app boots
+  healthy with the shared keys present.

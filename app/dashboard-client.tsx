@@ -6,8 +6,12 @@ import {
   BrainCircuit,
   Check,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
+  Columns3,
   ExternalLink,
+  Eye,
+  EyeOff,
   Gauge,
   HelpCircle,
   Hourglass,
@@ -25,8 +29,10 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Server,
   Settings as SettingsIcon,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   TrendingUp,
@@ -140,6 +146,13 @@ type AccountDeletionPreview = {
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
 const EXECUTION_BANNER_COMPACT_KEY = "execution-banner-compact";
 const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
+// New source-of-truth for the 3-way banner mode. The legacy keys above were both boolean and only
+// ever produced a VISIBLE banner (compact), so they must NOT be read as the new "hidden" state —
+// they migrate to compact instead (see the read effect) so upgrading users never lose the safety
+// banner without explicitly choosing Hidden.
+const EXECUTION_BANNER_MODE_KEY = "execution-banner-mode";
+type ExecutionBannerMode = "full" | "compact" | "hidden";
+const HIDE_TEST_ACCOUNT_KEY = "hide-test-account";
 const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
 const FEED_TAB_KEY = "dashboard-feed-tab";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
@@ -338,12 +351,12 @@ function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
     <div className="rounded-lg border border-line bg-surface/70 px-3 py-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Readiness</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted sm:text-[11px]">Readiness</span>
           {items.map((item) => (
             <span
               key={item.label}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium",
+                "inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium sm:px-2 sm:py-1 sm:text-[11px]",
                 item.ok ? "bg-up/10 text-up" : "bg-warn/10 text-warn"
               )}
               title={item.detail}
@@ -579,6 +592,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [tickerScan, setTickerScan] = useState<MarketScan | null>(null);
   const [tickerLogoDisplay, setTickerLogoDisplay] = useState<TickerLogoDisplay>(DEFAULT_TICKER_LOGO_DISPLAY);
   const [compactExecutionBanner, setCompactExecutionBanner] = useState(false);
+  const [executionBannerHidden, setExecutionBannerHidden] = useState(false);
+  const [hideTestAccount, setHideTestAccount] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -598,10 +613,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     try {
       const saved = localStorage.getItem(TICKER_LOGO_DISPLAY_KEY);
       if (isTickerLogoDisplay(saved)) setTickerLogoDisplay(saved);
-      setCompactExecutionBanner(
-        localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true" ||
-          localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true"
-      );
+      const bannerMode = localStorage.getItem(EXECUTION_BANNER_MODE_KEY);
+      if (bannerMode === "full" || bannerMode === "compact" || bannerMode === "hidden") {
+        setCompactExecutionBanner(bannerMode === "compact");
+        setExecutionBannerHidden(bannerMode === "hidden");
+      } else {
+        // Migrate legacy prefs: BOTH the legacy compact key AND the legacy "hidden" key map to compact
+        // (the old build kept the safety banner visible in both cases), so upgrading users never lose
+        // the Test/Paper/Brokerage banner until they explicitly pick the new Hidden option.
+        const legacyCompact =
+          localStorage.getItem(EXECUTION_BANNER_COMPACT_KEY) === "true" ||
+          localStorage.getItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY) === "true";
+        setCompactExecutionBanner(legacyCompact);
+        setExecutionBannerHidden(false);
+      }
+      setHideTestAccount(localStorage.getItem(HIDE_TEST_ACCOUNT_KEY) === "true");
     } catch {
       /* ignore storage failures */
     }
@@ -616,11 +642,31 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
-  function updateCompactExecutionBanner(next: boolean) {
-    setCompactExecutionBanner(next);
+  const executionBannerMode: ExecutionBannerMode = executionBannerHidden
+    ? "hidden"
+    : compactExecutionBanner
+      ? "compact"
+      : "full";
+  function updateExecutionBannerMode(next: ExecutionBannerMode) {
+    const hidden = next === "hidden";
+    const compact = next === "compact";
+    setExecutionBannerHidden(hidden);
+    setCompactExecutionBanner(compact);
     try {
-      localStorage.setItem(EXECUTION_BANNER_COMPACT_KEY, String(next));
+      // Persist to the new mode key only; keep the legacy compact key in sync for backward-compat
+      // and clear the legacy hidden key so it can never be misread as the new Hidden state.
+      localStorage.setItem(EXECUTION_BANNER_MODE_KEY, next);
+      localStorage.setItem(EXECUTION_BANNER_COMPACT_KEY, String(compact));
       localStorage.removeItem(LEGACY_EXECUTION_BANNER_HIDDEN_KEY);
+    } catch {
+      /* ignore storage failures */
+    }
+  }
+
+  function updateHideTestAccount(next: boolean) {
+    setHideTestAccount(next);
+    try {
+      localStorage.setItem(HIDE_TEST_ACCOUNT_KEY, String(next));
     } catch {
       /* ignore storage failures */
     }
@@ -1072,24 +1118,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       actionLabel: "Settings",
       onAction: () => openSettings("operate")
     },
-    {
-      label: executionState.label,
-      // Only a broker that EXPLICITLY reports agenticAllowed=false is a hard block. `selectedBrokerAccount`
-      // is undefined when the live account list couldn't be fetched (a transient broker/MCP enumeration
-      // miss — gateway.getAccounts() failing degrades to [] in the snapshot). Don't false-alarm "not
-      // available" in that case: the account is configured + active, and the execution path fails closed
-      // on its own if the broker is genuinely unreachable. (Bug: showed the opposite of the real status.)
-      ok: executionState.usesLocalSimulation || selectedBrokerAccount?.agenticAllowed !== false,
-      detail: executionState.usesLocalSimulation
-        ? "Test mode uses local simulated fills."
-        : selectedBrokerAccount?.agenticAllowed === false
-          ? "Selected broker account is not available for agentic execution."
-          : selectedBrokerAccount
-            ? "Selected broker account is available for agentic execution."
-            : "Could not re-verify the account with the broker just now; agentic execution uses the selected account.",
-      actionLabel: "Accounts",
-      onAction: () => setAccountsOpen(true)
-    }
   ];
 
   const safetyBanner = executionBanner(executionState);
@@ -1119,22 +1147,24 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
-      <div
-        role="status"
-        aria-live="polite"
-        className={cn(
-          "shrink-0 border-b text-center font-semibold tracking-wide",
-          compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
-          safetyBanner.className
-        )}
-        title={safetyBanner.title}
-      >
-        {safetyBanner.content}
-      </div>
+      {!executionBannerHidden && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={cn(
+            "shrink-0 border-b text-center font-semibold tracking-wide",
+            compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
+            safetyBanner.className
+          )}
+          title={safetyBanner.title}
+        >
+          {safetyBanner.content}
+        </div>
+      )}
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:py-0 xl:px-4">
+      <header className="flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:gap-3 xl:py-0 xl:px-4">
         {/* Left Side: Logo, Title, Status, and Pills */}
-        <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-3 w-full xl:w-auto xl:justify-start xl:gap-4">
+        <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 w-full xl:w-auto xl:justify-start xl:gap-4">
           <div className="flex items-start gap-2.5">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
               <Zap size={17} className="fill-current" />
@@ -1161,9 +1191,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         </div>
 
         {/* Right Side: Selects, Utilities, Actions */}
-        <div className="flex flex-col gap-2.5 w-full lg:flex-row lg:items-center lg:justify-end xl:w-auto xl:flex-nowrap xl:gap-3">
+        <div className="flex flex-col gap-1.5 w-full sm:gap-2 lg:flex-row lg:items-center lg:justify-end xl:w-auto xl:flex-nowrap xl:gap-3">
           {/* Sub-container 1: Selects and Utility tools */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
               className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
@@ -1189,7 +1219,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
-                className="h-8 max-sm:h-11 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
+                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
                 value={activeAccountId}
                 onChange={async (e) => {
                   const id = e.target.value;
@@ -1201,9 +1231,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 }}
               >
                 <option value="" disabled>Select Account...</option>
-                {snapshot.connectedAccounts?.map(acc => (
-                  <option key={acc.id} value={acc.id}>{acc.broker === "test" || acc.label.toLowerCase().includes(acc.environment.toLowerCase()) ? acc.label : `${acc.label} (${acc.environment})`}</option>
-                ))}
+                {(() => {
+                  const accts = (snapshot.connectedAccounts ?? []).filter(acc => acc.id === activeAccountId || !hideTestAccount || acc.broker !== "test");
+                  // Append the environment only when two accounts would otherwise render the same option
+                  // text — disambiguating identical labels (e.g. two "Alpaca") so a live account is never
+                  // mistaken for paper in this real-money switcher, while distinct labels stay uncluttered.
+                  const labelCounts = new Map<string, number>();
+                  for (const a of accts) labelCounts.set(a.label, (labelCounts.get(a.label) ?? 0) + 1);
+                  return accts.map(acc => {
+                    const ambiguous = (labelCounts.get(acc.label) ?? 0) > 1 && acc.broker !== "test"
+                      && !acc.label.toLowerCase().includes(acc.environment.toLowerCase());
+                    return <option key={acc.id} value={acc.id}>{ambiguous ? `${acc.label} (${acc.environment})` : acc.label}</option>;
+                  });
+                })()}
                 <option value="manage">Manage Accounts...</option>
               </select>
             </div>
@@ -1225,7 +1265,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
 
           {/* Sub-container 2: Action buttons */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <button
               onClick={() => setFeedOpen(true)}
               aria-label={pendingCount > 0 ? `Activity — ${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}` : "Activity"}
@@ -1433,7 +1473,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" subtitle="Operate, Connections, Display & More" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" icon={<SettingsIcon size={18} />} size="lg">
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -1445,8 +1485,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           updatePolicy={updatePolicy}
           tickerLogoDisplay={tickerLogoDisplay}
           setTickerLogoDisplay={updateTickerLogoDisplay}
-          compactExecutionBanner={compactExecutionBanner}
-          setCompactExecutionBanner={updateCompactExecutionBanner}
+          executionBannerMode={executionBannerMode}
+          setExecutionBannerMode={updateExecutionBannerMode}
           openAccounts={() => setAccountsOpen(true)}
           openStrategyStudio={() => {
             setSettingsOpen(false);
@@ -1458,11 +1498,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" subtitle="Connect and switch supported accounts" icon={<Wallet size={18} />} size="lg">
-        <IntegrationsSection accounts={snapshot.connectedAccounts || []} policy={policy} onSaved={load} />
+      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" icon={<Wallet size={18} />} size="lg">
+        <IntegrationsSection accounts={snapshot.connectedAccounts || []} policy={policy} onSaved={load} hideTestAccount={hideTestAccount} setHideTestAccount={updateHideTestAccount} />
       </Modal>
 
-      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="Safety limits, tax logic, pricing & MCP" icon={<HelpCircle size={18} />} size="lg">
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="How it works, safeguards, costs & data sources" icon={<HelpCircle size={18} />} size="xl">
         <HelpContent policy={policy} snapshot={snapshot} />
       </Modal>
 
@@ -1538,6 +1578,9 @@ function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: Dashb
     ? (perf?.paperUnrealizedPnl ?? 0) + (perf?.paperRealizedPnl ?? 0)
     : (perf?.liveUnrealizedPnl ?? 0) + (perf?.liveRealizedPnl ?? 0);
 
+  const [posOpen, setPosOpen] = useState(false);
+  const enriched = enrichPositionsForDisplay(positions, total).sort((a, b) => b.marketValue - a.marketValue);
+
   return (
     <Card className="px-4 py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -1545,7 +1588,7 @@ function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: Dashb
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Portfolio</h2>
           <p className="text-xs text-faint">{getPortfolioAccountSubtitle(snapshot)}</p>
         </div>
-        <Chip tone={mode === "paper" ? "info" : modeLabel === "Paper" ? "up" : "down"}>{modeLabel}</Chip>
+        <Chip tone={mode === "paper" ? "info" : "up"}>{modeLabel}</Chip>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div>
@@ -1558,9 +1601,32 @@ function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: Dashb
         </div>
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">Positions</div>
-          <div className="tnum mt-1 text-base text-fg">{positions.length}</div>
+          <button
+            onClick={() => setPosOpen((o) => !o)}
+            className="mt-1 flex items-center gap-0.5 tnum text-base text-fg"
+          >
+            {positions.length}
+            <ChevronDown size={14} className={cn("transition-transform", posOpen && "rotate-180")} />
+          </button>
         </div>
       </div>
+      {posOpen && (
+        <div className="mt-2 max-h-72 overflow-auto rounded-md border border-line/50">
+          {enriched.length === 0 ? (
+            <div className="px-2 py-2 text-[13px] text-faint">No open positions.</div>
+          ) : (
+            enriched.map((p) => (
+              <div key={p.symbol} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
+                <span className="flex-1 font-semibold text-fg">{p.symbol}</span>
+                <span className="tnum text-fg">{money(p.marketValue)}</span>
+                <span className={cn("tnum", p.pnl > 0 ? "text-up" : p.pnl < 0 ? "text-down" : "text-fg")}>
+                  {signedMoney(p.pnl)}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -1828,7 +1894,7 @@ function DecisionView({
             </div>
               );
             })()}
-            <div className="max-h-[760px] space-y-2 overflow-y-auto pr-1">
+            <div className="max-h-[760px] space-y-2 overflow-y-auto overflow-x-hidden pr-1">
             {recentDecisionItems.slice(0, 100).map((item) => {
               const accountLabel = getProposalAccountLabel(item.accountNumber || decision?.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
               const age = proposalAgeTone(item.createdAt);
@@ -1864,8 +1930,8 @@ function DecisionView({
                       <Chip tone={statusTone(item.status)}>{displayStatus(item.status)}</Chip>
                     </div>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div className="grid min-w-0 gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Chip tone={item.proposal.side === "buy" ? "up" : "down"}>{item.proposal.side.toUpperCase()}</Chip>
                     <SymbolButton
                       symbol={item.proposal.symbol}
@@ -1885,7 +1951,7 @@ function DecisionView({
                       <div className="text-[10px] uppercase tracking-wide text-faint">{labelize(item.proposal.type)}</div>
                     </div>
                   </div>
-                  <p className="mt-2 text-[13px] leading-snug text-fg/85">{item.proposal.rationale}</p>
+                  <p className="mt-2 break-words text-[13px] leading-snug text-fg/85">{item.proposal.rationale}</p>
                   {(reasons.length > 0 || hypothetical) && (
                     <div className="mt-2 grid gap-1.5 text-[11px] text-faint sm:grid-cols-2">
                       {reasons.length > 0 && <p className="rounded-md bg-surface-3/50 px-2 py-1">{reasons.join("; ")}</p>}
@@ -2227,6 +2293,7 @@ function MarketScanView({
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
   const [visible, setVisible] = useState<string[]>(DEFAULT_SCAN_COLS);
   const [colsOpen, setColsOpen] = useState(false);
+  const [scanDetailsOpen, setScanDetailsOpen] = useState(false);
   const [liveScan, setLiveScan] = useState<MarketScan | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState("");
@@ -2289,7 +2356,7 @@ function MarketScanView({
           actions={
             <div className="flex items-center gap-1.5">
               <IconButton label="Scan settings" onClick={onConfigureScanSettings}>
-                <Gauge size={14} />
+                <SlidersHorizontal size={14} />
               </IconButton>
               <IconButton label="Run scan" onClick={() => void refreshScan()} disabled={scanLoading}>
                 <RefreshCw size={14} className={cn(scanLoading && "animate-spin")} />
@@ -2331,16 +2398,22 @@ function MarketScanView({
       ? scan.warnings[0]
       : `${scan.warnings[0]} (${scan.warnings.length - 1} more warning${scan.warnings.length === 2 ? "" : "s"})`
     : "";
+  const mobileSubtitle = scan.returnedQuotes === 0
+    ? "No quotes returned"
+    : `${scan.returnedQuotes} quotes`;
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <PanelHeader
         title="Market Scan"
-        subtitle={subtitle}
+        subtitle={<>
+          <span className="hidden sm:inline">{subtitle}</span>
+          <span className="inline sm:hidden">{mobileSubtitle}</span>
+        </>}
         icon={<LineChartIcon size={16} />}
         actions={
           <div className="flex items-center gap-1.5">
             <IconButton label={`Scan settings: ${scan.candidateLimit ?? snapshot.policy.marketScanCandidateLimit ?? DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT} candidates, ${scan.outlierReserve ?? snapshot.policy.marketScanOutlierReserve ?? DEFAULT_MARKET_SCAN_OUTLIER_RESERVE} outlier reserve`} onClick={onConfigureScanSettings}>
-              <Gauge size={14} />
+              <SlidersHorizontal size={14} />
             </IconButton>
             <Chip tone="neutral">{new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Chip>
             <IconButton label="Refresh scan" onClick={() => void refreshScan()} disabled={scanLoading}>
@@ -2348,7 +2421,7 @@ function MarketScanView({
             </IconButton>
             <div className="relative">
               <IconButton label="Configure columns" onClick={() => setColsOpen((v) => !v)}>
-                <SettingsIcon size={14} />
+                <Columns3 size={14} />
               </IconButton>
               {colsOpen && (
                 <>
@@ -2368,6 +2441,21 @@ function MarketScanView({
           </div>
         }
       />
+      {/* Mobile-only: collapsible scan details row (hidden on sm+) */}
+      <div className="sm:hidden px-4 pt-1 pb-0.5">
+        <button
+          type="button"
+          onClick={() => setScanDetailsOpen((v) => !v)}
+          className="inline-flex items-center gap-1 text-[11px] text-faint hover:text-muted transition-colors"
+          aria-expanded={scanDetailsOpen}
+        >
+          <ChevronDown size={12} className={cn("transition-transform", scanDetailsOpen && "rotate-180")} />
+          Scan details
+        </button>
+        {scanDetailsOpen && (
+          <p className="mt-1 text-[11px] text-faint leading-relaxed">{subtitle}</p>
+        )}
+      </div>
       {scanError && (
         // We're past the no-data guard, so the table below is showing a valid (captured/last)
         // scan — a failed live refresh is non-critical here. Show a subtle muted note, not an
@@ -2474,6 +2562,46 @@ function freshness(fetchedAt?: string): string {
   return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
 }
 
+/** Maps raw trade-source keys to display labels for the Congressional / Insider subtitles. */
+function formatTradeSource(key: string): string {
+  switch (key) {
+    case "congress.trade": return "Congress.Trade";
+    case "senate-efd": return "Senate eFD";
+    case "capitol-trades": return "Capitol Trades";
+    case "apify-congress": return "Apify";
+    case "sec-edgar":
+    case "edgar": return "SEC EDGAR";
+    default: return key;
+  }
+}
+
+/** Returns a compact date range string from an array of ISO date strings.
+ *  "" for empty, single date for one entry, "MMM D – MMM D YYYY" within a year,
+ *  or "MMM YYYY – MMM YYYY" across years. */
+function formatDateRange(isoDates: string[]): string {
+  if (isoDates.length === 0) return "";
+  const dates = isoDates
+    .map((d) => new Date(d))
+    .filter((d) => !isNaN(d.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (dates.length === 0) return "";
+  // Date-only ISO strings parse as UTC midnight, so format in UTC too — otherwise US time zones
+  // (west of UTC) render the day before, e.g. "2026-06-26" -> "Jun 25".
+  const fmt = (d: Date, includeYear: boolean) =>
+    d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", ...(includeYear ? { year: "numeric" } : {}) });
+  const min = dates[0];
+  const max = dates[dates.length - 1];
+  if (min.getTime() === max.getTime()) {
+    return fmt(min, true);
+  }
+  if (min.getUTCFullYear() === max.getUTCFullYear()) {
+    return `${fmt(min, false)} – ${fmt(max, true)}`;
+  }
+  const fmtMonth = (d: Date) =>
+    d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "numeric" });
+  return `${fmtMonth(min)} – ${fmtMonth(max)}`;
+}
+
 /** Surfaces the full scraped congressional + insider datasets (the scan's Congress column
  *  only shows symbols that overlap the scan; this shows everything recently disclosed). */
 function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { snapshot: DashboardSnapshot; scan: MarketScan | null; onDrilldown: (q: MarketQuote) => void; tickerLogoDisplay: TickerLogoDisplay }) {
@@ -2486,13 +2614,13 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
       <Card className="overflow-hidden">
         <PanelHeader
           title="Congressional Trades"
-          subtitle={ws?.congress ? `${ws.congress.recordCount} on file · ${ws.congress.sources.join("+") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
+          subtitle={ws?.congress ? `${ws.congress.recordCount} on file${congress.length > 0 ? ` · ${formatDateRange(congress.map((t) => t.tradedAt))}` : ""} · ${ws.congress.sources.map(formatTradeSource).join(" + ") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
           icon={<Landmark size={16} />}
         />
         {congress.length === 0 ? (
           <EmptyState icon={<Landmark size={20} />} title="No Disclosures Cached Yet" hint="The connector refreshes daily in the background; check back after the next refresh." />
         ) : (
-          <div className="max-h-72 overflow-auto p-2">
+          <div className="max-h-72 overflow-auto p-2 pb-3">
             {congress.map((t, i) => (
               <div key={`${t.symbol}-${t.member}-${t.tradedAt}-${i}`} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
                 <Chip tone={t.side === "buy" ? "up" : "down"}>{t.side === "buy" ? "BUY" : "SELL"}</Chip>
@@ -2508,13 +2636,13 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
       <Card className="overflow-hidden">
         <PanelHeader
           title="Insider (Form 4) Activity"
-          subtitle={ws?.insider ? `${ws.insider.recordCount} on file · SEC EDGAR · ${freshness(ws.insider.fetchedAt)}` : "SEC EDGAR — open-market buys/sells only"}
+          subtitle={ws?.insider ? `${ws.insider.recordCount} on file${insider.length > 0 ? ` · ${formatDateRange(insider.map((f) => f.filedAt))}` : ""} · SEC EDGAR · ${freshness(ws.insider.fetchedAt)}` : "SEC EDGAR — open-market buys/sells only"}
           icon={<Shield size={16} />}
         />
         {insider.length === 0 ? (
           <EmptyState icon={<Shield size={20} />} title="No Insider Filings Cached Yet" hint="Open-market Form 4 buys/sells accumulate here as they're filed." />
         ) : (
-          <div className="max-h-72 overflow-auto p-2">
+          <div className="max-h-72 overflow-auto p-2 pb-3">
             {insider.map((f, i) => {
               const net = f.buyTx - f.sellTx;
               return (
@@ -3429,8 +3557,8 @@ function SettingsContent({
   updatePolicy,
   tickerLogoDisplay,
   setTickerLogoDisplay,
-  compactExecutionBanner,
-  setCompactExecutionBanner,
+  executionBannerMode,
+  setExecutionBannerMode,
   openAccounts,
   openStrategyStudio,
   load,
@@ -3447,8 +3575,8 @@ function SettingsContent({
   updatePolicy: (patch: PolicyPatch) => void;
   tickerLogoDisplay: TickerLogoDisplay;
   setTickerLogoDisplay: (next: TickerLogoDisplay) => void;
-  compactExecutionBanner: boolean;
-  setCompactExecutionBanner: (next: boolean) => void;
+  executionBannerMode: ExecutionBannerMode;
+  setExecutionBannerMode: (next: ExecutionBannerMode) => void;
   openAccounts: () => void;
   openStrategyStudio: () => void;
   load: () => Promise<void>;
@@ -3601,13 +3729,13 @@ function SettingsContent({
   return (
     <>
       <div className="min-h-[60vh] space-y-4">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overscroll-x-contain">
           <Tabs
             value={section}
             onChange={(v) => setSection(v as SettingsSection)}
             tabs={[
               { id: "operate", label: "Operate" },
-              { id: "risk", label: "Risk & Safety" },
+              { id: "risk", label: "Safety" },
               { id: "connections", label: "Connections" },
               { id: "display", label: "Display" },
               { id: "tax", label: "Tax" },
@@ -3774,7 +3902,7 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Account circuit breakers</div>
-                <p className="mt-0.5 text-xs text-faint">When breached, the system auto-switches to close-only (no new entries) and fires a kill-switch alert. Blank = off.</p>
+                <p className="mt-0.5 text-xs text-faint">Auto-switch to close-only when breached. Blank = off. See Definitions.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
@@ -3787,7 +3915,7 @@ function SettingsContent({
               <label className="flex items-center justify-between gap-3">
                 <span>
                   <span className="block text-sm font-semibold text-fg">Volatility panic brake</span>
-                  <span className="block text-xs text-faint">On a VIX / VVIX / Cboe SKEW tail extreme, auto-switch to close-only. On by default. Blank threshold = use the built-in default (40 / 150 / 160).</span>
+                  <span className="block text-xs text-faint">Auto-switch to close-only on a volatility tail extreme. On by default. Blank threshold = built-in default. See Definitions.</span>
                 </span>
                 <Switch checked={policy.volPanicBrakeEnabled !== false} onChange={(v) => updatePolicy({ volPanicBrakeEnabled: v })} />
               </label>
@@ -3804,7 +3932,7 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Whole-portfolio exposure caps</div>
-                <p className="mt-0.5 text-xs text-faint">Gross = Σ|position value|; net = Σ position value (directional). <strong>Default 80%</strong> deliberately keeps ~20% cash — raise to 100 to allow full deployment. Mainly bite once shorting is enabled.</p>
+                <p className="mt-0.5 text-xs text-faint"><strong>Default 80%</strong> keeps ~20% cash — raise to 100 for full deployment. See Definitions.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <OptionalNumberField label="Max gross exposure %" value={policy.maxGrossExposurePct} placeholder="80" step={1} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v })} />
@@ -3822,15 +3950,6 @@ function SettingsContent({
                 <OptionalNumberField label="Trailing stop %" value={policy.riskRules.trailingStopPct || undefined} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, trailingStopPct: v ?? 0 } })} />
                 <NumberField label="Take-profit trim %" value={policy.riskRules.takeProfitTrimPct ?? 50} min={1} max={100} step={5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitTrimPct: v } })} />
               </div>
-              <p className="text-xs text-faint">
-                A fixed stop-loss % is a <strong>static price</strong> (entry minus the %), so it rests at the broker
-                24/7 where the integration allows it — see &quot;Stop support&quot; below. <strong>Trailing</strong> stops,
-                by contrast, are <strong>currently app-managed</strong> (they fire only while this app/scheduler runs):
-                most brokers — incl. Alpaca and Robinhood — support trailing natively, but the app doesn&apos;t place
-                native trailing orders yet, and Robinhood&apos;s trading API the app uses can&apos;t carry them at all.
-                <strong> Take-profit trim %</strong> = how much of a position to sell at the take-profit target (the rest
-                rides; laddered per target band).
-              </p>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
                 <span>
                   <span className="block text-sm font-medium text-fg">ATR (volatility) stops</span>
@@ -3944,13 +4063,39 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Universe floor (exclude penny / illiquid names)</div>
-                <p className="mt-0.5 text-xs text-faint">Filters the SCANNED candidates only. Your explicit Additional Watchlist symbols and current holdings are always exempt. Market-cap / $-volume bounds apply only when that datum is known.</p>
+                <p className="mt-0.5 text-xs text-faint">Filters the SCANNED candidates only. Watchlist symbols and holdings are always exempt. See Definitions.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <OptionalNumberField label="Min share price $" value={policy.universeFloor?.minPrice} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minPrice: v } })} />
                 <OptionalNumberField label="Min market cap $" value={policy.universeFloor?.minMarketCapUsd} placeholder="off" step={1_000_000} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minMarketCapUsd: v } })} />
                 <OptionalNumberField label="Min daily $-volume" value={policy.universeFloor?.minDollarVolume} placeholder="off" step={100_000} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minDollarVolume: v } })} />
               </div>
+            </div>
+
+            {/* Definitions — fuller explanations for the guards above, in the order they appear */}
+            <div className="rounded-lg border border-line bg-surface-1/60 px-3 py-2 text-xs text-faint space-y-1.5">
+              <span className="block font-medium text-muted">Definitions</span>
+              <p>
+                <span className="font-medium text-muted">Account circuit breakers</span> — when max drawdown % or max daily loss ($) is breached, the system auto-switches to close-only (no new entries) and fires a kill-switch alert. Blank = off.
+              </p>
+              <p>
+                <span className="font-medium text-muted">Volatility panic brake</span> — on a VIX / VVIX / Cboe SKEW tail extreme, auto-switch to close-only. On by default. A blank threshold uses the built-in default (40 / 150 / 160).
+              </p>
+              <p>
+                <span className="font-medium text-muted">Whole-portfolio exposure caps</span> — gross = Σ|position value|; net = Σ position value (directional). Default 80% deliberately keeps ~20% cash — raise to 100 to allow full deployment. These mainly bite once shorting is enabled.
+              </p>
+              <p>
+                <span className="font-medium text-muted">Stops &amp; exits</span> — a fixed stop-loss % is a static price (entry minus the %), so it rests at the broker 24/7 where the integration allows it (see &ldquo;Stop support&rdquo; above). Trailing stops are currently app-managed (they fire only while this app/scheduler runs): most brokers — incl. Alpaca and Robinhood — support trailing natively, but the app doesn&apos;t place native trailing orders yet, and Robinhood&apos;s trading API can&apos;t carry them at all. Take-profit trim % = how much of a position to sell at the take-profit target (the rest rides; laddered per target band).
+              </p>
+              <p>
+                <span className="font-medium text-muted">Short-selling limits</span> — apply only when &ldquo;Enable short selling&rdquo; (Operate → Key Parameters) is on. A short stop-loss % is required — without it every short is rejected.
+              </p>
+              <p>
+                <span className="font-medium text-muted">Order execution</span> — a proposal whose type is not permitted is blocked; most accounts only need market + limit. Extended-hours orders, marketable-limit entries, and extended-hours synthetic stops each gate the respective behavior.
+              </p>
+              <p>
+                <span className="font-medium text-muted">Universe floor</span> — filters the scanned candidates only. Your explicit Additional Watchlist symbols and current holdings are always exempt. Market-cap / $-volume bounds apply only when that datum is known.
+              </p>
             </div>
           </div>
         )}
@@ -3966,7 +4111,7 @@ function SettingsContent({
                     {" · "}
                     Red: <span className="font-medium text-fg">{policy.redTeamLlmModel || "Same as Green Team"}</span>
                     {" · "}
-                    Effort: <span className="font-medium text-fg">{policy.llmReasoningEffort ?? "medium"}</span>
+                    Effort: <span className="font-medium text-fg">{(policy.llmReasoningEffort ?? "medium").replace(/^./, (c) => c.toUpperCase())}</span>
                   </p>
                   <p className="mt-1 text-xs text-faint">Edit Green/Red Team behavior in Strategy Studio. Provider keys are saved below.</p>
                 </div>
@@ -3995,19 +4140,17 @@ function SettingsContent({
 
         {section === "display" && (
           <div className="space-y-3">
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
-              <span>
-                <span className="block text-sm font-medium text-fg">Compact mode banner</span>
-                <span className="block text-xs text-faint">
-                  Keeps the Test, Paper, or Brokerage banner visible with less vertical space.
-                </span>
-              </span>
-              <Switch
-                checked={compactExecutionBanner}
-                onChange={setCompactExecutionBanner}
-                label="Compact mode banner"
+            <Field label="Account-mode banner" hint="The Test / Paper / Brokerage banner at the very top. Full is the standard size, Compact uses less vertical space, and Hidden removes it entirely.">
+              <Segmented<ExecutionBannerMode>
+                value={executionBannerMode}
+                onChange={setExecutionBannerMode}
+                options={[
+                  { value: "full", label: "Full" },
+                  { value: "compact", label: "Compact" },
+                  { value: "hidden", label: "Hidden" }
+                ]}
               />
-            </label>
+            </Field>
             <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more. Option 1 uses a tile; Option 2 uses the transparent logo style.">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}
@@ -4048,12 +4191,11 @@ function SettingsContent({
               <option value="roth_ira">Roth IRA — tax-free</option>
               <option value="traditional_ira">Traditional IRA — tax-deferred</option>
             </select>
-            <p className="text-xs text-faint">IRAs are tax-sheltered: 0% estimated tax and no in-account wash-sale lockout. A loss in a <em>taxable</em> account still locks rebuys of that symbol across all your accounts for 30 days.</p>
           </div>
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Wash-sale guard</span>
-              <span className="block text-xs text-faint">Block rebuying a symbol sold at a loss within 30 days (IRC §1091).</span>
+              <span className="block text-xs text-faint">Block rebuying a symbol sold at a loss within 30 days.</span>
             </span>
             <Switch checked={taxSettings.washSaleGuard} onChange={(v) => updatePolicy({ taxSettings: { ...taxSettings, washSaleGuard: v } })} />
           </label>
@@ -4061,14 +4203,28 @@ function SettingsContent({
             <NumberField label="Short-term rate (%)" value={taxSettings.shortTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, shortTermRatePct: v } })} />
             <NumberField label="Long-term rate (%)" value={taxSettings.longTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, longTermRatePct: v } })} />
           </div>
-          <p className="text-xs text-faint">Rates are used only for the rough liability estimate on the Tax tab. Defaults: 24% short-term (ordinary), 15% long-term.</p>
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Subtract estimated tax from results</span>
-              <span className="block text-xs text-faint">Show realized P&amp;L on the Performance tab net of the estimated tax burden.</span>
+              <span className="block text-xs text-faint">Show realized P&amp;L net of the estimated tax burden.</span>
             </span>
             <Switch checked={Boolean(taxSettings.subtractFromResults)} onChange={(v) => updatePolicy({ taxSettings: { ...taxSettings, subtractFromResults: v } })} />
           </label>
+          <div className="rounded-lg border border-line bg-surface-1/60 px-3 py-2 text-xs text-faint space-y-1.5">
+            <span className="block font-medium text-muted">Definitions</span>
+            <p>
+              <span className="font-medium text-muted">Account tax treatment</span> — IRAs are tax-sheltered: 0% estimated tax and no in-account wash-sale lockout. A loss in a <em>taxable</em> account still locks rebuys of that symbol across all your accounts for 30 days.
+            </p>
+            <p>
+              <span className="font-medium text-muted">Wash-sale guard</span> — blocks rebuying a symbol sold at a loss within 30 days (IRC §1091).
+            </p>
+            <p>
+              <span className="font-medium text-muted">Short-term / Long-term rate</span> — used only for the rough liability estimate on the Tax tab. Defaults: 24% short-term (ordinary), 15% long-term.
+            </p>
+            <p>
+              <span className="font-medium text-muted">Subtract estimated tax from results</span> — shows realized P&amp;L on the Performance tab net of the estimated tax burden.
+            </p>
+          </div>
         </div>
       )}
 
@@ -4133,7 +4289,7 @@ function SettingsContent({
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Skip proven money-losers (negative-EV gate)</span>
-              <span className="block text-xs text-faint">Off by default. When on, an opening trade is skipped entirely if its thesis is <em>proven</em> (≥ min lots) and its realized post-cost edge is at or below the threshold. Normally the sizer instead downsizes such theses to the exploratory floor to keep gathering data; this is the more conservative &ldquo;don&apos;t open a proven money-loser&rdquo; stance. Unproven theses are never skipped.</span>
+              <span className="block text-xs text-faint">Off by default. When on, skip opening a trade whose thesis is already proven to lose money. See Definitions below.</span>
             </span>
             <Switch checked={Boolean(tuning.skipNegativeExpectancy)} onChange={(v) => updatePolicy({ tuning: { ...tuning, skipNegativeExpectancy: v } })} />
           </label>
@@ -4150,7 +4306,10 @@ function SettingsContent({
             <span className="font-medium text-muted">Debt/equity veto ceiling</span> vetoes BUYS whose debt/equity ratio exceeds this (e.g. 3); blank disables.
           </p>
           <p className="text-xs text-faint">
-            Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables — see <span className="text-muted">docs/phase-9-web-sources.md</span> and <span className="text-muted">src/lib/market.ts</span>.
+            <span className="font-medium text-muted">Skip proven money-losers</span> — when on, an opening trade is skipped entirely if its thesis is <em>proven</em> (≥ min lots) and its realized post-cost edge is at or below the threshold. Normally the sizer instead downsizes such theses to the exploratory floor to keep gathering data; this is the more conservative &ldquo;don&apos;t open a proven money-loser&rdquo; stance. Unproven theses are never skipped.
+          </p>
+          <p className="text-xs text-faint">
+            Other tunables (scan refresh cadence, congressional/insider lookback windows, scoring sub-score thresholds) are set via environment variables.
           </p>
         </div>
       )}
@@ -4194,11 +4353,11 @@ function SettingsContent({
             />
           </div>
           <p className="text-xs text-faint">
-            <span className="font-medium text-muted">Candidate cap</span> is the maximum `marketScan.topCandidates` count the LLM may choose from.{" "}
-            <span className="font-medium text-muted">Outlier reserve</span> is included inside that cap and lets below-cutoff names with notable congressional, insider, short-pressure, or technical signals replace lower-ranked plain candidates.
+            <span className="font-medium text-muted">Candidate cap</span> is the top-ranked count (default {DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT}) the LLM may choose from.{" "}
+            <span className="font-medium text-muted">Outlier reserve</span> names are <span className="font-medium text-muted">added on top of</span> the candidate cap, not swapped inside it — below-cutoff names with notable congressional, insider, short-pressure, or technical signals, plus statistically extreme price/volume movers. Your current holdings are always scanned regardless of either limit.
           </p>
           <p className="text-xs text-faint">
-            Expert consensus: {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-12 is the lowest reasonable range for very cost-sensitive runs, 25-40 is balanced, 60-80 is broad research, and {MAX_MARKET_SCAN_CANDIDATE_LIMIT} is the practical upper bound before attention dilution usually outweighs extra breadth.
+            So a run sends up to the cap (top-N) plus up to the outlier reserve of added outliers, plus every position you currently hold. Expert consensus on the cap: {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-12 is the lowest reasonable range for very cost-sensitive runs, 25-40 is balanced, 60-80 is broad research, and {MAX_MARKET_SCAN_CANDIDATE_LIMIT} is the practical upper bound before attention dilution usually outweighs extra breadth.
           </p>
 
           <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
@@ -4262,11 +4421,11 @@ function SettingsContent({
             <span>
               <span className="block text-sm font-medium text-fg">Contribute my learnings to the shared pool</span>
               <span className="block text-xs text-faint">
-                {lcSharing === null ? "Loading…" : lcSharing.contributeShared ? "On — new facts you learn are shared with opted-in users." : "Off — your learned facts stay private (default)."}
+                {lcSharing === null ? "Loading…" : lcSharing.contributeShared ? "On — new facts you learn are shared with opted-in users." : "Off — your learned facts stay private."}
               </span>
             </span>
             <Switch
-              checked={lcSharing?.contributeShared ?? false}
+              checked={lcSharing?.contributeShared ?? true}
               onChange={(v) => { if (!lcSharingLoading && lcSharing !== null) void updateLcSharing({ contributeShared: v }); }}
             />
           </label>
@@ -4312,8 +4471,8 @@ function SettingsContent({
           <div className="border-t border-line pt-3">
             <span className="mb-1.5 block text-xs font-medium text-muted">Direct delivery (email · SMS · push)</span>
             <p className="mb-2 text-[11px] text-faint">
-              Send price-alert and event notifications straight to you. Email/SMS require the operator to have configured the
-              provider keys (Resend / Twilio); toggle a channel, enter your target, then Send test to verify delivery.
+              Send price-alert and event notifications straight to you. Email and SMS require the operator to have configured the
+              provider keys. Toggle a channel, enter your target, then Send test to verify delivery.
             </p>
             <DeliveryChannelsPanel />
           </div>
@@ -5063,8 +5222,8 @@ function ApiKeysSection() {
                   </div>
                 </div>
                 {row.docsUrl && (
-                  <a className="inline-flex items-center gap-1 text-xs font-medium text-info hover:underline" href={row.docsUrl} target="_blank" rel="noreferrer">
-                    Docs <ExternalLink size={12} />
+                  <a className="inline-flex items-center text-info hover:text-fg" href={row.docsUrl} target="_blank" rel="noreferrer" aria-label="Open provider site" title="Open provider site">
+                    <ExternalLink size={15} />
                   </a>
                 )}
               </div>
@@ -5101,11 +5260,15 @@ function ApiKeysSection() {
 function IntegrationsSection({
   accounts,
   policy,
-  onSaved
+  onSaved,
+  hideTestAccount,
+  setHideTestAccount
 }: {
   accounts: DashboardSnapshot["connectedAccounts"];
   policy: TradingPolicy;
   onSaved: () => Promise<void>;
+  hideTestAccount: boolean;
+  setHideTestAccount: (next: boolean) => void;
 }) {
   type AccountDraft = Partial<NonNullable<DashboardSnapshot["connectedAccounts"]>[0]>;
   const [editing, setEditing] = useState<AccountDraft | null>(null);
@@ -5207,7 +5370,14 @@ function IntegrationsSection({
         toast.error("Account Number is required for Alpaca.");
         return;
       }
-      draft.environment = inferAlpacaEnvironment(draft);
+      // When editing an existing account and leaving the API key blank ("leave blank to keep"), the
+      // secret is preserved server-side — so DON'T re-infer the environment from the now-blank key
+      // (that could flip a PK-inferred paper account to live on a label-only edit). Keep the stored
+      // environment; only re-infer when a key is actually (re)entered or for a brand-new account.
+      const keepingHiddenSecret = Boolean(draft.id) && !draft.apiKey?.trim();
+      draft.environment = keepingHiddenSecret
+        ? draft.environment || inferAlpacaEnvironment(draft)
+        : inferAlpacaEnvironment(draft);
     } else {
       draft.environment = draft.environment || "live";
     }
@@ -5273,39 +5443,38 @@ function IntegrationsSection({
     return (
       <div className="space-y-4 rounded-lg border border-line bg-surface-2/30 p-4">
         <h4 className="text-sm font-semibold text-fg">
-          {editing.id
-            ? "Edit Account"
-            : editing.broker === "robinhood"
-              ? "Add Robinhood Account"
-              : editing.broker === "alpaca-mcp"
-                ? "Add Alpaca MCP Account"
-                : "Add Alpaca Account"}
+          {editing.broker === "robinhood"
+            ? (editing.id ? "Edit Robinhood Account" : "Add Robinhood Account")
+            : editing.broker === "alpaca-mcp"
+              ? (editing.id ? "Edit Alpaca MCP Account" : "Add Alpaca MCP Account")
+              : (editing.id ? "Edit Alpaca Account" : "Add Alpaca Account")}
         </h4>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {isAlpacaMcp ? (
-            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {isAlpacaMcp && (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted sm:col-span-2">
               Alpaca MCP uses your MCP server URL, such as a local SSE endpoint. For direct Alpaca keys, use the regular Alpaca account option.
             </div>
-          ) : (
-            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted col-span-2">
+          )}
+          {editing.broker === "robinhood" && (
+            <div className="rounded-md border border-line bg-bg/35 px-3 py-2 text-[13px] text-muted sm:col-span-2">
               Robinhood uses OAuth through MCP and syncs the agentic Brokerage account. No API key fields are required here.
             </div>
           )}
-          <Field label="Label (Optional)">
+          <Field label="Label">
             <input
-              className={inputClass}
+              className={cn(inputClass, "placeholder:italic")}
               value={editing.label || ""}
               onChange={e => setEditing({ ...editing, label: e.target.value })}
               placeholder={
                 editing.broker === "robinhood"
-                  ? "e.g. Robinhood Agentic"
+                  ? "Robinhood Agentic"
                   : editing.broker === "alpaca-mcp"
-                    ? "e.g. Alpaca MCP Paper"
-                    : "e.g. Alpaca Paper"
+                    ? "Alpaca MCP Paper"
+                    : "Paper, Roth IRA, etc"
               }
             />
           </Field>
-          <Field label={isAlpaca ? "Account Number (Required)" : "Account Number (Optional)"}>
+          <Field label="Account Number">
             <input
               className={inputClass}
               value={editing.accountNumber || ""}
@@ -5324,9 +5493,9 @@ function IntegrationsSection({
           </Field>
           {isAlpaca && (
             <>
-              <Field label="Alpaca API Key">
+              <Field label={editing.id ? "Alpaca API Key (hidden)" : "Alpaca API Key"}>
                 <input
-                  className={inputClass}
+                  className={cn(inputClass, "placeholder:italic")}
                   value={editing.apiKey || ""}
                   onChange={e => {
                     const apiKey = e.target.value;
@@ -5338,11 +5507,11 @@ function IntegrationsSection({
                       baseUrl: isAlpacaRest && !showCustomEndpoint ? alpacaDefaultEndpointFor(environment) : editing.baseUrl
                     });
                   }}
-                  placeholder="Required (API Key / OAuth Token)"
+                  placeholder={editing.id ? "•••••••• — leave blank to keep" : "Required (API Key / OAuth Token)"}
                 />
               </Field>
-              <Field label="Alpaca API Secret">
-                <input type="password" className={inputClass} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder="Required for key-pair; omit for OAuth" />
+              <Field label={editing.id ? "Alpaca API Secret (hidden)" : "Alpaca API Secret"}>
+                <input type="password" className={cn(inputClass, "placeholder:italic")} value={editing.apiSecret || ""} onChange={e => setEditing({ ...editing, apiSecret: e.target.value })} placeholder={editing.id ? "•••••••• — leave blank to keep" : "Required for key-pair; omit for OAuth"} />
               </Field>
               {isAlpacaRest ? (
                 <>
@@ -5361,7 +5530,7 @@ function IntegrationsSection({
                       }}
                     />
                     <span>
-                      <span className="block text-sm font-medium text-fg">Use a custom Alpaca endpoint</span>
+                      <span className="block text-sm font-medium text-fg">Use a Custom Alpaca Endpoint</span>
                       <span className="block text-xs text-faint">
                         Leave off unless your endpoint is different from the Paper/Brokerage defaults. Current default: <span className="font-mono">{defaultAlpacaEndpoint}</span>.
                       </span>
@@ -5413,13 +5582,10 @@ function IntegrationsSection({
             if (mcpHealth?.authenticated) { void syncRobinhood(); }
             else { window.location.href = "/api/auth/robinhood/start"; }
           }}>
-            <Plus size={14} className="mr-1" /> Connect Robinhood Agentic Account
+            <Plus size={14} className="mr-1" /> Connect Robinhood
           </Button>
           <Button variant="ghost" size="sm" onClick={() => openAccountEditor({ broker: "alpaca", environment: "paper", baseUrl: ALPACA_PAPER_ENDPOINT })}>
-            <Plus size={14} className="mr-1" /> Connect Alpaca Account
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => openAccountEditor({ broker: "alpaca-mcp", environment: "paper" })}>
-            <Plus size={14} className="mr-1" /> Connect Alpaca MCP Account
+            <Plus size={14} className="mr-1" /> Connect Alpaca
           </Button>
         </div>
       </div>
@@ -5499,6 +5665,12 @@ function IntegrationsSection({
           })}
         </div>
       )}
+      {accounts?.some((a) => a.broker === "test") && (
+        <label className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-xs text-faint">
+          <span>Hide the Test account from the account selector</span>
+          <Switch checked={hideTestAccount} onChange={setHideTestAccount} label="Hide Test account" />
+        </label>
+      )}
     </div>
   );
 }
@@ -5517,8 +5689,8 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "guardrails", label: "Guardrails" },
-          { id: "tax", label: "Tax & Wash-sale" },
-          { id: "fintech", label: "Fintech Studios" },
+          { id: "tax", label: "Tax" },
+          { id: "fintech", label: "Data Sources" },
           { id: "mcp", label: "MCP Connection" }
         ]}
       />
@@ -5536,7 +5708,7 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
               <li><strong>Market Scan:</strong> The system continuously scans index universes (e.g. S&amp;P 500) to find candidate symbols.</li>
               <li><strong>Enrichment:</strong> Fetches company profiles, premium news from Fintech Studios, and analyst reviews.</li>
               <li><strong>AI Analysis:</strong> Executes prompts through the configured model (e.g. Claude) to score symbols and formulate trade suggestions.</li>
-              <li><strong>Execution:</strong> Approves or proposes orders based on your selected risk policies and safety limits.</li>
+              <li><strong>Execution:</strong> Approves or proposes orders based on your selected risk policies and guardrails.</li>
             </ol>
           </div>
         </div>
@@ -5545,18 +5717,26 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
       {section === "guardrails" && (
         <div className="space-y-3 text-[13px] text-muted">
           <p>
-            Safety guardrails prevent runaway trading and keep allocations within your risk tolerance. Customize these in the <strong>Settings → Operate</strong> tab.
+            Guardrails prevent runaway trading and keep allocations within your risk tolerance. Customize these in <strong>Settings</strong>.
           </p>
-          <div className="grid gap-2.5">
+          <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">
               <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
                 <Gauge size={14} className="text-info" /> Daily Notional Ceiling
               </div>
               <p>
-                Maximum combined dollar amount of order executions permitted per day. Currently set to: <strong className="text-fg">${policy.maxDailyNotional ?? "Unlimited"}</strong>.
+                Maximum combined dollar amount of order executions permitted per day. Currently set to: <strong className="text-fg">{policy.maxDailyNotional != null ? `$${policy.maxDailyNotional}` : "Unlimited"}</strong>.
               </p>
             </div>
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
+                <Hourglass size={14} className="text-info" /> Hourly Ceiling
+              </div>
+              <p>
+                Maximum notional executed in a rolling 60-minute window. Set to <strong className="text-fg">{policy.maxHourlyNotional != null ? `$${policy.maxHourlyNotional}` : "Unlimited"}</strong>. Breaches automatically drop authority to Propose mode.
+              </p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3 sm:col-span-2">
               <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
                 <Shield size={14} className="text-info" /> Trading Authority Mode
               </div>
@@ -5567,14 +5747,6 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
                 <li><strong>Propose Mode:</strong> Order proposals are staged and require your explicit click to send to the brokerage.</li>
                 <li><strong>Autonomous Mode:</strong> The agent places orders autonomously when matching signals are identified.</li>
               </ul>
-            </div>
-            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
-              <div className="font-semibold text-fg flex items-center gap-1.5 mb-1">
-                <Hourglass size={14} className="text-info" /> Hourly Ceiling
-              </div>
-              <p>
-                Maximum notional executed in a rolling 60-minute window. Set to <strong className="text-fg">${policy.maxHourlyNotional ?? "Unlimited"}</strong>. Breaches automatically drop authority to Propose mode.
-              </p>
             </div>
           </div>
         </div>
@@ -5616,53 +5788,42 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
       {section === "fintech" && (
         <div className="space-y-3 text-[13px] text-muted">
           <p>
-            <strong>Fintech Studios (PowerIntell.AI)</strong> supplies real-time financial news, press releases, regulatory updates, and sentiment analysis scores.
+            The app blends several data sources so every symbol gets real numbers. Keyless sources work out of the box; optional keyed providers add depth when you supply an API key. Where a value is unavailable, the cell shows <code className="text-fg font-mono">-</code> rather than a fabricated number.
           </p>
-          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
-            <div className="font-semibold text-fg flex items-center gap-1.5">
-              <Zap size={14} className="text-accent" /> Operation Credit Costs
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+              <div className="font-semibold text-fg flex items-center gap-1.5">
+                <Server size={14} className="text-accent" /> Keyless &amp; Core
+              </div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li><strong>Yahoo Finance:</strong> quotes and price history with no API key — the floor every symbol falls back to.</li>
+                <li><strong>Connected broker:</strong> Alpaca or Robinhood for live account quotes, positions, and execution.</li>
+                <li><strong>SEC EDGAR:</strong> insider activity from Form 4 filings.</li>
+                <li><strong>FINRA:</strong> daily short-volume data.</li>
+              </ul>
             </div>
-            <ul className="list-disc pl-4 space-y-0.5">
-              <li><strong>Symbol Search:</strong> 6 credits per query (returns 25 articles).</li>
-              <li><strong>AI Article Summary:</strong> 5 credits per summary.</li>
-            </ul>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+              <div className="font-semibold text-fg flex items-center gap-1.5">
+                <Landmark size={14} className="text-accent" /> Congressional Trades
+              </div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li><strong>U.S. Senate eFD:</strong> senator financial-disclosure transactions.</li>
+                <li><strong>Capitol Trades</strong> and <strong>Congress.Trade:</strong> aggregated House/Senate trade reporting.</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2 sm:col-span-2">
+              <div className="font-semibold text-fg flex items-center gap-1.5">
+                <Zap size={14} className="text-accent" /> Optional Keyed Providers
+              </div>
+              <p>
+                Supply an API key to enrich coverage: <strong>Finnhub</strong>, <strong>Alpha Vantage</strong>, and <strong>FMP</strong> for fundamentals and quotes, plus <strong>Fintech Studios</strong> for premium financial news, press releases, regulatory updates, and sentiment scores. None are required — the app runs fully on the keyless sources above.
+              </p>
+            </div>
           </div>
           <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
-            <div className="font-semibold text-fg">Monthly Run Projections (5-Ticker Portfolio)</div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-line text-faint">
-                    <th className="pb-1.5">Scenario</th>
-                    <th className="pb-1.5">Frequency</th>
-                    <th className="pb-1.5 text-right">Est. Cost</th>
-                    <th className="pb-1.5 text-right">Recommended Plan</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line/40">
-                  <tr>
-                    <td className="py-1.5 font-medium text-fg">Daily EOD scan</td>
-                    <td className="py-1.5 text-faint">Once/day (22 days)</td>
-                    <td className="py-1.5 text-right font-mono">660 credits/mo</td>
-                    <td className="py-1.5 text-right text-up font-medium">Free ($0/mo)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1.5 font-medium text-fg">Intra-day tracking</td>
-                    <td className="py-1.5 text-faint">3 scans/day (22 days)</td>
-                    <td className="py-1.5 text-right font-mono">1,980 credits/mo</td>
-                    <td className="py-1.5 text-right text-up font-medium">Starter ($20/mo)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1.5 font-medium text-fg">High Frequency</td>
-                    <td className="py-1.5 text-faint">10 scans/day (22 days)</td>
-                    <td className="py-1.5 text-right font-mono">6,600 credits/mo</td>
-                    <td className="py-1.5 text-right text-up font-medium">Pro ($40/mo)</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p className="text-[11px] text-faint mt-1">
-              Note: Unused credits in the Starter tier roll over up to 1,500 credits.
+            <div className="font-semibold text-fg">Fintech Studios pricing (one provider, informational)</div>
+            <p className="text-[12px]">
+              Reference only — this is Fintech Studios&apos; own credit-based pricing, not a per-user in-app setting. Symbol search costs ~6 credits per query (25 articles); an AI article summary costs ~5 credits. A 5-ticker portfolio scanned once daily (~22 trading days) runs roughly 660 credits/month, comfortably within their free tier; intra-day scanning scales up to their paid plans.
             </p>
           </div>
         </div>
@@ -5671,33 +5832,31 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
       {section === "mcp" && (
         <div className="space-y-3 text-[13px] text-muted">
           <p>
-            The <strong>Model Context Protocol (MCP)</strong> enables your desktop AI agent (e.g. Claude Desktop) to connect directly to the Fintech Studios API and run advanced queries dynamically.
+            The <strong>Model Context Protocol (MCP)</strong> is an open standard that lets an AI agent connect to external tools and data providers through a uniform interface, so the agent can call provider actions and pull live data on demand rather than working from a static snapshot.
           </p>
-          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
-            <div className="font-semibold text-fg flex items-center gap-1.5">
-              <Network size={14} className="text-accent" /> MCP Integration Benefits
+          <p>
+            An AI agent — like this app — can connect to providers over MCP. This app uses MCP for things like the <strong>Robinhood</strong> brokerage connection and optional premium news, calling those tools as part of its research and execution loop.
+          </p>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+              <div className="font-semibold text-fg flex items-center gap-1.5">
+                <Network size={14} className="text-accent" /> Benefits
+              </div>
+              <ul className="list-disc pl-4 space-y-1">
+                <li><strong>Dynamic tool use:</strong> the agent discovers and invokes provider actions on demand instead of hard-coding each call.</li>
+                <li><strong>Uniform interface:</strong> one protocol spans many providers, so adding a new source is consistent.</li>
+                <li><strong>Stateful sessions:</strong> auth and context persist across calls, enabling multi-turn research loops.</li>
+              </ul>
             </div>
-            <ul className="list-disc pl-4 space-y-1">
-              <li><strong>Dynamic Tool Use:</strong> Allows the agent to query news articles, filter by regulatory event tags, and request summary analysis on demand.</li>
-              <li><strong>Real-time Research:</strong> The agent can conduct deep multi-turn market research loops in the background when evaluating trading proposals.</li>
-              <li><strong>Decoupled Key Management:</strong> Keys are registered securely in the desktop config, not exposed to client dashboard scripts.</li>
-            </ul>
-          </div>
-          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
-            <div className="font-semibold text-fg">Fintech Studios MCP Server Command</div>
-            <pre className="mt-1 block overflow-x-auto rounded bg-bg/50 px-2 py-1.5 font-mono text-[11px] text-fg border border-line/60">
-{`"fintechstudios": {
-  "command": "npx",
-  "args": ["-y", "@fintechstudios/mcp-server"],
-  "env": {
-    "FINTECH_STUDIOS_API_KEY": "fts_live_..."
-  }
-}`}
-            </pre>
-            <p className="text-[11px] text-faint mt-1.5">
-              Configured in Claude Desktop configuration at:<br />
-              <code className="text-fg font-mono">~/Library/Application Support/Claude/claude_desktop_config.json</code>
-            </p>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
+              <div className="font-semibold text-fg flex items-center gap-1.5">
+                <Server size={14} className="text-accent" /> Trade-offs vs REST API
+              </div>
+              <ul className="list-disc pl-4 space-y-1">
+                <li><strong>More moving parts:</strong> MCP needs a running, stateful server plus session and OAuth management; it can add latency and an extra hop, and the tooling is still newer and less universally supported.</li>
+                <li><strong>REST is simpler but more manual:</strong> a plain REST API is stateless and ubiquitous, but typically requires bespoke per-provider integration and manual key handling.</li>
+              </ul>
+            </div>
           </div>
         </div>
       )}

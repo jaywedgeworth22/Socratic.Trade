@@ -171,7 +171,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
     target: (p) => p.phone || "",
     describe: (cfg) => ({
       id: "sms",
-      label: "SMS (Twilio)",
+      label: "SMS",
       available: CHANNELS.sms.available(cfg),
       targetField: "phone",
       targetLabel: "Mobile number",

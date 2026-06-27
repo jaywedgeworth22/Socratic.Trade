@@ -60,6 +60,17 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          # This workflow EXISTS to respond to a bot. claude-code-action's default
+          # human-actor gate aborts (~11s) on any non-User trigger with
+          # "Workflow initiated by non-human actor: chatgpt-codex-connector ...
+          # Add bot to allowed_bots list or use '*' to allow all bots." That gate
+          # was the real failure — NOT the "directory mismatch ... tsconfig.json"
+          # text, which is just a comment the action echoes in its run script.
+          # Allow ONLY the Codex reviewer (not '*'); the job's `if:` already
+          # restricts triggers to chatgpt-codex-connector[bot], so this is the
+          # exact complement. The action normalizes by lowercasing + stripping a
+          # trailing "[bot]", so this value matches the actor exactly.
+          allowed_bots: "chatgpt-codex-connector[bot]"
           # The whole policy lives in the prompt so behavior is auditable in-repo.
           prompt: |
             You are the autonomous fixer that responds to the Codex PR reviewer
@@ -91,11 +102,22 @@ jobs:
                start with "[codex-autofix] ". Push to the PR branch.
             6. Update STATUS.md + the relevant docs/rollouts note like the repo's
                handoff protocol requires.
-            7. When the PR is functional (CI will run on your push) and you have
+            7. RESOLVE THE THREADS YOU HANDLED. This is required — a fixed bug
+               whose thread is still OPEN leaves the PR blocked on the repo's
+               "all conversations resolved" gate (a fix only makes the thread
+               OUTDATED, never RESOLVED). For every Codex thread you addressed in
+               code this run, OR that is outdated and already fixed, mark it
+               resolved. Do NOT resolve a thread where you posted a question to
+               the maintainer or intentionally left a finding unfixed — those stay
+               open. Get the IDs, then resolve each:
+                 gh api graphql -f query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:1){nodes{author{login}}}}}}}}' -f o=OWNER -f n=REPO -F p=PR
+                 gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}' -f t=THREAD_ID
+               (OWNER/REPO/PR come from `gh pr view --json headRepositoryOwner,headRepository,number` or the event context. Only resolve threads whose first comment author is chatgpt-codex-connector[bot].)
+            8. When the PR is functional (CI will run on your push) and you have
                addressed the actionable items, ensure auto-merge is enabled:
                `gh pr merge <PR> --squash --auto`. Do NOT use --admin and do NOT
                try to bypass the required `verify` check.
-            8. Be frugal with PR comments — only comment to ask the maintainer a
+            9. Be frugal with PR comments — only comment to ask the maintainer a
                question, to report the round cap was hit, or to flag a finding you
                are intentionally not fixing. The diff is the record otherwise.
           claude_args: |
