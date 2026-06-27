@@ -4,6 +4,15 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Codex autofix on PR #175 (auth/Robinhood): merge marker + rollout file lists
+Branch `claude/wonderful-wozniak-xploaq`. Addressed the remaining non-outdated Codex review items on
+PR #175: (1) removed the leftover `>>>>>>> origin/main` merge-conflict marker in `STATUS.md`
+(git diff --check clean); (2) completed the Robinhood rollout note's Files section to list `STATUS.md`
+and the note itself, per `AGENTS.md` rollout minimums. The three P1/P2 auth findings (allowlist gating,
+verified-email guard, Apple rollout handoff) were already fixed in earlier commits (`ba7004e`,
+`49e8ad2`, `0cca3fa`) — verified present and threads resolved. Merged `origin/main` (#141 chat
+read-only state tools) cleanly. Verify trio run before push.
+
 ## 2026-06-27 — HANDOFF: cutover crash UNRESOLVED + the "bash 3.2" claim below is WRONG
 Branch `claude/practical-mendel-cqtduf`. The operator reproduced the line-200
 `SHARED_PROJECT_ID?: unbound variable` crash under **Homebrew bash 5.3**, so the "macOS bash 3.2"
@@ -250,7 +259,7 @@ Verify: `node --check` ✓ · `bash -n` ✓ · fake-`infisical`-shim tests (UA m
 per-project identities, token-drop, exit-code propagation) ✓ · tsc ✓ · **1250/1250** ✓ · build ✓.
 Operator unblock for the in-flight cutover: `unset INFISICAL_SHARED_TOKEN` then re-run (app verify
 already passes). See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
->>>>>>> origin/main
+
 ## 2026-06-26 — Stop-execution capability correction (copy) + verified broker matrix
 Branch `agent/claude-stop-execution`. Retracts a wrong Phase-3 claim ("no broker holds trailing stops").
 Diverse adversarial verification (84 agents, primary docs, 2 skeptics/claim — workflow `wf_e5bf1b0a-04d`):

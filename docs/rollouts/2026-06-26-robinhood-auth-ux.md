@@ -44,6 +44,8 @@ the case where Robinhood IS explicitly selected but the token is missing or expi
   in the Decisions error banner; add conditional "Robinhood" readiness item when not connected.
 - `test/robinhood-mcp.test.ts` — update two tests that previously relied on token-less HTTP calls
   to explicitly store a token for `"user-a"` via `setMcpOAuthTokens`.
+- `STATUS.md` — add the current-state entry for this Robinhood auth UX fix.
+- `docs/rollouts/2026-06-26-robinhood-auth-ux.md` — this rollout note.
 
 ## Verification
 
