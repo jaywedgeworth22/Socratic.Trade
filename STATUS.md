@@ -4,6 +4,23 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Account UI polish + production logout/OAuth reconnect hardening
+Branch `codex/account-ui-logout-oauth`. Follow-up to the Robinhood OAuth/readiness
+work: Settings -> Accounts now shows the concise reconnect line
+`Robinhood needs to be reconnected.` instead of leaking low-level MCP token
+details, Settings has a header `Manage Accounts` action beside the close button,
+the command-bar `Manage Accounts...` account option is italicized, and the Mode
+and Account selectors share desktop sizing/typography so `Autonomous Mode` is
+not truncated. `/logout` now builds the Cloudflare Access logout URL from the
+public app origin instead of internal `localhost:4000`, and Robinhood OAuth
+callback completion reuses the stored public redirect/client instead of
+re-registering a localhost callback client. When dynamic client registration is
+configured, it takes precedence over any stale static client id. Verified
+focused OAuth/logout regressions, `npx tsc --noEmit`, full `npm test`
+(1467/1467), `npm run build`, and `npm run lint` (0 errors / 214 existing
+warnings). See
+`docs/rollouts/2026-06-27-account-ui-logout-oauth.md`.
+
 ## 2026-06-27 — Robinhood OAuth production callback host fix
 Branch `codex/robinhood-oauth-callback-host`. The reported Robinhood OAuth
 return to `http://localhost:4000/api/auth/robinhood/callback?...` was caused by

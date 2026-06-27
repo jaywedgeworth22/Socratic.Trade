@@ -215,8 +215,9 @@ ROBINHOOD_MCP_REDIRECT_URI=
 ROBINHOOD_MCP_SCOPES=tools:call
 ```
 
-If the provider supports dynamic client registration, use
-`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` instead of `ROBINHOOD_MCP_CLIENT_ID`.
+If the provider supports dynamic client registration, set
+`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL`; it takes precedence over a configured
+`ROBINHOOD_MCP_CLIENT_ID` so the app can register the correct callback origin.
 Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
 or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite

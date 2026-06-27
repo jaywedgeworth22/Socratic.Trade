@@ -225,7 +225,17 @@ Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
 
 - **Visible session controls**: the dashboard shows the signed-in email when available,
   exposes a Sign out command, and `/logout` clears Auth.js cookies before routing through
-  Cloudflare Access logout when CF Access is trusted.
+  Cloudflare Access logout when CF Access is trusted. As of 2026-06-27, `/logout`
+  resolves that Cloudflare Access logout and `returnTo` URL through the public app
+  origin (`x-forwarded-host`, `NEXT_PUBLIC_SITE_URL`, or the production fallback)
+  so production sign-out does not redirect to internal `localhost:4000`.
+
+- **Robinhood OAuth redirect/client integrity**: the OAuth callback route is public
+  but state-bound, callback completion uses the redirect URI stored at OAuth start,
+  and dynamic client registration takes precedence when
+  `ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` is configured. This prevents a stale
+  static client id or callback-time localhost default from replacing the public
+  production redirect/client during reconnect.
 
 - **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
   unchanged (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior,

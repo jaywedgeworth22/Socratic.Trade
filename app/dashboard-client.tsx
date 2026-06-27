@@ -1213,13 +1213,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           {/* Sub-container 1: Selects and Utility tools */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
-              className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
+              className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-2 py-0.5 backdrop-blur-xl md:flex lg:h-9 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
-              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode:</span>
+              <span className="text-xs font-medium text-muted lg:text-sm">Mode:</span>
               <select
                 aria-label="Approval mode"
-                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
+                className="min-w-[9.5rem] bg-transparent text-xs font-medium text-fg outline-none lg:min-w-[11rem] lg:text-sm"
                 value={policy.strategyAuthority}
                 onChange={(e) => {
                   const next = e.target.value as TradingPolicy["strategyAuthority"];
@@ -1237,7 +1237,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
-                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
+                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:h-9 lg:max-w-[14rem] lg:px-2.5 lg:text-sm"
                 value={activeAccountId}
                 onChange={async (e) => {
                   const id = e.target.value;
@@ -1262,7 +1262,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                     return <option key={acc.id} value={acc.id}>{ambiguous ? `${acc.label} (${acc.environment})` : acc.label}</option>;
                   });
                 })()}
-                <option value="manage">Manage Accounts...</option>
+                <option value="manage" className="italic">Manage Accounts...</option>
               </select>
             </div>
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
@@ -1491,7 +1491,26 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        title="Settings"
+        icon={<SettingsIcon size={18} />}
+        size="lg"
+        headerAction={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSettingsOpen(false);
+              setAccountsOpen(true);
+            }}
+          >
+            <Wallet size={14} />
+            Manage Accounts
+          </Button>
+        }
+      >
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -5710,9 +5729,9 @@ function IntegrationsSection({
                   </div>
                   <div className="mt-1 text-xs text-faint">
                     {info.subtitle}
-                    {needsRobinhoodReconnect && mcpHealth?.error && (
+                    {needsRobinhoodReconnect && (
                       <span className="block pt-1 text-amber-300">
-                        {mcpHealth.error}
+                        Robinhood needs to be reconnected.
                       </span>
                     )}
                     {acc.capabilities && (

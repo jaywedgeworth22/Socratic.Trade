@@ -37,6 +37,13 @@ filling the missing pieces.
 > portfolio/balance read failures can all mark Account as
 > not ready while preserving stored rows for account management. No roadmap
 > change; see `docs/rollouts/2026-06-27-account-readiness-broker-health.md`.
+>
+> 2026-06-27 (`codex/account-ui-logout-oauth`): account UI/logout OAuth hardening —
+> Settings and the command-bar controls now keep the Manage Accounts path visible and
+> legible, Robinhood reconnect copy is concise, Cloudflare Access logout uses the
+> public app origin instead of localhost, and Robinhood OAuth callback completion
+> preserves the initiating public redirect/client. No roadmap change; see
+> `docs/rollouts/2026-06-27-account-ui-logout-oauth.md`.
 
 ## Current Status
 
