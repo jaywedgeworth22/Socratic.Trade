@@ -10,6 +10,12 @@ filling the missing pieces.
 > Insider (future-date rejection, Congress.Trade casing, time span), System Help + Settings rework,
 > Accounts/Edit-Account, 3-way banner, Hide-Test-account, shared-pool default ON, Alpaca account-mismatch
 > hardening. No roadmap change; see `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+>
+> 2026-06-27 (`codex/account-mismatch-selector`): account-selection polish/fix —
+> hidden Test now filters both Settings -> Accounts and the command-bar selector, strategy-run
+> audits are scoped by `connectedAccountId` for Latest Decisions/Strategy Tuning, and selected
+> Alpaca connected accounts no longer fall back to generic paper keys when stored credentials are
+> missing. No roadmap change; see `docs/rollouts/2026-06-27-account-mismatch-selector.md`.
 
 ## Current Status
 

@@ -498,5 +498,34 @@ describe("persistence and notifications", () => {
     const gateway1 = getAlpacaGateway(userId);
     expect(((gateway1 as any).alpaca).configuration.baseUrl).toBe("https://custom-alpaca-endpoint.com");
   });
-});
 
+  it("does not fall back to generic Alpaca keys for a selected connected account with missing credentials", async () => {
+    const originalPaperKey = process.env.ALPACA_PAPER_API_KEY;
+    const originalPaperSecret = process.env.ALPACA_PAPER_SECRET_KEY;
+    process.env.ALPACA_PAPER_API_KEY = "PK-OTHER-ACCOUNT";
+    process.env.ALPACA_PAPER_SECRET_KEY = "other-secret";
+    try {
+      const { getAlpacaGateway } = await import("../src/lib/alpaca");
+      const { upsertConnectedAccount } = await import("../src/lib/db");
+      const userId = `alpaca-missing-key-user-${randomUUID()}`;
+
+      upsertConnectedAccount({
+        id: randomUUID(),
+        userId,
+        broker: "alpaca",
+        environment: "live",
+        accountNumber: "294709855",
+        label: "Roth IRA",
+        baseUrl: "https://api.alpaca.markets",
+        isActive: true
+      });
+
+      expect(() => getAlpacaGateway(userId)).toThrow(/Alpaca credentials are missing for Roth IRA/);
+    } finally {
+      if (originalPaperKey) process.env.ALPACA_PAPER_API_KEY = originalPaperKey;
+      else delete process.env.ALPACA_PAPER_API_KEY;
+      if (originalPaperSecret) process.env.ALPACA_PAPER_SECRET_KEY = originalPaperSecret;
+      else delete process.env.ALPACA_PAPER_SECRET_KEY;
+    }
+  });
+});

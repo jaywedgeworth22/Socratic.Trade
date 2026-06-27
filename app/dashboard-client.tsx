@@ -283,6 +283,19 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
   return deriveExecutionState(snapshot.policy, activeConnectedAccountFor(snapshot));
 }
 
+function visibleConnectedAccounts(
+  accounts: ConnectedAccount[] | undefined,
+  hideTestAccount: boolean,
+  activeAccountId?: string
+): ConnectedAccount[] {
+  return (accounts ?? []).filter((account) => {
+    if (!hideTestAccount || account.broker !== "test") return true;
+    // Keep the active Test row visible until the user switches away; hiding the active
+    // selection would make the account state look blank while Test is still in force.
+    return Boolean(activeAccountId && account.id === activeAccountId);
+  });
+}
+
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
 // decides the color + message so a live (Brokerage) session can never be mistaken for a
 // Test sandbox. Display-only — it does not place or gate orders.
@@ -1035,6 +1048,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
   const executionState = executionStateFor(snapshot);
   const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
+  const selectorAccounts = visibleConnectedAccounts(snapshot.connectedAccounts, hideTestAccount, activeAccountId);
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
@@ -1232,7 +1246,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               >
                 <option value="" disabled>Select Account...</option>
                 {(() => {
-                  const accts = (snapshot.connectedAccounts ?? []).filter(acc => acc.id === activeAccountId || !hideTestAccount || acc.broker !== "test");
+                  const accts = selectorAccounts;
                   // Append the environment only when two accounts would otherwise render the same option
                   // text — disambiguating identical labels (e.g. two "Alpaca") so a live account is never
                   // mistaken for paper in this real-money switcher, while distinct labels stay uncluttered.
@@ -5621,6 +5635,7 @@ function IntegrationsSection({
   // The app's active account: prefer the explicitly-selected one, else the flagged-active row (mirrors
   // activeConnectedAccountFor). Used to mark which row is ACTIVE vs merely Connected.
   const activeId = policy.connectedAccountId ?? accounts?.find((a) => a.isActive)?.id;
+  const visibleAccounts = visibleConnectedAccounts(accounts, hideTestAccount, activeId);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5640,13 +5655,13 @@ function IntegrationsSection({
         </div>
       </div>
 
-      {!accounts?.length ? (
+      {!visibleAccounts.length ? (
         <div className="rounded-lg border border-line border-dashed p-6 text-center text-sm text-faint">
           No connected accounts yet. Use the buttons above to connect any supported account when you want broker-backed execution; Paper accounts are optional.
         </div>
       ) : (
         <div className="space-y-2">
-          {accounts.map(acc => {
+          {visibleAccounts.map(acc => {
             const info = formatAccountInfo(acc);
             const isActive = acc.id === activeId;
             return (
@@ -5717,7 +5732,7 @@ function IntegrationsSection({
       )}
       {accounts?.some((a) => a.broker === "test") && (
         <label className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-xs text-faint">
-          <span>Hide the Test account from the account selector</span>
+          <span>Hide the Test account from Accounts and the account selector</span>
           <Switch checked={hideTestAccount} onChange={setHideTestAccount} label="Hide Test account" />
         </label>
       )}

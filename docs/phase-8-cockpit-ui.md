@@ -196,6 +196,10 @@ across panels, feeds, popovers, or status chips.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
   incomplete account list does not strand the user away from Settings.
+- The Hide Test account preference filters inactive Test rows from both
+  Settings -> Accounts and the command-bar selector; if Test is still active, it
+  stays visible until the user switches away so the current execution mode is not
+  hidden.
 - Account rows should remain readable on narrow screens: stack account details
   above actions, make inactive `Use` the primary action, keep Edit/Remove as
   secondary actions, and visually anchor the active account with a subtle left
