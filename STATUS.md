@@ -52,6 +52,11 @@ going to be fetched. **Codex round 7:** positive-value guard on App A price targ
 only the congress.trade tier (paid providers no longer serialized behind unrelated free tiers); PLAN.md
 flag ref fixed. **Codex round 8 (doc-only):** rollout enablement steps point at the new
 `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`. Merged `origin/main` (5f83ec2) 2026-06-25. 1224 tests.
+**Codex round 12 (PR #160):** `rowIsFresh` now rejects future-dated App A rows (2-day skew) so clock-skew/
+bad-import rows can't win first-wins; the short-circuit FMP cache-hit path treats a stripped leftover as a
+MISS when App A already covers the remaining field (e.g. `peRatio`) so FMP's unique insider/senate/target
+fields get refetched. Other non-outdated Codex threads this round were already implemented earlier (verified
++ resolved). Merged `origin/main` 2026-06-27. tsc clean, 1450 tests, build OK.
 
 ## 2026-06-26 — Cutover crash root cause: macOS bash 3.2 mis-parses a multibyte char next to `$VAR`
 Branch `claude/practical-mendel-cqtduf`. The operator's `scripts/infisical-prod-cutover.sh: line 200:

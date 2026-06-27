@@ -392,7 +392,16 @@ function rowIsFresh(row: { date?: string | null; updatedAt?: string | null }, no
   const stamp = row.date || row.updatedAt;
   if (!stamp) return false;
   const t = Date.parse(stamp);
-  return Number.isFinite(t) && now - t <= congressMaxStaleMs();
+  if (!Number.isFinite(t)) return false;
+  const age = now - t;
+  // Reject FUTURE-dated rows (clock skew / bad import / accidental future as-of date): a
+  // negative age would otherwise sail through the max-stale check and let future-dated
+  // fundamentals/analyst data win first-wins ahead of current providers. Allow a small
+  // skew so a date-only stamp from a timezone ahead of UTC (parsed as UTC midnight) isn't
+  // mistaken for the future; anything beyond that is not real data.
+  const FUTURE_SKEW_MS = 2 * 86_400_000;
+  if (age < -FUTURE_SKEW_MS) return false;
+  return age <= congressMaxStaleMs();
 }
 
 // ── Congress.Trade (App A) cross-app read tier ───────────────────────────────
@@ -1719,10 +1728,15 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
         // would otherwise overwrite App A's fresher fmp-keyed analyst in the blend).
         if (skipFlagsFor(symbol).skipConsensus && cached.data.analystBySource) {
           const { analystBySource, analystRating, analystScore, ...rest } = cached.data;
-          // If stripping the redundant consensus leaves nothing useful, the cached entry was
-          // analyst-only — treat it as a MISS so FMP's unique fields (insider/senate, enabled
-          // targets) are refetched, rather than returning {} and skipping the fetch path.
-          if (Object.keys(rest).length > 0) result[symbol] = rest;
+          // A leftover field is only USEFUL if App A doesn't ALSO cover it. A cached
+          // { peRatio, analystBySource } leaves { peRatio } after stripping the consensus,
+          // but App A's first-wins peRatio (or covered targets) makes that contribute
+          // nothing — so the entry is effectively empty and FMP's unique fields
+          // (insider/senate, enabled targets) would never be refetched. Treat it as a MISS
+          // unless a NON-covered field survives, so the fetch path runs.
+          const covered = context?.coveredFields?.[symbol];
+          const usefulKeys = Object.keys(rest).filter((k) => !(covered?.has(k) ?? false));
+          if (usefulKeys.length > 0) result[symbol] = rest;
           else misses.push(symbol);
         } else {
           result[symbol] = cached.data;

@@ -186,6 +186,23 @@ Four more valid P2s — two were real bugs introduced by the round 5–7 changes
   unique fields (insider/senate, enabled targets) never refetched until the cache expired. **Fixed**: when
   stripping leaves nothing useful, fall through to `misses` so FMP refetches its unique fields.
 
+## Codex review round 12 (PR #160, commit [codex-autofix]) — two remaining non-outdated findings
+- **Future-dated App A rows accepted as fresh** — `rowIsFresh` only checked the *upper* stale bound
+  (`now - t <= maxStale`), so a row dated AFTER the scan (clock skew / bad import / accidental future
+  as-of date) had a negative age that sailed through and could win the first-wins cascade ahead of
+  current providers. **Fixed**: reject `age < -FUTURE_SKEW_MS` (2-day skew so a date-only stamp from a
+  timezone ahead of UTC, parsed as UTC midnight, isn't mistaken for the future).
+- **Covered FMP cache leftovers returned as a hit** — when the short-circuit strips a cached FMP entry's
+  redundant consensus, a remaining field like `peRatio` that App A ALSO covers makes the entry effectively
+  empty (App A's first-wins `peRatio` wins), yet `Object.keys(rest).length > 0` treated it as a usable hit
+  and FMP's unique fields (insider/senate, enabled targets) were never refetched until TTL. **Fixed**: a
+  leftover field counts as useful only when App A's `coveredFields` does NOT also cover it; otherwise fall
+  through to `misses` so the fetch path runs.
+- The other non-outdated Codex threads this round (rowIsFresh date-first preference, `!transportError`
+  negative-cache guard, analyst de-dupe crediting, donated-aggregate `congress.trade` drop, and the
+  `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` doc sync in PLAN.md / STATUS.md / `docs/congress-trade-consume.md`)
+  were already implemented by earlier rounds; verified against current code and resolved.
+
 ## Follow-ups
 - Enabling in prod: `CONGRESS_TRADE_READS_ENABLED=on` (price/history cache-aside) **and**
   `CONGRESS_TRADE_FUNDAMENTALS_ENABLED=on` (the fundamentals/analyst tier — gated SEPARATELY since the
