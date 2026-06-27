@@ -39,7 +39,10 @@ falls back to `local`.
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
   responses, unwraps Robinhood's `data` envelope, and exposes
-  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
+  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics. As of
+  2026-06-27, Settings -> Accounts uses that health result to label stored
+  Robinhood rows without a usable token as `OAuth Needed` with Reconnect instead
+  of implying the account is fully connected.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,
@@ -99,7 +102,9 @@ Accounts continues to own brokerage-account credentials. Settings -> Accounts
 presents Robinhood through the same supported-account button
 row as Alpaca. The client still checks `GET /api/broker/mcp/health` silently so
 the Robinhood button can sync an authenticated MCP session or start OAuth, but it
-does not render a separate disconnected MCP status panel. Mutable
+does not render a separate disconnected MCP status panel. Stored Robinhood rows
+now show `OAuth Needed` when the MCP token is absent/invalid, so stored metadata
+cannot masquerade as a live balance/order connection. Mutable
 account/key/order/policy route handlers touched by this flow are marked
 `dynamic = "force-dynamic"` so production builds do not attempt static page-data
 collection for request-bound operations.

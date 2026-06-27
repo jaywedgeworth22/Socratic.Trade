@@ -4,6 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Robinhood balance visibility + recoverable-fallback audit trail
+Branch `codex/robinhood-balance-failover-audit`. Investigated production via
+local authenticated `GET /api/dashboard` and `/api/broker/mcp/health`: the active
+execution account was Alpaca Roth IRA, while the stored Robinhood Agentic row was
+not MCP-authenticated (`No Robinhood MCP access token...`), so Robinhood balances
+could not refresh even though the row appeared connected. Fix: Settings ->
+Accounts now marks unauthenticated Robinhood rows as `OAuth Needed` with a
+Reconnect action instead of a plain `Connected` badge. Robinhood portfolio
+parsing now accepts cash-only/nested buying-power payloads so a $100 cash account
+does not show zero if Robinhood omits old total/cash field names. Broker
+dashboard fallbacks, selected-account backfills, and Robinhood quote/average-cost
+fallbacks now write throttled `recoverable_issue` audit events that render in
+Activity. Vitest now caps workers at 4 and uses a 20s global timeout to match
+the repo's loaded-runner behavior; the previous uncapped/5s default produced
+unrelated cold-import failures in full-suite runs. Focused tests and
+`npx tsc --noEmit` are green; full `npm test` (1451/1451), `npm run build`, and
+`npm run lint` (0 errors / 218 warnings) are green. See
+`docs/rollouts/2026-06-27-robinhood-balance-failover-audit.md`.
+
 ## 2026-06-27 — ESLint configured + wired into required `verify` CI gate
 Branch `cursor/configure-eslint-f266`. Added `eslint.config.mjs` (flat config
 extending `eslint-config-next` core-web-vitals + typescript), changed the `lint`

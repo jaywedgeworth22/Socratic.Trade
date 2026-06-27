@@ -36,6 +36,7 @@ import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { MarketQuote, MarketScan, TradeProposal } from "./types";
 import { isAdminEmail } from "./auth/admin";
+import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
 /**
  * Derive agentic-allowed for a STORED connected account, used as a fallback when the live broker
@@ -58,10 +59,24 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const policy = getPolicy(userId);
   const gateway = getBrokerGateway(policy, userId);
   let accounts: any[] = [];
+  let brokerAccountReadFailed = false;
   try {
     accounts = await gateway.getAccounts();
   } catch (error) {
-    console.warn("Failed to fetch accounts:", error instanceof Error ? error.message : error);
+    brokerAccountReadFailed = true;
+    const message = messageFromUnknownError(error);
+    console.warn("Failed to fetch accounts:", message);
+    recordRecoverableIssue({
+      source: "broker",
+      operation: "dashboard.getAccounts",
+      severity: "error",
+      message,
+      fallback: "Using stored connected-account rows so configured accounts remain visible.",
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      broker: policy.activeBroker,
+      accountNumber: policy.accountNumber
+    });
   }
   // Resilience: a live getAccounts() that fails or returns empty (a transient broker/MCP enumeration
   // miss) must not make the configured account vanish from the snapshot — which made the readiness
@@ -69,13 +84,34 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // live list didn't return, deriving agenticAllowed from the account type so the selected account
   // always resolves to a definitive status.
   const liveAccountNumbers = new Set(accounts.map((account) => account.accountNumber));
+  let storedBackfillCount = 0;
+  let selectedAccountWasBackfilled = false;
   for (const connected of listConnectedAccounts(userId)) {
     if (!connected.accountNumber || liveAccountNumbers.has(connected.accountNumber)) continue;
+    storedBackfillCount += 1;
+    if (connected.id === policy.connectedAccountId || connected.accountNumber === policy.accountNumber) {
+      selectedAccountWasBackfilled = true;
+    }
     accounts.push({
       accountNumber: connected.accountNumber,
       label: connected.label,
       agenticAllowed: connectedAccountAgenticFallback(connected),
       capabilities: connected.capabilities
+    });
+  }
+  if (storedBackfillCount > 0 && (brokerAccountReadFailed || selectedAccountWasBackfilled)) {
+    recordRecoverableIssue({
+      source: "broker",
+      operation: "dashboard.connectedAccountBackfill",
+      message: brokerAccountReadFailed
+        ? "Live broker account enumeration failed, so the dashboard used stored connected-account metadata."
+        : "Live broker account enumeration did not include the selected account.",
+      fallback: "Stored connected-account rows were added to the dashboard snapshot.",
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      broker: policy.activeBroker,
+      accountNumber: policy.accountNumber,
+      details: { backfilledAccounts: storedBackfillCount, brokerAccountReadFailed, selectedAccountWasBackfilled }
     });
   }
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
@@ -88,7 +124,19 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
         gateway.getEquityOrders(accountNumber)
       ]);
     } catch (error) {
-      console.warn("Failed to fetch portfolio:", error instanceof Error ? error.message : error);
+      const message = messageFromUnknownError(error);
+      console.warn("Failed to fetch portfolio:", message);
+      recordRecoverableIssue({
+        source: "broker",
+        operation: "dashboard.getPortfolioBundle",
+        severity: "error",
+        message,
+        fallback: "Dashboard snapshot continues without live portfolio, positions, and orders.",
+        userId,
+        connectedAccountId: policy.connectedAccountId,
+        broker: policy.activeBroker,
+        accountNumber
+      });
     }
   }
 
