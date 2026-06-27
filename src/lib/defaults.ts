@@ -21,6 +21,8 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
 export const DEFAULT_RISK_RULES: RiskRules = {
   stopLossPct: 8,
   takeProfitPct: 20,
+  // Take partial profit at the target and let the rest ride (laddered per take-profit band).
+  takeProfitTrimPct: 50,
   trailingStopPct: 0
 };
 
@@ -36,6 +38,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   includedIndices: ["sp500"],
   additionalSymbols: [],
   blocklist: [],
+  // Penny/illiquid exclusion for the SCANNED universe (explicit symbols + held positions always exempt).
+  // No-op for the default S&P-500 universe (every member clears it); it bites only when the universe is
+  // broadened to other indexes / the wider screener. Tunable in settings.
+  universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
   sellToFundBuy: "off",
   llmModel: "gpt-5.4-mini",

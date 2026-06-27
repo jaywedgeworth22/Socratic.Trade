@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AlpacaSnapshotEnrichmentProvider,
+  CascadingEnrichmentProvider,
   alpacaDataFeed,
   analystScoreFromCounts,
   analystScoreFromMean,
@@ -14,7 +15,9 @@ import {
   noopProvider,
   parseAlpacaSnapshot,
   parseWebullUnofficialQuote,
-  scoreHeadlines
+  scoreHeadlines,
+  type MarketEnrichmentProvider,
+  type SymbolEnrichment
 } from "../src/lib/data-providers";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
@@ -922,5 +925,50 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
     expect(result.AAPL?.sources?.bid).toBe("alpaca-snapshot");
     expect(result.AAPL?.sources?.ask).toBe("alpaca-snapshot");
     expect(result.AAPL?.sources?.volume).toBe("alpaca-snapshot");
+  });
+});
+
+describe("CascadingEnrichmentProvider.activeSources (honest source attribution)", () => {
+  const stub = (name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider => ({
+    name,
+    configured: true,
+    async enrich() {
+      return data;
+    }
+  });
+
+  it("names only providers that supplied ≥1 accepted field, in registration order", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("alpha", { AAPL: { peRatio: 30 } }), // contributes peRatio
+      stub("beta", {}), // contributes nothing — must NOT appear in the source string
+      stub("gamma", { AAPL: { volume: 1000 } }) // contributes volume
+    ]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["alpha", "gamma"]);
+  });
+
+  it("excludes a provider whose every field lost the first-wins race (added nothing new)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("first", { AAPL: { peRatio: 30 } }),
+      stub("second", { AAPL: { peRatio: 99 } }) // peRatio already filled → not accepted → not a contributor
+    ]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["first"]);
+  });
+
+  it("counts an analyst-only contribution", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("rater", { AAPL: { analystBySource: { rater: { score: 80, label: "Buy" } } } })
+    ]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["rater"]);
+  });
+
+  it("resets between runs (a provider that contributed before but not now drops out)", async () => {
+    const cascade = new CascadingEnrichmentProvider([stub("only", { AAPL: { peRatio: 30 } })]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["only"]);
+    await cascade.enrich(["MSFT"]); // no data for MSFT this run
+    expect(cascade.activeSources).toEqual([]);
   });
 });

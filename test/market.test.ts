@@ -34,6 +34,16 @@ describe("rankMarketQuotes", () => {
     expect(strong.quality).toBeGreaterThan(weak.quality); // low leverage + EPS growth lift quality
   });
 
+  it("treats a sec-xbrl D/E above 10 as a true ratio (penalized), not a percentage", () => {
+    const common = { marketCap: 2_000_000_000, volume: 2_000_000 };
+    // sec-xbrl always emits a true ratio: 12 = 12x leverage → penalized. The `>10 → ÷100` percentage
+    // heuristic is source-aware, so it is NOT applied here (otherwise 12 would read as 0.12 and the
+    // over-levered name would be wrongly REWARDED as near-debt-free).
+    const levered = scoreFactors(quote({ symbol: "L", ...common, debtToEquity: 12, sources: { debtToEquity: "sec-xbrl" } }));
+    const safe = scoreFactors(quote({ symbol: "S", ...common, debtToEquity: 0.3, sources: { debtToEquity: "sec-xbrl" } }));
+    expect(levered.quality).toBeLessThan(safe.quality);
+  });
+
   it("blends 52-week position into momentum and beta into volatility", () => {
     const nearHigh = scoreFactors(quote({ symbol: "H", intradayChangePct: 1, price: 99, fiftyTwoWeekLow: 50, fiftyTwoWeekHigh: 100 }));
     const nearLow = scoreFactors(quote({ symbol: "L", intradayChangePct: 1, price: 51, fiftyTwoWeekLow: 50, fiftyTwoWeekHigh: 100 }));

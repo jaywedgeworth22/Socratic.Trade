@@ -598,6 +598,51 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).not.toContain("net exposure");
   });
 
+  it("net cap does NOT block a risk-exit sell whose notional is the 'price unavailable' sentinel", () => {
+    // Regression: a risk-exit SELL with no live quote carried estimatedNotional = MAX_SAFE_INTEGER
+    // (the over-cap sentinel). netDelta = -MAX overshot net through zero to ~-9e15, so
+    // |netProjected| > cap AND > |netNow| → the risk-reducing exit was BLOCKED with
+    // "Projected net exposure $-9,007,199,254,740,800 exceeds net cap". Closes are now exempt.
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, type: "market" },
+      { ...context(Number.MAX_SAFE_INTEGER), policy: { ...enabledPolicy, maxNetExposurePct: 100, maxGrossExposurePct: 100 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("net exposure");
+    expect(decision.reasons.join(" ")).not.toContain("gross exposure");
+    expect(decision.approved).toBe(true);
+  });
+
+  it("per-symbol % cap does NOT block a SELL of an already-over-cap position (the risk-exit trigger)", () => {
+    // maxSymbolExposurePct is ON by default (25%). An over-cap position is precisely what triggers a
+    // risk-exit (strategy prompts "SELL/TRIM any position exceeding maxSymbolExposurePct%"), so the cap
+    // must never block the exit it demanded. Covers BOTH the un-priced exit (estimatedNotional 0, the
+    // alpaca fix's fallback) AND a normally-priced partial exit (a pre-existing latent block the
+    // MAX_SAFE_INTEGER sentinel used to mask).
+    const overCapPositions: EquityPosition[] = [
+      { symbol: "AAPL", quantity: 5, averageCost: 200, marketValue: 4000, sector: "Technology" } // 40% of $10k
+    ];
+    for (const est of [0, 1000]) {
+      const decision = evaluateTradeProposal(
+        { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+        { policy: { ...enabledPolicy, maxSymbolExposurePct: 25 }, portfolio, positions: overCapPositions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: est }
+      );
+      expect(decision.reasons.join(" ")).not.toContain("exposure");
+      expect(decision.approved).toBe(true);
+    }
+  });
+
+  it("sector % cap does NOT block a SELL of a name in an already-over-cap sector", () => {
+    const techPositions: EquityPosition[] = [
+      { symbol: "AAPL", quantity: 5, averageCost: 200, marketValue: 4000, sector: "Technology" } // 40% tech in $10k book
+    ];
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { policy: { ...enabledPolicy, sectorCaps: { Technology: 25 } }, portfolio, positions: techPositions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 0 }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("sector exposure");
+    expect(decision.approved).toBe(true);
+  });
+
   it("default 100% gross/net caps do not block a small in-policy order", () => {
     const decision = evaluateTradeProposal(proposal, {
       policy: enabledPolicy,

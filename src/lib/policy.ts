@@ -109,6 +109,47 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
+  // STALENESS GATE: block an OPENING proposal built on stale market data (fail-safe, DEFAULT OFF).
+  // Enabled per-class only when the threshold is set (> 0). Fail-safe direction only: data older than
+  // the threshold → block; a MISSING timestamp is treated as stale (block) ONLY because the gate is on.
+  // Exits (sell/cover) are never gated. Timestamps are read from the run's MarketScan — never fabricated.
+  if (isOpening) {
+    const now = (context.now ?? new Date()).getTime();
+    const maxQuoteAgeSec = context.policy.maxQuoteAgeSec;
+    if (maxQuoteAgeSec != null && maxQuoteAgeSec > 0) {
+      const quoteAsOf =
+        context.marketScan?.quotesBySymbol[symbol]?.asOf ??
+        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.asOf;
+      const asOfMs = quoteAsOf ? new Date(quoteAsOf).getTime() : NaN;
+      if (!quoteAsOf || Number.isNaN(asOfMs)) {
+        reasons.push(
+          `staleness_gate: ${symbol} quote timestamp is missing/unparseable; treating as stale ` +
+            `(maxQuoteAgeSec=${maxQuoteAgeSec}).`
+        );
+      } else {
+        const ageSec = Math.round((now - asOfMs) / 1000);
+        if (ageSec > maxQuoteAgeSec) {
+          reasons.push(`staleness_gate: ${symbol} quote is ${ageSec}s old (max ${maxQuoteAgeSec}s).`);
+        }
+      }
+    }
+    const maxFundamentalsAgeSec = context.policy.maxFundamentalsAgeSec;
+    if (maxFundamentalsAgeSec != null && maxFundamentalsAgeSec > 0) {
+      const scanGeneratedAt = context.marketScan?.generatedAt;
+      const genMs = scanGeneratedAt ? new Date(scanGeneratedAt).getTime() : NaN;
+      if (!scanGeneratedAt || Number.isNaN(genMs)) {
+        reasons.push(
+          `staleness_gate: market-scan timestamp is missing/unparseable; treating fundamentals as stale ` +
+            `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}).`
+        );
+      } else {
+        const ageSec = Math.round((now - genMs) / 1000);
+        if (ageSec > maxFundamentalsAgeSec) {
+          reasons.push(`staleness_gate: market scan is ${ageSec}s old (max ${maxFundamentalsAgeSec}s).`);
+        }
+      }
+    }
+  }
   // SHORT_SELLING: opening shorts require both the policy flag and account capability.
   // Risk-reducing covers are allowed based on the existing short position even if shorting is now
   // disabled or capabilities are unavailable; blocking a cover would trap exposure.
@@ -254,8 +295,13 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
 
+  // Per-symbol exposure % cap — OPENING orders only. A close (sell/cover) can only reduce a symbol's
+  // exposure, so it must never be blocked here (otherwise the very risk-exit triggered by an over-cap
+  // position — see strategy.ts "SELL/TRIM any position exceeding maxSymbolExposurePct%" — would be
+  // blocked by the same cap that demanded it). Mirrors the isOpening gate on maxSymbolExposureNotional
+  // below. This cap is ON by default (unlike the 100% gross/net defaults).
   const projectedSymbolExposurePct = projectedExposurePct(proposal, context.positions, context.portfolio, estimatedNotional);
-  if (context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
+  if (isOpening && context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
     reasons.push(`Projected ${symbol} exposure ${projectedSymbolExposurePct.toFixed(2)}% exceeds ${context.policy.maxSymbolExposurePct}%.`);
   }
   if (context.policy.maxSymbolExposureNotional && isOpening) {
@@ -270,16 +316,19 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
 
   // Whole-portfolio gross/net exposure caps. Gross = Σ|marketValue| (total market
-  // involvement / leverage); net = Σ marketValue (directional bias). Each blocks only an
-  // order that pushes the metric FURTHER past its cap — a risk-reducing close is always
-  // allowed. These mainly bite once short selling is enabled. Defaults are 100% (non-binding).
-  if (context.policy.maxGrossExposurePct || context.policy.maxNetExposurePct) {
+  // involvement / leverage); net = Σ marketValue (directional bias). These apply to OPENING
+  // orders only — a risk-reducing close (sell/cover) is ALWAYS allowed, since it can only move
+  // gross/net toward zero. We gate on `isOpening` rather than relying solely on the
+  // "further-from-cap" guards because a corrupt/oversized notional on a close (e.g. an exit with
+  // no live quote) can overshoot through zero and look like a huge opposite-side position, which
+  // previously blocked the exit. These mainly bite once short selling is enabled (default 100%).
+  if ((context.policy.maxGrossExposurePct || context.policy.maxNetExposurePct) && isOpening) {
     const totalValue = context.portfolio.totalMarketValue;
     if (totalValue > 0) {
       const grossNow = context.positions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
       const netNow = context.positions.reduce((sum, p) => sum + p.marketValue, 0);
-      const grossProjected = isOpening ? grossNow + estimatedNotional : Math.max(0, grossNow - estimatedNotional);
-      const netDelta = proposal.side === "buy" || proposal.side === "cover" ? estimatedNotional : -estimatedNotional;
+      const grossProjected = grossNow + estimatedNotional;
+      const netDelta = proposal.side === "buy" ? estimatedNotional : -estimatedNotional; // opening: buy=long, short=short
       const netProjected = netNow + netDelta;
       if (context.policy.maxGrossExposurePct) {
         const grossCap = (context.policy.maxGrossExposurePct / 100) * totalValue;
@@ -296,7 +345,10 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
 
-  const sectorDecision = projectedSectorExposurePct(proposal, context, estimatedNotional);
+  // Sector exposure % cap — OPENING orders only, same reasoning as the per-symbol cap: a close can only
+  // reduce sector exposure, so it must never be blocked (a stale/zero notional on an exit would otherwise
+  // make projected == current and re-block a name in an already-over-cap sector).
+  const sectorDecision = isOpening ? projectedSectorExposurePct(proposal, context, estimatedNotional) : null;
   if (sectorDecision && sectorDecision.cap > 0 && sectorDecision.projectedPct > sectorDecision.cap) {
     reasons.push(`Projected ${sectorDecision.sector} sector exposure ${sectorDecision.projectedPct.toFixed(2)}% exceeds sector cap ${sectorDecision.cap}%.`);
   }

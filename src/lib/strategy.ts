@@ -31,6 +31,8 @@ import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
+import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -61,12 +63,15 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
+import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
+import { computeRationaleDiversity } from "./rationale-diversity";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -85,6 +90,8 @@ export interface StrategyResult {
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
+  /** Advisory only — rationale-diversity check result (improvement-program item #8). Never affects proposal generation or selection. */
+  rationaleDiversity?: RationaleDiversity;
 }
 
 export interface LiveApprovalConfirmation {
@@ -160,7 +167,8 @@ export async function runStrategyOnce(
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor
     });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
@@ -272,17 +280,37 @@ export async function runStrategyOnce(
       );
     }
     const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
+    // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
+    // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
+    // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
+    if (policy.accountNumber) {
+      try {
+        const lastTpBands = getTakeProfitTrimBands(policy.accountNumber, userId);
+        const tpPlan = planTakeProfitTrims(workingPositions, currentPrices, policy, lastTpBands);
+        const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
+        clearTakeProfitTrimBands(policy.accountNumber, Object.keys(lastTpBands).filter((s) => !heldSymbols.has(s)), userId);
+        proactiveProposals.push(...tpPlan.proposals);
+      } catch (err) {
+        console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
+      }
+    }
 
     let ragContext = "";
     try {
-      const { retrieveContext } = await import("./vector-db");
+      const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
       const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
       const contexts = await Promise.all(topSymbols.map(sym =>
-        retrieveContext(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
+        // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
+        // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
+        // never wired through this call site before. Advisory context only — not a money-path gate.
+        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
+          docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+          minScore: defaultMinScore()
+        })
       ));
       const validContexts = contexts.flat().filter(Boolean);
       if (validContexts.length > 0) {
-        ragContext = validContexts.join("\n\n");
+        ragContext = validContexts.map(c => c.text).join("\n\n");
       }
     } catch (e) {
       console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
@@ -412,6 +440,15 @@ export async function runStrategyOnce(
       workingPositions,
       userId
     );
+
+    // Advisory-only rationale-diversity check (improvement-program item #8).
+    // Computed on the final post-debate, post-gate proposal set. NEVER blocks, drops, or modifies proposals.
+    const rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
+    if (rationaleDiversity.collapsed) {
+      console.warn(
+        `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
+      );
+    }
 
     const results: StrategyResult["proposals"] = [];
     for (const proposal of proposals) {
@@ -683,6 +720,8 @@ export async function runStrategyOnce(
       .filter(Boolean)
       .join(" ");
 
+    // Persist diversity result as an advisory audit event (no schema migration needed).
+    audit("rationale_diversity", { runId, ...rationaleDiversity }, userId);
     finishStrategyRun(runId, "completed", summary, userId);
     if (!executionState.usesLocalSimulation) {
       recordPortfolioSnapshot({
@@ -711,7 +750,7 @@ export async function runStrategyOnce(
         positions: paperProjection.positions
       });
     }
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber };
+    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection
     generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
@@ -1256,7 +1295,8 @@ export async function executeProposal(
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor
     });
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
@@ -1533,7 +1573,11 @@ async function proposeTrades(input: {
   learnedContext?: string;
 }): Promise<TradeProposal[]> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
-  if (!openaiKey) return fallbackProposal(input);
+  // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
+  // We deliberately do NOT fabricate a rule-based stub here: a strategy session is an LLM-driven action,
+  // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
+  // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
+  if (!openaiKey) throw new LlmCredentialRequiredError(LLM_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -1808,14 +1852,9 @@ async function proposeTrades(input: {
           { role: "system", content: systemPrompt },
           { role: "user", content: JSON.stringify(userContent) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "trade_proposals",
-            strict: true,
-            schema
-          }
-        }
+        response_format: provider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "trade_proposals", strict: true, schema } }
       }
       : {
         model,
@@ -1868,7 +1907,7 @@ async function proposeTrades(input: {
 
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
+        throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
       }
       const payload = await response.json();
       recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
@@ -2017,14 +2056,9 @@ async function proposeTrades(input: {
           { role: "system", content: bearSystemPrompt },
           { role: "user", content: JSON.stringify(bearUserContent) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "bear_proposals",
-            strict: true,
-            schema: bearSchema
-          }
-        }
+        response_format: bearProvider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "bear_proposals", strict: true, schema: bearSchema } }
       }
       : {
         model: bearModel,
@@ -2228,38 +2262,6 @@ function compactPromptObject(values: Record<string, unknown>): Record<string, un
     compacted[key] = value;
   }
   return compacted;
-}
-
-function fallbackProposal(input: {
-  policyAllowlist: string[];
-  portfolio: Portfolio;
-  positions: EquityPosition[];
-}): TradeProposal[] {
-  const allowed = new Set(input.policyAllowlist.map(normalizeSymbol));
-  const candidates = input.positions
-    .filter((position) => allowed.has(normalizeSymbol(position.symbol)))
-    .map((position) => ({
-      symbol: normalizeSymbol(position.symbol),
-      exposurePct: input.portfolio.totalMarketValue > 0 ? (position.marketValue / input.portfolio.totalMarketValue) * 100 : 0
-    }))
-    .sort((a, b) => a.exposurePct - b.exposurePct);
-
-  const symbol = candidates[0]?.symbol ?? input.policyAllowlist.map(normalizeSymbol)[0];
-  if (!symbol) return [];
-  return [
-    {
-      symbol,
-      side: "buy",
-      type: "market",
-      dollarAmount: 10,
-      timeInForce: "gfd",
-      marketHours: "regular_hours",
-      rationale:
-        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple rule-based rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
-      tradeThesisTag: "Development Fallback",
-      entryMarketRegime: "Rule-based"
-    }
-  ];
 }
 
 // The LLM is told confidenceScore is 1–100, but json_schema strict mode does not
@@ -2504,12 +2506,13 @@ export function generateProactiveRiskProposals(
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
-  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
   const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
   const betaStops = policy.betaScaledStops === true;
   const atrStops = policy.atrStops === true;
 
-  if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
+  // Take-profit trims are handled by planTakeProfitTrims (a stateful, laddered band ratchet); this
+  // generator emits only stateless FULL-position stop-loss / short-stop exits.
+  if (stopLossPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
 
   // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
   // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
@@ -2541,8 +2544,6 @@ export function generateProactiveRiskProposals(
       const returnPct = ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
       if (effStopLossPct > 0 && returnPct <= -effStopLossPct) {
         reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effStopLossPct.toFixed(2)}% limit.`;
-      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-        reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
       exitSide = "sell";
     } else {
@@ -2554,8 +2555,6 @@ export function generateProactiveRiskProposals(
       const effShortStop = effectiveStopPct(sym, baseShortStop, beta);
       if (effShortStop > 0 && returnPct <= -effShortStop) {
         reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop.toFixed(2)}% limit.`;
-      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-        reason = `Proactive short take-profit cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
       }
       exitSide = "cover";
     }
@@ -2575,4 +2574,106 @@ export function generateProactiveRiskProposals(
     }
   }
   return proactiveProposals;
+}
+
+/** Clamp a take-profit trim percent to (0,100]; undefined/invalid → 100 (full exit, back-compat). */
+export function clampTakeProfitTrimPct(pct: number | undefined): number {
+  if (typeof pct !== "number" || !Number.isFinite(pct) || pct <= 0) return 100;
+  return Math.min(100, pct);
+}
+
+const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+
+/**
+ * Quantity to sell for a take-profit trim. Exits fully at >=100%. For a WHOLE-share position the trim is
+ * floored to whole shares (so it never forces a fractional order a non-fractional broker would reject); a
+ * sub-1-share slice or a <1-share remainder becomes a full exit. An already-fractional position keeps a
+ * fractional trim (the broker already supports fractional for it), avoiding a dust remainder.
+ */
+export function takeProfitTrimQuantity(qty: number, trimPct: number): number {
+  const q = Math.abs(qty);
+  if (q <= 0) return 0;
+  if (trimPct >= 100) return round6(q);
+  const raw = q * (trimPct / 100);
+  if (Number.isInteger(q)) {
+    const whole = Math.floor(raw);
+    if (whole < 1 || q - whole < 1) return round6(q); // no clean whole-share slice → full exit at target
+    return whole;
+  }
+  if (q - raw < 0.0001) return round6(q); // negligible remainder → full exit, no dust
+  return round6(raw);
+}
+
+export interface TakeProfitTrimPlan {
+  proposals: TradeProposal[];
+  /**
+   * Symbols + bands the trims emitted this run target (each proposal also carries `takeProfitBand`/
+   * `takeProfitBasis`). The band is persisted on FILL by recordFillFromProposal, NOT here — so a
+   * proposed/blocked/rejected trim is re-offered next run rather than silently ratcheted past.
+   */
+  advancedBands: Array<{ symbol: string; band: number }>;
+}
+
+/**
+ * Plan partial take-profit trims with a monotonic, lot-keyed band ratchet. For each position at/above its
+ * take-profit target, the take-profit BAND = floor(returnPct / takeProfitPct); a trim of
+ * `takeProfitTrimPct`% of the CURRENT position is emitted ONLY when that band exceeds the highest band
+ * already TRIMMED for this lot (`lastBandBySymbol[sym]`, matched by cost basis). So a partial take-profit
+ * trims once per band (e.g. at +20%, +40%, …) instead of laddering out the position every run, and a
+ * close+rebuy (different cost basis) starts fresh. Pure/sync. The caller reads prior bands from
+ * `take_profit_trims`; the band is committed only when the trim actually FILLS (recordFillFromProposal).
+ */
+export function planTakeProfitTrims(
+  positions: EquityPosition[],
+  currentPrices: Record<string, number>,
+  policy: TradingPolicy,
+  lastBandBySymbol: Record<string, TakeProfitTrimBand> = {}
+): TakeProfitTrimPlan {
+  const proposals: TradeProposal[] = [];
+  const advancedBands: Array<{ symbol: string; band: number }> = [];
+  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
+  if (takeProfitPct <= 0) return { proposals, advancedBands };
+  const trimPct = clampTakeProfitTrimPct(policy.riskRules.takeProfitTrimPct);
+
+  for (const pos of positions) {
+    const qty = Math.abs(pos.quantity);
+    if (qty <= 0.000001 || pos.averageCost <= 0) continue;
+    const sym = normalizeSymbol(pos.symbol);
+    const currentPrice = currentPrices[sym] ?? (pos.quantity !== 0 ? pos.marketValue / pos.quantity : 0);
+    if (!currentPrice || currentPrice <= 0) continue;
+
+    const isShort = pos.quantity < 0;
+    if (isShort && !policy.shortSellingEnabled) continue; // only manage shorts the app could have opened
+    const returnPct = isShort
+      ? ((pos.averageCost - currentPrice) / pos.averageCost) * 100
+      : ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
+    if (returnPct < takeProfitPct) continue;
+
+    const band = Math.floor(returnPct / takeProfitPct);
+    // Ratchet keyed to THIS lot: a stored band only counts if its cost basis still matches the live
+    // position (otherwise it's a new lot from a close+rebuy → start fresh at band 0).
+    const prior = lastBandBySymbol[sym];
+    const lastBand = prior && Math.abs(prior.avgCost - pos.averageCost) < 0.005 ? prior.band : 0;
+    if (band <= lastBand) continue; // already trimmed at/above this band for this lot (monotonic)
+
+    const trimQty = takeProfitTrimQuantity(qty, trimPct);
+    if (trimQty <= 0) continue;
+    const side: "sell" | "cover" = isShort ? "cover" : "sell";
+    const label = trimPct >= 100 ? "full exit" : `${trimPct}% trim`;
+    proposals.push({
+      symbol: sym,
+      side,
+      type: "market",
+      quantity: trimQty,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      rationale: `Proactive take-profit ${label}: ${pos.symbol} +${returnPct.toFixed(2)}% (band ${band} @ ${takeProfitPct}% step) — ${side === "cover" ? "covering" : "selling"} ${trimQty}, letting the rest ride.`,
+      tradeThesisTag: "Risk-Exit",
+      entryMarketRegime: "Active Risk Check",
+      takeProfitBand: band,
+      takeProfitBasis: pos.averageCost
+    });
+    advancedBands.push({ symbol: sym, band });
+  }
+  return { proposals, advancedBands };
 }

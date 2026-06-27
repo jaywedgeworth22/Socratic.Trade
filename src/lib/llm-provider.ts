@@ -4,7 +4,7 @@ import { resolveOpenAiModel, type OpenAiTransport } from "./llm-request";
 export type LlmTeamRole = "green" | "red" | "support";
 
 export interface LlmEndpoint {
-  provider: "openai" | "xai";
+  provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek";
   url: string;
   key?: string;
   model: string;
@@ -19,9 +19,11 @@ function resolveRoleModel(policy: { llmModel?: string | null; redTeamLlmModel?: 
 }
 
 /**
- * Provider is derived from the model name: grok-* → xAI (OpenAI-compatible), else OpenAI.
- * Lets a user select Grok simply by choosing a grok-* model; no separate provider flag.
- * The Anthropic chat path is NOT affected by this function.
+ * Provider is derived from the model name (no separate provider flag): grok-* → xAI, gemini-* →
+ * Google Gemini, mistral/ministral/codestral/… → Mistral, else OpenAI. xAI/Gemini/Mistral are all
+ * OpenAI-compatible (chat/completions), so the call sites treat them like OpenAI but with a
+ * per-provider base URL + key. The user selects a provider simply by choosing one of its models.
+ * The Anthropic chat path is NOT affected by this function (it has its own Messages loop).
  */
 export function resolveLlmEndpoint(
   policy?: { llmModel?: string | null; redTeamLlmModel?: string | null } | null,
@@ -31,6 +33,7 @@ export function resolveLlmEndpoint(
   defaultOpenAiUrl: string = "https://api.openai.com/v1/responses",
   role: LlmTeamRole = "green"
 ): LlmEndpoint {
+
   const model = resolveRoleModel(policy, role);
 
   if (/^grok/i.test(model)) {
@@ -40,6 +43,54 @@ export function resolveLlmEndpoint(
     const cred = resolveLlmCredential("xai", userId);
     return {
       provider: "xai",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^gemini/i.test(model)) {
+    const url =
+      process.env.GEMINI_API_URL?.trim() ||
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+    const cred = resolveLlmCredential("gemini", userId);
+    return {
+      provider: "gemini",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {
+    const url =
+      process.env.MISTRAL_API_URL?.trim() ||
+      "https://api.mistral.ai/v1/chat/completions";
+    const cred = resolveLlmCredential("mistral", userId);
+    return {
+      provider: "mistral",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^deepseek/i.test(model)) {
+    const url =
+      process.env.DEEPSEEK_API_URL?.trim() ||
+      "https://api.deepseek.com/v1/chat/completions";
+    const cred = resolveLlmCredential("deepseek", userId);
+    return {
+      provider: "deepseek",
       url,
       key: cred.key,
       model,

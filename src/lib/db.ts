@@ -173,6 +173,18 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_account_deletion_audit_subject ON account_deletion_audit (subject_hash, completed_at);
       `);
     }
+  },
+  {
+    // Record which model produced each assistant chat turn, so the transcript / admin view / hover can
+    // show "via <model>". Idempotent — skips the column when already present.
+    version: 5,
+    name: "chat_turns_model",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(chat_turns)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "model")) {
+        database.exec("ALTER TABLE chat_turns ADD COLUMN model TEXT");
+      }
+    }
   }
 ];
 
@@ -438,6 +450,22 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_broker_protective_stops_account ON broker_protective_stops (user_id, account_number);
 
+    -- Take-profit trim ratchet: the highest take-profit "band" (floor(returnPct / takeProfitPct)) at
+    -- which a partial trim has already been emitted for an open position. Monotonic per (user, account,
+    -- symbol) so a partial take-profit trims once per band instead of laddering out every run; cleared
+    -- when the position closes. One row per open profitable position.
+    CREATE TABLE IF NOT EXISTS take_profit_trims (
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      band INTEGER NOT NULL,
+      -- Position cost basis at the time the band was recorded. The ratchet is keyed to this lot: if the
+      -- current position's average cost no longer matches, it's a new lot (close+rebuy) and the band resets.
+      avg_cost REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, account_number, symbol)
+    );
+
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
       id TEXT PRIMARY KEY,
@@ -539,6 +567,7 @@ function migrate(database: Database.Database): void {
       citations TEXT NOT NULL DEFAULT '[]',
       intent TEXT,
       redacted INTEGER NOT NULL DEFAULT 0,
+      model TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);

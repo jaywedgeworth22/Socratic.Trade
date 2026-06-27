@@ -9,7 +9,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2, Send, ShieldCheck, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import type { ExecutionState } from "@/lib/execution-mode";
+import { humanizeLlmError } from "@/lib/llm-errors";
+import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
+import { Markdown } from "./markdown";
+import { ModelPicker, type ModelGroup } from "./model-picker";
 import { cn } from "./cn";
 
 interface ChatDraft {
@@ -37,11 +41,13 @@ interface ChatReply {
   draft: ChatDraft | null;
   citations: Citation[];
   intent: string;
+  model?: string;
 }
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  model?: string;
   citations?: Citation[];
   draft?: ChatDraft | null;
 }
@@ -78,11 +84,10 @@ async function readPlainError(res: Response, fallback: string): Promise<Error> {
   } catch {
     if (message.startsWith("<")) message = "";
   }
-  if (/Incorrect API key provided/i.test(message) && /console\.x\.ai|x\.ai/i.test(message)) {
-    message = "The xAI API key was rejected. Open Settings -> Connections to update the xAI key, or choose an OpenAI model in Strategy Studio.";
-  } else if (/Incorrect API key provided/i.test(message) && /openai|platform\.openai/i.test(message)) {
-    message = "The OpenAI API key was rejected. Open Settings -> Connections to update the OpenAI key, or choose a model your key can access in Strategy Studio.";
-  }
+  // Turn a raw provider error (e.g. "gemini 401: API key not valid") into a plain-English,
+  // provider-aware sentence. The provider + HTTP status are parsed from the message text itself
+  // (the route's own status is 500, so we don't pass it).
+  if (message) message = humanizeLlmError(message);
   return new Error(message || `${fallback} (${res.status}).`);
 }
 
@@ -98,35 +103,106 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
   { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
 ];
 
-/** Provider options shown in the model-selector. The env var (CHAT_LLM) sets the initial value;
- *  the selection is sent as a per-request hint to the API (stored client-side only — no DB migration). */
-type ChatProvider = "mock" | "anthropic" | "openai";
+// Chat-model selector (custom ModelPicker: provider logos + relative price tiers). The chosen model is
+// sent as a per-request `model` hint to /api/chat, which routes it to the right provider by name
+// (claude-*→Anthropic, grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, deepseek-*→DeepSeek, else
+// OpenAI). Tiers ($/$$/$$$) are relative blended cost. Selection is sticky via localStorage. Per-
+// provider key availability comes from /api/chat/providers; unkeyed providers show "no key" + disabled.
+const CHAT_MODEL_GROUPS: ModelGroup[] = [
+  { provider: "offline", label: "Offline", options: [{ value: "mock", label: "Mock — deterministic, no key", tier: "" }] },
+  {
+    provider: "openai",
+    label: "OpenAI",
+    options: [
+      { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest", tier: "$" },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default", tier: "$$" },
+      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost", tier: "$$$" }
+    ]
+  },
+  {
+    provider: "anthropic",
+    label: "Anthropic",
+    options: [
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast & low cost", tier: "$$" },
+      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — stronger reasoning", tier: "$$$" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 — strongest, premium", tier: "$$$" }
+    ]
+  },
+  {
+    provider: "xai",
+    label: "xAI (Grok)",
+    options: [
+      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost", tier: "$" },
+      { value: "grok-4.3", label: "grok-4.3 — stronger, large context", tier: "$$" }
+    ]
+  },
+  {
+    provider: "gemini",
+    label: "Google Gemini",
+    options: [
+      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost", tier: "$" },
+      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — balanced, long context", tier: "$" },
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — strongest flash", tier: "$" }
+    ]
+  },
+  {
+    provider: "mistral",
+    label: "Mistral",
+    options: [
+      { value: "mistral-small-latest", label: "mistral-small-latest — lowest cost", tier: "$" },
+      { value: "mistral-medium-latest", label: "mistral-medium-latest — balanced", tier: "$" },
+      { value: "mistral-large-latest", label: "mistral-large-latest — strongest", tier: "$$" }
+    ]
+  },
+  {
+    provider: "deepseek",
+    label: "DeepSeek",
+    options: [
+      { value: "deepseek-chat", label: "deepseek-chat (V3) — cheap, tool-capable", tier: "$" },
+      { value: "deepseek-reasoner", label: "deepseek-reasoner (R1) — reasoning; limited tools", tier: "$" }
+    ]
+  }
+];
 
-const PROVIDER_LABELS: Record<ChatProvider, string> = {
-  mock: "Mock (offline)",
-  anthropic: "Anthropic",
-  openai: "OpenAI"
-};
+const DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
+const CHAT_MODEL_STORAGE_KEY = "assistant.chatModel";
 
 export function AssistantView({
   executionState,
   approveProposal,
   rejectProposal,
-  defaultProvider
+  defaultModel
 }: {
   executionState: ExecutionState;
   approveProposal: (proposalId: string) => Promise<void>;
   rejectProposal: (proposalId: string) => Promise<void>;
-  /** Initial provider; matches the server-side CHAT_LLM env var. Defaults to "mock". */
-  defaultProvider?: ChatProvider;
+  /** Initial chat model. Overridden by a sticky localStorage choice; defaults to gpt-5.4-mini. */
+  defaultModel?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [provider, setProvider] = useState<ChatProvider>(defaultProvider ?? "mock");
+  const [model, setModel] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
+      if (saved) return saved;
+    }
+    return defaultModel ?? DEFAULT_CHAT_MODEL;
+  });
+  // Per-provider key availability for the picker. undefined = not yet loaded (treat as available so we
+  // never flash "no key" before the check resolves); after load, false = no usable key for that provider.
+  const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const dest = destination(executionState);
+
+  // Gate chat when NO real LLM provider has a usable key (mirrors the /api/chat 412). The offline Mock
+  // model is the only keyless path, so it's never gated. providerStatus is {} until loaded → treat as
+  // available so we don't flash the gate before the check resolves (fail open, like the picker).
+  const isMockModel = model.trim().toLowerCase() === "mock";
+  const providerKeys = Object.keys(providerStatus);
+  const noLlmConfigured = !isMockModel && providerKeys.length > 0 && providerKeys.every((p) => providerStatus[p] === false);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,8 +210,8 @@ export function AssistantView({
       try {
         const res = await fetch("/api/chat-history?limit=50");
         if (!res.ok) return;
-        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string }> };
-        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text })));
+        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string; model?: string | null }> };
+        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text, model: t.model ?? undefined })));
       } catch {
         /* history is best-effort */
       }
@@ -145,9 +221,42 @@ export function AssistantView({
     };
   }, []);
 
+  // Which providers have a usable key (so the picker can mark/disable ones that don't). Fail open:
+  // on error, leave statuses unset → every provider stays selectable. Re-checked on window focus and
+  // tab visibility so that connecting a key in Settings (then returning to this tab) immediately
+  // unlocks chat — otherwise providerStatus would stay stale until a full reload.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const res = await fetch("/api/chat/providers");
+        if (!res.ok) return;
+        const body = (await res.json()) as { providers?: Partial<Record<string, boolean>> };
+        if (!cancelled && body.providers) setProviderStatus(body.providers);
+      } catch {
+        /* availability is best-effort; default to all selectable */
+      }
+    };
+    void refresh();
+    const onFocus = () => void refresh();
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, drafts]);
+
+  // Persist the chat-model choice so it survives reloads (client-side only — no DB migration).
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, model);
+  }, [model]);
 
   const patchDraft = (msgId: string, patch: Partial<DraftState>) =>
     setDrafts((d) => ({ ...d, [msgId]: { ...(d[msgId] ?? { phase: "draft" }), ...patch } as DraftState }));
@@ -155,6 +264,10 @@ export function AssistantView({
   const send = useCallback(async (override?: string) => {
     const message = (typeof override === "string" ? override : input).trim();
     if (!message || sending) return;
+    if (noLlmConfigured) {
+      toast.error(LLM_REQUIRED_CHAT_MESSAGE);
+      return;
+    }
     setInput("");
     const stamp = Date.now();
     setMessages((m) => [...m, { id: `u-${stamp}`, role: "user", text: message }]);
@@ -163,12 +276,12 @@ export function AssistantView({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message, provider })
+        body: JSON.stringify({ message, model })
       });
       if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;
       const id = `a-${stamp}`;
-      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft }]);
+      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft, model: reply.model }]);
       if (reply.draft) setDrafts((d) => ({ ...d, [id]: { phase: "draft" } }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Chat request failed.");
@@ -176,7 +289,7 @@ export function AssistantView({
     } finally {
       setSending(false);
     }
-  }, [input, provider, sending]);
+  }, [input, model, sending, noLlmConfigured]);
 
   async function checkPolicy(msgId: string, draft: ChatDraft) {
     patchDraft(msgId, { phase: "checking" });
@@ -254,16 +367,17 @@ export function AssistantView({
           <span className="text-xs text-muted">drafts orders you confirm — it never places on its own</span>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as ChatProvider)}
-            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-            title="Chat LLM provider"
-          >
-            {(Object.keys(PROVIDER_LABELS) as ChatProvider[]).map((p) => (
-              <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
-            ))}
-          </select>
+          <ModelPicker
+            className="w-[15rem]"
+            value={model}
+            groups={CHAT_MODEL_GROUPS}
+            providerStatus={providerStatus}
+            onChange={(m) => {
+              setModel(m);
+              // Move focus straight to the prompt box so the user can type right after picking a model.
+              inputRef.current?.focus();
+            }}
+          />
           <Chip tone={dest.tone}>{dest.text}</Chip>
         </div>
       </div>
@@ -282,7 +396,7 @@ export function AssistantView({
                   <button
                     key={s.prompt}
                     onClick={() => void send(s.prompt)}
-                    disabled={sending}
+                    disabled={sending || noLlmConfigured}
                     className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg transition hover:border-accent hover:bg-surface-2 disabled:opacity-50"
                   >
                     <span className="text-[10px] uppercase tracking-wide text-muted">{s.category}</span>
@@ -295,8 +409,15 @@ export function AssistantView({
         )}
         {messages.map((m) => (
           <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}>
-              <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+            <div
+              className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}
+              title={m.role === "assistant" && m.model ? `Answered by ${m.model}` : undefined}
+            >
+              {m.role === "assistant" ? (
+                <Markdown>{m.text}</Markdown>
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+              )}
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {m.citations.map((c, i) =>
@@ -337,12 +458,19 @@ export function AssistantView({
       </div>
 
       <div className="border-t border-line p-3">
+        {noLlmConfigured && (
+          <p className="mb-2 flex items-center gap-1.5 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+            <AlertTriangle size={14} /> {LLM_REQUIRED_CHAT_MESSAGE}
+          </p>
+        )}
         <div className="flex items-end gap-2">
           <textarea
+            ref={inputRef}
             className={cn(inputClass, "min-h-[2.5rem] flex-1 resize-none")}
             rows={1}
-            placeholder="Ask a question, or describe an order to draft…"
+            placeholder={noLlmConfigured ? "Connect an LLM provider in Settings to chat…" : "Ask a question, or describe an order to draft…"}
             value={input}
+            disabled={noLlmConfigured}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -351,7 +479,7 @@ export function AssistantView({
               }
             }}
           />
-          <Button onClick={() => void send()} disabled={sending || !input.trim()} size="md">
+          <Button onClick={() => void send()} disabled={sending || !input.trim() || noLlmConfigured} size="md">
             <Send size={15} /> Send
           </Button>
         </div>

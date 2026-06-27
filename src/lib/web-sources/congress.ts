@@ -220,12 +220,38 @@ const OWNER_LABELS: Record<string, string> = { sp: "Spouse", se: "Self", jt: "Jo
 function saneIsoDate(value: string, now: number): string | undefined {
   const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return undefined;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // Reject impossible calendar dates that would otherwise roll over to a valid timestamp (e.g.
+  // "2026-02-30" -> Mar 2): build the UTC date from the components and require it to round-trip.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined;
   const iso = `${m[1]}-${m[2]}-${m[3]}`;
-  const ts = Date.parse(iso);
+  const ts = d.getTime();
   if (!Number.isFinite(ts)) return undefined;
   if (ts > now + 3 * 24 * 60 * 60_000) return undefined; // absurd future (allow small skew)
   if (ts < Date.parse("2000-01-01")) return undefined; // absurd past
   return iso;
+}
+
+/**
+ * Normalize a raw trade-date string to a sane ISO date, REJECTING future-dated values. A trade
+ * cannot occur after today, so a future date (e.g. a "12/26/2026" parsed from a corrupt source) is
+ * an unambiguous data-quality error — we drop it rather than let it poison the recency window or
+ * surface an impossible date in the UI. Accepts ISO directly or a US MM/DD/YYYY value.
+ */
+function normalizeTradeDate(value: string | undefined, now: number): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const mdy = toIsoDate(trimmed);
+  const iso = saneIsoDate(trimmed, now) ?? (mdy ? saneIsoDate(mdy, now) : undefined);
+  if (!iso) return undefined;
+  // A congressional trade/disclosure DATE is a timezone-less calendar date, so `saneIsoDate`'s small
+  // (±3 day) future skew — meant for timestamps — is too lax here: even tomorrow is impossible.
+  // Reject anything strictly after today (lexicographic compare is valid for YYYY-MM-DD).
+  const todayIso = new Date(now).toISOString().slice(0, 10);
+  return iso > todayIso ? undefined : iso;
 }
 
 /** Parse the Apify `johnvc` actor's dataset items into CongressTrade rows (pure). */
@@ -637,12 +663,21 @@ export function coerceCongressTrade(raw: unknown): CongressTrade | null {
   else if (sideRaw === "s" || sideRaw.startsWith("s_") || /(sell|sale|dispos)/.test(sideRaw)) side = "sell";
   if (!side) return null;
 
-  const tradedAt = pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]);
-  const disclosedAt = pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]);
+  const now = Date.now();
+  const rawTradedAt = pickStr(o, ["tradedAt", "txDate", "transactionDate", "tradeDate", "date"]);
+  const rawDisclosedAt = pickStr(o, ["disclosedAt", "filedDate", "filedAt", "reportDate", "disclosureDate", "publishedAt", "pubDate"]);
+  const tradedAt = normalizeTradeDate(rawTradedAt, now);
+  const disclosedAt = normalizeTradeDate(rawDisclosedAt, now);
+  // A date field that was SUPPLIED but is unparseable ("2026-13-45") or FUTURE-dated is a
+  // data-quality error — reject the whole row rather than silently falling back to the other date,
+  // which would otherwise let a future-dated trade in under its disclosure date. Only fall back when
+  // a field was simply absent.
+  if (rawTradedAt && !tradedAt) return null;
+  if (rawDisclosedAt && !disclosedAt) return null;
   const anchor = tradedAt ?? disclosedAt;
-  // Reject a trade with no date OR an unparseable one ("not-a-date", "2026-13-45") at ingestion, so
-  // garbage never accumulates in the dataset and the disclosedAt-windowed signal stays correct.
-  if (!anchor || !Number.isFinite(Date.parse(anchor))) return null;
+  // Reject a trade with no usable date at all so garbage never accumulates and the
+  // disclosedAt-windowed signal stays correct.
+  if (!anchor) return null;
 
   // Match the senate prefix (senate/senator) at the START — substring .includes("sen") would
   // misclassify "representative". Anything else (house/rep/unknown) → house.

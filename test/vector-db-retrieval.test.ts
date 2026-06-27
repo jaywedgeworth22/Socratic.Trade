@@ -1,18 +1,40 @@
-import { describe, expect, it } from "vitest";
-import { buildExtraFilters, isWithinAsOf, rerankMatches } from "../src/lib/vector-db";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildExtraFilters, defaultMinScore, isWithinAsOf, rerankMatches } from "../src/lib/vector-db";
 
 describe("buildExtraFilters", () => {
   it("is empty with no options", () => {
     expect(buildExtraFilters()).toEqual({});
     expect(buildExtraFilters({})).toEqual({});
   });
-  it("builds doc_type / section / source clauses", () => {
-    expect(buildExtraFilters({ docType: ["10-k", "10-q"] })).toEqual({ doc_type: { $in: ["10-k", "10-q"] } });
+  it("matches doc_type across casings (stored values are inconsistent: '10-K' vs '8-k')", () => {
+    // Each requested type expands to original + lower + upper, deduped — so a lowercase filter still
+    // matches uppercase-stored "10-K"/"10-Q" chunks (the bug this fixes), and vice-versa.
+    const f = buildExtraFilters({ docType: ["10-k", "10-q"] }).doc_type as { $in: string[] };
+    expect(new Set(f.$in)).toEqual(new Set(["10-k", "10-K", "10-q", "10-Q"]));
+    // An already-uppercase request stays matched too.
+    const u = buildExtraFilters({ docType: ["8-K"] }).doc_type as { $in: string[] };
+    expect(new Set(u.$in)).toEqual(new Set(["8-K", "8-k"]));
+  });
+  it("builds section / source clauses unchanged", () => {
     expect(buildExtraFilters({ section: "risk_factors" })).toEqual({ section: { $eq: "risk_factors" } });
     expect(buildExtraFilters({ source: "sec-8k" })).toEqual({ source: { $eq: "sec-8k" } });
   });
   it("ignores an empty docType array", () => {
     expect(buildExtraFilters({ docType: [] })).toEqual({});
+  });
+});
+
+describe("defaultMinScore", () => {
+  const prev = process.env.VECTOR_MIN_SCORE;
+  afterEach(() => { if (prev === undefined) delete process.env.VECTOR_MIN_SCORE; else process.env.VECTOR_MIN_SCORE = prev; });
+  it("defaults to 0.30, reads VECTOR_MIN_SCORE, and clamps to [0,1]", () => {
+    delete process.env.VECTOR_MIN_SCORE;
+    expect(defaultMinScore()).toBe(0.3);
+    process.env.VECTOR_MIN_SCORE = "0"; expect(defaultMinScore()).toBe(0); // disable floor
+    process.env.VECTOR_MIN_SCORE = "0.55"; expect(defaultMinScore()).toBe(0.55);
+    process.env.VECTOR_MIN_SCORE = "9"; expect(defaultMinScore()).toBe(1); // clamp high
+    process.env.VECTOR_MIN_SCORE = "-1"; expect(defaultMinScore()).toBe(0); // clamp low
+    process.env.VECTOR_MIN_SCORE = "nonsense"; expect(defaultMinScore()).toBe(0.3); // fallback
   });
 });
 

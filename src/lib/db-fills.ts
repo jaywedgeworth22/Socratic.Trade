@@ -38,6 +38,8 @@ type RawFillEvent = {
   status: string;
   broker_order_id: string | null;
   raw: string | null;
+  mae: number | null;
+  mfe: number | null;
   filled_at: string;
   execution_mode: string | null;
 };
@@ -75,6 +77,8 @@ function toFillEvent(row: RawFillEvent): FillEvent {
     status: row.status,
     brokerOrderId: row.broker_order_id ?? undefined,
     raw: row.raw ? JSON.parse(row.raw) : undefined,
+    mae: row.mae ?? undefined,
+    mfe: row.mfe ?? undefined,
     filledAt: row.filled_at,
     executionMode: row.execution_mode ? (row.execution_mode as ExecutionMode) : undefined
   };

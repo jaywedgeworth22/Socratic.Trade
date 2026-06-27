@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-26 (`claude/portfolio-market-scan-ui-27azkz`): operator-driven mobile-UX + correctness pass —
+> Portfolio/Readiness/header, Market Scan (icons + universe: top-N + outliers + holdings), Congress/
+> Insider (future-date rejection, Congress.Trade casing, time span), System Help + Settings rework,
+> Accounts/Edit-Account, 3-way banner, Hide-Test-account, shared-pool default ON, Alpaca account-mismatch
+> hardening. No roadmap change; see `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+
 ## Current Status
 
 Hosting topology: production remains `trading.jays.services` on the
@@ -14,12 +20,19 @@ integration checkout uses the single pre-production beta hostname
 port `4001`. Do not add a second dev/beta hostname in code, docs, Tunnel
 ingress, DNS, or Access configuration.
 
-Secrets/config topology (2026-06-25): `.env.local` is git-ignored and
-per-worktree (never committed; only `.env.example` is tracked), and **GCP Secret
-Manager is the authoritative upstream for secret values** — each `.env.local` is
-a local cache. See `docs/deployment.md` → "Configuration & secrets
-(`.env.local`) — what's authoritative". This documents existing behavior; no
-phase scope, timeline, or approach changed.
+Secrets/config topology (2026-06-25): `.env.local` is git-ignored and is **not** a
+secret source (only the secret-free `.env.example` is tracked), and **Infisical is
+the authoritative source of truth for secret values** — the app launches through
+the Infisical runner (`npm run start:secrets`), which injects them at startup, and
+`REQUIRE_SECRETS_MANAGER=1` makes prod refuse to boot off a local `.env.local`. See
+`docs/secrets.md` and `docs/deployment.md` → "Configuration & secrets". (The former
+GCP runner was removed — Infisical is the single path.) The box authenticates with the machine
+identity's **Client ID + Client Secret** (universal auth, long-lived; the runner mints a short-lived
+token each launch — a raw `INFISICAL_TOKEN` is only a fallback and the Client Secret is NOT that
+token). Production cutover is scripted (`scripts/infisical-prod-cutover.sh`) and `deploy.yml`
+auto-picks-up the box bootstrap; shared App-A/B secrets are pulled via an app-wins overlay
+(`INFISICAL_SHARED_PROJECT_ID` + its own Client ID/Secret). This documents existing behavior; no phase
+scope, timeline, or approach changed.
 
 | # | Phase | Spec | Status |
 |---|-------|------|--------|
@@ -67,6 +80,19 @@ phase scope, timeline, or approach changed.
   previously null, are now ALSO fillable via the opt-in FMP `price-target-consensus` provider
   (`FMP_PRICE_TARGETS_ENABLED`) — **BUILT 2026-06-25**; they thread through the enrichment
   surface onto the quote and into `marketQuoteToAnalyst`.
+- **congress.trade — App A handoff: new analytics endpoints + adjusted-close fix** (2026-06-25,
+  `docs/rollouts/2026-06-25-app-a-handoff-integration.md`): consumes three new App A endpoints
+  now live/merging (App A PRs #77/#79/#80): `GET /api/analytics/conviction` (composite 0–100
+  conviction score, gated by `CONGRESS_ANALYTICS_ENABLED`), `GET /api/analytics/ticker/{T}/backtest`
+  (per-ticker post-buy return stats, on-demand), and `GET /api/analytics/conflicts` (committee
+  conflict-of-interest disclosures). Conviction + conflictCount wired into the daily
+  `refreshCongressAnalytics` parallel fetch and the `CongressAnalytics` overlay. Yahoo adjusted-close
+  fix: `fetchYahoo` now prefers `indicators.adjclose` (split+dividend-adjusted) over raw close for
+  correct multi-year returns pushed to App A. **2026-06-26 update:** conviction + conflict bulletins
+  now emitted in `web-sources/index.ts`; `congressAnalyticsScore` gates on `convictionDirection=BUY`
+  and adds a `convictionBoost` so conviction-only tickers reach the scan candidate set. **Deferred:**
+  ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
+  for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
 ## Build Order
 

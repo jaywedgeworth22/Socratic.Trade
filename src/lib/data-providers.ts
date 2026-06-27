@@ -13,6 +13,9 @@ import { normalizeSymbol } from "./money";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
 import { getStreamedHeadlines } from "./streams/news-store";
+import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
+import { loadTickerCikMap } from "./web-sources/sec8k";
+import { padCik } from "./web-sources/sec-filings";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -154,6 +157,8 @@ export interface MarketEnrichmentProvider {
   name: string;
   configured: boolean;
   enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
+  /** Registered providers that supplied ≥1 field in the most recent enrich() run (cascade only). */
+  activeSources?: string[];
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -355,6 +360,10 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
+  // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity from authoritative SEC filings.
+  // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
+  // data supersedes Yahoo's scraped values when enabled.
+  if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
   providers.push(new YahooFinanceEnrichmentProvider());
   // Always wrap in the cascade — even for a single provider — so per-field source
   // stamping and analyst blending happen uniformly.
@@ -386,15 +395,26 @@ export const noopProvider = mockEnrichmentProvider;
 // rest) and records which provider supplied it. Analyst ratings are NOT first-wins:
 // every provider's read is collected and blended into one 0–100 score + label.
 
-class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
+export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name: string;
   readonly configured = true;
+  // Provider names that supplied ≥1 accepted field during the most recent enrich() run. Reset each run
+  // and exposed via activeSources so MarketScan.source names only providers that ACTUALLY contributed —
+  // a keyless/default-OFF provider that returns nothing for a scan (budget timeout, no CIK, no aligned
+  // fact) must not appear in the source string just because it was registered.
+  private contributingNames = new Set<string>();
 
   constructor(private readonly providers: MarketEnrichmentProvider[]) {
     this.name = providers.map((p) => p.name).join("+");
   }
 
+  /** Registered providers that contributed ≥1 field in the last enrich(), in registration order. */
+  get activeSources(): string[] {
+    return this.providers.map((p) => p.name).filter((n) => this.contributingNames.has(n));
+  }
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    this.contributingNames = new Set();
     // Run all providers in parallel; pair each result set with its provider name.
     const results = await Promise.all(
       this.providers.map((p) =>
@@ -419,6 +439,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       ) => {
         if (base[field] === undefined && value !== undefined) {
           base[field] = value;
+          this.contributingNames.add(sourceName);
           if (field in EMPTY_SOURCED) sources[field as EnrichmentSourcedField] = sourceName;
         }
       };
@@ -454,9 +475,15 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("targetHigh", name, r.targetHigh);
         takeScalar("targetLow", name, r.targetLow);
         takeScalar("targetMedian", name, r.targetMedian);
-        if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
-        // Collect every provider's analyst read.
-        if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
+        if (!base.headlines?.length && r.headlines?.length) {
+          base.headlines = r.headlines;
+          this.contributingNames.add(name);
+        }
+        // Collect every provider's analyst read (an analyst contribution counts as a contribution too).
+        if (r.analystBySource && Object.keys(r.analystBySource).length > 0) {
+          Object.assign(analystBySource, r.analystBySource);
+          this.contributingNames.add(name);
+        }
       }
 
       // Blend analyst scores across all sources that reported one.
@@ -477,6 +504,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (typeof avSentiment === "number") {
         base.sentiment = avSentiment;
         sources.sentiment = "alpha-vantage";
+        this.contributingNames.add("alpha-vantage");
       }
 
       base.sources = sources;
@@ -529,6 +557,10 @@ const DEFAULT_WEBULL_UNOFFICIAL_MAX = 20;
 
 export function webullUnofficialEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(String(process.env.WEBULL_UNOFFICIAL_ENABLED ?? "").trim().toLowerCase());
+}
+
+export function secXbrlEnrichmentEnabled(): boolean {
+  return ["1", "true", "on", "yes"].includes(String(process.env.SEC_XBRL_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
 }
 
 function webullUnofficialMaxSymbols(): number {
@@ -2182,5 +2214,276 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
     }
 
     return result;
+  }
+}
+
+// ── SEC EDGAR XBRL company-facts provider (keyless, default-OFF) ─────────────
+// Fills debtToEquity from authoritative SEC 10-K filings via the public
+// companyfacts API (https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json).
+// Polite 300 ms inter-symbol delay per SEC fair-access guidance.
+// Enable with: SEC_XBRL_ENRICHMENT_ENABLED=on
+
+const SEC_XBRL_TTL_MS = 24 * 60 * 60_000; // 24h — filings move slowly
+const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
+const SEC_XBRL_FETCH_TIMEOUT_MS = 6_000; // per-symbol fetch cap (kept short — SEC is on the scan path)
+const SEC_XBRL_BUDGET_MS = 8_000; // overall wall-clock budget for the SEC pass during a scan
+
+// Only audited PERIODIC reports carry the balance-sheet facts we want. companyfacts also includes
+// facts from non-periodic filings (earnings-release 8-K, S-1, pro-forma); a newer 8-K equity fact with
+// no aligned debt fact would otherwise win the latest-period reducer and either null out enrichment or
+// publish non-periodic leverage. Restrict to 10-K/10-Q and their amendments.
+const SEC_XBRL_PERIODIC_FORMS = new Set(["10-K", "10-K/A", "10-Q", "10-Q/A"]);
+
+// Symbols whose companyfacts fetch is in progress, shared across concurrent enrich() calls. The SEC pass
+// keeps warming the cache in the background past the per-scan budget; without this guard a second scan
+// that starts before the first's warm finishes would re-fetch the same companyfacts URLs concurrently.
+const secXbrlInFlight = new Set<string>();
+
+/** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
+ *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
+ *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
+  try {
+    if (!json || typeof json !== "object") return {};
+    const root = json as Record<string, unknown>;
+    const facts = root.facts;
+    if (!facts || typeof facts !== "object") return {};
+    const gaap = (facts as Record<string, unknown>)["us-gaap"];
+    if (!gaap || typeof gaap !== "object") return {};
+    const concepts = gaap as Record<string, unknown>;
+
+    type Fact = { end: string; val: number; form?: string; filed?: string };
+
+    // Helper: extract entries array for a concept + unit (keeping form + filed date).
+    function getEntries(concept: string, unit: string): Fact[] {
+      const c = concepts[concept];
+      if (!c || typeof c !== "object") return [];
+      const units = (c as Record<string, unknown>).units;
+      if (!units || typeof units !== "object") return [];
+      const arr = (units as Record<string, unknown>)[unit];
+      if (!Array.isArray(arr)) return [];
+      const out: Fact[] = [];
+      for (const e of arr) {
+        if (e === null || typeof e !== "object") continue;
+        const r = e as Record<string, unknown>;
+        if (typeof r.end !== "string" || typeof r.val !== "number" || !Number.isFinite(r.val)) continue;
+        // Keep only PERIODIC reports — drop 8-K/S-1/pro-forma so a non-periodic fact can't win the
+        // latest-period reducer (which would null out enrichment or publish non-periodic leverage).
+        const form = typeof r.form === "string" ? r.form : undefined;
+        if (!form || !SEC_XBRL_PERIODIC_FORMS.has(form)) continue;
+        out.push({
+          end: r.end,
+          val: r.val,
+          form,
+          filed: typeof r.filed === "string" ? r.filed : undefined
+        });
+      }
+      return out;
+    }
+
+    // Helper: pick the entry for the latest reporting PERIOD across ALL forms (10-K, 10-K/A, AND 10-Q).
+    // debtToEquity is a point-in-time balance-sheet ratio, so a newer 10-Q balance sheet supersedes the
+    // prior fiscal-year 10-K — preferring the annual filing would publish last year's leverage for most of
+    // the year after Q1/Q2/Q3. Tie-break a shared period end by the latest `filed` (an amendment beats the
+    // original) so a 10-K/A restatement supersedes the superseded 10-K.
+    function latestEntry(entries: Fact[]): Fact | undefined {
+      if (entries.length === 0) return undefined;
+      return entries.reduce((best, e) => {
+        if (e.end > best.end) return e;
+        if (e.end === best.end && (e.filed ?? "") > (best.filed ?? "")) return e;
+        return best;
+      }, entries[0]);
+    }
+
+    // Helper: the value of a concept AT a specific reporting-period end date — the latest `filed` at that
+    // end wins (an amendment supersedes the original) — so debt + equity facts stay aligned on the SAME
+    // period regardless of form (the equity anchor may be a 10-Q quarter).
+    function valueAtEnd(entries: Fact[], end: string): number | undefined {
+      const atEnd = entries.filter((e) => e.end === end);
+      if (atEnd.length === 0) return undefined;
+      return atEnd.reduce((best, e) => ((e.filed ?? "") > (best.filed ?? "") ? e : best), atEnd[0]).val;
+    }
+
+    // Total DEBT at a period end from debt-specific concepts (never total Liabilities). Returns undefined
+    // when no debt concept is present (so we omit debtToEquity rather than fabricate it).
+    function debtAtEnd(end: string): number | undefined {
+      // Long-term debt, NONCURRENT portion — prefer the pure concept, fall back to the combined
+      // debt+finance-lease concept some filers tag instead.
+      const noncurrent =
+        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsNoncurrent", "USD"), end);
+      // The COMPLETE long-term total (incl. current maturities) — pure concept then combined-lease variant.
+      const ltdTotal =
+        valueAtEnd(getEntries("LongTermDebt", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndCapitalLeaseObligations", "USD"), end);
+      const debtCurrentAgg = valueAtEnd(getEntries("DebtCurrent", "USD"), end);
+      // Current maturities of LT debt — pure concept then combined-lease variant.
+      const ltdCurrent =
+        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsCurrent", "USD"), end);
+      // Short-term borrowings OUTSIDE long-term debt (revolver / commercial paper).
+      const shortTerm =
+        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end) ??
+        valueAtEnd(getEntries("CommercialPaper", "USD"), end);
+
+      // Current-debt portion: prefer the aggregate DebtCurrent; otherwise SUM the separate components
+      // (current maturities of LT debt + short-term borrowings) so neither is dropped.
+      let current: number | undefined;
+      if (debtCurrentAgg !== undefined) current = debtCurrentAgg;
+      else if (ltdCurrent !== undefined || shortTerm !== undefined) current = (ltdCurrent ?? 0) + (shortTerm ?? 0);
+
+      if (noncurrent !== undefined) {
+        // When NO separate current maturity of LT debt is tagged (LongTermDebtCurrent / aggregate
+        // DebtCurrent) but the complete LongTermDebt total is larger, use that total — it bundles the
+        // current maturities the noncurrent concept omits — so leverage isn't understated. This gates on
+        // the LT-current concepts ONLY, not on `shortTerm`: a separate ShortTermBorrowings/CommercialPaper
+        // fact is orthogonal (revolver/CP outside LT debt) and is added on top either way, so its presence
+        // must not suppress the ltdTotal-bundles-current-maturities fallback.
+        const hasSeparateLtCurrent = debtCurrentAgg !== undefined || ltdCurrent !== undefined;
+        if (!hasSeparateLtCurrent && ltdTotal !== undefined && ltdTotal > noncurrent) return ltdTotal + (shortTerm ?? 0);
+        return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
+      }
+      // LongTermDebt is the COMPLETE long-term total (don't re-add its current maturities), but add any
+      // genuinely-separate ShortTermBorrowings (commercial paper / revolver) — not part of long-term debt.
+      if (ltdTotal !== undefined) return ltdTotal + (shortTerm ?? 0);
+      if (current !== undefined) return current; // only current-debt concepts present
+      return undefined;
+    }
+
+    // ── debtToEquity: DEBT-specific concepts ÷ StockholdersEquity, aligned on equity's latest period ──
+    // The app treats `debtToEquity` as debt/equity for quality scoring + the bear-veto, so total
+    // Liabilities (which includes operating payables/leases/deferred revenue) would over-state leverage.
+    // Compute from debt concepts at the SAME period as equity; omit when no debt concept exists there.
+    //
+    // NOTE: this provider intentionally does NOT publish `eps`. SymbolEnrichment.eps is documented as
+    // TRAILING-TWELVE-MONTHS, but SEC companyfacts EPS facts are per-period (annual 10-K / quarterly
+    // 10-Q) — the latest annual 10-K EPS is last fiscal year's figure, not current TTM. Since this
+    // provider sits ahead of Yahoo in the cascade, publishing annual EPS would override Yahoo's real
+    // TTM EPS mid-year with a stale value. debtToEquity is a point-in-time balance-sheet ratio, so the
+    // latest reporting PERIOD (annual OR quarterly) is correct for it — see latestEntry above. (A true
+    // trailing EPS from quarterly facts could be added later if a TTM-correct computation is wired.)
+    let debtToEquity: number | undefined;
+    // Anchor on the latest equity PERIOD available under EITHER standard equity concept. Some filers tag
+    // the current balance-sheet period only under StockholdersEquityIncludingPortionAttributableToNon-
+    // controllingInterest (total equity incl. minority interest), not the parent-only StockholdersEquity;
+    // anchoring on the pure concept alone would publish a stale older period (or omit SEC leverage) despite
+    // aligned current debt. At the anchored period, PREFER the parent-only value (the conventional D/E
+    // denominator), falling back to the inclusive total when only it is tagged there.
+    const equityPure = getEntries("StockholdersEquity", "USD");
+    const equityIncl = getEntries("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD");
+    const equityAnchor = latestEntry([...equityPure, ...equityIncl]);
+    const equityVal = equityAnchor && (valueAtEnd(equityPure, equityAnchor.end) ?? valueAtEnd(equityIncl, equityAnchor.end));
+    if (equityAnchor !== undefined && equityVal !== undefined && equityVal > 0) {
+      const totalDebt = debtAtEnd(equityAnchor.end);
+      if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
+        const ratio = Math.round((totalDebt / equityVal) * 100) / 100;
+        // Publish the RAW true ratio (e.g. 1.5, or 12 for a genuinely 12x-levered name). The bear-veto
+        // (strategy.ts) and analytics/exports compare this value directly, so it must NOT be capped or
+        // pre-normalized — a cap would let a >ceiling name escape a strict `> ceiling` veto and would
+        // understate leverage in exports. Display + quality (market.ts, dashboard-client.tsx) apply a
+        // `>10 → ÷100` percentage heuristic for providers that report D/E as a percentage; those call
+        // sites are SOURCE-AWARE and skip the heuristic for sec-xbrl (which always emits a true ratio),
+        // so a raw 12 is no longer misread as 0.12 there. See market.ts qualityScore / the D/E column.
+        debtToEquity = ratio;
+      }
+    }
+
+    return debtToEquity !== undefined ? { debtToEquity } : {};
+  } catch {
+    return {};
+  }
+}
+
+export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "sec-xbrl";
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = cache.get(`sec-xbrl:${symbol}`);
+      if (cached && cached.expiresAt > now) {
+        result[symbol] = cached.data;
+      } else {
+        misses.push(symbol);
+      }
+    }
+    if (misses.length === 0) return result;
+
+    const deadline = now + SEC_XBRL_BUDGET_MS;
+
+    // Ticker→CIK map (weekly-cached; preserves dual-class tickers that share a CIK). Bound the load by
+    // the SAME budget so a cold/expired map fetch (its own 9s timeout + retry) can't block the cascade
+    // before the scan budget even starts. On timeout/error, skip SEC this pass and fall through to
+    // FMP/Yahoo; the load keeps running in the background to warm its cache for the next scan.
+    let tickerToCik: Record<string, string>;
+    try {
+      const mapPromise = loadTickerCikMap(now);
+      mapPromise.catch(() => {});
+      const loaded = await Promise.race([
+        mapPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())))
+      ]);
+      if (!loaded) return result;
+      tickerToCik = loaded;
+    } catch {
+      return result;
+    }
+
+    const ua = secUserAgent();
+
+    // Bound the SEC pass on the interactive market-scan critical path: the rate-limited loop keeps
+    // running in the BACKGROUND to warm the cache, but enrich() returns within the budget with whatever
+    // SEC data completed. Symbols not yet fetched fall through to FMP/Yahoo this pass and resolve from
+    // the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
+    //
+    // The budget is enforced SOLELY by the outer Promise.race below — the per-symbol loop deliberately
+    // has NO `Date.now() > deadline` short-circuit. A deadline check here would make every symbol after
+    // the first slow miss return without fetching, so the cache would never warm past that leading miss
+    // and repeated scans would keep retrying it instead of converging. Letting the continuation run to
+    // completion (rate-limited + in-flight-deduped, so it never double-hits SEC) warms the full 24h
+    // cache; the awaited race still caps interactive latency regardless of how long the loop runs.
+    const work = runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
+      const cik = tickerToCik[symbol];
+      if (!cik) return;
+      const cacheKey = `sec-xbrl:${symbol}`;
+      // A concurrent scan may have warmed this symbol since we snapshotted misses — use it, don't refetch.
+      const fresh = cache.get(cacheKey);
+      if (fresh && fresh.expiresAt > Date.now()) { result[symbol] = fresh.data; return; }
+      // Dedup concurrent background warms: if another enrich() is already fetching this symbol, skip it
+      // (it falls through to Yahoo this pass and resolves from the warmed cache next scan).
+      if (secXbrlInFlight.has(symbol)) return;
+      secXbrlInFlight.add(symbol);
+      try {
+        const paddedCik = padCik(cik);
+        const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`;
+        const text = await politeFetchText(url, { headers: { "user-agent": ua }, timeoutMs: SEC_XBRL_FETCH_TIMEOUT_MS });
+        const json = JSON.parse(text) as unknown;
+        const data = parseCompanyFacts(json);
+        cache.set(cacheKey, { expiresAt: now + SEC_XBRL_TTL_MS, data });
+        result[symbol] = data;
+      } catch {
+        // best-effort — this symbol falls through to the next provider
+      } finally {
+        secXbrlInFlight.delete(symbol);
+      }
+    });
+    work.catch(() => {}); // the background continuation must never surface as an unhandled rejection
+    // Use the REMAINING budget (the CIK-map race already consumed part of it) so the whole SEC pass —
+    // map load + companyfacts fetches — shares one SEC_XBRL_BUDGET_MS, not two.
+    await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())))]);
+
+    // Return a SNAPSHOT of what completed within the budget. The background continuation keeps warming
+    // the cache (and may still write into `result` for symbols fetched after the race), but it must not
+    // retroactively change what THIS pass returns: a late SEC write into the already-returned object
+    // could flip a symbol's winning source after enrich() resolved, making the cascade merge order
+    // timing-dependent. The spread decouples the returned value from those post-race mutations.
+    return { ...result };
   }
 }

@@ -1,4 +1,4 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots } from "./db";
+import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -189,7 +189,7 @@ export function recordFillFromProposal(input: {
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
-  return insertFillEvent({
+  const fill = insertFillEvent({
     userId: input.userId,
     proposalId: input.proposalId,
     runId: input.runId,
@@ -207,6 +207,18 @@ export function recordFillFromProposal(input: {
     // for the sector learning dimension (sector isn't on the proposal itself).
     raw: { proposal: input.proposal, review: input.review, execution: input.execution, sector: input.marketScan?.quotesBySymbol[symbol]?.sector }
   });
+
+  // Advance the take-profit trim ratchet ONLY now that the trim has actually been placed/filled — a
+  // proposed / policy-blocked / rejected trim never reaches recordFillFromProposal, so it's re-offered next
+  // run instead of silently ratcheting past its band. Keyed to the lot's cost basis for close+rebuy resets.
+  if (typeof input.proposal.takeProfitBand === "number") {
+    try {
+      recordTakeProfitTrimBand(input.accountNumber, symbol, input.proposal.takeProfitBand, input.proposal.takeProfitBasis ?? 0, input.userId);
+    } catch {
+      // ratchet bookkeeping must never break fill recording
+    }
+  }
+  return fill;
 }
 
 export function getPerformanceSummary(accountNumber: string, currentPrices: Record<string, number> = {}, userId: string = "local"): PerformanceSummary {
@@ -397,9 +409,17 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         exitAt: fill.filledAt,
         entryRunId: lot.runId,
         confidence: lot.confidence,
-        sector: lot.sector
+        sector: lot.sector,
+        mae: fill.mae,
+        mfe: fill.mfe
       });
       addAttribution(attribution, fill, pnl);
+      // Change A: dual-sided credit — also credit the ENTRY run (the run that opened this lot).
+      // Guard prevents double-counting when the same run opened and closed (that run already
+      // gets the realized P&L via realizedPnl/realizedPnlAsExit from the addAttribution call).
+      if (lot.runId && lot.runId !== (fill.runId ?? "manual")) {
+        addEntryAttribution(attribution, lot.runId, pnl);
+      }
       lot.quantity -= matched;
       remaining -= matched;
       if (lot.quantity <= 0.000001) symbolLots.splice(idx, 1);
@@ -950,7 +970,21 @@ function addAttribution(map: Map<string, RunAttribution>, fill: FillEvent, reali
   current.fillCount += 1;
   current.notional += fill.notional;
   current.realizedPnl += realizedPnl;
+  // Mirror realized P&L as exit-run credit (new additive field; existing realizedPnl unchanged).
+  if (realizedPnl !== 0) current.realizedPnlAsExit = (current.realizedPnlAsExit ?? 0) + realizedPnl;
   map.set(runId, current);
+}
+
+/**
+ * Dual-sided credit: ALSO credit the run whose ENTRY decision opened a now-closed lot, via a NEW
+ * optional field (realizedPnlAsEntry). Does NOT touch realizedPnl / fillCount / notional — the
+ * entry run's open fill already counted those at open time (see addAttribution on the buy/short
+ * fill). Additive: leaves every existing field exactly as the exit-keyed path set it.
+ */
+function addEntryAttribution(map: Map<string, RunAttribution>, entryRunId: string, realizedPnl: number): void {
+  const current = map.get(entryRunId) ?? { runId: entryRunId, fillCount: 0, notional: 0, realizedPnl: 0 };
+  current.realizedPnlAsEntry = (current.realizedPnlAsEntry ?? 0) + realizedPnl;
+  map.set(entryRunId, current);
 }
 
 function combineAttribution(...groups: RunAttribution[][]): RunAttribution[] {
@@ -961,6 +995,8 @@ function combineAttribution(...groups: RunAttribution[][]): RunAttribution[] {
       current.fillCount += item.fillCount;
       current.notional += item.notional;
       current.realizedPnl += item.realizedPnl;
+      if (item.realizedPnlAsEntry != null) current.realizedPnlAsEntry = (current.realizedPnlAsEntry ?? 0) + item.realizedPnlAsEntry;
+      if (item.realizedPnlAsExit != null) current.realizedPnlAsExit = (current.realizedPnlAsExit ?? 0) + item.realizedPnlAsExit;
       map.set(item.runId, current);
     }
   }
