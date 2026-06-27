@@ -209,6 +209,16 @@ deployment machine.
   removed because showing fabricated numbers next to real ones is misleading.
   Yahoo Finance (no API key required) is the floor now — every symbol gets real
   data or the cell shows `-`/`n/a`, never a fake number.
+- **Operator/deploy shell scripts must stay ASCII-only.** The production box is a
+  Mac, so `bash scripts/foo.sh` runs Apple's `/bin/bash` 3.2.57, which mis-parses a
+  non-ASCII byte placed **directly adjacent to a `$VAR`** (e.g. `"...$SHARED_PROJECT_ID…"`):
+  it swallows a byte into the identifier and dies under `set -u` with a cryptic
+  `SHARED_PROJECT_ID?: unbound variable` (the `?` is the stray byte). Non-adjacent
+  decoration prints fine, so the failure looks impossible until you spot the one
+  `$VAR`-adjacent glyph. Keep `scripts/*.sh` pure ASCII — use `...`/`-`/`->`, never
+  `…`/`—`/`→`; check with `grep -nP '[^\x00-\x7F]' scripts/*.sh` and the
+  `\$\{?\w+\}?[^\x00-\x7F]` adjacency pattern. Cost this the hard way once:
+  `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
 
 ## Conventions
 

@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-26 (`claude/portfolio-market-scan-ui-27azkz`): operator-driven mobile-UX + correctness pass —
+> Portfolio/Readiness/header, Market Scan (icons + universe: top-N + outliers + holdings), Congress/
+> Insider (future-date rejection, Congress.Trade casing, time span), System Help + Settings rework,
+> Accounts/Edit-Account, 3-way banner, Hide-Test-account, shared-pool default ON, Alpaca account-mismatch
+> hardening. No roadmap change; see `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+
 ## Current Status
 
 Hosting topology: production remains `trading.jays.services` on the
@@ -20,10 +26,13 @@ the authoritative source of truth for secret values** — the app launches throu
 the Infisical runner (`npm run start:secrets`), which injects them at startup, and
 `REQUIRE_SECRETS_MANAGER=1` makes prod refuse to boot off a local `.env.local`. See
 `docs/secrets.md` and `docs/deployment.md` → "Configuration & secrets". (The former
-GCP runner was removed — Infisical is the single path.) Production cutover is scripted
-(`scripts/infisical-prod-cutover.sh`) and `deploy.yml` auto-picks-up the box bootstrap; shared
-App-A/B secrets are pulled via an app-wins overlay (`INFISICAL_SHARED_PROJECT_ID`). This documents
-existing behavior; no phase scope, timeline, or approach changed.
+GCP runner was removed — Infisical is the single path.) The box authenticates with the machine
+identity's **Client ID + Client Secret** (universal auth, long-lived; the runner mints a short-lived
+token each launch — a raw `INFISICAL_TOKEN` is only a fallback and the Client Secret is NOT that
+token). Production cutover is scripted (`scripts/infisical-prod-cutover.sh`) and `deploy.yml`
+auto-picks-up the box bootstrap; shared App-A/B secrets are pulled via an app-wins overlay
+(`INFISICAL_SHARED_PROJECT_ID` + its own Client ID/Secret). This documents existing behavior; no phase
+scope, timeline, or approach changed.
 
 | # | Phase | Spec | Status |
 |---|-------|------|--------|
@@ -86,6 +95,19 @@ existing behavior; no phase scope, timeline, or approach changed.
   across all fresh rows, freshness-gated by the data `date`, and negative-cached 1h (transport errors are
   NOT cached). A→B push wired (`APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` on App A; App B needs the same token
   + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`).
+- **congress.trade — App A handoff: new analytics endpoints + adjusted-close fix** (2026-06-25,
+  `docs/rollouts/2026-06-25-app-a-handoff-integration.md`): consumes three new App A endpoints
+  now live/merging (App A PRs #77/#79/#80): `GET /api/analytics/conviction` (composite 0–100
+  conviction score, gated by `CONGRESS_ANALYTICS_ENABLED`), `GET /api/analytics/ticker/{T}/backtest`
+  (per-ticker post-buy return stats, on-demand), and `GET /api/analytics/conflicts` (committee
+  conflict-of-interest disclosures). Conviction + conflictCount wired into the daily
+  `refreshCongressAnalytics` parallel fetch and the `CongressAnalytics` overlay. Yahoo adjusted-close
+  fix: `fetchYahoo` now prefers `indicators.adjclose` (split+dividend-adjusted) over raw close for
+  correct multi-year returns pushed to App A. **2026-06-26 update:** conviction + conflict bulletins
+  now emitted in `web-sources/index.ts`; `congressAnalyticsScore` gates on `convictionDirection=BUY`
+  and adds a `convictionBoost` so conviction-only tickers reach the scan candidate set. **Deferred:**
+  ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
+  for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
 ## Build Order
 

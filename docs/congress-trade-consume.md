@@ -102,6 +102,27 @@ real skill score and **falls back** to `buildMemberScores` (activity prominence 
 member's trades are scored (which needs the price push to fill in), so this lights up gradually — until
 then the activity proxy carries it. No extra calls when there are no clusters.
 
+**New App A analytics endpoints (2026-06-25, App A PRs #77/#79/#80).** Three additional read functions
+wired into `congress-trade-client.ts` (all gated on `CONGRESS_ANALYTICS_ENABLED`):
+
+- **`getAppAConviction(opts)`** → `GET /api/analytics/conviction?window=&limit=` — composite 0–100
+  conviction score per ticker (`convictionScore: number | null`, direction-aware BUY/SELL). `null` = thin
+  signal (< 3 resolved-side trades); these rows are **excluded** from the overlay map so no-signal tickers
+  can't leak into scan candidates via `netSentiment`. Wired into `refreshCongressAnalytics` alongside the
+  existing leaderboard fetch; `CongressAnalytics` gains `convictionScore` + `convictionDirection`.
+
+- **`getAppATickerBacktest(ticker, opts)`** → `GET /api/analytics/ticker/{T}/backtest` — per-horizon
+  post-buy return stats (`winRate`, `medianReturn`, `medianExcess`, `n`). On-demand only (one call per
+  ticker — too expensive to bulk-fetch in the daily refresh); intended for proposal/chat enrichment.
+
+- **`getAppAConflicts(opts)`** → `GET /api/analytics/conflicts?window=&limit=&chamber=&party=` —
+  committee conflict-of-interest disclosures (member sits on a committee overseeing the traded stock's
+  GICS sector). Aggregated to `conflictCount` per ticker in the overlay. Conflict-only tickers (absent
+  from leaderboard and conviction) still get an overlay entry.
+
+**Deferred:** downstream scan scoring / evidence bulletins for `convictionScore` + `conflictCount`
+(currently stored in the overlay but not yet read by `congressAnalyticsScore` or emitted as bulletins).
+
 ## 4. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,
 `applyCongressEvent` (`src/lib/congress-trade-events.ts`), which upserts into App B's existing persisted

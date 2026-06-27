@@ -33,6 +33,7 @@ export function resolveLlmEndpoint(
   defaultOpenAiUrl: string = "https://api.openai.com/v1/responses",
   role: LlmTeamRole = "green"
 ): LlmEndpoint {
+
   const model = resolveRoleModel(policy, role);
 
   if (/^grok/i.test(model)) {

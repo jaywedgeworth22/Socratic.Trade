@@ -1,5 +1,6 @@
 import { getInternalSetting } from "@/lib/db";
 import { getProviderTierStatus } from "@/lib/provider-tier";
+import { getLease } from "@/lib/scheduler-lease";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,26 @@ export function GET() {
     if (ageMs > 5 * 60_000) checks.schedulerStale = true;
   } else {
     checks.schedulerLastTick = null;
+  }
+
+  // Scheduler lease state (additive; only meaningful when SCHEDULER_SINGLE_LEADER is on).
+  // Surfaced here so ops tooling can confirm which process is the current leader and how old
+  // the lease is. Never breaks the liveness probe.
+  try {
+    const lease = getLease();
+    if (lease) {
+      checks.schedulerLease = {
+        owner: lease.owner,
+        acquiredAt: lease.acquiredAt,
+        expiresAt: lease.expiresAt,
+        ageSeconds: Math.round(lease.ageMs / 1000),
+        expired: lease.expired
+      };
+    } else {
+      checks.schedulerLease = null;
+    }
+  } catch {
+    // never let lease reporting break the liveness probe
   }
 
   // Market-data paid-tier watchdog status (per the nightly provider-tier check). Surfaced here so the
