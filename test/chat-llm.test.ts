@@ -7,7 +7,7 @@
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb } from "../src/lib/db";
-import { AnthropicLLM, getLLM, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
+import { AnthropicLLM, chatProviderForModel, getLLM, llmForModel, MockLLM, OpenAILLM } from "../src/lib/chat/llm";
 import { buildSystem, DISCLAIMER, SYSTEM_PROMPT } from "../src/lib/chat/prompt";
 import type { LlmRunArgs, ToolSchema } from "../src/lib/chat/types";
 
@@ -317,5 +317,134 @@ describe("getLLM provider routing", () => {
     process.env.CHAT_LLM = savedLlm;
     if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
     else delete process.env.ANTHROPIC_API_KEY;
+  });
+});
+
+// ── llmForModel: model-name → provider routing across all five providers ─────
+
+describe("chatProviderForModel — model name → provider", () => {
+  it("derives the provider from the model-name prefix", () => {
+    expect(chatProviderForModel("claude-haiku-4-5")).toBe("anthropic");
+    expect(chatProviderForModel("grok-4.3")).toBe("xai");
+    expect(chatProviderForModel("gemini-2.5-flash")).toBe("gemini");
+    expect(chatProviderForModel("mistral-large-latest")).toBe("mistral");
+    expect(chatProviderForModel("ministral-3b-latest")).toBe("mistral");
+    expect(chatProviderForModel("deepseek-chat")).toBe("deepseek");
+    expect(chatProviderForModel("deepseek-reasoner")).toBe("deepseek");
+    expect(chatProviderForModel("gpt-5.4-mini")).toBe("openai");
+    expect(chatProviderForModel("o4-mini")).toBe("openai");
+  });
+});
+
+describe("llmForModel — multi-provider routing", () => {
+  // Every LLM provider key; the helper below presents exactly one (or none) so we can prove the
+  // model routes to its own provider and never silently borrows a different provider's key.
+  const KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
+
+  beforeAll(() => {
+    process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/chat-llm-model-routing-${Date.now()}.db`;
+    process.env.LLM_OPERATOR_FALLBACK = "on"; // env key serves a keyless user (operator-funded failover)
+    getDb();
+  });
+
+  function withOnlyKey(present: (typeof KEYS)[number] | null, fn: () => void) {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    if (present) process.env[present] = `key-for-${present}`;
+    try {
+      fn();
+    } finally {
+      for (const k of KEYS) {
+        if (saved[k] !== undefined) process.env[k] = saved[k];
+        else delete process.env[k];
+      }
+    }
+  }
+
+  it("returns MockLLM for an empty or 'mock' model", () => {
+    expect(llmForModel("", "u_mock")).toBeInstanceOf(MockLLM);
+    expect(llmForModel("mock", "u_mock")).toBeInstanceOf(MockLLM);
+  });
+
+  it("routes claude-* to AnthropicLLM with an Anthropic key", () => {
+    withOnlyKey("ANTHROPIC_API_KEY", () => {
+      expect(llmForModel("claude-haiku-4-5", "u_anthropic")).toBeInstanceOf(AnthropicLLM);
+    });
+  });
+
+  it("routes gpt-*/grok-*/gemini-*/mistral-* to OpenAILLM with that provider's key", () => {
+    withOnlyKey("OPENAI_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("XAI_API_KEY", () => expect(llmForModel("grok-4.3", "u_xai")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("GEMINI_API_KEY", () => expect(llmForModel("gemini-2.5-flash", "u_gemini")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-latest", "u_mistral")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("DEEPSEEK_API_KEY", () => expect(llmForModel("deepseek-chat", "u_deepseek")).toBeInstanceOf(OpenAILLM));
+  });
+
+  it("does NOT borrow another provider's key — a non-OpenAI model with only an OpenAI key is MockLLM", () => {
+    withOnlyKey("OPENAI_API_KEY", () => {
+      expect(llmForModel("gemini-2.5-flash", "u_gem2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("mistral-large-latest", "u_mis2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("claude-sonnet-4-6", "u_ant2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("grok-4.3", "u_xai2")).toBeInstanceOf(MockLLM);
+    });
+  });
+
+  it("returns MockLLM when no provider key is available at all", () => {
+    withOnlyKey(null, () => {
+      expect(llmForModel("gpt-5.4-mini", "u_none")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("gemini-2.5-flash", "u_none")).toBeInstanceOf(MockLLM);
+    });
+  });
+});
+
+// ── MockLLM labels every answer ──────────────────────────────────────────────
+
+describe("MockLLM — labels every reply as a mock response", () => {
+  it("prefixes 'Mock Response: ' on a plain chat reply (and keeps the disclaimer)", async () => {
+    const res = await new MockLLM().run({ system: "", message: "hello there", tools: [], executeTool: async () => ({ ok: true }) });
+    expect(res.text.startsWith("Mock Response: ")).toBe(true);
+    expect(res.text).toContain("not personalized financial advice"); // disclaimer still present
+  });
+
+  it("labels a tool-backed answer exactly once (no double prefix)", async () => {
+    const res = await new MockLLM().run({
+      system: "",
+      message: "what's on my watchlist?",
+      tools: [],
+      executeTool: async (name: string) => (name === "list_watchlist" ? { watchlist: [] } : { ok: true })
+    });
+    expect(res.text.startsWith("Mock Response: ")).toBe(true);
+    expect(res.text.indexOf("Mock Response: ")).toBe(res.text.lastIndexOf("Mock Response: "));
+  });
+});
+
+// ── Token-cap parameter: max_completion_tokens for OpenAI reasoning models ────
+
+describe("OpenAILLM — token-cap param by model/provider", () => {
+  it("sends max_completion_tokens (not max_tokens) for OpenAI reasoning models", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-5.4-mini", transport, {}, "openai").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_completion_tokens).toBeGreaterThan(0);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("sends max_tokens for OpenAI classic (non-reasoning) models", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-4o-mini", transport).run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+
+  it("keeps max_tokens for OpenAI-compatible providers (never sends the OpenAI-only param)", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gemini-2.5-flash", transport, {}, "gemini").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(body.max_completion_tokens).toBeUndefined();
   });
 });

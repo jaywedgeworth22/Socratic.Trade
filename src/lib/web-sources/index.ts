@@ -51,6 +51,7 @@ import {
   refreshCongressAnalytics
 } from "./congress-analytics";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
+import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -163,6 +164,17 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "technical", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  // RAG embed for congressional + insider disclosures (flag-gated, default OFF).
+  // Fire-and-forget: advisory RAG only — never blocks or errors the refresh loop.
+  if (disclosureRagEnabled()) {
+    const congressData = getCongressDataset();
+    const insiderData = getInsiderDataset();
+    const trades = congressData?.trades ?? [];
+    const filings = insiderData?.filings ?? [];
+    embedDisclosures(trades, filings).catch((err) =>
+      console.error("[disclosure-rag] runDueRefreshes embed error:", err)
+    );
+  }
   return results;
 }
 
@@ -189,6 +201,12 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
         `Congress cluster buy${a.clusterMemberCount ? ` (${a.clusterMemberCount} members)` : ""}` +
           (typeof a.netFlowUsd === "number" ? `, net $${Math.round(a.netFlowUsd).toLocaleString()}` : "")
       );
+    }
+    if (a.convictionScore !== null && a.convictionScore !== undefined && a.convictionDirection) {
+      entry.bulletins.push(`Congress conviction: ${a.convictionDirection} score ${a.convictionScore}/100`);
+    }
+    if ((a.conflictCount ?? 0) > 0) {
+      entry.bulletins.push(`Congress conflict: ${a.conflictCount} conflicted trade${a.conflictCount === 1 ? "" : "s"}`);
     }
   }
   const insider = insiderEnabled() ? getInsiderSignals(symbols, now) : {};

@@ -72,6 +72,15 @@ describe("SEC Form 4 parsers", () => {
     const onlyOptions = FORM4_BUY_XML.replace("<transactionCode>P</transactionCode>", "<transactionCode>M</transactionCode>");
     expect(parseForm4Xml(onlyOptions, { accession: "x" })).toBeNull();
   });
+
+  it("drops Form 4s with a future, near-future, or impossible reported date", () => {
+    // A reported transaction date can't be after today — far-future, tomorrow (within the old skew),
+    // and rolled-over impossible dates are all rejected rather than re-anchored to today.
+    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-06-12", "2030-01-01"), { accession: "fut" })).toBeNull();
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-06-12", tomorrow), { accession: "tmrw" })).toBeNull();
+    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-06-12", "2026-02-30"), { accession: "roll" })).toBeNull();
+  });
 });
 
 describe("aggregateInsiderSignals + merge", () => {

@@ -92,6 +92,9 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   xai: "XAI_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
   finnhub: "FINNHUB_API_KEY",
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
@@ -129,6 +132,14 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   grok: "xai",
   grok_api_key: "xai",
   xai: "xai",
+  gemini: "gemini",
+  gemini_api_key: "gemini",
+  google_gemini: "gemini",
+  google_gemini_api_key: "gemini",
+  mistral: "mistral",
+  mistral_api_key: "mistral",
+  deepseek: "deepseek",
+  deepseek_api_key: "deepseek",
   marketstack_api_key: "marketstack",
   tradier_api_key: "tradier",
   fred_api_key: "fred",
@@ -261,9 +272,10 @@ export type CredTier = "per-user-only" | "shared-operator-infra";
 
 export const LOCAL_USER = "local";
 
-// Per-user-only (env = `local` operator only): openai, anthropic, alpaca_paper_api_key,
-// alpaca_paper_secret_key — and any UNLISTED service (the fail-closed default). Everything below is
-// operator-funded shared infrastructure where env is a justified global fallback for all users.
+// Per-user-only (env = `local` operator only): the LLM keys (openai, anthropic, xai, gemini,
+// mistral), alpaca_paper_api_key, alpaca_paper_secret_key — and any UNLISTED service (the
+// fail-closed default). Everything below is operator-funded shared infrastructure where env is a
+// justified global fallback for all users.
 const API_KEY_TIER: Record<string, CredTier> = {
   // Market data — public, operator-funded, shared cache (a user's own key still wins + stays private).
   finnhub: "shared-operator-infra",
@@ -381,7 +393,7 @@ export function keyFingerprint(key: string | undefined): string | undefined {
  * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
  * when the failover is enabled.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic" | "xai", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
+export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
@@ -396,10 +408,24 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai", us
   return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
 }
 
+/** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
+export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"] as const;
+export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
+
+/**
+ * True when AT LEAST ONE supported LLM provider resolves a usable credential for this user — their own
+ * per-user key OR the operator-funded failover (see resolveLlmCredential). This is the gate for the two
+ * LLM-driven actions (strategy session + chat): when it returns false the app must error rather than
+ * silently degrade to a rule-based stub. Mirrors the same check the `/api/chat/providers` route exposes.
+ */
+export function userHasAnyLlmCredential(userId?: string): boolean {
+  return LLM_PROVIDER_SERVICES.some((service) => Boolean(resolveLlmCredential(service, userId).key));
+}
+
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
-const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
 
 /**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
@@ -991,6 +1017,7 @@ interface RawChatTurnRow {
   citations: string;
   intent: string | null;
   redacted: number;
+  model: string | null;
   created_at: string;
 }
 
@@ -1011,6 +1038,7 @@ function mapChatTurn(row: RawChatTurnRow): ChatTurn {
     citations,
     intent: row.intent,
     redacted: row.redacted === 1,
+    model: row.model ?? null,
     createdAt: row.created_at
   };
 }
@@ -1018,9 +1046,9 @@ function mapChatTurn(row: RawChatTurnRow): ChatTurn {
 export function insertChatTurn(turn: ChatTurn): ChatTurn {
   getDb()
     .prepare(
-      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.createdAt);
+    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.model ?? null, turn.createdAt);
   return turn;
 }
 
@@ -1114,4 +1142,53 @@ export function touchMemory(id: string, assertedAt: string, confidence: number):
 
 export function deleteMemory(userId: string, id: string): boolean {
   return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
+}
+
+// ── Take-profit trim ratchet ────────────────────────────────────────────────
+// Monotonic "band" already trimmed per open profitable position, so a partial take-profit trims once
+// per take-profit band instead of laddering out every run. See take_profit_trims (db.ts migrate()).
+
+export interface TakeProfitTrimBand {
+  /** Highest take-profit band already trimmed for the lot. */
+  band: number;
+  /** Position cost basis when the band was recorded — ratchet resets when the live basis differs (rebuy). */
+  avgCost: number;
+}
+
+/** Map of symbol → {band, avgCost} of the highest already-trimmed take-profit band (empty when none). */
+export function getTakeProfitTrimBands(accountNumber: string, userId: string = "local"): Record<string, TakeProfitTrimBand> {
+  const rows = getDb()
+    .prepare("SELECT symbol, band, avg_cost FROM take_profit_trims WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; band: number; avg_cost: number }>;
+  const out: Record<string, TakeProfitTrimBand> = {};
+  for (const r of rows) out[r.symbol] = { band: Number(r.band) || 0, avgCost: Number(r.avg_cost) || 0 };
+  return out;
+}
+
+/** Record (upsert) the highest take-profit band trimmed for a position lot (band + its cost basis). */
+export function recordTakeProfitTrimBand(
+  accountNumber: string,
+  symbol: string,
+  band: number,
+  avgCost: number,
+  userId: string = "local",
+  now: string = new Date().toISOString()
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO take_profit_trims (user_id, account_number, symbol, band, avg_cost, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol)
+       DO UPDATE SET band = excluded.band, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at`
+    )
+    .run(userId, accountNumber, symbol, Math.max(0, Math.floor(band)), Number.isFinite(avgCost) ? avgCost : 0, now);
+}
+
+/** Clear ratchet state for the given symbols (e.g. positions that have closed). No-op on empty input. */
+export function clearTakeProfitTrimBands(accountNumber: string, symbols: string[], userId: string = "local"): void {
+  if (symbols.length === 0) return;
+  const placeholders = symbols.map(() => "?").join(",");
+  getDb()
+    .prepare(`DELETE FROM take_profit_trims WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
+    .run(userId, accountNumber, ...symbols);
 }

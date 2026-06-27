@@ -3,6 +3,7 @@ import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
@@ -153,10 +154,11 @@ Respond with a JSON object containing:
         });
 
         if (!response.ok) {
-          console.warn("Red Team LLM call failed", await response.text());
+          const why = humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status });
+          console.warn("Red Team LLM call failed:", why);
           return {
             text: undefined,
-            debate: { rejected: false, available: false, reason: "Red Team debate failed to execute." }
+            debate: { rejected: false, available: false, reason: `Red Team debate unavailable — ${why}` }
           };
         }
 

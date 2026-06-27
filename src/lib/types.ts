@@ -196,12 +196,37 @@ export interface TuningSettings {
   skipNegativeExpectancy?: boolean;
   /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
   skipNegativeExpectancyEdgePct?: number;
+  /**
+   * When true (DEFAULT), proposed factor-weight changes are WITHHELD (stripped from the patch)
+   * whenever the OOS walk-forward gate could not validate them (data-fetch failure, insufficient
+   * snapshot history, or missing composite IC). When false, the prior behavior is restored:
+   * weights are kept as proposed with a "NOT out-of-sample validated" caution. Default true is
+   * strictly more conservative — it only ever REMOVES unjustified weight moves, never adds one.
+   */
+  oosWithholdUnvalidated?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the tuner's compacted performance context surfaces per-run
+   * ENTRY-run P&L credit (realizedPnlAsEntry) in addition to the existing exit-keyed attribution.
+   * Pure context/advisory data for the LLM; it does NOT alter sizing or weight math. Off by default
+   * so tuning input is byte-for-byte unchanged unless an operator opts in.
+   */
+  useEntryRunAttribution?: boolean;
 }
 
 export interface RiskRules {
   stopLossPct?: number;
   stopLossNotional?: number;
   takeProfitPct?: number;
+  /**
+   * Fraction of the position to sell when take-profit triggers (1–100; 100 = full exit). Default 50 —
+   * take partial profit and let the rest ride. Laddered by take-profit "band"
+   * (floor(returnPct / takeProfitPct)) so it trims once per band, not every run (state in the
+   * `take_profit_trims` table). NOTE: `mergePolicy` injects the DEFAULT (50) into stored policies that
+   * lack the key, so existing take-profit users move from full-exit to a 50% trim — a deliberate
+   * behavior change, not a no-op upgrade. A literal `undefined` (only reachable in non-merged policy
+   * objects / tests) is clamped to 100 (full exit).
+   */
+  takeProfitTrimPct?: number;
   takeProfitNotional?: number;
   trailingStopPct?: number;
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
@@ -322,6 +347,23 @@ export interface BrokerQuote {
   provider?: string;
 }
 
+/**
+ * Universe eligibility floor — excludes penny / illiquid micro-cap names from the SCANNED candidate set
+ * (index + dynamic-universe sources). It is an opening-eligibility filter only: explicitly listed
+ * `additionalSymbols` and currently-held positions are ALWAYS exempt (deliberate user intent / never trap
+ * an exit), and exits are never affected. Each bound is applied only when set (`> 0`) and, for market cap /
+ * dollar-volume, only when that datum is known for the name — missing data never excludes (the price floor
+ * is the reliable penny gate). Surfaced in settings; see passesUniverseFloor/applyUniverseFloor in market.ts.
+ */
+export interface UniverseFloor {
+  /** Minimum share price in USD (the primary penny-stock gate). */
+  minPrice?: number;
+  /** Minimum market capitalization in USD. Applied only when market cap is known for the name. */
+  minMarketCapUsd?: number;
+  /** Minimum recent daily dollar-volume (latest price × volume) — a liquidity floor. Applied only when volume is known. */
+  minDollarVolume?: number;
+}
+
 export interface TradingPolicy {
   systemState: SystemState;
   paperMode: boolean;
@@ -331,6 +373,8 @@ export interface TradingPolicy {
   includedIndices: IndexUniverse[];
   additionalSymbols: string[];
   blocklist?: string[];
+  /** Penny/illiquid exclusion for the scanned candidate universe (explicit symbols + positions exempt). */
+  universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
@@ -500,6 +544,19 @@ export interface TradingPolicy {
   volPanicVvixThreshold?: number;
   /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
   volPanicSkewThreshold?: number;
+  /**
+   * Market-data staleness gate (fail-safe, additive, DEFAULT OFF). Enforced at proposal REVIEW for
+   * OPENING orders only — exits are never blocked. When set (> 0), an opening proposal whose backing
+   * market data is older than the threshold is BLOCKED. Fail-safe direction only: stale → block; a
+   * missing timestamp is treated as stale (block) ONLY when the gate is enabled. Undefined or <= 0
+   * disables (no behavior change). Read from the run's MarketScan timestamps; never fabricated.
+   */
+  /** Max age (seconds) of the per-symbol quote (MarketScan.quotesBySymbol[sym].asOf, fallback the
+   *  candidate's asOf). Undefined/<=0 disables. */
+  maxQuoteAgeSec?: number;
+  /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
+   *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
+  maxFundamentalsAgeSec?: number;
 }
 
 export interface TradeProposal {
@@ -532,6 +589,14 @@ export interface TradeProposal {
    * When absent the stop-loss leg is a plain stop-market.
    */
   bracketStopLimit?: number;
+  /**
+   * Take-profit trim bookkeeping (set only on proactive take-profit trim proposals by
+   * planTakeProfitTrims). `takeProfitBand` = the take-profit band this trim corresponds to; its position
+   * cost basis is `takeProfitBasis`. The ratchet (take_profit_trims) is advanced ONLY when the trim
+   * actually fills (recordFillFromProposal), so a blocked/rejected/un-approved trim is re-offered next run.
+   */
+  takeProfitBand?: number;
+  takeProfitBasis?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -718,6 +783,8 @@ export interface MarketDataProviderOptions {
   dynamicUniverses?: IndexUniverse[];
   candidateLimit?: number;
   outlierReserve?: number;
+  /** Penny/illiquid exclusion for index + dynamic-universe candidates (explicit symbols + positions exempt). */
+  universeFloor?: UniverseFloor;
 }
 
 export interface MarketDataProvider {
@@ -945,6 +1012,10 @@ export interface FillEvent {
   status: string;
   brokerOrderId?: string;
   raw?: unknown;
+  /** Max Adverse Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mae?: number;
+  /** Max Favorable Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mfe?: number;
   filledAt: string;
 }
 
@@ -959,6 +1030,10 @@ export interface RunAttribution {
   fillCount: number;
   notional: number;
   realizedPnl: number;
+  /** P&L credited to this run as the ENTRY/decision run (sum over lots it opened that later closed). Additive; undefined until any dual-credit accrues. */
+  realizedPnlAsEntry?: number;
+  /** P&L credited to this run as the EXIT/closing run (mirror of the slice of realizedPnl from closing fills). Additive. */
+  realizedPnlAsExit?: number;
 }
 
 /** One point on a benchmark-normalized curve (base date = 100). */
@@ -1069,6 +1144,8 @@ export interface ChatTurn {
   intent: string | null;
   /** True when redact-on-write stripped a secret/PII from `text` before persistence. */
   redacted: boolean;
+  /** Model that produced this turn (assistant turns only, e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). */
+  model?: string | null;
   createdAt: string;
 }
 
@@ -1170,4 +1247,23 @@ export interface LearnedContextPendingRow {
   createdAt: string;
   status: LearnedContextPendingStatus;
   resolvedAt: string | null;
+}
+
+/**
+ * Advisory result from the per-run rationale-diversity check (improvement-program item #8).
+ *
+ * Populated after proposals are generated; never blocks, drops, or modifies any proposal.
+ * Persisted via `audit("rationale_diversity", ...)` and optionally attached to `StrategyResult`.
+ */
+export interface RationaleDiversity {
+  /** Number of rationale strings evaluated. */
+  count: number;
+  /** Mean pairwise character-trigram Jaccard similarity across all N*(N-1)/2 pairs, in [0, 1]. */
+  meanPairwiseSimilarity: number;
+  /** Maximum pairwise similarity observed across any single pair, in [0, 1]. */
+  maxPairwiseSimilarity: number;
+  /** True when meanPairwiseSimilarity exceeds `threshold` — indicates likely template collapse. */
+  collapsed: boolean;
+  /** Similarity threshold used to set `collapsed` (default 0.85). */
+  threshold: number;
 }

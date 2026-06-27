@@ -21,11 +21,11 @@ export async function GET(request: Request) {
   const operatorFundedOnly = url.searchParams.get("operatorFundedOnly") === "true";
   const sinceIso = new Date(Date.now() - sinceDays * 24 * 60 * 60_000).toISOString();
 
-  // Enrich each per-key row with a human-readable label (last-4 + name) resolved from the live key
+  // Enrich each per-key row with a human-readable label + masked key resolved from the live key
   // store — so the per-key view isn't just an opaque fingerprint. Null when the key is detached.
   const rows = getLlmUsageSummary({ sinceIso, operatorFundedOnly }).map((r) => {
     const key = describeUsageKey(r);
-    return { ...r, keyLabel: key?.label ?? null, keyLast4: key?.last4 ?? null };
+    return { ...r, keyLabel: key?.label ?? null, keyLast4: key?.last4 ?? null, keyMasked: key?.masked ?? null };
   });
   const operatorFunded = rows.filter((r) => r.keySource === "operator" && r.userId !== "local");
 

@@ -21,6 +21,7 @@ import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -258,7 +259,9 @@ export async function revalidatePendingProposals(input: {
             { role: "system", content: systemPrompt },
             { role: "user", content: JSON.stringify(userContent) }
           ],
-          response_format: { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
+          response_format: provider === "deepseek"
+            ? { type: "json_object" }
+            : { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
         }
       : {
           model,
@@ -291,7 +294,7 @@ export async function revalidatePendingProposals(input: {
           body: JSON.stringify(body)
         });
         if (!response.ok) {
-          console.warn("[revalidation] LLM call failed", await response.text());
+          console.warn("[revalidation] LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();

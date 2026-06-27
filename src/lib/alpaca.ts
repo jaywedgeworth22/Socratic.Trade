@@ -19,6 +19,34 @@ import type {
 import { normalizeSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, resolveApiKey } from "./db";
+import { fetchDailyOHLC } from "./history";
+
+/**
+ * Fill in a usable price for any symbol the broker didn't quote (>0). Alpaca's latest-quote feed
+ * returns 0/empty bid-ask outside market hours and on the free IEX tier, which used to leave the chat
+ * with no price and the pre-trade review with a MAX_SAFE_INTEGER "can't size it" sentinel (so even a
+ * 0.5-share order tripped every cap). A recent daily close (keyless Yahoo, works anytime) is a fine
+ * sizing/notional anchor and lets the assistant answer price questions. Exported for testing.
+ */
+export async function fillMissingQuotesWithClose(
+  quotes: Record<string, BrokerQuote>,
+  symbols: string[],
+  getFallback: (symbol: string) => Promise<{ price: number; asOf?: string } | undefined>
+): Promise<Record<string, BrokerQuote>> {
+  const missing = symbols.filter((s) => {
+    const q = quotes[s];
+    return !(q && typeof q.price === "number" && q.price > 0);
+  });
+  await Promise.all(
+    missing.map(async (symbol) => {
+      const fb = await getFallback(symbol).catch(() => undefined);
+      if (fb && Number.isFinite(fb.price) && fb.price > 0) {
+        quotes[symbol] = { symbol, price: fb.price, asOf: fb.asOf, provider: "yahoo-finance-delayed" };
+      }
+    })
+  );
+  return quotes;
+}
 
 export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
   return new AlpacaBrokerGateway(userId);
@@ -87,7 +115,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
   private isMcp: boolean;
   private mcpUrl?: string;
 
-  constructor(userId: string) {
+  constructor(private userId: string) {
     const activeAccount = getActiveConnectedAccount(userId);
     const accountKeys =
       activeAccount?.broker === "alpaca" || activeAccount?.broker === "alpaca-mcp"
@@ -222,7 +250,18 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     return this.callMcp<any>("get_account_info", {}, async () => {
       const account = await this.alpaca.getAccount();
-      if (account.account_number !== accountNumber) throw new Error("Account mismatch");
+      // Alpaca API credentials are scoped to exactly one account, so getAccount() always returns THE
+      // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
+      // and actually different, ignoring case/whitespace) — a blank configured number or a mere
+      // formatting difference must never block a run. The message is actionable so the operator can
+      // correct the stored number in Settings → Accounts.
+      const liveNum = String(account.account_number ?? "").trim();
+      const wantNum = String(accountNumber ?? "").trim();
+      if (wantNum && liveNum && liveNum.toLowerCase() !== wantNum.toLowerCase()) {
+        throw new Error(
+          `Account Mismatch: the connected Alpaca credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Settings → Accounts.`
+        );
+      }
       return {
         accountNumber,
         totalMarketValue: number(account.portfolio_value),
@@ -298,10 +337,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
     // Standard quotes method: fall back to REST directly to avoid multi-ticker latency
     const normalizedSymbols = symbols.map(normalizeSymbol);
+    const quotes: Record<string, BrokerQuote> = {};
     try {
       const response = await this.alpaca.getLatestQuotes(normalizedSymbols);
-      const quotes: Record<string, BrokerQuote> = {};
-      
       for (const [symbol, q] of Object.entries(response)) {
         const anyQ = q as Record<string, number | string>;
         const bid = optionalNumber(anyQ.bp);
@@ -315,13 +353,20 @@ class AlpacaBrokerGateway implements BrokerGateway {
           provider: "alpaca"
         };
       }
-      return quotes;
     } catch (error) {
-      // Don't fail silently — a swallowed quote error is what makes the review fall
-      // through to an unusable price. Surface it; callers handle the empty result.
+      // Don't fail silently — a swallowed quote error is what makes the review fall through to an
+      // unusable price. Surface it; the keyless fallback below still tries to price the symbols.
       console.warn(`[alpaca] getLatestQuotes failed for ${normalizedSymbols.join(",")}:`, error instanceof Error ? error.message : error);
-      return {};
     }
+    // Keyless market-data fallback for any symbol the broker left unpriced (0/empty bid-ask — common
+    // outside market hours and on the free IEX tier). A recent daily close keeps the chat quote and
+    // the pre-trade notional review usable instead of failing closed to the over-cap sentinel.
+    await fillMissingQuotesWithClose(quotes, normalizedSymbols, async (symbol) => {
+      const bars = await fetchDailyOHLC(symbol, Date.now(), this.userId);
+      const last = bars && bars.length ? bars[bars.length - 1] : undefined;
+      return last && typeof last.close === "number" ? { price: last.close, asOf: last.time != null ? String(last.time) : undefined } : undefined;
+    });
+    return quotes;
   }
 
   async getEquityTradability(accountNumber: string, symbols: string[]) {

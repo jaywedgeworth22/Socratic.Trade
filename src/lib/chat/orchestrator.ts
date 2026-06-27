@@ -9,14 +9,17 @@
 
 import { audit, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
-import { retrieveContextDetailed } from "../vector-db";
+import { fetchDailyOHLC } from "../history";
+import { fetchYahooFinanceQuote } from "../yahoo-finance";
+import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
+import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
 import { extractLearnedCandidates } from "../memory/salience";
-import { ingestLearned } from "../learned-context/store";
+import { ingestLearned, retrieveLearnedContext } from "../learned-context/store";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
@@ -41,15 +44,23 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     appendTurn(userId, { role: "user", text: message });
 
     const mem = ingestMessage(userId, message);
-    // Parallel learned-context producer: durable pattern/decision FACTS route through ingestLearned
-    // (NOT user_memory). The fail-closed classifier hard-caps chat at 'fact'; risk-adjacent prose is
-    // dropped+audited, never written. This keeps chat structurally write-isolated from the brain's
-    // risk knobs while letting it contribute advisory facts.
-    for (const candidate of extractLearnedCandidates(message)) {
-      // Awaited: ingest now runs the async semantic gate. The chat hard-cap still holds — a gate
-      // 'risk' verdict on a chat candidate is DROPPED (never queued) inside ingestLearned.
-      await ingestLearned(userId, candidate, "chat");
+    // Extract learned-context candidates from the message for both the write path (ingest) and
+    // the read path (retrieve facts already in store to inject into the system prompt).
+    const learnedCandidates = extractLearnedCandidates(message);
+    // Fire-and-forget write path: the semantic classifier runs 3+ sequential LLM calls — awaiting
+    // it on the hot path would add 1–3 s of latency to every chat turn. Errors are benign: advisory
+    // writes, never critical. The chat hard-cap (risk-adjacent prose is DROPPED) holds inside
+    // ingestLearned regardless.
+    for (const candidate of learnedCandidates) {
+      ingestLearned(userId, candidate, "chat").catch((e) => {
+        console.warn("[orchestrator] learned-context ingest failed:", e);
+      });
     }
+    // Read path: inject already-stored facts for symbols mentioned in this message so the model
+    // sees prior advisory context it (or the strategy loop) has learned.
+    const learnedSymbols = learnedCandidates.map((c) => c.symbol).filter((s): s is string => s != null);
+    const learnedFacts = learnedSymbols.length > 0 ? retrieveLearnedContext(userId, learnedSymbols) : [];
+    const learnedContextSummary = learnedFacts.join("\n");
     const memories = retrieve(userId);
     const memorySummary = memories.map((m) => `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`).join("\n");
 
@@ -62,7 +73,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     };
 
     const result = await model.run({
-      system: buildSystem(memorySummary),
+      system: buildSystem(memorySummary, learnedContextSummary),
       message,
       tools: toolSchemas,
       executeTool,
@@ -78,6 +89,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     const draftCall = result.toolCalls?.find((c) => c.name === "draft_order" && c.result && !c.result.error);
     const draft = (draftCall?.result as ChatDraft) ?? null;
 
+    const usedModel = model.modelName;
     const reply: ChatReply = {
       text,
       draft,
@@ -85,13 +97,15 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       usedMemories: memories.map((m) => ({ subject: m.subject, value: m.value, hard: m.hard })),
       memory: { written: mem.written.length, held: mem.held.length },
       intent: classifyIntent(message).intent,
-      promptVersion: PROMPT_VERSION
+      promptVersion: PROMPT_VERSION,
+      model: usedModel
     };
     appendTurn(userId, {
       role: "assistant",
       text: reply.text,
       citations: reply.citations.map((c) => c.chunk_id ?? c.source),
-      intent: reply.intent
+      intent: reply.intent,
+      model: usedModel
     });
     audit("chat.reply", { userId, has_draft: !!draft, citations: reply.citations.length }, userId);
     return reply;
@@ -105,12 +119,49 @@ export function buildProductionDeps(): ToolDeps {
       const fallback: ChatQuote = { symbol, price_usd: 0, as_of: "", source: "none" };
       try {
         const policy = getPolicy(userId);
-        const account = policy.accountNumber;
-        if (!account) return { ...fallback, error: "NO_ACCOUNT" };
-        const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(account, [symbol]);
-        const q = quotes[symbol];
-        if (!q || typeof q.price !== "number") return { ...fallback, error: "NO_QUOTE" };
-        return { symbol, price_usd: q.price, as_of: q.asOf ?? new Date().toISOString(), source: q.provider ?? "broker" };
+        let price: number | undefined;
+        let asOf: string | undefined;
+        let source: string | undefined;
+        // 1) Account-aware broker quote, when an account is selected. Its own try/catch so a broker
+        // failure (auth, data plan, network) FALLS THROUGH to the market-data fallback below instead
+        // of aborting the whole quote.
+        if (policy.accountNumber) {
+          try {
+            const quotes = await getBrokerGateway(policy, userId).getEquityQuotes(policy.accountNumber, [symbol]);
+            const q = quotes[symbol];
+            if (q && typeof q.price === "number" && q.price > 0) {
+              price = q.price;
+              asOf = q.asOf;
+              source = q.provider ?? "broker";
+            }
+          } catch {
+            /* fall through to the keyless market-data fallback */
+          }
+        }
+        // 2) Live market-data quote (Yahoo regularMarketPrice + its real timestamp). Preferred over the
+        // daily-bar close so the "as of" reflects today's price, not the last completed daily bar
+        // (which is often yesterday until the current session's bar posts).
+        if (price == null) {
+          const yq = await fetchYahooFinanceQuote(symbol);
+          if (yq && yq.price > 0) {
+            price = yq.price;
+            asOf = yq.asOf;
+            source = "yahoo-finance";
+          }
+        }
+        // 3) Daily-close fallback (recent close) — last resort when no live quote is available. Works
+        // with NO account selected too, so "what's X at" still gets answered instead of NO_QUOTE.
+        if (price == null) {
+          const bars = await fetchDailyOHLC(symbol, Date.now(), userId);
+          const last = bars && bars.length ? bars[bars.length - 1] : undefined;
+          if (last && typeof last.close === "number" && last.close > 0) {
+            price = last.close;
+            asOf = last.time != null ? String(last.time) : undefined;
+            source = "yahoo-finance-delayed";
+          }
+        }
+        if (price == null) return { ...fallback, error: "NO_QUOTE" };
+        return { symbol, price_usd: price, as_of: asOf ?? new Date().toISOString(), source: source ?? "delayed" };
       } catch {
         return { ...fallback, error: "QUOTE_FAILED" };
       }
@@ -118,7 +169,14 @@ export function buildProductionDeps(): ToolDeps {
     async searchKnowledge(args, userId) {
       const symbol = args.ticker ? canonicalTicker(args.ticker) : "";
       if (!symbol) return [];
-      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, args.as_of ? { asOf: args.as_of } : undefined);
+      // Forward ALL retrieval options: as-of (point-in-time), the doc_type the intent classifier extracted
+      // (previously dropped here), and the relevance floor. docType matching is casing-tolerant downstream.
+      const options: RetrieveOptions = {
+        ...(args.as_of ? { asOf: args.as_of } : {}),
+        ...(args.doc_type ? { docType: [args.doc_type] } : {}),
+        minScore: defaultMinScore()
+      };
+      const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, options);
       // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).
       return chunks.map((c) => ({ chunk_id: c.id, text: c.text, source: c.source ?? "kb", as_of: c.as_of, score: c.score, url: c.url }));
     },

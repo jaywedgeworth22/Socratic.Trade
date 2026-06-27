@@ -40,13 +40,16 @@ export function outlierInterestScore(sig?: SymbolWebSignal): number {
 /** 0–100 outlier weight from App A's aggregate congressional analytics; 0 unless there is net buying. */
 export function congressAnalyticsScore(a?: SymbolWebSignal["congressAnalytics"]): number {
   if (!a) return 0;
-  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0;
+  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0 ||
+    (a.convictionDirection === "BUY" && (a.convictionScore ?? 0) >= 60);
   if (!netBuying) return 0; // net selling / neutral is not a long-side outlier
   const flowBoost = (a.netFlowUsd ?? 0) > 0 ? Math.min(20, Math.log10(Math.max(1, a.netFlowUsd ?? 0)) * 3) : 0;
   const clusterBoost = a.cluster ? 15 : 0;
   const memberBoost = (a.memberCount ?? 0) >= 2 ? Math.min(10, (a.memberCount ?? 0) * 2) : 0;
   const qualityBoost = a.topMemberScore ? Math.min(15, a.topMemberScore * 0.15) : 0;
-  return Math.min(95, 50 + flowBoost + clusterBoost + memberBoost + qualityBoost);
+  // Conviction-only tickers (not in leaderboard) would otherwise score 0 on flow/sentiment alone.
+  const convictionBoost = a.convictionScore != null ? Math.min(20, a.convictionScore * 0.2) : 0;
+  return Math.min(95, 50 + flowBoost + clusterBoost + memberBoost + qualityBoost + convictionBoost);
 }
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";
@@ -68,7 +71,8 @@ import type {
   MarketQuote,
   MarketQuoteSummary,
   MarketScan,
-  ScoringWeights
+  ScoringWeights,
+  UniverseFloor
 } from "./types";
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
@@ -81,13 +85,76 @@ type NasdaqExchange = "nasdaq" | "nyse";
 // consumed, so this single shared cache is safe to serve to all users.
 let screenerCache = new Map<string, { expiresAt: number; rows: RawNasdaqRow[]; asOf?: string }>();
 
+/**
+ * True if a quote clears the universe floor. Each bound applies only when set (`> 0`); market-cap and
+ * dollar-volume are checked only when that datum is known (missing data never excludes — the price floor
+ * is the reliable penny gate). Pure; exported for testing and reuse by the share/backfill universe.
+ */
+export function passesUniverseFloor(
+  quote: Pick<MarketQuote, "price" | "volume" | "marketCap">,
+  floor?: UniverseFloor
+): boolean {
+  if (!floor) return true;
+  const { minPrice, minMarketCapUsd, minDollarVolume } = floor;
+  if (minPrice != null && minPrice > 0 && !(quote.price >= minPrice)) return false;
+  if (
+    minMarketCapUsd != null &&
+    minMarketCapUsd > 0 &&
+    typeof quote.marketCap === "number" &&
+    quote.marketCap > 0 &&
+    quote.marketCap < minMarketCapUsd
+  ) {
+    return false;
+  }
+  if (minDollarVolume != null && minDollarVolume > 0 && quote.volume > 0) {
+    const dollarVolume = (quote.price > 0 ? quote.price : 0) * quote.volume;
+    if (dollarVolume < minDollarVolume) return false;
+  }
+  return true;
+}
+
+/** True if the floor has at least one active (`> 0`) bound. */
+export function universeFloorActive(floor?: UniverseFloor): boolean {
+  return (
+    !!floor &&
+    ((floor.minPrice ?? 0) > 0 || (floor.minMarketCapUsd ?? 0) > 0 || (floor.minDollarVolume ?? 0) > 0)
+  );
+}
+
+/**
+ * Drop sub-floor names from the scanned candidate set, EXEMPTING `exempt` (explicitly-listed symbols +
+ * held positions) — those are deliberate and an exit must never be trapped. No-op when the floor is empty.
+ */
+export function applyUniverseFloor(
+  quotes: MarketQuote[],
+  exempt: Set<string>,
+  floor?: UniverseFloor
+): MarketQuote[] {
+  if (!universeFloorActive(floor)) return quotes;
+  return quotes.filter((q) => exempt.has(q.symbol) || passesUniverseFloor(q, floor));
+}
+
+/**
+ * Right-tail cutoff (mean + nσ) for a list of values, used to flag statistically extreme names
+ * (an unusually large daily move or trading volume relative to the whole scanned universe). Returns
+ * undefined when there are too few samples to be meaningful, so the caller skips the outlier path.
+ */
+function tailThreshold(values: number[], sigma: number): number | undefined {
+  if (values.length < 20) return undefined;
+  const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+  const std = Math.sqrt(variance);
+  if (!(std > 0)) return undefined;
+  return mean + sigma * std;
+}
+
 export async function scanMarket(
   symbols: string[],
   positions: EquityPosition[],
   scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
   userId?: string,
   dynamicUniverses: IndexUniverse[] = [],
-  scanOptions: { candidateLimit?: number; outlierReserve?: number } = {}
+  scanOptions: { candidateLimit?: number; outlierReserve?: number; universeFloor?: UniverseFloor } = {}
 ): Promise<MarketScan> {
   const scan = await nasdaqDelayedProvider.scan(symbols, positions, {
     scoringWeights,
@@ -95,12 +162,16 @@ export async function scanMarket(
     userId,
     dynamicUniverses,
     candidateLimit: scanOptions.candidateLimit,
-    outlierReserve: scanOptions.outlierReserve
+    outlierReserve: scanOptions.outlierReserve,
+    universeFloor: scanOptions.universeFloor
   });
   // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
   // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
   // throttled and fully self-guarded, so it never delays or breaks a scan. Fire-and-forget.
-  void shareScanRefs(scan);
+  // PRIVACY: holdings are personal account data and are force-included in `topCandidates` so the agent
+  // can exit them — but they must NEVER leave the box. Share only the publicly-ranked candidates.
+  const heldSymbols = new Set(positions.map((p) => normalizeSymbol(p.symbol)).filter(Boolean));
+  void shareScanRefs({ topCandidates: scan.topCandidates.filter((quote) => !heldSymbols.has(quote.symbol)) });
   return scan;
 }
 
@@ -158,6 +229,10 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       warnings.push(error instanceof Error ? error.message : "Market data request failed.");
     }
 
+    // Universe floor: drop penny/illiquid index + dynamic-universe candidates before ranking. `allowed`
+    // (explicit symbols + held positions) is exempt — never hide a name the user listed or a position to exit.
+    quotes = applyUniverseFloor(quotes, allowed, options?.universeFloor);
+
     const ranked = rankMarketQuotes(quotes, weights).map((quote) => ({ ...quote, cached }));
     const candidateLimit = normalizeMarketScanCandidateLimit(options?.candidateLimit, envNumber("MARKET_SCAN_LIMIT", DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT));
     const outlierReserve = normalizeMarketScanOutlierReserve(options?.outlierReserve, candidateLimit, envNumber("MARKET_SCAN_EVENT_RESERVE", DEFAULT_MARKET_SCAN_OUTLIER_RESERVE));
@@ -172,17 +247,39 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       warnings.push(error instanceof Error ? `Web signals failed: ${error.message}` : "Web signals failed.");
     }
     const topCut = new Set(ranked.slice(0, candidateLimit).map((quote) => quote.symbol));
+    // Statistical-outlier cutoffs across the WHOLE ranked universe: a name is "extreme" today if its
+    // absolute intraday move or its volume sits far in the right tail (mean + 2σ). This lets an
+    // unusually active/volatile name surface as a candidate even with no congressional/insider signal.
+    const moveCut = tailThreshold(
+      ranked.map((q) => Math.abs(q.intradayChangePct ?? 0)).filter((v) => Number.isFinite(v)),
+      2
+    );
+    const volCut = tailThreshold(
+      ranked.map((q) => q.volume ?? 0).filter((v) => Number.isFinite(v) && v > 0),
+      2
+    );
+    const isStatisticalOutlier = (quote: MarketQuote): boolean =>
+      (moveCut !== undefined && Math.abs(quote.intradayChangePct ?? 0) >= moveCut) ||
+      (volCut !== undefined && (quote.volume ?? 0) >= volCut);
+    // Outliers = up to `outlierReserve` below-cutoff names with either a notable cached web signal
+    // (heavy congressional/insider buying, short pressure, strong technicals) OR statistically
+    // extreme price/volume action. These are ADDED ON TOP of the top-N (not swapped in), so the
+    // candidate set is the full top-N PLUS the outliers — exactly the "30 + up to 8 outliers" model.
     const eventExtra = ranked
-      .filter((quote) => !topCut.has(quote.symbol) && hasNotableWebSignal(allWebSignals[quote.symbol]))
+      .filter((quote) => !topCut.has(quote.symbol)
+        && (hasNotableWebSignal(allWebSignals[quote.symbol]) || isStatisticalOutlier(quote)))
       .sort((a, b) => {
         const signalDelta = outlierInterestScore(allWebSignals[b.symbol]) - outlierInterestScore(allWebSignals[a.symbol]);
         return signalDelta !== 0 ? signalDelta : b.score - a.score;
       })
       .slice(0, outlierReserve);
-    // Keep the union within the enrichment cap by trimming the lowest-scored top names
-    // to make room for the event names (so both get enriched).
-    const keepTop = Math.max(0, candidateLimit - eventExtra.length);
-    let topCandidates: MarketQuote[] = [...ranked.slice(0, keepTop), ...eventExtra];
+    // Finally, force-include any current holdings that landed outside both the top-N and the outlier
+    // set, so the agent always sees (and can exit) every name it actually owns — even illiquid or
+    // low-ranked ones that would otherwise never reach the candidate set.
+    const includedSoFar = new Set<string>([...topCut, ...eventExtra.map((q) => q.symbol)]);
+    const heldSymbols = new Set(positions.map((p) => normalizeSymbol(p.symbol)).filter(Boolean));
+    const heldExtra = ranked.filter((quote) => heldSymbols.has(quote.symbol) && !includedSoFar.has(quote.symbol));
+    let topCandidates: MarketQuote[] = [...ranked.slice(0, candidateLimit), ...eventExtra, ...heldExtra];
 
     // Enrich the candidate set with news sentiment + fundamentals, then re-score & re-sort.
     const provider = getEnrichmentProvider(options?.userId);
