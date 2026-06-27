@@ -33,8 +33,8 @@ export function SymbolDrilldown({ quote, logoDisplay = "tile" }: { quote: Market
     if (typeof q.insiderSentiment === "number" && q.insiderSentiment >= 60) pros.push("Bullish insider transaction activity.");
     else if (typeof q.insiderSentiment === "number" && q.insiderSentiment <= 40) cons.push("Bearish insider transaction activity.");
     
-    if (q.senateTrades && q.senateTrades > 0) pros.push("Net positive congressional buying.");
-    else if (q.senateTrades && q.senateTrades < 0) cons.push("Net negative congressional selling.");
+    if (q.senateTrades && q.senateTrades > 0) pros.push("Delayed congressional disclosure context is net positive.");
+    else if (q.senateTrades && q.senateTrades < 0) cons.push("Delayed congressional disclosure context is net negative.");
 
     if (typeof q.factorBreakdown?.momentum === "number" && q.factorBreakdown.momentum >= 65) pros.push("Strong relative momentum.");
     if (typeof q.factorBreakdown?.quality === "number" && q.factorBreakdown.quality >= 65) pros.push("High quality fundamentals (FCF/Debt/Growth).");

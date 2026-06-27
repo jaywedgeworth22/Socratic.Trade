@@ -668,6 +668,16 @@ export interface MarketQuote {
   technicalDirection?: TechnicalDirection;
   /** Named technical conditions that fired, e.g. ["sma50_200_golden_cross","rsi_reclaim_oversold"]. */
   technicalSignals?: string[];
+  /** Composite Congress.Trade score 0-100, with direction separated so bearish evidence stays explicit. */
+  congressCompositeScore?: number;
+  congressCompositeSignedScore?: number;
+  congressCompositeDirection?: "BUY" | "SELL" | "NEUTRAL";
+  congressCompositeConfidence?: number;
+  congressCompositeComponents?: Record<string, number>;
+  congressCompositeProvenance?: Record<string, string[]>;
+  congressCompositeVersion?: string;
+  congressCompositeWeights?: Record<string, number>;
+  preCongressScore?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
 }
@@ -730,6 +740,16 @@ export interface CandidateEvidence {
   technicalScore?: number; // bar-based technical strength 0–100 at decision time
   technicalDirection?: TechnicalDirection;
   technicalSignals?: string[]; // named technical conditions that fired
+  /** Composite Congress.Trade score at decision time. Positive strength is 0-100; direction carries BUY/SELL. */
+  congressCompositeScore?: number;
+  congressCompositeSignedScore?: number;
+  congressCompositeDirection?: "BUY" | "SELL" | "NEUTRAL";
+  congressCompositeConfidence?: number;
+  congressCompositeComponents?: Record<string, number>;
+  congressCompositeProvenance?: Record<string, string[]>;
+  congressCompositeVersion?: string;
+  congressCompositeWeights?: Record<string, number>;
+  preCongressScore?: number;
   asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
   provider?: string; // primary provider
   sources?: EnrichmentSources; // per-field provenance (source attribution)

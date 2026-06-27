@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Congress.Trade composite score + PIT evaluation harness
+Branch `codex/congress-score-eval-clean`. Added a direction-aware, confidence-capped
+Congress.Trade research composite and a strict PIT export evaluator. BUY composites
+can promote below-cutoff names only when score, confidence, and supporting
+breadth/flow/cluster/skill evidence are strong; weak/proxy-only analytics remain
+advisory evidence. Export parsing now anchors PIT rows to disclosure availability,
+uses selected nested horizon labels, rejects ambiguous unsigned rows, rejects future
+member-skill vintages, accepts explicit excess-return rows as benchmark-covered, and
+uses only explicit pre-Congress baselines for marginal IC. Local DB has no usable
+historical Congress-composite snapshots yet, so real historical validation is blocked
+on an App A PIT export. Verified focused Congress tests (121), synthetic passing and
+failing PIT fixtures, `npm run lint` (0 errors / 225 existing warnings), `npx tsc --noEmit`,
+full `npm test` (1,484), and `npm run build`. See
+`docs/rollouts/2026-06-27-congress-score-evaluation.md`.
+
 ## 2026-06-27 — Account UI polish + production logout/OAuth reconnect hardening
 Branch `codex/account-ui-logout-oauth`. Follow-up to the Robinhood OAuth/readiness
 work: Settings -> Accounts now shows the concise reconnect line
