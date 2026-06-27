@@ -18,10 +18,13 @@ falls back to `local`.
   shared fallback.
 - `connected_accounts` account storage for the default `local` user.
   Connected account credentials are encrypted at rest, omitted from dashboard
-  snapshots, decrypted only for backend active-account use, and preserved when
-  editing account metadata with blank key fields. Alpaca now resolves credentials
-  from the active connected account before falling back to legacy per-user/env keys.
-  Robinhood is connected through the MCP OAuth/status flow rather than manual API
+  snapshots,  decrypted only for backend active-account use, and preserved when
+  editing account metadata with blank key fields. Alpaca resolves credentials
+  from the connected accounts (preferring active status, then live environment,
+  falling back to the first available connected Alpaca account) before falling back
+  to legacy per-user/env keys. This fixes the HTTP 401 connection warnings for
+  market data providers like `alpaca-news` and `alpaca-snapshot` when broker keys
+  are updated. Robinhood is connected through the MCP OAuth/status flow rather than manual API
   key fields, and users may connect one or more supported account types from
   Accounts. Paper accounts are optional; users do not need to connect one unless
   they want broker-hosted sandbox execution.
