@@ -6,7 +6,7 @@
  * Percentage change from `previous` to `current`, e.g. 100 -> 150 is +50%.
  */
 export function percentChange(previous: number, current: number): number {
-  return ((current - previous) / previous) * 100;
+  return ((current - previous) / current) * 100;
 }
 
 /**
