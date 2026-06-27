@@ -18,6 +18,22 @@ new regressions. No app code changed. Verified the full CI sequence locally:
 `npm ci` → `npm run lint` (0 errors) → `npx tsc --noEmit` → `npm test` (1444
 passing) → `npm run build`, all green. See
 `docs/rollouts/2026-06-27-configure-eslint.md`.
+
+## 2026-06-27 — Account selector hide-Test + scoped Latest Decisions fix
+Branch `codex/account-mismatch-selector`. Hidden Test accounts are now filtered
+consistently from both the command-bar account selector and Settings -> Accounts
+while keeping Test visible if it is still the active execution account. Strategy
+run audit rows are now written and read with `connectedAccountId`, so Latest
+Decisions and Strategy Tuning no longer show a stale Account Mismatch from a
+different account after switching to the Roth IRA/Alpaca account. Selected Alpaca
+connected accounts no longer fall back to generic/operator paper keys when their
+stored credentials are missing or unreadable; they fail with an actionable
+credential message instead of a misleading cross-account mismatch. Verified
+focused regressions, TypeScript, full tests (first full run hit a timing timeout
+in `correlation-cluster-gate`, that file passed alone, then the full suite
+passed), and production build; see
+`docs/rollouts/2026-06-27-account-mismatch-selector.md`.
+
 ## 2026-06-27 — Cursor Cloud dev-env verification + browser `localhost` note
 Branch `cursor/setup-dev-environment-f266`. Set up and verified the dev
 environment on a fresh Cursor Cloud VM: `npm install` (811 pkgs, clean),

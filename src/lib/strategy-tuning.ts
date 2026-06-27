@@ -153,7 +153,9 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
   const prompt = getStrategyPrompt(userId);
-  const latestDecision = latestAuditByKind("strategy_run", userId)?.payload as LatestDecisionPayload | undefined;
+  const latestDecision = (policy.connectedAccountId
+    ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
+    : latestAuditByKind("strategy_run", userId))?.payload as LatestDecisionPayload | undefined;
   const macro = await fetchMacroData(userId);
   const accountNumber = policy.accountNumber;
   const performance = accountNumber ? getPerformanceSummary(accountNumber, {}, userId) : undefined;

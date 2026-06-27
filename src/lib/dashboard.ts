@@ -124,8 +124,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
-  const activeAccountForTax = getActiveConnectedAccount(userId);
-  const executionState = deriveExecutionState(policy, activeAccountForTax);
+  const activeAccount = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccount);
   const scorecardSource = fillSourceForExecutionMode(executionState);
   // SPY-benchmark scoreboard for the active execution mode's equity curve. Best-effort: a SPY fetch
   // failure or sparse history simply leaves performance.benchmark undefined (UI shows "—").
@@ -137,12 +137,14 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
   const tax = accountNumber
-    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccountForTax?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId)
+    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId)
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
   const notifications = listNotificationEvents(userId, 50);
-  const latestRunAudit = latestAuditByKind("strategy_run", userId);
+  const latestRunAudit = policy.connectedAccountId
+    ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
+    : latestAuditByKind("strategy_run", userId);
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;

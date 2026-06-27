@@ -20,7 +20,8 @@ falls back to `local`.
   Connected account credentials are encrypted at rest, omitted from dashboard
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
-  from the active connected account before falling back to legacy per-user/env keys.
+  from the active connected account and does not fall back to generic paper/env
+  keys for a selected connected account with missing or unreadable credentials.
   Robinhood is connected through the MCP OAuth/status flow rather than manual API
   key fields, and users may connect one or more supported account types from
   Accounts. Paper accounts are optional; users do not need to connect one unless
@@ -31,6 +32,9 @@ falls back to `local`.
   so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
   labels can distinguish Test from broker-hosted paper environments such as
   Alpaca Paper, and Brokerage from live broker production accounts.
+- Strategy-run audit lookups for Latest Decisions and Strategy Tuning are scoped
+  by `connectedAccountId`, matching the per-account run lock/state model so a
+  stale failure from one account does not appear under another selected account.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
