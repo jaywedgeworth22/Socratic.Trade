@@ -125,7 +125,9 @@ describe("chat read-only state tools (I6)", () => {
     listAlerts: () => [
       { id: "a1", userId: "s", symbol: "AAPL", op: "<", price: 180, note: "", status: "armed", createdAt: "2024-01-01", triggeredAt: null, triggeredPrice: null }
     ],
-    listOpenProposals: () => []
+    listOpenProposals: () => [],
+    getFundamentals: async (symbol) => ({ companyName: "Apple Inc.", peRatio: 30, analystRating: "Buy" }),
+    getMarketSignals: async () => ({ marketBreadthPct: 62.5, marketTopGainers: [{ sym: "AAPL", pct: 4.5 }] })
   };
   const orch = makeOrchestrator(stateDeps, new MockLLM());
 
@@ -144,5 +146,17 @@ describe("chat read-only state tools (I6)", () => {
   it("reads armed alerts", async () => {
     const r = await orch({ userId: "s3", message: "show me my alerts" });
     expect(r.text).toMatch(/AAPL/);
+  });
+
+  it("reads fundamentals for a ticker", async () => {
+    const r = await orch({ userId: "s4", message: "what is the PE ratio of AAPL?" });
+    expect(r.text).toMatch(/Apple Inc/);
+    expect(r.text).toMatch(/PE: 30/);
+  });
+
+  it("reads market signals", async () => {
+    const r = await orch({ userId: "s5", message: "what stocks did best today?" });
+    expect(r.text).toMatch(/Breadth: 62.5%/);
+    expect(r.text).toMatch(/AAPL \(\+4.5%\)/);
   });
 });

@@ -13,6 +13,8 @@ export type WatchlistResult = { ok: boolean; item: { symbol: string; deduped: bo
 
 export interface ToolDeps {
   getQuote(symbol: string, userId: string): Promise<ChatQuote>;
+  getFundamentals?(symbol: string, userId: string): Promise<any>;
+  getMarketSignals?(userId: string): Promise<any>;
   searchKnowledge(args: { query: string; ticker?: string; doc_type?: string; as_of?: string; k?: number }, userId: string): Promise<KbChunk[]>;
   createAlert(userId: string, input: { symbol: string; op: string; price: number; note?: string }): AlertResult;
   watchlistAdd(userId: string, symbol: string): WatchlistResult;
@@ -200,6 +202,26 @@ export function buildTools(): Record<string, ToolDef> {
       input_schema: { type: "object", additionalProperties: false, properties: {} },
       async execute(_input, ctx) {
         return { proposals: ctx.deps.listOpenProposals ? ctx.deps.listOpenProposals(ctx.userId) : [] };
+      }
+    },
+
+    get_fundamentals: {
+      readOnly: true,
+      description: "Get rich fundamentals, company profiles, analyst ratings, price targets, sector, division, peRatio, dividendYield, beta, etc. for a ticker.",
+      input_schema: { type: "object", additionalProperties: false, required: ["symbol"], properties: { symbol: { type: "string" } } },
+      async execute(input, ctx) {
+        if (!ctx.deps.getFundamentals) return { error: "NOT_SUPPORTED" };
+        return ctx.deps.getFundamentals(canonicalTicker(String(input.symbol ?? "")), ctx.userId);
+      }
+    },
+
+    get_market_signals: {
+      readOnly: true,
+      description: "Get market-wide regime/sentiment signals, including top gainers, top losers, market breadth, volatility indices, CFTC futures spec positioning, etc.",
+      input_schema: { type: "object", additionalProperties: false, properties: {} },
+      async execute(_input, ctx) {
+        if (!ctx.deps.getMarketSignals) return { error: "NOT_SUPPORTED" };
+        return ctx.deps.getMarketSignals(ctx.userId);
       }
     }
   };

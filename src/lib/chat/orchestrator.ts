@@ -14,6 +14,8 @@ import { fetchYahooFinanceQuote } from "../yahoo-finance";
 import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
 import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
+import { getEnrichmentProvider } from "../data-providers";
+import { getMarketSignals } from "../market-signals";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
@@ -220,6 +222,24 @@ export function buildProductionDeps(): ToolDeps {
       const policy = getPolicy(userId);
       if (!policy.accountNumber) return [];
       return listPendingProposals(policy.accountNumber, userId);
+    },
+    async getFundamentals(symbol, userId) {
+      try {
+        const provider = getEnrichmentProvider(userId);
+        const map = await provider.enrich([symbol]);
+        const res = map[symbol];
+        if (!res) return { error: "NO_FUNDAMENTALS" };
+        return res;
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getMarketSignals(userId) {
+      try {
+        return await getMarketSignals(userId);
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
     },
     accountLabel: "Test (local)"
   };

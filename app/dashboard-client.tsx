@@ -3447,61 +3447,111 @@ function StrategyStudio({
           <h4 className="mb-2 text-sm font-semibold text-fg" title="Choose which LLM proposes trades and which LLM critiques them before approval. API keys still live in Settings -> Connections.">Green/Red Team Models</h4>
           <div className="grid gap-3">
             <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
-              <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
-                <optgroup label="OpenAI">
-                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
-                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
-                </optgroup>
-                <optgroup label="xAI (Grok)">
-                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
-                  <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
-                </optgroup>
-                <optgroup label="Google Gemini">
-                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                  <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                  <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                  <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                </optgroup>
-                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                </optgroup>
-              </select>
+              <div className="space-y-2">
+                <select className={inputClass} value={["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
+                  if (e.target.value === "custom") {
+                    updatePolicy({ llmModel: "gpt-4o-mini" });
+                  } else {
+                    updatePolicy({ llmModel: e.target.value });
+                  }
+                }}>
+                  <optgroup label="OpenAI (Simulated)">
+                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
+                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
+                  </optgroup>
+                  <optgroup label="OpenAI (Real)">
+                    <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
+                    <option value="gpt-4o">gpt-4o — standard large</option>
+                    <option value="o1-mini">o1-mini — fast reasoning</option>
+                    <option value="o3-mini">o3-mini — balanced reasoning</option>
+                    <option value="o1">o1 — deepest reasoning</option>
+                  </optgroup>
+                  <optgroup label="xAI (Grok)">
+                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
+                    <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
+                  </optgroup>
+                  <optgroup label="Google Gemini">
+                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
+                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
+                  </optgroup>
+                  <optgroup label="Mistral">
+                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
+                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
+                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                  </optgroup>
+                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
+                  </optgroup>
+                  <option value="custom">Custom Model ID...</option>
+                </select>
+                {!["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") && (
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={policy.llmModel ?? ""}
+                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    onChange={(e) => updatePolicy({ llmModel: e.target.value })}
+                  />
+                )}
+              </div>
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
-              <select className={inputClass} value={policy.redTeamLlmModel ?? ""} onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}>
-                <option value="">Same as Green Team model</option>
-                <optgroup label="OpenAI">
-                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
-                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
-                </optgroup>
-                <optgroup label="xAI (Grok)">
-                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
-                  <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
-                </optgroup>
-                <optgroup label="Google Gemini">
-                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                  <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                  <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                  <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                </optgroup>
-                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                </optgroup>
-              </select>
+              <div className="space-y-2">
+                <select className={inputClass} value={!policy.redTeamLlmModel ? "" : ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
+                  if (e.target.value === "custom") {
+                    updatePolicy({ redTeamLlmModel: "gpt-4o-mini" });
+                  } else {
+                    updatePolicy({ redTeamLlmModel: e.target.value || undefined });
+                  }
+                }}>
+                  <option value="">Same as Green Team model</option>
+                  <optgroup label="OpenAI (Simulated)">
+                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
+                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
+                  </optgroup>
+                  <optgroup label="OpenAI (Real)">
+                    <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
+                    <option value="gpt-4o">gpt-4o — standard large</option>
+                    <option value="o1-mini">o1-mini — fast reasoning</option>
+                    <option value="o3-mini">o3-mini — balanced reasoning</option>
+                    <option value="o1">o1 — deepest reasoning</option>
+                  </optgroup>
+                  <optgroup label="xAI (Grok)">
+                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
+                    <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
+                  </optgroup>
+                  <optgroup label="Google Gemini">
+                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
+                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
+                  </optgroup>
+                  <optgroup label="Mistral">
+                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
+                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
+                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                  </optgroup>
+                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
+                  </optgroup>
+                  <option value="custom">Custom Model ID...</option>
+                </select>
+                {policy.redTeamLlmModel !== undefined && !["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) && (
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={policy.redTeamLlmModel ?? ""}
+                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}
+                  />
+                )}
+              </div>
             </Field>
             <Field label="Reasoning Effort" hint="For gpt-5 / o-series reasoning models: higher effort = deeper analysis, more tokens, higher cost & latency. Other model families use their provider defaults.">
               <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>

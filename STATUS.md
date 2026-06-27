@@ -4,8 +4,12 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Chat Assistant Enrichment & O-Series Model Pricing
+Branch `agent/antigravity` (`resolve-prod-merge-prs`). Added `get_fundamentals` and `get_market_signals` tools to the chat assistant tool registry, enabling the LLM to access company metrics (P/E ratio, analyst ratings, target prices, etc.) and market-wide gainers/losers/breadth. Added token pricing definitions for OpenAI `o1`, `o1-mini`, `o1-preview`, and `o3-mini` models in `llm-usage.ts`. All 1,440 unit tests passing clean.
+
 ## 2026-06-27 — PR merge resolution & production verification
 Branch `agent/antigravity` (`resolve-prod-merge-prs`). Resolved conflicts in all three open PRs: PR #175 (dashboard-client.tsx + STATUS.md), PR #160 (PLAN.md + STATUS.md), and PR #141 (orchestrator.ts + STATUS.md). Verified each locally: TypeScript compiles clean, all tests passed (1441+, 1446+, and 1442+ respectively), and production build succeeded. Pushed to remote branches; awaiting auto-merge via CI checks. Verified that the production PM2 instance is running and healthy on port 4000 (health check returns 200 OK with ticking scheduler).
+
 
 ## 2026-06-27 — HANDOFF: cutover crash UNRESOLVED + the "bash 3.2" claim below is WRONG
 Branch `claude/practical-mendel-cqtduf`. The operator reproduced the line-200

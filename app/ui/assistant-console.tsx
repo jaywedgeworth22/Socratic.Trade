@@ -109,14 +109,22 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
 // OpenAI). Tiers ($/$$/$$$) are relative blended cost. Selection is sticky via localStorage. Per-
 // provider key availability comes from /api/chat/providers; unkeyed providers show "no key" + disabled.
 const CHAT_MODEL_GROUPS: ModelGroup[] = [
-  { provider: "offline", label: "Offline", options: [{ value: "mock", label: "Mock — deterministic, no key", tier: "" }] },
+  { provider: "offline", label: "Offline", options: [
+    { value: "mock", label: "Mock — deterministic, no key", tier: "" },
+    { value: "custom", label: "Custom Model ID...", tier: "" }
+  ] },
   {
     provider: "openai",
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest", tier: "$" },
       { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default", tier: "$$" },
-      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost", tier: "$$$" }
+      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost", tier: "$$$" },
+      { value: "gpt-4o-mini", label: "gpt-4o-mini — standard mini", tier: "$" },
+      { value: "gpt-4o", label: "gpt-4o — standard large", tier: "$$" },
+      { value: "o1-mini", label: "o1-mini — fast reasoning", tier: "$$" },
+      { value: "o3-mini", label: "o3-mini — balanced reasoning", tier: "$$" },
+      { value: "o1", label: "o1 — deepest reasoning", tier: "$$$" }
     ]
   },
   {
@@ -367,13 +375,32 @@ export function AssistantView({
           <span className="text-xs text-muted">drafts orders you confirm — it never places on its own</span>
         </div>
         <div className="flex items-center gap-2">
+          {(!CHAT_MODEL_GROUPS.flatMap(g => g.options).some(o => o.value === model) || model === "custom") && (
+            <input
+              type="text"
+              className="h-7 w-[10rem] rounded border border-line bg-surface px-2 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+              value={model === "custom" ? "" : model}
+              placeholder="Model ID (e.g. gpt-4o)"
+              onChange={(e) => {
+                const val = e.target.value;
+                setModel(val || "custom");
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, val || "custom");
+              }}
+            />
+          )}
           <ModelPicker
-            className="w-[15rem]"
-            value={model}
+            className="w-[12rem]"
+            value={CHAT_MODEL_GROUPS.flatMap(g => g.options).some(o => o.value === model) ? model : "custom"}
             groups={CHAT_MODEL_GROUPS}
             providerStatus={providerStatus}
             onChange={(m) => {
-              setModel(m);
+              if (m === "custom") {
+                setModel("gpt-4o-mini");
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, "gpt-4o-mini");
+              } else {
+                setModel(m);
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, m);
+              }
               // Move focus straight to the prompt box so the user can type right after picking a model.
               inputRef.current?.focus();
             }}
