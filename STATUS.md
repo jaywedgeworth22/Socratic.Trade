@@ -23,6 +23,21 @@ OAuth/middleware tests, `npx tsc --noEmit`, full `npm test` (1457/1457),
 `npm run build`, and `npm run lint` (0 errors / 218 existing warnings). See
 `docs/rollouts/2026-06-27-robinhood-oauth-callback-host.md`.
 
+## 2026-06-27 — Account readiness now gates on broker health, OAuth, and balance reads
+Branch `codex/readiness-oauth-needed`. The dashboard readiness strip and
+Start/Run blockers no longer treat `policy.accountNumber` alone as an Account
+green check. `/api/dashboard` now returns a shared `accountReadiness` result
+derived from the selected connected account, live broker account enumeration,
+Robinhood MCP OAuth health, broker agentic-allowed flags, and portfolio/balance
+read success. Stored/backfilled account rows can still remain visible for
+management, but they do not make the account ready if Robinhood OAuth is needed,
+Alpaca credentials fail, the selected account is missing from broker results,
+the broker marks it non-agentic, or portfolio data cannot be read. The strategy
+enable API now returns a clear 400 if broker account enumeration fails. Verified
+focused readiness tests, `npx tsc --noEmit`, full `npm test` (1463/1463),
+`npm run build`, and `npm run lint` (0 errors / 214 existing warnings). See
+`docs/rollouts/2026-06-27-account-readiness-broker-health.md`.
+
 ## 2026-06-27 — Robinhood balance visibility + recoverable-fallback audit trail
 Branch `codex/robinhood-balance-failover-audit`. Investigated production via
 local authenticated `GET /api/dashboard` and `/api/broker/mcp/health`: the active

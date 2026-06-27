@@ -25,6 +25,7 @@ import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard,
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
@@ -34,9 +35,18 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
-import type { MarketQuote, MarketScan, TradeProposal } from "./types";
+import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
+
+export interface AccountReadiness {
+  ok: boolean;
+  reason?: string;
+  detail: string;
+  accountNumber?: string;
+  connectedAccountId?: string;
+  broker?: TradingPolicy["activeBroker"] | ConnectedAccount["broker"];
+}
 
 /**
  * Derive agentic-allowed for a STORED connected account, used as a fallback when the live broker
@@ -54,17 +64,143 @@ export function connectedAccountAgenticFallback(account: {
   return true; // alpaca / alpaca-mcp / test gateways report agentic-allowed for all their accounts
 }
 
+function brokerDisplayName(broker: AccountReadiness["broker"] | undefined): string {
+  switch (broker) {
+    case "alpaca":
+    case "alpaca-mcp":
+      return "Alpaca";
+    case "robinhood":
+      return "Robinhood";
+    case "test":
+      return "Test";
+    default:
+      return "broker";
+  }
+}
+
+function robinhoodMcpHealthIssue(health: RobinhoodMcpHealth | undefined): string | undefined {
+  if (!health) return undefined;
+  if (health.ok && health.configured && health.authenticated) return undefined;
+  return health.error ?? health.warning ?? "Robinhood OAuth is not connected.";
+}
+
+export function accountReadinessForSnapshot(input: {
+  policy: TradingPolicy;
+  activeAccount?: ConnectedAccount;
+  liveAccounts: BrokerageAccount[];
+  brokerAccountReadError?: string;
+  portfolioReadError?: string;
+  robinhoodMcpHealth?: RobinhoodMcpHealth;
+}): AccountReadiness {
+  const { policy, activeAccount } = input;
+  const accountNumber = policy.accountNumber ?? activeAccount?.accountNumber;
+  const broker = activeAccount?.broker ?? policy.activeBroker;
+  const brokerName = brokerDisplayName(broker);
+
+  if (!accountNumber) {
+    return {
+      ok: false,
+      reason: "Select an account before enabling autonomy.",
+      detail: "No account is selected.",
+      connectedAccountId: policy.connectedAccountId,
+      broker
+    };
+  }
+
+  if (policy.connectedAccountId && !activeAccount) {
+    return {
+      ok: false,
+      reason: "Open Accounts and choose a working account before enabling autonomy.",
+      detail: `Selected connected account ${policy.connectedAccountId} was not found.`,
+      accountNumber,
+      connectedAccountId: policy.connectedAccountId,
+      broker
+    };
+  }
+
+  const robinhoodIssue = broker === "robinhood" ? robinhoodMcpHealthIssue(input.robinhoodMcpHealth) : undefined;
+  if (robinhoodIssue) {
+    return {
+      ok: false,
+      reason: "Reconnect Robinhood OAuth before enabling autonomy.",
+      detail: robinhoodIssue,
+      accountNumber,
+      connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+      broker
+    };
+  }
+
+  const requiresBrokerReadiness = !policy.paperMode && broker !== "test";
+  if (requiresBrokerReadiness) {
+    if (input.brokerAccountReadError) {
+      return {
+        ok: false,
+        reason: `${brokerName} account check failed. Open Accounts and reconnect or fix credentials.`,
+        detail: input.brokerAccountReadError,
+        accountNumber,
+        connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+        broker
+      };
+    }
+
+    const liveAccount = input.liveAccounts.find((account) => account.accountNumber === accountNumber);
+    if (!liveAccount) {
+      return {
+        ok: false,
+        reason: `Selected ${brokerName} account is not available from the broker.`,
+        detail: `The selected account ${accountNumber} was not returned by ${brokerName}.`,
+        accountNumber,
+        connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+        broker
+      };
+    }
+
+    if (!liveAccount.agenticAllowed) {
+      return {
+        ok: false,
+        reason: `Selected ${brokerName} account is not approved for agentic execution.`,
+        detail: `${brokerName} returned account ${accountNumber}, but marked it not agentic-allowed.`,
+        accountNumber,
+        connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+        broker
+      };
+    }
+  }
+
+  if (input.portfolioReadError) {
+    return {
+      ok: false,
+      reason: `${brokerName} account data check failed. Open Accounts and reconnect or fix credentials.`,
+      detail: input.portfolioReadError,
+      accountNumber,
+      connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+      broker
+    };
+  }
+
+  return {
+    ok: true,
+    detail: broker === "test"
+      ? `Selected Test account ${accountNumber}.`
+      : `Selected ${brokerName} account ${accountNumber} is available for execution.`,
+    accountNumber,
+    connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+    broker
+  };
+}
+
 export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
   ensureTestAccount(userId);
   const policy = getPolicy(userId);
+  const activeAccount = getActiveConnectedAccount(userId);
   const gateway = getBrokerGateway(policy, userId);
-  let accounts: any[] = [];
-  let brokerAccountReadFailed = false;
+  let accounts: BrokerageAccount[] = [];
+  let brokerAccountReadError: string | undefined;
   try {
     accounts = await gateway.getAccounts();
   } catch (error) {
-    brokerAccountReadFailed = true;
     const message = messageFromUnknownError(error);
+    brokerAccountReadError = message;
     console.warn("Failed to fetch accounts:", message);
     recordRecoverableIssue({
       source: "broker",
@@ -83,7 +219,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // badge false-warn "not available for agentic execution". Backfill any stored connected account the
   // live list didn't return, deriving agenticAllowed from the account type so the selected account
   // always resolves to a definitive status.
-  const liveAccountNumbers = new Set(accounts.map((account) => account.accountNumber));
+  const liveAccounts = accounts.slice();
+  const liveAccountNumbers = new Set(liveAccounts.map((account) => account.accountNumber));
   let storedBackfillCount = 0;
   let selectedAccountWasBackfilled = false;
   for (const connected of listConnectedAccounts(userId)) {
@@ -99,11 +236,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       capabilities: connected.capabilities
     });
   }
-  if (storedBackfillCount > 0 && (brokerAccountReadFailed || selectedAccountWasBackfilled)) {
+  if (storedBackfillCount > 0 && (brokerAccountReadError || selectedAccountWasBackfilled)) {
     recordRecoverableIssue({
       source: "broker",
       operation: "dashboard.connectedAccountBackfill",
-      message: brokerAccountReadFailed
+      message: brokerAccountReadError
         ? "Live broker account enumeration failed, so the dashboard used stored connected-account metadata."
         : "Live broker account enumeration did not include the selected account.",
       fallback: "Stored connected-account rows were added to the dashboard snapshot.",
@@ -111,11 +248,28 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       connectedAccountId: policy.connectedAccountId,
       broker: policy.activeBroker,
       accountNumber: policy.accountNumber,
-      details: { backfilledAccounts: storedBackfillCount, brokerAccountReadFailed, selectedAccountWasBackfilled }
+      details: { backfilledAccounts: storedBackfillCount, brokerAccountReadFailed: Boolean(brokerAccountReadError), selectedAccountWasBackfilled }
     });
   }
+  let robinhoodMcpHealth: RobinhoodMcpHealth | undefined;
+  if ((activeAccount?.broker ?? policy.activeBroker) === "robinhood") {
+    robinhoodMcpHealth = await getRobinhoodMcpHealth(userId).catch((error): RobinhoodMcpHealth => ({
+      adapter: "mcp",
+      ok: false,
+      configured: false,
+      authenticated: false,
+      protocolVersion: "",
+      transport: "http+sse",
+      tools: [],
+      checkedAt: new Date().toISOString(),
+      error: messageFromUnknownError(error)
+    }));
+  }
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
-  let portfolio, positions: any[] = [], orders: any[] = [];
+  let portfolio: Portfolio | undefined;
+  let positions: EquityPosition[] = [];
+  let orders: EquityOrder[] = [];
+  let portfolioReadError: string | undefined;
   if (accountNumber) {
     try {
       [portfolio, positions, orders] = await Promise.all([
@@ -125,6 +279,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       ]);
     } catch (error) {
       const message = messageFromUnknownError(error);
+      portfolioReadError = message;
       console.warn("Failed to fetch portfolio:", message);
       recordRecoverableIssue({
         source: "broker",
@@ -139,6 +294,14 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       });
     }
   }
+  const accountReadiness = accountReadinessForSnapshot({
+    policy,
+    activeAccount,
+    liveAccounts,
+    brokerAccountReadError,
+    portfolioReadError,
+    robinhoodMcpHealth
+  });
 
   const dailyStats = accountNumber
     ? dailyExecutionStats(accountNumber, new Date(), userId)
@@ -172,7 +335,6 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
   const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
-  const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
   const scorecardSource = fillSourceForExecutionMode(executionState);
   // SPY-benchmark scoreboard for the active execution mode's equity curve. Best-effort: a SPY fetch
@@ -285,6 +447,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     policy,
     strategyPrompt: getStrategyPrompt(userId),
     accounts,
+    accountReadiness,
     portfolio: displayPortfolio,
     positions: displayPositions,
     symbolMetaBySymbol,

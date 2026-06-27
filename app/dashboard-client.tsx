@@ -1023,11 +1023,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const dailyStats = snapshot.dailyStats ?? { orderCount: 0, openingOrderCount: 0, notional: 0 };
   const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
   const remainingOrders = Math.max(0, policy.maxDailyOrders - (dailyStats.openingOrderCount ?? dailyStats.orderCount));
-  const enableBlockedReason = !policy.accountNumber
-    ? "Select an account before enabling autonomy."
-    : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
+  const accountReadiness = snapshot.accountReadiness;
+  const accountBlockedReason = accountReadiness
+    ? (accountReadiness.ok ? undefined : accountReadiness.reason ?? accountReadiness.detail)
+    : (!policy.accountNumber ? "Select an account before enabling autonomy." : undefined);
+  const enableBlockedReason = accountBlockedReason ?? (
+    policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
-      : undefined;
+      : undefined
+  );
   // A strategy session is LLM-driven. When NO LLM provider has a resolvable credential for this user
   // (own key OR operator failover; see userHasAnyLlmCredential), "Run once" is gated with an actionable
   // message — matching the /api/strategy/run 412 — rather than firing a run that only errors deep inside.
@@ -1075,12 +1079,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
   function routeSetupBlocker(reason: string) {
+    const accountIsBlocked = accountReadiness ? !accountReadiness.ok : (!policy.accountNumber && !policy.connectedAccountId);
     toast.warning(reason, {
-      description: !policy.accountNumber && !policy.connectedAccountId
+      description: accountIsBlocked
         ? "Open Accounts to connect or select a supported account."
         : "Open Settings to choose a tradable universe."
     });
-    if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
+    if (accountIsBlocked) setAccountsOpen(true);
     else openSettings("operate");
   }
 
@@ -1105,7 +1110,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
-  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === executionState.accountNumber);
   const riskCapsReady =
     (policy.maxDailyNotional ?? 0) > 0 &&
     (policy.maxOrderNotional ?? 0) > 0 &&
@@ -1113,8 +1117,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const readinessItems: ReadinessItem[] = [
     {
       label: "Account",
-      ok: Boolean(policy.accountNumber),
-      detail: policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected.",
+      ok: accountReadiness?.ok ?? Boolean(policy.accountNumber),
+      detail: accountReadiness?.detail ?? (policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected."),
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
     },

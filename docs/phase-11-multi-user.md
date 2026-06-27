@@ -48,6 +48,12 @@ falls back to `local`.
   state row. Hosted callback URLs are derived from forwarded/public site origin
   when the configured redirect is loopback, preventing production from sending
   Robinhood back to `localhost`.
+- Dashboard snapshots now include `accountReadiness`, a server-derived status for
+  the selected execution account. It keeps stored/backfilled connected-account
+  rows visible for management while failing closed for actual execution readiness
+  when OAuth/auth, broker account enumeration, selected-account availability,
+  broker `agenticAllowed`, or portfolio/balance reads fail. This applies to
+  Robinhood and Alpaca paths.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,

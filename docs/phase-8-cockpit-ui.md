@@ -155,6 +155,12 @@ across panels, feeds, popovers, or status chips.
   authenticated Robinhood MCP session. If `/api/broker/mcp/health` reports
   configured-but-unauthenticated, the Robinhood row shows `OAuth Needed` plus a
   Reconnect action instead of a plain `Connected` badge.
+- The top readiness strip must use the server-provided selected-account
+  readiness result, not only `policy.accountNumber`. A stored/backfilled account
+  row may stay visible for management, but Account is not ready if broker
+  OAuth is needed, selected-account enumeration fails, the selected
+  account is absent from live broker results, the broker marks it non-agentic,
+  or portfolio/balance data cannot be read.
 - Standalone ticker text should use the shared clickable ticker treatment so
   hover/click styling and symbol drilldown are consistent in Market Scan,
   Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.

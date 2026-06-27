@@ -1,4 +1,5 @@
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
+import type { AccountReadiness } from "@/lib/dashboard";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
@@ -51,6 +52,7 @@ export interface DashboardSnapshot {
   policy: TradingPolicy;
   strategyPrompt: string;
   accounts: BrokerageAccount[];
+  accountReadiness?: AccountReadiness;
   connectedAccounts: ConnectedAccount[];
   portfolio?: Portfolio;
   positions: EquityPosition[];
