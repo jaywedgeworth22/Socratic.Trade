@@ -91,6 +91,30 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.detail).toContain("Notifications Webhook");
   });
 
+  it("formats recoverable issue audits into visible fallback diagnostics", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "a-recoverable",
+          createdAt: "2026-06-15T00:03:00.000Z",
+          kind: "recoverable_issue",
+          payload: {
+            source: "broker",
+            operation: "dashboard.getPortfolioBundle",
+            message: "No Robinhood MCP access token is stored.",
+            fallback: "Dashboard snapshot continues without live portfolio, positions, and orders.",
+            suppressedSinceLastAudit: 2
+          }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Broker issue");
+    expect(feed[0]?.detail).toContain("No Robinhood MCP access token");
+    expect(feed[0]?.detail).toContain("Fallback:");
+    expect(feed[0]?.detail).toContain("2 repeats suppressed");
+  });
+
   it("formats notification panel rows with action title and skipped-webhook detail", () => {
     const item = formatNotificationDisplay(
       {

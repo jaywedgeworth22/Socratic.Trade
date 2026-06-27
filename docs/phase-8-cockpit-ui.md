@@ -95,6 +95,11 @@ Route/global error screens show the actual error message when available, and an
 app-level browser listener surfaces uncaught runtime errors and unhandled promise
 rejections as bottom-right error toasts.
 
+As of 2026-06-27, recoverable broker/data fallbacks that would otherwise only
+hit `console.warn` write throttled `recoverable_issue` audit rows and render in
+Activity. This keeps resilience for transient broker/provider misses while
+leaving a visible trail for later correction.
+
 ## Accessibility
 
 - All dialogs render through a single reusable `Modal` component. It provides
@@ -146,6 +151,10 @@ across panels, feeds, popovers, or status chips.
   Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Accounts distinguishes a stored Robinhood account row from an
+  authenticated Robinhood MCP session. If `/api/broker/mcp/health` reports
+  configured-but-unauthenticated, the Robinhood row shows `OAuth Needed` plus a
+  Reconnect action instead of a plain `Connected` badge.
 - Standalone ticker text should use the shared clickable ticker treatment so
   hover/click styling and symbol drilldown are consistent in Market Scan,
   Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.

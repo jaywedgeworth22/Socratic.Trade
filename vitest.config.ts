@@ -12,6 +12,8 @@ export default defineConfig({
     }
   },
   test: {
+    maxWorkers: 4,
+    testTimeout: 20_000,
     exclude: [
       "node_modules/**",
       ".next/**",

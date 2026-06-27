@@ -5340,6 +5340,9 @@ function IntegrationsSection({
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
 
+  const robinhoodAuthIssue = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) =>
+    acc.broker === "robinhood" && Boolean(mcpHealth && (!mcpHealth.configured || !mcpHealth.authenticated || !mcpHealth.ok));
+
   const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
     if (acc.broker === "test") {
       return {
@@ -5351,7 +5354,7 @@ function IntegrationsSection({
     if (acc.broker === "robinhood") {
       return {
         title: acc.label || "Agentic Robinhood",
-        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}`,
+        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}${robinhoodAuthIssue(acc) ? " · OAuth not connected" : ""}`,
         showBadges: true
       };
     }
@@ -5664,6 +5667,7 @@ function IntegrationsSection({
           {visibleAccounts.map(acc => {
             const info = formatAccountInfo(acc);
             const isActive = acc.id === activeId;
+            const needsRobinhoodReconnect = robinhoodAuthIssue(acc);
             return (
               <div
                 key={acc.id}
@@ -5675,7 +5679,12 @@ function IntegrationsSection({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-fg">{info.title}</span>
-                    {info.showBadges && (isActive ? (
+                    {info.showBadges && needsRobinhoodReconnect && (
+                      <span className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                        OAuth Needed
+                      </span>
+                    )}
+                    {info.showBadges && !needsRobinhoodReconnect && (isActive ? (
                       <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
                         Active
                       </span>
@@ -5684,6 +5693,11 @@ function IntegrationsSection({
                         Connected
                       </span>
                     ))}
+                    {info.showBadges && needsRobinhoodReconnect && isActive && (
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                        Active
+                      </span>
+                    )}
                     {info.showBadges && isActive && policy?.strategyAuthority === "decide" && (
                       <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
                         Autonomous
@@ -5692,6 +5706,11 @@ function IntegrationsSection({
                   </div>
                   <div className="mt-1 text-xs text-faint">
                     {info.subtitle}
+                    {needsRobinhoodReconnect && mcpHealth?.error && (
+                      <span className="block pt-1 text-amber-300">
+                        {mcpHealth.error}
+                      </span>
+                    )}
                     {acc.capabilities && (
                       <span className="ml-2">
                         {acc.capabilities.accountType !== "brokerage" && (
@@ -5721,7 +5740,11 @@ function IntegrationsSection({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1 sm:justify-end">
-                  {!isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
+                  {needsRobinhoodReconnect ? (
+                    <Button variant="primary" size="sm" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }} disabled={busy}>Reconnect</Button>
+                  ) : (
+                    !isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => openAccountEditor(acc)} disabled={busy}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>

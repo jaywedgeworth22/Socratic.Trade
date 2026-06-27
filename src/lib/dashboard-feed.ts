@@ -204,6 +204,20 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "recoverable_issue") {
+    const source = stringValue(payload.source) ?? "system";
+    const operation = stringValue(payload.operation) ?? "operation";
+    const repeats = numberValue(payload.suppressedSinceLastAudit);
+    return {
+      title: `${capitalize(source)} issue`,
+      detail: joinDetail([
+        shortText(stringValue(payload.message) ?? operation),
+        stringValue(payload.fallback) ? `Fallback: ${shortText(stringValue(payload.fallback) ?? "")}` : undefined,
+        repeats && repeats > 0 ? `${repeats} repeat${repeats === 1 ? "" : "s"} suppressed` : undefined
+      ]) ?? operation
+    };
+  }
+
   return {
     title: humanizeKind(kind),
     detail: shortText(JSON.stringify(payload))
