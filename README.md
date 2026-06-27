@@ -210,7 +210,8 @@ ROBINHOOD_MCP_AUTHORIZATION_URL=https://...
 ROBINHOOD_MCP_TOKEN_URL=https://...
 ROBINHOOD_MCP_CLIENT_ID=...
 ROBINHOOD_MCP_CLIENT_SECRET=... # only when required by the provider
-ROBINHOOD_MCP_REDIRECT_URI=http://localhost:3000/api/auth/robinhood/callback
+# Optional. Leave blank in hosted environments; the app derives the public callback URL.
+ROBINHOOD_MCP_REDIRECT_URI=
 ROBINHOOD_MCP_SCOPES=tools:call
 ```
 
@@ -220,6 +221,11 @@ Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
 or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
 settings table.
+
+For production behind the Cloudflare tunnel, do not set a localhost
+`ROBINHOOD_MCP_REDIRECT_URI`; the app will use `x-forwarded-host`,
+`NEXT_PUBLIC_SITE_URL`, or `https://trading.jays.services` for
+`/api/auth/robinhood/callback`.
 
 ## Tests
 

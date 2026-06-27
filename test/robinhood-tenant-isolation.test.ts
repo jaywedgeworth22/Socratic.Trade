@@ -202,4 +202,25 @@ describe("robinhood oauth callback — session binding", () => {
     expect(getStoredMcpOAuthTokens("user-a")?.accessToken).toBe("fresh-token");
     expect(getStoredMcpOAuthTokens("user-b")).toBeUndefined();
   });
+
+  it("allows completing a provider callback with no app session by using the stored state owner", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ access_token: "state-owned-token", token_type: "Bearer", expires_in: 3600 }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    const { buildMcpAuthorizationUrl, completeMcpOAuthCallback, getStoredMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+
+    const urlStr = await buildMcpAuthorizationUrl("user-a");
+    const state = new URL(urlStr).searchParams.get("state")!;
+
+    const tokens = await completeMcpOAuthCallback({ code: "auth-code", state });
+    expect(tokens.accessToken).toBe("state-owned-token");
+    expect(getStoredMcpOAuthTokens("user-a")?.accessToken).toBe("state-owned-token");
+    expect(getStoredMcpOAuthTokens("user-b")).toBeUndefined();
+  });
 });

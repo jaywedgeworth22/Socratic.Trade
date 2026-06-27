@@ -42,7 +42,12 @@ falls back to `local`.
   `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics. As of
   2026-06-27, Settings -> Accounts uses that health result to label stored
   Robinhood rows without a usable token as `OAuth Needed` with Reconnect instead
-  of implying the account is fully connected.
+  of implying the account is fully connected. Robinhood OAuth start remains
+  authenticated, but the provider callback is public, strips forged identity
+  hints in middleware, and completes only against the one-time server-side OAuth
+  state row. Hosted callback URLs are derived from forwarded/public site origin
+  when the configured redirect is loopback, preventing production from sending
+  Robinhood back to `localhost`.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,

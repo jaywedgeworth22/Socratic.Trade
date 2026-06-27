@@ -23,6 +23,12 @@ filling the missing pieces.
 > `OAuth Needed` with Reconnect, cash-only Robinhood portfolio payloads parse to nonzero balances,
 > and broker/data fallbacks emit throttled `recoverable_issue` Activity events. No roadmap change;
 > see `docs/rollouts/2026-06-27-robinhood-balance-failover-audit.md`.
+>
+> 2026-06-27 (`codex/robinhood-oauth-callback-host`): Robinhood OAuth callback host fix —
+> production callbacks no longer use loopback `localhost` redirect URIs when the app is
+> hosted behind the Cloudflare tunnel. OAuth start remains authenticated, callback is public
+> but state-bound, and callback success returns to the public site origin. No roadmap change;
+> see `docs/rollouts/2026-06-27-robinhood-oauth-callback-host.md`.
 
 ## Current Status
 

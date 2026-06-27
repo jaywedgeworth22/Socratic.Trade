@@ -4,6 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Robinhood OAuth production callback host fix
+Branch `codex/robinhood-oauth-callback-host`. The reported Robinhood OAuth
+return to `http://localhost:4000/api/auth/robinhood/callback?...` was caused by
+two production-hosting gaps: OAuth start trusted a loopback
+`ROBINHOOD_MCP_REDIRECT_URI`, and the app middleware treated
+`/api/auth/robinhood/callback` as protected, so the provider could land on a
+plain `Unauthorized` response before the callback handler ran. Fix: OAuth start
+now replaces loopback callback config with the forwarded/public app origin,
+callback is public in middleware while forged identity headers are stripped,
+callback completion still cross-checks a verified app user when present and
+otherwise binds by the one-time server-side state row, and success redirects
+back to the public site origin. Dynamic OAuth client registration now
+re-registers when the callback redirect changes, so an old localhost-registered
+client is not reused for the public callback. `.env.example` and README now say
+to leave `ROBINHOOD_MCP_REDIRECT_URI` blank in hosted environments. Verified focused
+OAuth/middleware tests, `npx tsc --noEmit`, full `npm test` (1457/1457),
+`npm run build`, and `npm run lint` (0 errors / 218 existing warnings). See
+`docs/rollouts/2026-06-27-robinhood-oauth-callback-host.md`.
+
 ## 2026-06-27 — Robinhood balance visibility + recoverable-fallback audit trail
 Branch `codex/robinhood-balance-failover-audit`. Investigated production via
 local authenticated `GET /api/dashboard` and `/api/broker/mcp/health`: the active
