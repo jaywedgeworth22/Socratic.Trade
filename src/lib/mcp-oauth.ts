@@ -2,6 +2,9 @@ import { deleteInternalSetting, findInternalSettingByKeyLike, getDb, getInternal
 
 // CLIENT registration is global (one OAuth app client shared across users).
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
+export const ROBINHOOD_MCP_CALLBACK_PATH = "/api/auth/robinhood/callback";
+const LOCAL_DEFAULT_REDIRECT_URI = `http://localhost:3000${ROBINHOOD_MCP_CALLBACK_PATH}`;
+const PUBLIC_SITE_FALLBACK_ORIGIN = "https://trading.jays.services";
 
 // Per-user key builders.  The state key embeds the random part last so LIKE
 // queries can scan by prefix without exposing userId in the OAuth redirect URL.
@@ -18,6 +21,7 @@ export interface McpOAuthClient {
   clientId: string;
   clientSecret?: string;
   tokenEndpointAuthMethod?: "none" | "client_secret_post";
+  redirectUri?: string;
 }
 
 export interface McpOAuthState {
@@ -45,7 +49,15 @@ export interface McpOAuthConfig {
   clientName: string;
 }
 
-export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
+export interface McpOAuthConfigOptions {
+  redirectUri?: string;
+}
+
+export interface BuildMcpAuthorizationUrlOptions {
+  redirectUri?: string;
+}
+
+export function getMcpOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuthConfig | undefined {
   const authorizationUrl = process.env.ROBINHOOD_MCP_AUTHORIZATION_URL;
   const tokenUrl = process.env.ROBINHOOD_MCP_TOKEN_URL;
   if (!authorizationUrl || !tokenUrl) return undefined;
@@ -53,14 +65,36 @@ export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
     authorizationUrl,
     tokenUrl,
     registrationUrl: process.env.ROBINHOOD_MCP_CLIENT_REGISTRATION_URL || undefined,
-    redirectUri: process.env.ROBINHOOD_MCP_REDIRECT_URI || "http://localhost:3000/api/auth/robinhood/callback",
+    redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
     clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
   };
 }
 
-export async function buildMcpAuthorizationUrl(userId: string): Promise<string> {
-  const config = requireOAuthConfig();
+export function resolveMcpOAuthRedirectUri(request: Request): string {
+  const configured = process.env.ROBINHOOD_MCP_REDIRECT_URI?.trim();
+  const requestRedirectUri = new URL(ROBINHOOD_MCP_CALLBACK_PATH, resolvePublicAppOrigin(request)).toString();
+  if (!configured) return requestRedirectUri;
+  if (isLoopbackUrl(configured) && !isLoopbackUrl(requestRedirectUri)) return requestRedirectUri;
+  return configured;
+}
+
+export function resolvePublicAppOrigin(request: Request): string {
+  const requestOrigin = resolveRequestOrigin(request);
+  if (!isLoopbackUrl(requestOrigin)) return requestOrigin;
+
+  const configuredPublicOrigin =
+    normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL) ||
+    normalizeOrigin(process.env.AUTH_URL) ||
+    normalizeOrigin(process.env.NEXTAUTH_URL);
+  if (configuredPublicOrigin && !isLoopbackUrl(configuredPublicOrigin)) return configuredPublicOrigin;
+
+  if (process.env.NODE_ENV === "production") return PUBLIC_SITE_FALLBACK_ORIGIN;
+  return requestOrigin;
+}
+
+export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcpAuthorizationUrlOptions = {}): Promise<string> {
+  const config = requireOAuthConfig(options);
   const client = await getOrRegisterClient(config);
   const randomPart = randomBase64Url(32);
   const codeVerifier = randomBase64Url(64);
@@ -102,9 +136,9 @@ export async function completeMcpOAuthCallback(input: {
    * The userId resolved from the browser session that hit the callback. When provided, it
    * must match the userId the flow was initiated under (`stateBlob.userId`). This stops an
    * attacker-initiated flow (state bound to the attacker) from being completed in a victim's
-   * session — i.e. binding a freshly-minted broker token under the wrong userId. In
-   * production the callback request always carries a verified identity (middleware enforces
-   * it); in single-operator/dev both sides are 'local', so the check is a no-op there.
+   * session — i.e. binding a freshly-minted broker token under the wrong userId. OAuth
+   * provider callbacks may arrive without app-session identity, so callers can omit this
+   * and bind by the one-time server-side state row alone.
    */
   expectedUserId?: string;
 }): Promise<McpOAuthTokens> {
@@ -229,7 +263,7 @@ async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClie
   }
 
   const existing = getInternalSetting<McpOAuthClient>(CLIENT_SETTING);
-  if (existing) return existing;
+  if (existing && (!config.registrationUrl || existing.redirectUri === config.redirectUri)) return existing;
   if (!config.registrationUrl) {
     throw new Error("ROBINHOOD_MCP_CLIENT_ID or ROBINHOOD_MCP_CLIENT_REGISTRATION_URL is required for MCP OAuth.");
   }
@@ -250,7 +284,8 @@ async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClie
   const client: McpOAuthClient = {
     clientId: String(raw.client_id ?? ""),
     clientSecret: raw.client_secret ? String(raw.client_secret) : undefined,
-    tokenEndpointAuthMethod: raw.token_endpoint_auth_method === "client_secret_post" ? "client_secret_post" : "none"
+    tokenEndpointAuthMethod: raw.token_endpoint_auth_method === "client_secret_post" ? "client_secret_post" : "none",
+    redirectUri: config.redirectUri
   };
   if (!client.clientId) throw new Error("Robinhood MCP OAuth registration did not return a client_id.");
   setInternalSetting(CLIENT_SETTING, client);
@@ -272,10 +307,56 @@ function isExpiring(tokens: McpOAuthTokens): boolean {
   return new Date(tokens.expiresAt).getTime() - Date.now() < 60_000;
 }
 
-function requireOAuthConfig(): McpOAuthConfig {
-  const config = getMcpOAuthConfig();
+function requireOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuthConfig {
+  const config = getMcpOAuthConfig(options);
   if (!config) throw new Error("ROBINHOOD_MCP_AUTHORIZATION_URL and ROBINHOOD_MCP_TOKEN_URL are required for MCP OAuth.");
   return config;
+}
+
+function resolveRequestOrigin(request: Request): string {
+  const url = new URL(request.url);
+  const forwardedHost = firstForwardedValue(request.headers.get("x-forwarded-host"));
+  const host = forwardedHost || firstForwardedValue(request.headers.get("host")) || url.host;
+  const forwardedProto = firstForwardedValue(request.headers.get("x-forwarded-proto"));
+  const protocol = forwardedProto || (isLoopbackHost(host) ? url.protocol.replace(/:$/, "") || "http" : "https");
+  return normalizeOrigin(`${protocol}://${host}`) || url.origin;
+}
+
+function firstForwardedValue(value: string | null): string | undefined {
+  return value
+    ?.split(",")[0]
+    ?.trim()
+    .replace(/\/+$/, "");
+}
+
+function normalizeOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    return isLoopbackHost(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHost(host: string): boolean {
+  let normalized = host.trim().toLowerCase();
+  if (normalized.startsWith("[")) {
+    const end = normalized.indexOf("]");
+    if (end >= 0) normalized = normalized.slice(1, end);
+  } else if (normalized.includes(":") && !normalized.includes("::")) {
+    normalized = normalized.split(":")[0];
+  }
+  return normalized === "localhost" || normalized === "0.0.0.0" || normalized === "::1" || normalized.startsWith("127.");
 }
 
 function randomBase64Url(length: number): string {
