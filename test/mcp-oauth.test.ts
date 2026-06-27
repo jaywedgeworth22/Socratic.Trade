@@ -99,6 +99,63 @@ describe("mcp oauth", () => {
     ]);
   });
 
+  it("uses dynamic OAuth client registration even when a stale static client id is configured", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "stale-static-client");
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { redirect_uris?: string[] };
+      expect(body.redirect_uris?.[0]).toBe("https://trading.jays.services/api/auth/robinhood/callback");
+      return new Response(JSON.stringify({ client_id: "dynamic-client" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const { buildMcpAuthorizationUrl } = await import("../src/lib/mcp-oauth");
+
+    const authorizationUrl = new URL(
+      await buildMcpAuthorizationUrl("user-a", { redirectUri: "https://trading.jays.services/api/auth/robinhood/callback" })
+    );
+
+    expect(authorizationUrl.searchParams.get("client_id")).toBe("dynamic-client");
+  });
+
+  it("uses the stored callback redirect and client when completing OAuth", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
+    const publicRedirect = "https://trading.jays.services/api/auth/robinhood/callback";
+    const registrationRedirects: string[] = [];
+    let tokenRequest: URLSearchParams | undefined;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
+      if (href === "https://auth.example.test/register") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { redirect_uris?: string[] };
+        registrationRedirects.push(body.redirect_uris?.[0] ?? "");
+        return new Response(JSON.stringify({ client_id: `client-${registrationRedirects.length}` }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      tokenRequest = new URLSearchParams(String(init?.body ?? ""));
+      return new Response(JSON.stringify({ access_token: "broker-token", token_type: "Bearer" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const { buildMcpAuthorizationUrl, completeMcpOAuthCallback, getMcpAccessToken } = await import("../src/lib/mcp-oauth");
+    const authorizationUrl = new URL(await buildMcpAuthorizationUrl("user-a", { redirectUri: publicRedirect }));
+    const state = authorizationUrl.searchParams.get("state")!;
+
+    await completeMcpOAuthCallback({ code: "oauth-code", state, expectedUserId: "user-a" });
+
+    expect(registrationRedirects).toEqual([publicRedirect]);
+    expect(tokenRequest?.get("client_id")).toBe("client-1");
+    expect(tokenRequest?.get("redirect_uri")).toBe(publicRedirect);
+    expect(await getMcpAccessToken("user-a")).toBe("broker-token");
+  });
+
   it("stores the state blob under a per-user key", async () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");

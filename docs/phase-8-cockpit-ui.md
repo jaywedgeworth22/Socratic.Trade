@@ -154,7 +154,8 @@ across panels, feeds, popovers, or status chips.
 - Settings → Accounts distinguishes a stored Robinhood account row from an
   authenticated Robinhood MCP session. If `/api/broker/mcp/health` reports
   configured-but-unauthenticated, the Robinhood row shows `OAuth Needed` plus a
-  Reconnect action instead of a plain `Connected` badge.
+  Reconnect action instead of a plain `Connected` badge. As of 2026-06-27, the
+  row warning copy is intentionally concise: `Robinhood needs to be reconnected.`
 - The top readiness strip must use the server-provided selected-account
   readiness result, not only `policy.accountNumber`. A stored/backfilled account
   row may stay visible for management, but Account is not ready if broker
@@ -210,7 +211,10 @@ across panels, feeds, popovers, or status chips.
   UI iteration should replace it with an in-app modal that shows the same fields.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
-  incomplete account list does not strand the user away from Settings.
+  incomplete account list does not strand the user away from Settings. The
+  Settings modal also keeps a `Manage Accounts` header action beside the close
+  button, and command-bar Mode/Account selectors should use matching typography
+  without truncating `Autonomous Mode`.
 - The Hide Test account preference filters inactive Test rows from both
   Settings -> Accounts and the command-bar selector; if Test is still active, it
   stays visible until the user switches away so the current execution mode is not
