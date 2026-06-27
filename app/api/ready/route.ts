@@ -2,6 +2,7 @@ import { getBrokerGateway } from "@/lib/broker";
 import { getActiveConnectedAccount, getInternalSetting, getPolicy } from "@/lib/db";
 import { deriveExecutionState } from "@/lib/execution-mode";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { getLease } from "@/lib/scheduler-lease";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,25 @@ export async function GET(request: Request) {
   } else {
     checks.schedulerLastTick = null;
     if (protectiveState(policy.systemState)) failures.push("scheduler_missing");
+  }
+
+  // Scheduler lease state (additive; only meaningful when SCHEDULER_SINGLE_LEADER is on).
+  // Never pushed to failures — lease absence does not indicate unreadiness.
+  try {
+    const lease = getLease();
+    if (lease) {
+      checks.schedulerLease = {
+        owner: lease.owner,
+        acquiredAt: lease.acquiredAt,
+        expiresAt: lease.expiresAt,
+        ageSeconds: Math.round(lease.ageMs / 1000),
+        expired: lease.expired
+      };
+    } else {
+      checks.schedulerLease = null;
+    }
+  } catch {
+    // never let lease reporting break the readiness probe
   }
 
   const activeAccount = getActiveConnectedAccount(userId);

@@ -21,6 +21,126 @@ char-swap lines, zero logic change, `bash -n` ✓, 0 non-ASCII bytes left; verif
 *this* crash. Operator: `git pull` (or let the next deploy `git reset --hard`) then re-run with the app
 + shared Client ID/Secret pairs; still rotate the two compromised Client Secrets; don't `--scrub` until
 the app boots healthy. See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
+## 2026-06-26 — Portfolio/Market-Scan/Settings/Help mobile-UX overhaul + data/exec fixes
+Branch `claude/portfolio-market-scan-ui-27azkz`. Large operator-driven UX + correctness pass (run as a
+team: backend + shared structural edits first, then per-region UI edits fanned out to Sonnet/Haiku/Opus
+subagents in isolated worktrees, patched back, verified centrally).
+**Backend/correctness:** future-dated congressional/insider trades now rejected at ingestion
+(`congress.ts normalizeTradeDate`, `sec.ts saneFilingDate`) — fixes the impossible "12/26/2026" date;
+market-scan candidate set = full top-N + up-to-N outliers (now incl. statistically extreme move/volume
+names) + force-included portfolio holdings; shared-pool contribution (`contributeShared`) now defaults
+ON; Alpaca `getPortfolio` account-number compare is case/space-tolerant with an actionable
+"Account Mismatch: …" message (fixes spurious aborts → no autonomous trades).
+**UI (dashboard-client.tsx + overlays/delivery-channels/notify):** large modals fill mobile screen;
+Congress/Insider source casing (**Congress.Trade**) + time-period subtitle + bottom buffer; Portfolio
+Brokerage tag green + mobile positions expander; Readiness drops broker chip; tighter mobile header +
+dropdown without "(live)"; Market Scan column/settings icons + mobile detail toggle; System Help
+enlarged + rebalanced (Data Sources tab, balanced MCP-vs-REST, `$Unlimited` fixed); Settings "Safety"
+rename + definitions-at-bottom + Docs→icon + Effort Title-Case + **3-way Full/Compact/Hidden** banner;
+Accounts/Edit-Account copy/required/hidden/full-width + **Hide Test account** toggle; Notifications copy.
+Verify: tsc clean · **1271/1271** tests · `npm run build` OK. Not browser-verified (no preview here).
+Next: live mobile walkthrough; deeper trace of the autonomous account-number provenance if mismatches
+persist. See `docs/rollouts/2026-06-26-portfolio-market-scan-ui-overhaul.md`.
+## 2026-06-26 — Codex Autofix follow-up: make it RESOLVE threads, not just fix code (CI/automation)
+Branch `claude/codex-autofix-resolve-threads` (PR open). After #201 unblocked the actor gate, end-to-end
+verification on throwaway PR #202 confirmed the autofix **passes the gate and fixes** Codex's findings
+(it fixed both planted bugs + pushed `[codex-autofix] …`) — but it resolved **0/2** threads: a code fix
+only makes a Codex thread `outdated`, never `resolved`, and GitHub's "require conversation resolution"
+gate needs explicit resolution. So a working-but-non-resolving autofix would still block PRs the moment
+that gate is re-enabled. (The live `main` ruleset currently has `required_review_thread_resolution:
+false` — only `verify` is required — likely toggled off as a stopgap while the bot was broken.) Fix:
+added prompt **step 7** instructing the autofix to RESOLVE every Codex thread it addressed (or that is
+outdated/already-fixed) via the GraphQL `resolveReviewThread` mutation, leaving maintainer-question
+threads open; the workflow already has `pull-requests: write`. Verify: YAML parse OK · full trio via
+land.sh. NEXT (post-merge): re-verify on a fresh throwaway PR that threads now show `resolved`, then the
+owner can re-enable `required_review_thread_resolution`. See
+`docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
+
+## 2026-06-26 — Fix: Codex Autofix workflow failing-fast on the bot-actor gate (CI/automation)
+Branch `claude/pensive-morse-77574e` (PR open). The `Codex Autofix` workflow (`anthropics/claude-code-action@v1`,
+added PR #188) was failing on **every** PR in ~11s, so Codex's inline comments never got auto-addressed/resolved
+→ PRs stuck `mergeStateStatus: BLOCKED` ("All comments must be resolved") even with `verify` green. Root cause:
+the action's agent-mode **human-actor gate** aborts on any non-`User` trigger ("Workflow initiated by non-human
+actor: chatgpt-codex-connector … Add bot to allowed_bots list") and the workflow set no `allowed_bots` (every
+failed run logged `ALLOWED_BOTS:` empty). The "directory mismatch … tsconfig.json" string is a **red herring** —
+a `#` comment the action echoes in its run script, not the error (the underlying Bun bug is already fixed
+upstream). Fix: add `allowed_bots: "chatgpt-codex-connector[bot]"` to the action step (explicit bot, not `*`; the
+job `if:` already restricts triggers to that bot). Verified against pinned action source `v1`→`78a7209`: agent
+mode's only actor gate is `checkHumanActor` — no separate write-perm gate, so this one input is the complete fix.
+**Behavioral note:** review/comment/dispatch events run the workflow def from `main`, so the fix is inert until
+merged. Verify: npm ci · tsc clean · **1428 tests pass (148 files)** · build green · full trio via land.sh. NEXT
+(post-merge): trigger Codex on an open PR, confirm the run passes the actor gate and resolves ≥1 thread. See
+`docs/rollouts/2026-06-26-codex-autofix-allowed-bots.md`.
+## 2026-06-26 — Improvement program: STATUS + CODEX HANDOFF (read this first)
+**Authoritative handoff:** `docs/rollouts/2026-06-26-improvement-program-handoff.md` (full per-item status +
+remaining work + merge mechanics). Summary: **12/14 items DONE** — merged PRs #186 risk-breaker, #190 four-side
+P&L, #187 RAG filters, #191 embed disclosures, #193 scheduler lease, #195 reasoning-diversity, #197 staleness
+gate, #192 langfuse evals, #196 hybrid BM25. **Remaining:** PR #199 coarse-credit (IN REVIEW — code done +
+dual-opus-reviewed, needs Codex-thread resolution + merge); multi-query/RRF (#2, NOT STARTED — last item,
+reuses `rrfFuse`); a final consolidation docs PR; the karpathy/autoresearch research read. **SKIP:**
+Self-RAG/HyDE/sentence-window/contextual-compression (documented). **Blocker:** the `autofix` CI bot
+(claude-code-action) is broken (Bun/tsconfig internal error) → it no longer resolves Codex review threads, and
+the branch policy requires all conversations resolved, so every PR must be resolved by hand until it's fixed
+(separate task spawned). See the handoff note's "Merge mechanics" for the resolve-threads command.
+
+## 2026-06-26 — Improvement program #5: Langfuse offline eval/regression harness (items #6+#7 DONE)
+Branch `agent/claude-langfuse-evals`. New `scripts/eval/{dataset,score,run-offline}.ts` + `test/eval-offline.test.ts`
++ `npm run eval:offline`. 15-case seed dataset; 6 deterministic scorers (contains/notContains/regex/notRegex/
+equals/jsonShape) + an LLM-judge that no-ops offline; offline runner replays through the REAL provider registry
+(`chatProviderForModel`/`llmForModel` + `MockLLM` from `chat/llm.ts`) — MockLLM by default (hermetic, no keys),
+real providers opt-in (`EVAL_REAL_PROVIDERS=1`), Langfuse logging gated on env; exit-1 below a 0.75 threshold.
+`npm run eval:offline` → 15/15 PASS (100%); 49 hermetic tests; tsc clean. Tooling, not money-path. Built by a
+model-tiered subagent team (all sonnet: recon→design→impl→review). Verify: 49 tests + CLI smoke run green ·
+full trio via land.sh. Next: scheduler CAS lease (money-path, opus-reviewed) lands next; then the sequential
+strategy.ts/types.ts + vector-db.ts clusters.
+## 2026-06-26 — Improvement program #9: market-data staleness gate (item #5 DONE)
+Branch `agent/claude-staleness-gate`. **Money-path-adjacent (blocks proposals).** Added `maxQuoteAgeSec` /
+`maxFundamentalsAgeSec` to `TradingPolicy` (default unset = OFF). `evaluateTradeProposal` now blocks an OPENING
+proposal whose backing market data is older than the threshold: quote age from
+`marketScan.quotesBySymbol[sym].asOf` (fallback topCandidates), fundamentals age from `MarketScan.generatedAt`;
+`age > threshold` (strict) OR a missing/unparseable timestamp → push a `staleness_gate:` reason → block. FAIL-SAFE
+(stale → block, never the reverse); exits (sell/cover) never gated; pure read + reason-push (no sizing/mutation);
+off-path byte-for-byte. `app/api/policy/route.ts` validates non-negative+finite and stripNullsDeep makes a
+cleared field = off. No defaults/market/strategy change needed (asOf already flows onto `quotesBySymbol`). Built
+by a model-tiered team: sonnet recon/impl, **opus design + dual opus review** (correctness + money-safety), both
+all-green. 9 tests; tsc clean. Verify: 57 tests (staleness + policy) · full trio via land.sh. Next (last two,
+sequential on strategy.ts): coarse-credit attribution, then multi-query/RRF.
+
+## 2026-06-26 — Improvement program #7: rationale-diversity / template-collapse check (item #8 DONE)
+Branch `agent/claude-reasoning-diversity`. New `src/lib/rationale-diversity.ts` — multiset character-trigram
+Jaccard over normalized proposal rationale text → `{count, meanPairwiseSimilarity, maxPairwiseSimilarity,
+collapsed, threshold}` (collapsed = mean pairwise > 0.85). Wired into `runStrategyOnce` after the proposal set
+is finalized; attached to `StrategyResult` (optional, non-breaking) + persisted via `audit("rationale_diversity")`;
+`console.warn` on collapse. **Advisory-only, no flag** — pure with no side effects beyond the audit write; it
+NEVER blocks, drops, or modifies a proposal. Catches an LLM emitting canned boilerplate regardless of the
+symbol/data. Built by a model-tiered subagent team (all sonnet recon→design→impl→review); review all-green, no
+fixes. 30 tests; tsc clean post-merge. Verify: 45 tests (diversity + persistence-notification) · full trio via
+land.sh.
+
+## 2026-06-26 — LLM-required gate: strategy + chat fail loud (no silent rule-based fallback)
+Branch `claude/llm-required-gate` (PR open). No resolvable LLM credential (own key OR operator failover) →
+the two LLM-driven actions ERROR instead of silently degrading: `/api/strategy/run` + `/api/chat` return
+412 ("Connect an LLM provider in Settings…"), `proposeTrades` throws `LlmCredentialRequiredError` (the
+rule-based `fallbackProposal` is deleted), and a `llmConfigured` snapshot flag disables the buttons.
+Everything else (dashboard/scan/config/Test-sim) stays keyless. New `src/lib/llm-required.ts` +
+`userHasAnyLlmCredential()` in `db-api-keys`. Verify: npm ci · tsc · 723 tests · build — all green. NEXT
+(owner decision pending): make the Red Team mandatory — (a) any failure → hard error/no proposal, or (b)
+error only the silent Bull-only path while keeping high-conviction→human-approval. See
+`docs/rollouts/2026-06-26-llm-required-gate.md`.
+## 2026-06-26 — Improvement program #6: single-leader scheduler CAS lease (item #3 durable-scheduler DONE)
+Branch `agent/claude-scheduler-lease`. **Money-path.** New `src/lib/scheduler-lease.ts`: a compare-and-swap
+lease in the existing `settings` KV (key `scheduler:lease`, NO migration), mirroring `acquireStrategyLock`
+(transaction-wrapped read+conditional-upsert). `acquireLease` wins on absent/malformed/expired/own-owner;
+`renewLease` only by current owner; `releaseLease` owner-checked + never throws; `getLease` adds ageMs/expired;
+fail-closed (exception → false → non-leader → no money-path body). `scheduler.ts` gates the per-account tick
+body (synthetic-stop monitor + strategy runs) behind `SCHEDULER_SINGLE_LEADER` (default OFF — flag OFF
+short-circuits, lease never touched, behavior byte-for-byte unchanged). SIGTERM/SIGINT/beforeExit release the
+lease. Lease surfaced additively on /health + /ready. Closes the double-fire gap: two processes could both run
+the synthetic-stop monitor (places broker EXIT orders) since it was only in-process guarded. Built by a
+model-tiered team: sonnet recon/impl, **opus design + dual opus review** (correctness + money-safety) — both
+all-green. One-tick cross-process TOCTOU remains (same as acquireStrategyLock, deferred per spec); TTL-steal +
+per-process guard + flag-OFF mitigate. 9 tests; tsc clean. Verify: 9 tests pass · full trio via land.sh.
+
 ## 2026-06-26 — Improvement program #4: embed congress/insider disclosures into RAG (item #3 DONE)
 Branch `agent/claude-rag-embed-disclosures`. New `src/lib/web-sources/disclosure-rag.ts` converts structured
 congress trades + insider filings into natural-language RAG docs and upserts them via the existing

@@ -250,7 +250,18 @@ class AlpacaBrokerGateway implements BrokerGateway {
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     return this.callMcp<any>("get_account_info", {}, async () => {
       const account = await this.alpaca.getAccount();
-      if (account.account_number !== accountNumber) throw new Error("Account mismatch");
+      // Alpaca API credentials are scoped to exactly one account, so getAccount() always returns THE
+      // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
+      // and actually different, ignoring case/whitespace) — a blank configured number or a mere
+      // formatting difference must never block a run. The message is actionable so the operator can
+      // correct the stored number in Settings → Accounts.
+      const liveNum = String(account.account_number ?? "").trim();
+      const wantNum = String(accountNumber ?? "").trim();
+      if (wantNum && liveNum && liveNum.toLowerCase() !== wantNum.toLowerCase()) {
+        throw new Error(
+          `Account Mismatch: the connected Alpaca credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Settings → Accounts.`
+        );
+      }
       return {
         accountNumber,
         totalMarketValue: number(account.portfolio_value),
