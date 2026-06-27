@@ -45,6 +45,9 @@ export interface DashboardSnapshot {
     email?: string;
     isAdmin: boolean;
   };
+  /** At least one LLM provider has a resolvable credential for this user (own key OR operator failover).
+   *  Gates the two LLM-driven actions (Run once / chat); optional so older payloads default to allowed. */
+  llmConfigured?: boolean;
   policy: TradingPolicy;
   strategyPrompt: string;
   accounts: BrokerageAccount[];

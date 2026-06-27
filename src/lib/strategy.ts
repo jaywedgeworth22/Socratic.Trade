@@ -32,6 +32,7 @@ import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llm
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
+import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -69,7 +70,8 @@ import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
+import { computeRationaleDiversity } from "./rationale-diversity";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -88,6 +90,8 @@ export interface StrategyResult {
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
+  /** Advisory only — rationale-diversity check result (improvement-program item #8). Never affects proposal generation or selection. */
+  rationaleDiversity?: RationaleDiversity;
 }
 
 export interface LiveApprovalConfirmation {
@@ -293,10 +297,16 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     try {
-      const { retrieveContextDetailed } = await import("./vector-db");
+      const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
       const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
       const contexts = await Promise.all(topSymbols.map(sym =>
-        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
+        // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
+        // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
+        // never wired through this call site before. Advisory context only — not a money-path gate.
+        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
+          docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+          minScore: defaultMinScore()
+        })
       ));
       const validContexts = contexts.flat().filter(Boolean);
       if (validContexts.length > 0) {
@@ -430,6 +440,15 @@ export async function runStrategyOnce(
       workingPositions,
       userId
     );
+
+    // Advisory-only rationale-diversity check (improvement-program item #8).
+    // Computed on the final post-debate, post-gate proposal set. NEVER blocks, drops, or modifies proposals.
+    const rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
+    if (rationaleDiversity.collapsed) {
+      console.warn(
+        `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
+      );
+    }
 
     const results: StrategyResult["proposals"] = [];
     for (const proposal of proposals) {
@@ -701,6 +720,8 @@ export async function runStrategyOnce(
       .filter(Boolean)
       .join(" ");
 
+    // Persist diversity result as an advisory audit event (no schema migration needed).
+    audit("rationale_diversity", { runId, ...rationaleDiversity }, userId);
     finishStrategyRun(runId, "completed", summary, userId);
     if (!executionState.usesLocalSimulation) {
       recordPortfolioSnapshot({
@@ -729,7 +750,7 @@ export async function runStrategyOnce(
         positions: paperProjection.positions
       });
     }
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber };
+    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection
     generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
@@ -1552,7 +1573,11 @@ async function proposeTrades(input: {
   learnedContext?: string;
 }): Promise<TradeProposal[]> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
-  if (!openaiKey) return fallbackProposal(input);
+  // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
+  // We deliberately do NOT fabricate a rule-based stub here: a strategy session is an LLM-driven action,
+  // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
+  // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
+  if (!openaiKey) throw new LlmCredentialRequiredError(LLM_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -2237,38 +2262,6 @@ function compactPromptObject(values: Record<string, unknown>): Record<string, un
     compacted[key] = value;
   }
   return compacted;
-}
-
-function fallbackProposal(input: {
-  policyAllowlist: string[];
-  portfolio: Portfolio;
-  positions: EquityPosition[];
-}): TradeProposal[] {
-  const allowed = new Set(input.policyAllowlist.map(normalizeSymbol));
-  const candidates = input.positions
-    .filter((position) => allowed.has(normalizeSymbol(position.symbol)))
-    .map((position) => ({
-      symbol: normalizeSymbol(position.symbol),
-      exposurePct: input.portfolio.totalMarketValue > 0 ? (position.marketValue / input.portfolio.totalMarketValue) * 100 : 0
-    }))
-    .sort((a, b) => a.exposurePct - b.exposurePct);
-
-  const symbol = candidates[0]?.symbol ?? input.policyAllowlist.map(normalizeSymbol)[0];
-  if (!symbol) return [];
-  return [
-    {
-      symbol,
-      side: "buy",
-      type: "market",
-      dollarAmount: 10,
-      timeInForce: "gfd",
-      marketHours: "regular_hours",
-      rationale:
-        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple rule-based rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
-      tradeThesisTag: "Development Fallback",
-      entryMarketRegime: "Rule-based"
-    }
-  ];
 }
 
 // The LLM is told confidenceScore is 1–100, but json_schema strict mode does not
