@@ -4,8 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Codex autofix (PR #204): align build-verification claims
+Branch `resolve-prod-merge-prs`. Addressed Codex review on PR #204. P2: the
+rollout note recorded only `tsc` + `npm test` for PR #160/#141 while STATUS.md
+claimed "production build succeeded" for all three — corrected both to state the
+local build gate ran only for #175, with #160/#141 covered by the `verify` CI
+gate. P1 (commit authored as `Codex <codex@openai.com>`) was already fixed before
+this run: the offending commit `0add0c2` is no longer in branch history; the tip
+`769d9fd` carries the required noreply author. No code changed.
+
 ## 2026-06-27 — PR merge resolution & production verification
-Branch `agent/antigravity` (`resolve-prod-merge-prs`). Resolved conflicts in all three open PRs: PR #175 (dashboard-client.tsx + STATUS.md), PR #160 (PLAN.md + STATUS.md), and PR #141 (orchestrator.ts + STATUS.md). Verified each locally: TypeScript compiles clean, all tests passed (1441+, 1446+, and 1442+ respectively), and production build succeeded. Pushed to remote branches; awaiting auto-merge via CI checks. Verified that the production PM2 instance is running and healthy on port 4000 (health check returns 200 OK with ticking scheduler).
+Branch `agent/antigravity` (`resolve-prod-merge-prs`). Resolved conflicts in all three open PRs: PR #175 (dashboard-client.tsx + STATUS.md), PR #160 (PLAN.md + STATUS.md), and PR #141 (orchestrator.ts + STATUS.md). Verified each locally: TypeScript compiles clean and all tests passed (1441+, 1446+, and 1442+ respectively). The local `npm run build` gate was run only for PR #175; for PR #160 and PR #141 the build is exercised by the required `verify` CI workflow before merge (see `docs/rollouts/2026-06-27-pr-merge-resolution.md`). Pushed to remote branches; awaiting auto-merge via CI checks. Verified that the production PM2 instance is running and healthy on port 4000 (health check returns 200 OK with ticking scheduler).
 
 ## 2026-06-27 — HANDOFF: cutover crash UNRESOLVED + the "bash 3.2" claim below is WRONG
 Branch `claude/practical-mendel-cqtduf`. The operator reproduced the line-200
