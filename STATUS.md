@@ -27,6 +27,21 @@ showing a `Required` badge or OpenAI-specific warning copy. Verified
 desktop/mobile Playwright screenshots against a built `next start` preview. See
 `docs/rollouts/2026-06-28-settings-connection-status.md`.
 
+## 2026-06-28 — Help/Data Sources copy and naming cleanup
+Branch `codex/settings-connection-status`. The top Help action is now a visible
+accent-soft Help button on desktop with a `?` mobile fallback, instead of an
+easy-to-miss icon-only control. System Help removes the welcome sentence,
+temporary app-name branding, `(e.g. Claude)`, the Fintech Studios-only pricing
+section, and stale Senate/Capitol source copy. Data Sources now uses
+`Keyless / Core`, links each source/provider in a new tab, lists Congress.Trade
+as the aggregated politicians' trades source, and keeps API-key links aligned
+with Connection Status. App-facing metadata/login/welcome/strategy copy and MCP
+client names now use generic dashboard language instead of the temporary
+`Agentic Trading` name. Verified `npx tsc --noEmit`, `npm test` (153 files /
+1,486 tests), `npm run build`, and in-app browser desktop/mobile Help checks
+against `http://127.0.0.1:4119/`. See
+`docs/rollouts/2026-06-28-help-data-sources-copy.md`.
+
 ## 2026-06-28 — Quiet tile first-paint dashboard loader
 Branch `codex/quiet-tiles-loading`. The first-paint dashboard shell now shows
 quiet skeleton tiles instead of three separate visible loading labels, keeps a
@@ -1708,7 +1723,7 @@ Branch: claude/magical-faraday-uce1uy
   `npm test`/`npm run build` NOT run in Cowork sandbox (host node_modules are
   macOS-only) — run locally. See
   `docs/rollouts/2026-06-21-vector-db-userid-timestamp-hardening.md`.
-- 2026-06-20 (`agent/antigravity`): **Rename project to Agentic Trading in documents.** Renamed the project title in `PLAN.md` to "Agentic Trading Dashboard", ensuring the overall application is consistently referred to as "Agentic Trading" rather than "Robinhood Agentic Trading" (now broker-neutral to support Alpaca and multi-broker setups). Verifications passed: tsc clean, 287 tests green, build OK.
+- 2026-06-20 (`agent/antigravity`): **Rename project to broker-neutral dashboard wording in documents.** Renamed the project title in `PLAN.md` away from the prior Robinhood-prefixed naming so the overall application reads broker-neutral for Alpaca and multi-broker setups. Verifications passed: tsc clean, 287 tests green, build OK.
 - 2026-06-20 (integration): **Public-repo consolidation into private dashboard.** Imported Atlas
   (`jaywedgeworth22/public`) design docs to `docs/atlas/`, archived reference material under
   `reference/atlas-public/`, and ported **user watchlist** + **price alerts** (SQLite + API routes +

@@ -282,11 +282,17 @@ symbols, broker account numbers, chat text, proposal JSON, or credentials.
 Provider identity deletion is intentionally separate. This app cannot delete a
 Google account, Apple ID, or broker account. After app-data deletion, signing in
 again with Google or Apple can create a fresh empty app account; users who also
-want to remove the OAuth grant should revoke Agentic Trading from their Google
-Account third-party access page or Apple ID Sign in with Apple settings. Before
+want to remove the OAuth grant should revoke the app from their Google Account
+third-party access page or Apple ID Sign in with Apple settings. Before
 Apple private-relay identities become a first-class login path, add a
 `user_identities` table keyed by provider + provider account id so identity is
 not derived from relay email alone.
+
+Help and Data Sources copy should be updated in the same change whenever a
+provider, source, API-key destination, account-flow label, or user-facing system
+description changes. The Help modal should reflect the actual provider stack,
+avoid giving one provider special treatment unless the runtime does, and link
+source names to their provider or API-key pages when applicable.
 
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real

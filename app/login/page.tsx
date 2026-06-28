@@ -15,7 +15,7 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
       <div className="max-w-md space-y-6">
         <div className="space-y-2">
-          <h1 className="text-xl font-semibold text-fg">Sign in to Agentic Trading</h1>
+          <h1 className="text-xl font-semibold text-fg">Sign in to the dashboard</h1>
           <p className="text-sm text-muted">
             Authentication is required to access this app.
           </p>

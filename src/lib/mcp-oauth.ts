@@ -71,7 +71,7 @@ export function getMcpOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuth
     redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
     resource: process.env.ROBINHOOD_MCP_RESOURCE || process.env.ROBINHOOD_MCP_URL || DEFAULT_ROBINHOOD_MCP_RESOURCE,
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
-    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Trading Dashboard"
   };
 }
 

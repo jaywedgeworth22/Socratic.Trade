@@ -450,7 +450,7 @@ function DashboardSsrShell({ snapshot, message, detail }: { snapshot?: Dashboard
             <Zap size={17} className="fill-current" />
           </span>
           <div>
-            <div className="text-sm font-semibold">Agentic Trading</div>
+            <div className="text-sm font-semibold">Trading Dashboard</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
               {mode ? (
                 <span>{mode}</span>
@@ -1256,7 +1256,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <Zap size={17} className="fill-current" />
             </span>
             <div className="leading-tight">
-              <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
+              <div className="whitespace-nowrap text-sm font-semibold text-fg">Trading Dashboard</div>
               <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
                 <div className="flex items-center gap-1.5 whitespace-nowrap">
                   <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
@@ -1336,9 +1336,18 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
               <SettingsIcon size={15} />
             </IconButton>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Help" onClick={() => setHelpOpen(true)}>
+            <Button
+              aria-label="Help"
+              className="h-8 px-2.5 lg:h-9"
+              size="sm"
+              title="Help"
+              variant="accentSoft"
+              onClick={() => setHelpOpen(true)}
+            >
               <HelpCircle size={15} />
-            </IconButton>
+              <span className="hidden sm:inline">Help</span>
+              <span className="font-semibold sm:hidden">?</span>
+            </Button>
             <ThemeToggle />
             {signedInEmail && (
               <span className="hidden max-w-[12rem] truncate text-[11px] text-faint md:inline" title={`Signed in as ${signedInEmail}`}>
@@ -2375,7 +2384,7 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : DASH), cellTitle: (q) => sentimentTitle(q) },
   { id: "analystScore", label: "Rating", title: "Analyst consensus 0–100, blended across providers (Strong Buy = 100 … Strong Sell = 0). Source: Yahoo / FMP / Finnhub.", sortKey: "analystScore",
     render: (q) => (q.analystRating ? <RatingChip score={q.analystScore} label={q.analystRating} /> : DASH), cellTitle: (q) => ratingTitle(q) },
-  { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
+  { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: configured congressional-trade feeds. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
     render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
   { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
     render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH),
@@ -2730,7 +2739,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
       <Card className="overflow-hidden">
         <PanelHeader
           title="Congressional Trades"
-          subtitle={ws?.congress ? `${ws.congress.recordCount} on file${congress.length > 0 ? ` · ${formatDateRange(congress.map((t) => t.tradedAt))}` : ""} · ${ws.congress.sources.map(formatTradeSource).join(" + ") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
+          subtitle={ws?.congress ? `${ws.congress.recordCount} on file${congress.length > 0 ? ` · ${formatDateRange(congress.map((t) => t.tradedAt))}` : ""} · ${ws.congress.sources.map(formatTradeSource).join(" + ") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Congressional trade feeds"}
           icon={<Landmark size={16} />}
         />
         {congress.length === 0 ? (
@@ -4875,7 +4884,7 @@ function AccountDeletionModal({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3">
               <div className="mb-2 text-sm font-semibold text-fg">Sign-in and provider access</div>
               <p className="text-xs leading-relaxed">
-                Signing in later with Google or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke Agentic Trading in your Google Account third-party access page or Apple ID Sign in with Apple settings.
+                Signing in later with Google or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke this app in your Google Account third-party access page or Apple ID Sign in with Apple settings.
               </p>
               {preview.isLocalOperatorAccount && (
                 <p className="mt-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
@@ -5402,7 +5411,7 @@ function ApiKeysSection() {
         })}
       </div>
       <p className="text-xs text-faint">
-        Yahoo Finance, Senate eFD, Capitol Trades, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
+        Yahoo Finance, Congress.Trade, SEC EDGAR, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
       </p>
     </div>
   );
@@ -5850,8 +5859,21 @@ function IntegrationsSection({
   );
 }
 
+function HelpSourceLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      className="font-semibold text-info underline-offset-2 hover:text-fg hover:underline"
+      href={href}
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      {children}
+    </a>
+  );
+}
+
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
-  type Section = "overview" | "guardrails" | "tax" | "fintech" | "mcp";
+  type Section = "overview" | "guardrails" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
@@ -5865,24 +5887,21 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           { id: "overview", label: "Overview" },
           { id: "guardrails", label: "Guardrails" },
           { id: "tax", label: "Tax" },
-          { id: "fintech", label: "Data Sources" },
+          { id: "data", label: "Data Sources" },
           { id: "mcp", label: "MCP Connection" }
         ]}
       />
 
       {section === "overview" && (
         <div className="space-y-3 text-[13px] text-muted">
-          <p>
-            Welcome to the <strong>Robinhood Agentic Trading</strong> dashboard. This platform leverages autonomous and semi-autonomous AI agents powered by LLMs to scan markets, enrich symbol datasets, formulate trading theses, and execute orders.
-          </p>
           <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
             <div className="font-semibold text-fg flex items-center gap-1.5">
               <Sparkles size={14} className="text-accent" /> How the System Works
             </div>
             <ol className="list-decimal pl-4 space-y-1">
               <li><strong>Market Scan:</strong> The system continuously scans index universes (e.g. S&amp;P 500) to find candidate symbols.</li>
-              <li><strong>Enrichment:</strong> Fetches company profiles, premium news from Fintech Studios, and analyst reviews.</li>
-              <li><strong>AI Analysis:</strong> Executes prompts through the configured model (e.g. Claude) to score symbols and formulate trade suggestions.</li>
+              <li><strong>Enrichment:</strong> Fetches company profiles, market data, news/sentiment, and analyst/fundamental context.</li>
+              <li><strong>AI Analysis:</strong> Executes prompts through the configured model to score symbols and formulate trade suggestions.</li>
               <li><strong>Execution:</strong> Approves or proposes orders based on your selected risk policies and guardrails.</li>
             </ol>
           </div>
@@ -5953,14 +5972,14 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
               </p>
               <ul className="list-disc pl-4 mt-1 space-y-0.5">
                 <li><strong>Taxable:</strong> Estimated tax liability is deducted from display returns (if configured) and subject to the 30-day lockout.</li>
-                <li><strong>IRA (Roth / Traditional):</strong> Tax-sheltered with 0% tax liability estimates and no in-account wash-sale blocks (though losses in taxable accounts still apply).</li>
+                <li><strong>IRA (Roth / Traditional):</strong> Tax-sheltered with 0% tax liability estimates and no in-account wash-sale blocks (losses in taxable accounts still apply).</li>
               </ul>
             </div>
           </div>
         </div>
       )}
 
-      {section === "fintech" && (
+      {section === "data" && (
         <div className="space-y-3 text-[13px] text-muted">
           <p>
             The app blends several data sources so every symbol gets real numbers. Keyless sources work out of the box; optional keyed providers add depth when you supply an API key. Where a value is unavailable, the cell shows <code className="text-fg font-mono">-</code> rather than a fabricated number.
@@ -5968,38 +5987,35 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
               <div className="font-semibold text-fg flex items-center gap-1.5">
-                <Server size={14} className="text-accent" /> Keyless &amp; Core
+                <Server size={14} className="text-accent" /> Keyless / Core
               </div>
               <ul className="list-disc pl-4 space-y-0.5">
-                <li><strong>Yahoo Finance:</strong> quotes and price history with no API key — the floor every symbol falls back to.</li>
-                <li><strong>Connected broker:</strong> Alpaca or Robinhood for live account quotes, positions, and execution.</li>
-                <li><strong>SEC EDGAR:</strong> insider activity from Form 4 filings.</li>
-                <li><strong>FINRA:</strong> daily short-volume data.</li>
+                <li><HelpSourceLink href="https://finance.yahoo.com/">Yahoo Finance</HelpSourceLink>: quotes and price history with no API key - the floor every symbol falls back to.</li>
+                <li>Politicians&apos; trades: aggregated House/Senate reporting via <HelpSourceLink href="https://congress.trade/">Congress.Trade</HelpSourceLink>.</li>
+                <li><HelpSourceLink href="https://www.sec.gov/os/accessing-edgar-data">SEC EDGAR</HelpSourceLink>: insider activity from Form 4 filings.</li>
+                <li><HelpSourceLink href="https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data">FINRA</HelpSourceLink>: daily short-volume data.</li>
+                <li>Connected broker: <HelpSourceLink href="https://alpaca.markets/">Alpaca</HelpSourceLink> or <HelpSourceLink href="https://robinhood.com/">Robinhood</HelpSourceLink> for account quotes, positions, and execution.</li>
               </ul>
             </div>
             <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
               <div className="font-semibold text-fg flex items-center gap-1.5">
-                <Landmark size={14} className="text-accent" /> Congressional Trades
+                <Zap size={14} className="text-accent" /> Optional Keyed Providers
               </div>
               <ul className="list-disc pl-4 space-y-0.5">
-                <li><strong>U.S. Senate eFD:</strong> senator financial-disclosure transactions.</li>
-                <li><strong>Capitol Trades</strong> and <strong>Congress.Trade:</strong> aggregated House/Senate trade reporting.</li>
+                <li><HelpSourceLink href="https://finnhub.io/dashboard">Finnhub</HelpSourceLink>: quotes, fundamentals, and sentiment/news enrichment.</li>
+                <li><HelpSourceLink href="https://www.alphavantage.co/support/#api-key">Alpha Vantage</HelpSourceLink>: fundamentals, technical indicators, and sentiment/news enrichment.</li>
+                <li><HelpSourceLink href="https://site.financialmodelingprep.com/developer/docs">FMP</HelpSourceLink>: fundamentals, ratios, and analyst context.</li>
+                <li><HelpSourceLink href="https://marketstack.com/signup/free">Marketstack</HelpSourceLink>: market-data API coverage.</li>
+                <li><HelpSourceLink href="https://developer.tradier.com/">Tradier</HelpSourceLink>: brokerage and market-data API coverage.</li>
+                <li><HelpSourceLink href="https://fred.stlouisfed.org/docs/api/api_key.html">FRED</HelpSourceLink>: macroeconomic indicators.</li>
+                <li><HelpSourceLink href="https://massive.com/">Massive</HelpSourceLink>: historical market-data files and provider feeds.</li>
               </ul>
             </div>
             <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2 sm:col-span-2">
-              <div className="font-semibold text-fg flex items-center gap-1.5">
-                <Zap size={14} className="text-accent" /> Optional Keyed Providers
-              </div>
               <p>
-                Supply an API key to enrich coverage: <strong>Finnhub</strong>, <strong>Alpha Vantage</strong>, and <strong>FMP</strong> for fundamentals and quotes, plus <strong>Fintech Studios</strong> for premium financial news, press releases, regulatory updates, and sentiment scores. None are required — the app runs fully on the keyless sources above.
+                None of the keyed providers are required. Add keys only when you want broader coverage, deeper fundamentals, or another provider to fill gaps left by the keyless/core sources.
               </p>
             </div>
-          </div>
-          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
-            <div className="font-semibold text-fg">Fintech Studios pricing (one provider, informational)</div>
-            <p className="text-[12px]">
-              Reference only — this is Fintech Studios&apos; own credit-based pricing, not a per-user in-app setting. Symbol search costs ~6 credits per query (25 articles); an AI article summary costs ~5 credits. A 5-ticker portfolio scanned once daily (~22 trading days) runs roughly 660 credits/month, comfortably within their free tier; intra-day scanning scales up to their paid plans.
-            </p>
           </div>
         </div>
       )}
