@@ -49,9 +49,9 @@ section, and stale Senate/Capitol source copy. Data Sources now uses
 `Keyless / Core`, links each source/provider in a new tab, lists Congress.Trade
 as the aggregated politicians' trades source, and keeps API-key links aligned
 with Connection Status. App-facing metadata/login/welcome/strategy copy and MCP
-client names now use generic dashboard language instead of the temporary
-`Agentic Trading` name. Verified `npx tsc --noEmit`, `npm test` (153 files /
-1,486 tests), `npm run build`, and in-app browser desktop/mobile Help checks
+client names now use generic dashboard language instead of the temporary name.
+Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153 files /
+1,487 tests), `npm run build`, and in-app browser desktop/mobile Help checks
 against `http://127.0.0.1:4119/`. See
 `docs/rollouts/2026-06-28-help-data-sources-copy.md`.
 

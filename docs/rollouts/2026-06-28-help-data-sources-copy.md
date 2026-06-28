@@ -44,10 +44,11 @@ or more formally branded than intended.
 
 ## Verification
 
-- `npx tsc --noEmit` - passed.
-- `npm test` - passed, 153 files / 1,486 tests.
-- `npm run build` - passed.
-- Local production preview on `http://127.0.0.1:4119/` - passed.
+- `npx tsc --noEmit` - passed after merging `origin/main`.
+- `npm test` - passed after merging `origin/main`, 153 files / 1,487 tests.
+- `npm run build` - passed after merging `origin/main`.
+- Local production preview on `http://127.0.0.1:4119/` - passed after merging
+  `origin/main`.
 - In-app browser desktop Help checks - passed:
   - Help button resolves to one accessible `Help` button.
   - Overview contains `System Help` and `How the System Works`.
