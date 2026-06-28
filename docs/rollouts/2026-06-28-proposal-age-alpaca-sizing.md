@@ -35,7 +35,7 @@ The observed `Request failed with status code 403` needs broker response detail 
 - `npm ci` — installed this isolated worktree's dependencies.
 - `npx tsc --noEmit` — passed.
 - `npx vitest run test/policy-normalization.test.ts test/antigravity-cheap-wins.test.ts` — passed, 13 tests.
-- `npm test` — passed, 154 files / 1,491 tests.
+- `npm test` — passed, 154 files / 1,492 tests after merging `origin/main`.
 - `npm run build` — passed.
 - First full `npm test` run failed after normalization was too broad in DB/profile merge helpers; the patch was narrowed to the policy API boundary and the suite passed.
 

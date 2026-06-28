@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_REQUEST_USER_ID, resolveRequestUserId } from "../src/lib/request-user";
 import { userIdForEmail } from "../src/lib/auth/identity";
 
-// Identity is established by middleware (verified Cloudflare Access email) and forwarded as the trusted
+// Identity is established by middleware (verified Auth.js/Google session) and forwarded as the trusted
 // `x-authenticated-user-email` header. resolveRequestUserId must trust ONLY that header — never the old
 // spoofable `x-user-id` / `?userId` / body hints (the closed IDOR vectors).
 describe("resolveRequestUserId (post-auth)", () => {

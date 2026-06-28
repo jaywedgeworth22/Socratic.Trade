@@ -141,9 +141,9 @@ pm2 restart trading && pm2 save
 
 - Actions → Deploy → latest run is green.
 - `curl -I https://trading.jays.services/` returns a response (a `302` to the
-  auth gate is expected for an unauthenticated request — it means the app is up).
-- `curl -I https://trading-beta.jays.services/` should reach the beta Access app
-  and then the `trading-main` tunnel service on `http://localhost:4001`.
-- Access requires the visitor's email to be on the allowlist
-  (`PRIMARY_USER_EMAIL` / `ADMIN_USER_EMAILS`, or the Cloudflare Access policy);
-  otherwise the app shows **Access denied** by design.
+  app `/login` page is expected for an unauthenticated request — it means the app is up).
+- `curl -I https://trading-beta.jays.services/` should reach the beta tunnel service
+  on `http://localhost:4001`.
+- Auth.js Google sign-in is the site auth layer. The Cloudflare tunnel may stay in
+  front of the app, but Cloudflare Access should not be the login gate for
+  `trading.jays.services`.

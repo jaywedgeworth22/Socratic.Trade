@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Google auth primary, Cloudflare tunnel only
+Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header
+login path with Auth.js Google as the only configured identity source.
+Cloudflare Tunnel can still route `trading.jays.services`, but
+`cf-access-authenticated-user-email` is ignored by middleware,
+`AUTH_SECRET` alone arms fail-closed auth, `/logout` clears Auth.js cookies and
+returns to app `/login`, and empty `ALLOWED_EMAILS` now allows only
+`PRIMARY_USER_EMAIL` plus aliases. Non-primary Google users must be explicitly
+listed in `ALLOWED_EMAILS`. Verified focused auth/logout/identity tests,
+`npx tsc --noEmit`, full `npm test` (153 files / 1,488 tests), and
+`npm run build` (existing Next.js middleware-to-proxy deprecation warning only).
+See `docs/rollouts/2026-06-28-google-auth-primary.md`.
+
 ## 2026-06-28 — Robinhood MCP OAuth discovery from documented MCP link
 Branch `codex/robinhood-mcp-discovery-auth`. Follow-up to the reconnect flow
 still landing on Robinhood `/oauth/error`: Robinhood's current support
