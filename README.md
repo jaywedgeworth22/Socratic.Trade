@@ -203,24 +203,26 @@ ROBINHOOD_MCP_AUTH_TOKEN=...
 The adapter calls MCP `tools/call` using JSON-RPC.
 
 For hosted MCP servers that require OAuth instead of a static bearer token, leave
-`ROBINHOOD_MCP_AUTH_TOKEN` empty and configure:
+`ROBINHOOD_MCP_AUTH_TOKEN` empty. For Robinhood's official Trading MCP, the app
+uses the documented MCP link (`ROBINHOOD_MCP_URL`) as the source of truth and
+discovers OAuth endpoints from the MCP auth challenge:
 
 ```bash
-ROBINHOOD_MCP_AUTHORIZATION_URL=https://...
-ROBINHOOD_MCP_TOKEN_URL=https://...
+ROBINHOOD_MCP_URL=https://agent.robinhood.com/mcp/trading
 ROBINHOOD_MCP_RESOURCE=https://agent.robinhood.com/mcp/trading
-ROBINHOOD_MCP_CLIENT_ID=...
-ROBINHOOD_MCP_CLIENT_SECRET=... # only when required by the provider
 # Optional. Leave blank in hosted environments; the app derives the public callback URL.
 ROBINHOOD_MCP_REDIRECT_URI=
-ROBINHOOD_MCP_SCOPES=tools:call
+ROBINHOOD_MCP_SCOPES=internal
 ```
 
-If the provider supports dynamic client registration, set
-`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL`; it takes precedence over a configured
-`ROBINHOOD_MCP_CLIENT_ID` so the app can register the correct callback origin.
-`ROBINHOOD_MCP_RESOURCE` defaults to `ROBINHOOD_MCP_URL` and is sent as the
-OAuth resource indicator on authorization and token requests.
+For custom or non-discoverable MCP providers, set
+`ROBINHOOD_MCP_OAUTH_DISCOVERY=off` and configure
+`ROBINHOOD_MCP_AUTHORIZATION_URL`, `ROBINHOOD_MCP_TOKEN_URL`, and optionally
+`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` / `ROBINHOOD_MCP_CLIENT_ID`.
+When discovery is enabled for the official Robinhood MCP URL, discovered OAuth
+endpoints take precedence over manual endpoint env values. `ROBINHOOD_MCP_RESOURCE`
+defaults to `ROBINHOOD_MCP_URL` and is sent as the OAuth resource indicator on
+authorization and token requests.
 Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
 or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
