@@ -15,7 +15,14 @@ returns to app `/login`, and empty `ALLOWED_EMAILS` now allows only
 listed in `ALLOWED_EMAILS`. Verified focused auth/logout/identity tests,
 `npx tsc --noEmit`, full `npm test` (153 files / 1,488 tests), and
 `npm run build` (existing Next.js middleware-to-proxy deprecation warning only).
-See `docs/rollouts/2026-06-28-google-auth-primary.md`.
+PR #219 merged and production deploy run `28319030128` passed. Cloudflare Zero
+Trust app `agentic-trading-dashboard` (`9539f646-575d-4e7c-b182-0bbe7c02083a`)
+now has bypass policy `42c4adc9-1421-416b-b744-f291afc87938` so
+`trading.jays.services` reaches Next.js instead of the Cloudflare Access login.
+Live validation: `/` returns app `307 /login`, `/login` returns the app Google
+login page, `/api/auth/providers` exposes Google, `/api/dashboard` returns app
+`401 Unauthorized`, and `/logout` redirects to app `/login`. See
+`docs/rollouts/2026-06-28-google-auth-primary.md`.
 
 ## 2026-06-28 — Robinhood MCP OAuth discovery from documented MCP link
 Branch `codex/robinhood-mcp-discovery-auth`. Follow-up to the reconnect flow

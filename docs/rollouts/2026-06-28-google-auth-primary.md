@@ -41,12 +41,25 @@ kept reintroducing the old Access-owned session path.
 - `npx tsc --noEmit` - passed.
 - `npm test` - passed, 153 files / 1,488 tests.
 - `npm run build` - passed; Next.js emitted the existing middleware-to-proxy deprecation warning.
+- `bash scripts/land.sh` - passed; opened PR #219.
+- GitHub PR checks - passed: `verify`, `smoke`, and `gitleaks`; PR #219 auto-merged.
+- Production deploy run `28319030128` - passed; `/Users/jay/apps/trading-live` is at `6599290d`.
+- Cloudflare Zero Trust root Access app `agentic-trading-dashboard`
+  (`9539f646-575d-4e7c-b182-0bbe7c02083a`) now has bypass policy
+  `42c4adc9-1421-416b-b744-f291afc87938` named
+  `Bypass Cloudflare Access; app Google auth handles login`.
+- Live public checks passed:
+  - `https://trading.jays.services/` returns app `307 /login`, not a Cloudflare Access login.
+  - `https://trading.jays.services/login` returns the app login page with `Sign in with Google`.
+  - `https://trading.jays.services/api/auth/providers` returns the Google provider and callback URL.
+  - `https://trading.jays.services/api/dashboard` returns app `401 Unauthorized`.
+  - `https://trading.jays.services/logout` clears Auth.js cookies and redirects to app `/login`.
 
 ## Follow-ups
 
-- After deployment, confirm the Cloudflare Access application or policy no
-  longer intercepts `trading.jays.services`; app code cannot show Google login
-  if Access blocks the request before it reaches Next.js.
 - Confirm production Infisical has `AUTH_SECRET`, `AUTH_GOOGLE_ID`,
   `AUTH_GOOGLE_SECRET`, `PRIMARY_USER_EMAIL`, and any intended
   `PRIMARY_USER_EMAIL_ALIASES` / `ALLOWED_EMAILS` values.
+- Rollback for the Cloudflare-side change: delete bypass policy
+  `42c4adc9-1421-416b-b744-f291afc87938` from Access app
+  `9539f646-575d-4e7c-b182-0bbe7c02083a`.
