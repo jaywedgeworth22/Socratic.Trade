@@ -2197,8 +2197,7 @@ function ProposalTimeMeta({ iso, label }: { iso?: string; label: string }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 normal-case tracking-normal" title={display.full}>
       <span className="font-semibold uppercase tracking-wider text-muted">{label}</span>
-      <span className="rounded-md bg-surface-3/55 px-1.5 py-0.5 text-[10px] font-semibold text-fg">{display.absolute}</span>
-      <span className="text-[10px] font-medium text-faint">{display.relative}</span>
+      <span className="rounded-md bg-surface-3/55 px-1.5 py-0.5 text-[10px] font-semibold text-fg">{display.display}</span>
     </span>
   );
 }
@@ -3129,11 +3128,11 @@ function StrategyView({
       <Card>
         <PanelHeader title="Key Parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 text-sm">
-          <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v })} onCommitRel={(v) => updatePolicy({ maxOrderPctOfNav: v })} defaultMode="rel" />
-          <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v })} onCommitRel={(v) => updatePolicy({ maxDailyPctOfNav: v })} defaultMode="abs" />
+          <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v, maxOrderPctOfNav: undefined })} onCommitRel={(v) => updatePolicy({ maxOrderNotional: undefined, maxOrderPctOfNav: v })} defaultMode="rel" />
+          <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v, maxDailyPctOfNav: undefined })} onCommitRel={(v) => updatePolicy({ maxDailyNotional: undefined, maxDailyPctOfNav: v })} defaultMode="abs" />
           <EditableParam label="Symbol cap" relValue={policy.maxSymbolExposurePct} onCommitAbs={() => {}} onCommitRel={(v) => updatePolicy({ maxSymbolExposurePct: v })} defaultMode="rel" />
-          <EditableParam label="Stop loss" absValue={policy.riskRules.stopLossNotional} relValue={policy.riskRules.stopLossPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} defaultMode="rel" />
-          <EditableParam label="Take profit" absValue={policy.riskRules.takeProfitNotional} relValue={policy.riskRules.takeProfitPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} defaultMode="rel" />
+          <EditableParam label="Stop loss" absValue={policy.riskRules.stopLossNotional} relValue={policy.riskRules.stopLossPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: v, stopLossPct: undefined } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: undefined, stopLossPct: v } })} defaultMode="rel" />
+          <EditableParam label="Take profit" absValue={policy.riskRules.takeProfitNotional} relValue={policy.riskRules.takeProfitPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: v, takeProfitPct: undefined } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: undefined, takeProfitPct: v } })} defaultMode="rel" />
           <p className="col-span-2 -mt-0.5 text-xs text-faint">Tap <span className="tnum">$⇄%</span> to switch a cap between a dollar amount and a % of NAV — each control holds <strong>one or the other</strong> (setting one clears the other). More guards (drawdown &amp; daily-loss breakers, volatility brake, exposure caps, trailing/ATR stops, short limits, order types, universe floor) live under <strong>Risk &amp; Safety</strong>.</p>
 
           <div className="col-span-2 mt-2 space-y-3">
@@ -3233,8 +3232,11 @@ function EditableParam({
   onCommitRel: (v: number | undefined) => void;
   defaultMode: "abs" | "rel";
 }) {
+  const preferredMode = defaultMode === "rel"
+    ? (relValue !== undefined ? "rel" : absValue !== undefined ? "abs" : defaultMode)
+    : (absValue !== undefined ? "abs" : relValue !== undefined ? "rel" : defaultMode);
   const [mode, setMode] = useState<"abs" | "rel">(
-    absValue !== undefined ? "abs" : relValue !== undefined ? "rel" : defaultMode
+    preferredMode
   );
   
   const currentVal = mode === "abs" ? absValue : relValue;
@@ -3247,17 +3249,15 @@ function EditableParam({
 
   function commit() {
     if (draft.trim() === "") {
-      onCommitAbs(undefined);
-      onCommitRel(undefined);
+      if (mode === "abs") onCommitAbs(undefined);
+      else onCommitRel(undefined);
       return;
     }
     const n = Number(draft);
     if (Number.isFinite(n) && n >= 0) {
       if (mode === "abs") {
         onCommitAbs(n);
-        onCommitRel(undefined);
       } else {
-        onCommitAbs(undefined);
         onCommitRel(n);
       }
     } else {
@@ -5143,12 +5143,12 @@ function relativeAge(iso?: string): string {
   if (!iso) return "";
   const ageMs = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ageMs)) return "";
-  const mins = Math.max(0, Math.round(ageMs / 60_000));
+  const mins = Math.max(0, Math.floor(ageMs / 60_000));
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min old`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours} hr old`;
-  const days = Math.round(hours / 24);
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr old`;
+  const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} old`;
 }
 
@@ -5166,14 +5166,36 @@ function proposalTimeLabel(iso?: string): string {
   return parts ? `${parts.full} · ${parts.relative}` : "";
 }
 
-function proposalTimeParts(iso?: string): { absolute: string; full: string; relative: string } | null {
+function proposalTimeParts(iso?: string): { display: string; full: string; relative: string } | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return null;
+  const now = new Date();
+  const ageMs = now.getTime() - date.getTime();
+  const relative = relativeAge(iso);
+  if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 86_400_000) {
+    return {
+      display: relative,
+      full: date.toLocaleString(),
+      relative
+    };
+  }
+  const today =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const dateLabel = today
+    ? "Today"
+    : date.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+        ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {})
+      });
+  const timeLabel = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   return {
-    absolute: date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    display: `${dateLabel}, ${timeLabel}`,
     full: date.toLocaleString(),
-    relative: relativeAge(iso)
+    relative
   };
 }
 

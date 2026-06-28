@@ -458,7 +458,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           raw
         };
       } catch (error: unknown) {
-        throw new Error(`Alpaca order failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`Alpaca order failed: ${formatAlpacaOrderError(error)}`);
       }
     };
 
@@ -592,4 +592,24 @@ function optionalIso(value: unknown): string | undefined {
   if (value === null || value === undefined || value === "") return undefined;
   const time = Date.parse(String(value));
   return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+}
+
+function formatAlpacaOrderError(error: unknown): string {
+  const err = error as {
+    message?: string;
+    response?: { status?: number; data?: unknown };
+  };
+  const status = err.response?.status;
+  const data = err.response?.data;
+  const body = typeof data === "string"
+    ? data
+    : data && typeof data === "object"
+      ? JSON.stringify(data)
+      : "";
+  const message = err.message ?? String(error);
+  const detail = [status ? `HTTP ${status}` : "", message, body].filter(Boolean).join(" — ");
+  if (status === 403 && !/position|short|permission|forbidden|insufficient/i.test(body)) {
+    return `${detail} — broker forbade the order; verify the account has permission and a matching open position if this was a sell/cover.`;
+  }
+  return detail;
 }

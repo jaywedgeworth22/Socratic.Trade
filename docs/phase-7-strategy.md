@@ -112,6 +112,19 @@ Proposals stay in the approval queue until a human approves or rejects them, so 
 1. **Deterministic hard expiry** — `policy.proposalExpiryMinutes` (default 2880 = 2 days; 0 = Never). A pending proposal older than the TTL is moved to status `expired` with an audit event, a `proposal_withdrawn` notification, and an SSE refresh. It runs at the **start of every strategy run** and on **every scheduler tick** (even while halted or the market is closed), so the queue self-clears regardless of run cadence. UI: a dropdown (3h / 6h / 12h / 1d / 2d / 5d / 10d / Never).
 2. **On-run LLM re-validation, cadence-gated to market hours** — `policy.proposalRevalidateCadenceHours` (default 0 = every run). It is not optional (no on/off switch) — it rides on strategy runs. Inside `runStrategyOnce`, each still-pending proposal that is **due** (≥ cadence hours since it was created or last re-checked; 0 = always) is re-checked against the fresh scan + current regime in one batched LLM call ("does this still stand?"). It runs **only during the regular US session** (`currentMarketSession === "regular"`), so it never re-checks overnight — re-checking when nothing can be acted on is wasted work and the scan would be stale. `reaffirm` stamps `last_revalidated_at` (the dashboard then shows "Re-checked X ago — still advised" and the staleness clock resets); `withdraw` moves it to status `withdrawn`. Ambiguous/missing output defaults to *keep*; the pass is skipped (deterministic expiry still applies) when the market is closed, `OPENAI_API_KEY` is absent, or the call fails. UI: a dropdown (Every run / Once per day / Every 5 days).
 
+### C.2 Opening Size and Broker Bracket Practicality
+
+The LLM advises proposal size, but deterministic sizing remains authoritative.
+`limits.maxOrderNotional` in the prompt is the effective cap after combining
+absolute and percent-of-NAV policy settings; hidden stale values must not bind
+behind the user's visible risk control. For Alpaca REST/MCP native brackets, a
+dollar order needs enough notional to represent at least one whole share at the
+reference price. If the advised notional is below that threshold and policy
+capacity allows it, the deterministic pass raises the order to one-share
+notional and records the reason. If the cap does not allow a full share, the
+proposal may remain a fractional dollar order, but native Alpaca bracket legs
+are skipped so the broker is not asked for an impossible sub-share bracket.
+
 ### D. Token Efficiency & Asynchronous Post-Mortems
 Feeding dozens of raw rationales, P&L lines, and redundant daily news into the trading prompt wastes massive amounts of tokens and degrades LLM reasoning. To optimize this:
 
