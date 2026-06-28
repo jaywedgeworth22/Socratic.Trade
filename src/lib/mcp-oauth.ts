@@ -6,6 +6,7 @@ export { resolvePublicAppOrigin } from "./public-origin";
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
 export const ROBINHOOD_MCP_CALLBACK_PATH = "/api/auth/robinhood/callback";
 const LOCAL_DEFAULT_REDIRECT_URI = `http://localhost:3000${ROBINHOOD_MCP_CALLBACK_PATH}`;
+const DEFAULT_ROBINHOOD_MCP_RESOURCE = "https://agent.robinhood.com/mcp/trading";
 
 // Per-user key builders.  The state key embeds the random part last so LIKE
 // queries can scan by prefix without exposing userId in the OAuth redirect URL.
@@ -46,6 +47,7 @@ export interface McpOAuthConfig {
   tokenUrl: string;
   registrationUrl?: string;
   redirectUri: string;
+  resource?: string;
   scope: string;
   clientName: string;
 }
@@ -67,6 +69,7 @@ export function getMcpOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuth
     tokenUrl,
     registrationUrl: process.env.ROBINHOOD_MCP_CLIENT_REGISTRATION_URL || undefined,
     redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
+    resource: process.env.ROBINHOOD_MCP_RESOURCE || process.env.ROBINHOOD_MCP_URL || DEFAULT_ROBINHOOD_MCP_RESOURCE,
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
     clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
   };
@@ -103,6 +106,7 @@ export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcp
   url.searchParams.set("state", randomPart);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
+  if (config.resource) url.searchParams.set("resource", config.resource);
   return url.toString();
 }
 
@@ -151,6 +155,7 @@ export async function completeMcpOAuthCallback(input: {
     client_id: client.clientId,
     code_verifier: stateBlob.codeVerifier
   });
+  if (config.resource) body.set("resource", config.resource);
   if (client.clientSecret) body.set("client_secret", client.clientSecret);
 
   const tokens = await exchangeToken(config.tokenUrl, body);
@@ -232,6 +237,7 @@ async function refreshMcpAccessToken(userId: string, existing: McpOAuthTokens): 
     refresh_token: existing.refreshToken ?? "",
     client_id: client.clientId
   });
+  if (config.resource) body.set("resource", config.resource);
   if (client.clientSecret) body.set("client_secret", client.clientSecret);
   const tokens = await exchangeToken(config.tokenUrl, body, existing);
   setMcpOAuthTokens(userId, tokens);

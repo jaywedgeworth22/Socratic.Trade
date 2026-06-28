@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-28 (`codex/robinhood-mcp-resource-param`): Robinhood MCP OAuth resource indicator —
+> production still used the public callback and dynamic client registration, but reconnect
+> continued to land on Robinhood `/oauth/error`. OAuth authorization and token requests now
+> include `ROBINHOOD_MCP_RESOURCE` (defaulting to `ROBINHOOD_MCP_URL`) so the grant is bound
+> to the MCP protected resource. No roadmap change; see
+> `docs/rollouts/2026-06-28-robinhood-mcp-resource-indicator.md`.
+>
 > 2026-06-26 (`claude/portfolio-market-scan-ui-27azkz`): operator-driven mobile-UX + correctness pass —
 > Portfolio/Readiness/header, Market Scan (icons + universe: top-N + outliers + holdings), Congress/
 > Insider (future-date rejection, Congress.Trade casing, time span), System Help + Settings rework,

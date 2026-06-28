@@ -15,6 +15,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
     vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:3000/api/auth/robinhood/callback");
+    vi.stubEnv("ROBINHOOD_MCP_RESOURCE", "https://mcp.example.test/trading");
     const { buildMcpAuthorizationUrl } = await import("../src/lib/mcp-oauth");
 
     const authorizationUrl = new URL(await buildMcpAuthorizationUrl("user-a"));
@@ -24,6 +25,7 @@ describe("mcp oauth", () => {
     expect(authorizationUrl.searchParams.get("client_id")).toBe("client-123");
     expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
     expect(authorizationUrl.searchParams.get("code_challenge")).toBeTruthy();
+    expect(authorizationUrl.searchParams.get("resource")).toBe("https://mcp.example.test/trading");
     expect(authorizationUrl.searchParams.get("state")).toBeTruthy();
   });
 
@@ -125,6 +127,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://agent.robinhood.com/mcp/trading");
     const publicRedirect = "https://trading.jays.services/api/auth/robinhood/callback";
     const registrationRedirects: string[] = [];
     let tokenRequest: URLSearchParams | undefined;
@@ -153,7 +156,35 @@ describe("mcp oauth", () => {
     expect(registrationRedirects).toEqual([publicRedirect]);
     expect(tokenRequest?.get("client_id")).toBe("client-1");
     expect(tokenRequest?.get("redirect_uri")).toBe(publicRedirect);
+    expect(tokenRequest?.get("resource")).toBe("https://agent.robinhood.com/mcp/trading");
     expect(await getMcpAccessToken("user-a")).toBe("broker-token");
+  });
+
+  it("sends the MCP resource indicator when refreshing OAuth tokens", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    vi.stubEnv("ROBINHOOD_MCP_RESOURCE", "https://agent.robinhood.com/mcp/trading");
+    let tokenRequest: URLSearchParams | undefined;
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      tokenRequest = new URLSearchParams(String(init?.body ?? ""));
+      return new Response(JSON.stringify({ access_token: "fresh-token", token_type: "Bearer" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const { getMcpAccessToken, setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+
+    setMcpOAuthTokens("user-a", {
+      accessToken: "old-token",
+      refreshToken: "refresh-token",
+      tokenType: "Bearer",
+      expiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+
+    expect(await getMcpAccessToken("user-a")).toBe("fresh-token");
+    expect(tokenRequest?.get("grant_type")).toBe("refresh_token");
+    expect(tokenRequest?.get("resource")).toBe("https://agent.robinhood.com/mcp/trading");
   });
 
   it("stores the state blob under a per-user key", async () => {
