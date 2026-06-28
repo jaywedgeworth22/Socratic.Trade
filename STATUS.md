@@ -52,7 +52,9 @@ with Connection Status. App-facing metadata/login/welcome/strategy copy and MCP
 client names now use generic dashboard language instead of the temporary name.
 Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153 files /
 1,487 tests), `npm run build`, and in-app browser desktop/mobile Help checks
-against `http://127.0.0.1:4119/`. See
+against `http://127.0.0.1:4119/`. The Playwright smoke selector was updated to
+expect `Trading Dashboard` instead of the temporary app name; local focused
+smoke passed against a started production server on port 4201. See
 `docs/rollouts/2026-06-28-help-data-sources-copy.md`.
 
 ## 2026-06-28 — Quiet tile first-paint dashboard loader

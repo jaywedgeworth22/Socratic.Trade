@@ -33,6 +33,7 @@ or more formally branded than intended.
 - `src/lib/mcp-oauth.ts`
 - `src/lib/robinhood.ts`
 - `src/lib/web-sources/http.ts`
+- `test/e2e/dashboard-smoke.spec.ts`
 - `docs/alpaca-mcp-vs-api-evaluation.md`
 - `docs/phase-11-multi-user.md`
 - `docs/rollouts/2026-06-20-loose-ends-cleanup.md`
@@ -67,6 +68,13 @@ or more formally branded than intended.
   - Visible mobile button text is `?`.
   - Button measured approximately `52x44`, large enough for touch.
   - Help modal opens and does not contain the temporary app-name wording.
+- GitHub PR smoke initially failed because `test/e2e/dashboard-smoke.spec.ts`
+  still expected the temporary app-name text. Updated the smoke assertion to
+  expect `Trading Dashboard`.
+- `npm run test:e2e` using Playwright's managed web server timed out waiting
+  for its production server after 240s. Retried against an already-started
+  production server with `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4201 npm run test:e2e`
+  - passed, 1 test.
 - During local preview testing, the shared market-data consent prompt was
   dismissed with `Decline` so the Help button could be exercised without opting
   into shared pooling.
