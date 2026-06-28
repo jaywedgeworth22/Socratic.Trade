@@ -8,11 +8,7 @@ const AUTHJS_COOKIE_NAMES = ["__Secure-authjs.session-token", "authjs.session-to
 export async function GET(request: NextRequest) {
   const appOrigin = resolvePublicAppOrigin(request);
   const returnTo = new URL("/login", appOrigin).toString();
-  const accessLogoutUrl =
-    process.env.CF_ACCESS_TRUST_EMAIL_HEADER === "1"
-      ? new URL(`/cdn-cgi/access/logout?returnTo=${encodeURIComponent(returnTo)}`, appOrigin).toString()
-      : returnTo;
-  const response = NextResponse.redirect(accessLogoutUrl);
+  const response = NextResponse.redirect(returnTo);
 
   for (const name of AUTHJS_COOKIE_NAMES) {
     response.cookies.delete(name);

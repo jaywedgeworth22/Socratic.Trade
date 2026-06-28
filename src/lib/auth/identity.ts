@@ -1,7 +1,7 @@
 // Multi-user identity (Q3). The app derives a per-user id from a VERIFIED email — never from a
-// client-supplied hint. In production, `middleware.ts` verifies identity at the edge (Cloudflare Access
-// today; Auth.js/Google next) and forwards a trusted `x-authenticated-user-email` header that this module
-// maps to a stable userId. See docs/chat-multiuser-learning-design.md §2.
+// client-supplied hint. In production, `middleware.ts` verifies the Auth.js/Google session at the edge
+// and forwards a trusted `x-authenticated-user-email` header that this module maps to a stable userId.
+// See docs/chat-multiuser-learning-design.md §2.
 //
 // NOTE: this module uses node `crypto` and must only be imported from the Node runtime (route handlers,
 // lib), NOT from edge middleware. `middleware.ts` keeps its own crypto-free allowlist check.
@@ -58,15 +58,14 @@ export function userIdForEmail(email: string): string {
 }
 
 /**
- * Allowlist gate. The primary email and its aliases are always allowed. When `ALLOWED_EMAILS` is unset the
- * app defers to the upstream gateway (Cloudflare Access already enforces an email allowlist); set
- * `ALLOWED_EMAILS` for defense-in-depth or when no gateway is in front.
+ * Allowlist gate. The primary email and its aliases are always allowed. When `ALLOWED_EMAILS` is unset,
+ * non-primary users are denied; Google authenticates identity, while this app still authorizes access.
  */
 export function isEmailAllowed(email: string): boolean {
   const e = normalizeEmail(email);
   if (!e || !e.includes("@")) return false;
   if (primaryEmails().has(e)) return true;
   const allowed = splitEmails(process.env.ALLOWED_EMAILS);
-  if (allowed.length === 0) return true;
+  if (allowed.length === 0) return false;
   return allowed.includes(e);
 }

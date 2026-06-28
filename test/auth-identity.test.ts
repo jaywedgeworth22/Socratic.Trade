@@ -19,10 +19,10 @@ describe("auth identity — multi-user keystone (Q3)", () => {
     expect(userIdForEmail("not-an-email")).toBe("local");
   });
 
-  it("allowlist: primary always allowed; with no ALLOWED_EMAILS set, defers to the gateway (open)", () => {
+  it("allowlist: primary always allowed; with no ALLOWED_EMAILS set, non-primary users fail closed", () => {
     expect(isPrimaryEmail("mail@jays.services")).toBe(true);
     expect(isEmailAllowed("mail@jays.services")).toBe(true);
-    expect(isEmailAllowed("anyone@example.com")).toBe(true); // no env allowlist in test → CF Access is the gate
+    expect(isEmailAllowed("anyone@example.com")).toBe(false);
     expect(isEmailAllowed("")).toBe(false);
   });
 });
