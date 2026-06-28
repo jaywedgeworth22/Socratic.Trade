@@ -22,9 +22,9 @@ const API_KEY_CATALOG = [
   {
     service: "openai",
     label: "OpenAI",
-    category: "Required",
-    required: true,
-    unlocks: "LLM trade proposals, strategy reviews, red-team debate, and post-mortems.",
+    category: "LLM",
+    required: false,
+    unlocks: "OpenAI models for trade proposals, strategy reviews, red-team debate, and post-mortems.",
     docsUrl: "https://platform.openai.com/api-keys"
   },
   {

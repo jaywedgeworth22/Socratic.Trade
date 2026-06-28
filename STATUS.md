@@ -15,6 +15,18 @@ and refresh-token exchange include the protected MCP resource indicator
 (`https://agent.robinhood.com/mcp/trading` by default). This preserves the
 hosted/public callback path rather than reverting to localhost. See
 `docs/rollouts/2026-06-28-robinhood-mcp-resource-indicator.md`.
+
+## 2026-06-28 — Settings Connection Status placement + OpenAI label cleanup
+Branch `codex/settings-connection-status`. Settings now puts the admin-only
+`Connection Status` link in the modal header beside `Manage Accounts`, with
+shorter mobile labels (`Status` / `Accounts`) to avoid header overflow. The old
+bottom `Connection Health` card in Settings -> Connections is removed. OpenAI
+now appears as an `LLM` connection like the other LLM providers instead of
+showing a `Required` badge or OpenAI-specific warning copy. Verified
+`npx tsc --noEmit`, `npm test` (153 files / 1,486 tests), `npm run build`, and
+desktop/mobile Playwright screenshots against a built `next start` preview. See
+`docs/rollouts/2026-06-28-settings-connection-status.md`.
+
 ## 2026-06-28 — Quiet tile first-paint dashboard loader
 Branch `codex/quiet-tiles-loading`. The first-paint dashboard shell now shows
 quiet skeleton tiles instead of three separate visible loading labels, keeps a

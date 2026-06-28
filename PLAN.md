@@ -11,11 +11,18 @@ filling the missing pieces.
 > include `ROBINHOOD_MCP_RESOURCE` (defaulting to `ROBINHOOD_MCP_URL`) so the grant is bound
 > to the MCP protected resource. No roadmap change; see
 > `docs/rollouts/2026-06-28-robinhood-mcp-resource-indicator.md`.
+>
 > 2026-06-28 (`codex/quiet-tiles-loading`): first-paint dashboard loader polish —
 > replaced the duplicated visible loading labels with quiet skeleton tiles,
 > kept one screen-reader status plus an explicit failure alert, and updated
 > app-facing metadata/welcome wording to dashboard language. No roadmap change;
 > see `docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
+>
+> 2026-06-28 (`codex/settings-connection-status`): Settings header polish —
+> moved the admin-only `Connection Status` link beside `Manage Accounts`, removed
+> the old bottom status card in Settings -> Connections, and made OpenAI an
+> ordinary `LLM` catalog row instead of a required/special provider. No roadmap
+> change; see `docs/rollouts/2026-06-28-settings-connection-status.md`.
 >
 > 2026-06-26 (`claude/portfolio-market-scan-ui-27azkz`): operator-driven mobile-UX + correctness pass —
 > Portfolio/Readiness/header, Market Scan (icons + universe: top-N + outliers + holdings), Congress/

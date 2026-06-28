@@ -82,10 +82,11 @@ falls back to `local`.
 ## Milestones
 
 ### M1 `[done]` Connections Settings section (buildable now, single-user)
-A Settings -> **"Connections"** tab listing every required + optional/helpful key
-with a status badge (Set / Using env / Not set) and a masked input to save/clear
-it. Stored per-user via `upsertUserApiKey` under the default user.
-- **Required for full function:** `OPENAI_API_KEY` (LLM proposals).
+A Settings -> **"Connections"** tab listing provider keys with a status badge
+(Set / Using env / Not set) and a masked input to save/clear each key. Stored
+per-user via `upsertUserApiKey` under the default user.
+- **LLM providers:** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`,
+  `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`.
 - **Optional enrichment / signals:** `FINNHUB_API_KEY`, `FMP_API_KEY`,
   `ALPHAVANTAGE_API_KEY`, `MARKETSTACK_API_KEY`, `TRADIER_API_KEY`, `FRED_API_KEY`
   (macro), `SEC_EDGAR_USER_AGENT` (politeness).
@@ -96,13 +97,14 @@ it. Stored per-user via `upsertUserApiKey` under the default user.
 - Each row shows what it unlocks and links to where to get it. Never display stored
   secrets (mask), and never log them.
 
-Current implementation: Settings -> Connections lists OpenAI, xAI/Grok,
-Finnhub, FMP, Alpha Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent,
-and Massive with Set / Using env / Not set badges, docs links, masked write-only
-inputs, Save, and Clear. Backend `GET/POST/DELETE /api/keys` serves the same
-catalog and never returns secret values. Strategy Studio lets each user choose a
-Green Team model for proposal generation and an optional separate Red Team model
-for Bear review; if no Red Team override is set, Red reuses Green. Connections
+Current implementation: Settings -> Connections lists OpenAI, Anthropic,
+xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
+Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
+env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
+Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
+secret values. Strategy Studio lets each user choose a Green Team model for
+proposal generation and an optional separate Red Team model for Bear review; if
+no Red Team override is set, Red reuses Green. Connections
 shows a read-only model summary and a link back to Strategy Studio so provider
 keys and model behavior stay connected without making Connections the editing
 surface. The visible model list omits legacy `gpt-4.1-mini`, keeps

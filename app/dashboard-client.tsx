@@ -112,6 +112,7 @@ import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
 import {
   Button,
+  buttonClass,
   Card,
   Chip,
   Dot,
@@ -1565,17 +1566,28 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         icon={<SettingsIcon size={18} />}
         size="lg"
         headerAction={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setSettingsOpen(false);
-              setAccountsOpen(true);
-            }}
-          >
-            <Wallet size={14} />
-            Manage Accounts
-          </Button>
+          <div className="flex items-center gap-2 max-sm:gap-1">
+            {snapshot.currentUser?.isAdmin && (
+              <a href="/admin/connections" className={buttonClass({ variant: "ghost", size: "sm", className: "max-sm:px-2" })}>
+                <Network size={14} />
+                <span className="hidden sm:inline">Connection Status</span>
+                <span className="sm:hidden">Status</span>
+              </a>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="max-sm:px-2"
+              onClick={() => {
+                setSettingsOpen(false);
+                setAccountsOpen(true);
+              }}
+            >
+              <Wallet size={14} />
+              <span className="hidden sm:inline">Manage Accounts</span>
+              <span className="sm:hidden">Accounts</span>
+            </Button>
+          </div>
         }
       >
         <SettingsContent
@@ -3740,7 +3752,6 @@ function SettingsContent({
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
-  const isAdmin = snapshot.currentUser?.isAdmin ?? false;
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   useEffect(() => setSection(initialSection), [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
@@ -4275,20 +4286,6 @@ function SettingsContent({
               </div>
             </div>
             <ApiKeysSection />
-            {isAdmin && (
-              <div className="rounded-lg border border-line bg-surface-2/45 p-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-fg">Connection Health</div>
-                  <p className="mt-0.5 text-xs text-muted">Monitor API status, latency, error patterns, and stopped keys.</p>
-                </div>
-                <a
-                  href="/admin/connections"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-2 transition-colors"
-                >
-                  View Status →
-                </a>
-              </div>
-            )}
           </div>
         )}
 
@@ -5340,7 +5337,7 @@ function ApiKeysSection() {
     }
   }
 
-  const requiredUnset = keys.some((row) => row.required && row.source === "none");
+  const requiredUnsetLabels = keys.filter((row) => row.required && row.source === "none").map((row) => row.label);
 
   if (loading) {
     return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={18} className="animate-spin" />} />;
@@ -5348,9 +5345,9 @@ function ApiKeysSection() {
 
   return (
     <div className="space-y-3">
-      {requiredUnset && (
+      {requiredUnsetLabels.length > 0 && (
         <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
-          OpenAI is required for model-generated proposals. Without it, the app uses local fallback proposals.
+          Required connection missing: {requiredUnsetLabels.join(", ")}.
         </p>
       )}
       <div className="grid gap-2">
