@@ -1,6 +1,6 @@
 # Alpaca MCP Server vs. Direct REST API Evaluation
 
-This document evaluates the trade-offs of using the official **Alpaca Model Context Protocol (MCP) Server** versus direct integration with the **Alpaca REST API** within the Robinhood Agentic Trading system.
+This document evaluates the trade-offs of using the official **Alpaca Model Context Protocol (MCP) Server** versus direct integration with the **Alpaca REST API** within this broker-neutral trading system.
 
 ---
 

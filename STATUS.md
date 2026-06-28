@@ -28,6 +28,37 @@ and refresh-token exchange include the protected MCP resource indicator
 (`https://agent.robinhood.com/mcp/trading` by default). This preserves the
 hosted/public callback path rather than reverting to localhost. See
 `docs/rollouts/2026-06-28-robinhood-mcp-resource-indicator.md`.
+
+## 2026-06-28 — Settings Connection Status placement + OpenAI label cleanup
+Branch `codex/settings-connection-status`. Settings now puts the admin-only
+`Connection Status` link in the modal header beside `Manage Accounts`, with
+shorter mobile labels (`Status` / `Accounts`) to avoid header overflow. The old
+bottom `Connection Health` card in Settings -> Connections is removed. OpenAI
+now appears as an `LLM` connection like the other LLM providers instead of
+showing a `Required` badge or OpenAI-specific warning copy. Verified
+`npx tsc --noEmit`, `npm test` (153 files / 1,486 tests), `npm run build`, and
+desktop/mobile Playwright screenshots against a built `next start` preview. See
+`docs/rollouts/2026-06-28-settings-connection-status.md`.
+
+## 2026-06-28 — Help/Data Sources copy and naming cleanup
+Branch `codex/settings-connection-status`. The top Help action is now a visible
+accent-soft Help button on desktop with a `?` mobile fallback, instead of an
+easy-to-miss icon-only control. System Help removes the welcome sentence,
+temporary app-name branding, `(e.g. Claude)`, the Fintech Studios-only pricing
+section, and stale hard-coded Senate/Capitol source copy. Data Sources now uses
+`Keyless / Core`, links each source/provider in a new tab, derives the
+politicians' trades source line from active `webSources.congress.sources`, and
+keeps API-key links aligned with Connection Status. Settings still avoids a
+special OpenAI `Required` badge, but warns when the selected Green Team model's
+provider key is missing. App-facing metadata/login/welcome/strategy copy and
+MCP client names now use generic dashboard language instead of the temporary
+name. Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153
+files / 1,487 tests), `npm run build`, and in-app browser desktop/mobile Help
+checks against `http://127.0.0.1:4119/`. The Playwright smoke selector was
+updated to expect `Trading Dashboard` instead of the temporary app name; local
+focused smoke passed against a started production server on port 4201. See
+`docs/rollouts/2026-06-28-help-data-sources-copy.md`.
+
 ## 2026-06-28 — Quiet tile first-paint dashboard loader
 Branch `codex/quiet-tiles-loading`. The first-paint dashboard shell now shows
 quiet skeleton tiles instead of three separate visible loading labels, keeps a
@@ -1709,7 +1740,7 @@ Branch: claude/magical-faraday-uce1uy
   `npm test`/`npm run build` NOT run in Cowork sandbox (host node_modules are
   macOS-only) — run locally. See
   `docs/rollouts/2026-06-21-vector-db-userid-timestamp-hardening.md`.
-- 2026-06-20 (`agent/antigravity`): **Rename project to Agentic Trading in documents.** Renamed the project title in `PLAN.md` to "Agentic Trading Dashboard", ensuring the overall application is consistently referred to as "Agentic Trading" rather than "Robinhood Agentic Trading" (now broker-neutral to support Alpaca and multi-broker setups). Verifications passed: tsc clean, 287 tests green, build OK.
+- 2026-06-20 (`agent/antigravity`): **Rename project to broker-neutral dashboard wording in documents.** Renamed the project title in `PLAN.md` away from the prior Robinhood-prefixed naming so the overall application reads broker-neutral for Alpaca and multi-broker setups. Verifications passed: tsc clean, 287 tests green, build OK.
 - 2026-06-20 (integration): **Public-repo consolidation into private dashboard.** Imported Atlas
   (`jaywedgeworth22/public`) design docs to `docs/atlas/`, archived reference material under
   `reference/atlas-public/`, and ported **user watchlist** + **price alerts** (SQLite + API routes +
