@@ -2476,14 +2476,16 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
 export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
-  const refPrice = proposal.referencePrice ?? proposal.limitPrice ?? marketScan.quotesBySymbol[sym]?.price;
+  const marketPrice = marketScan.quotesBySymbol[sym]?.price;
+  const refPrice = proposal.referencePrice ?? marketPrice ?? proposal.limitPrice ?? proposal.stopPrice;
   if (refPrice == null || !(refPrice > 0)) return proposal;
+  const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
-  const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / refPrice) : undefined;
+  const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
   if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
     const stopPct = proposal.side === "short"
@@ -2492,16 +2494,16 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
     const takePct = policy.riskRules?.takeProfitPct ?? 0;
     // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
     if (proposal.side === "buy") {
-      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(refPrice * (1 - stopPct / 100)) };
-      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(refPrice * (1 + takePct / 100)) };
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 - stopPct / 100)) };
+      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
     } else {
-      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(refPrice * (1 + stopPct / 100)) };
-      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(refPrice * (1 - takePct / 100)) };
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 + stopPct / 100)) };
+      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
     }
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
     next = {
       ...next,
-      rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(refPrice)} reference price; this avoids a broker rejection for sub-share brackets.`
+      rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
     };
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
     // Transparency for non-bracket brokers (e.g. Robinhood): the broker can't hold an OCO bracket at
@@ -2526,7 +2528,7 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
     (policy.permittedOrderTypes?.includes("limit") ?? true)
   ) {
     const quote = marketScan.quotesBySymbol[sym];
-    const qty = Math.floor(next.dollarAmount / refPrice);
+    const qty = Math.floor(next.dollarAmount / entryPrice);
     if (qty >= 1) {
       const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
       const buffer = bufferBps / 10_000;

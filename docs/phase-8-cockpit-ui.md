@@ -23,6 +23,14 @@
 > hours old and switch to date/time for older decisions. Settings risk controls
 > that present dollar vs percent modes must write the selected mode and clear the
 > other mode in the same policy update so hidden stale caps cannot bind.
+>
+> 2026-06-28: Fresh proposal performance chips are suppressed until the proposal
+> is at least 15 minutes old, approval failures with broker error status refresh
+> the queue with explicit placement-failed copy, Market Scan column settings can
+> reorder visible columns and default to Sector before Sec RS, Symbol drilldowns
+> use the fixed slide-over header for logo/ticker/company/sector/price, close-only
+> history renders as a line chart, and Macro header helper copy lives inside the
+> same padded header block as the title.
 
 
 This phase restructures the dashboard from a long vertical page into a
@@ -174,6 +182,11 @@ across panels, feeds, popovers, or status chips.
 - Standalone ticker text should use the shared clickable ticker treatment so
   hover/click styling and symbol drilldown are consistent in Market Scan,
   Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.
+- Ticker drilldowns must prefer a full scan quote from `topCandidates` or
+  `quotesBySymbol` and must preserve quote metadata when the symbol is not in
+  the visible top-candidate table. Sparse/event-only symbols may open with a
+  partial record, but the price header should never display `$0.00` for a
+  missing quote.
 - Settings → Data includes Market Scan candidate controls. `Candidate cap`
   controls how many ranked/enriched rows reach `marketScan.topCandidates` and
   the LLM prompt; `Outlier reserve` controls how many below-cutoff names with
@@ -191,6 +204,10 @@ across panels, feeds, popovers, or status chips.
 - `Run once` is a manual proposal check. It must work while the system is
   stopped and must force proposal-only behavior, so it never bypasses the
   Start/Stop gate for scheduled/autonomous execution.
+- If pending proposals are visible while the mode selector says Autonomous Mode,
+  the Decision tab must explain that they came from the manual/proposal-only Run
+  once path; scheduled autonomous placement still requires Start and passing
+  account/risk checks.
 - Workspace and feed tabs persist in local storage so a browser refresh returns
   to the same tab/area instead of resetting the user to Decision/Activity.
 - Headings and card titles use Title Case. Abbreviated data labels can stay

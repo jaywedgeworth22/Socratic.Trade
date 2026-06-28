@@ -3,6 +3,8 @@
 import {
   Activity as ActivityIcon,
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BrainCircuit,
   Check,
   CheckCircle,
@@ -106,7 +108,7 @@ import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
-import { SymbolDrilldown } from "./ui/symbol-drilldown";
+import { SymbolDrilldown, SymbolDrilldownTitle } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
@@ -960,6 +962,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       if (body.status === "blocked") {
         const reasonsMsg = body.reasons?.map((r) => `• ${r}`).join("\n") ?? "No reasons provided.";
         toast.warning("Proposal blocked by policy", { description: reasonsMsg });
+      } else if (body.status === "error" || body.status === "placing_failed") {
+        const reasonsMsg = body.reasons?.filter(Boolean).join("\n") || "The broker did not confirm the order.";
+        toast.error("Order placement failed", { description: reasonsMsg });
       } else {
         if (body.status === "placed" && body.fillStatus === "pending_reconciliation") {
           toast.info("Order accepted by broker and pending execution.", {
@@ -979,7 +984,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           );
         }
       }
-      if (body.status === "placed" || body.status === "paper") await load({ quiet: true });
+      await load({ quiet: true });
     } catch (approvalError) {
       const errMsg = approvalError instanceof Error ? approvalError.message : "Proposal approval failed.";
       toast.error("Execution error", { description: errMsg });
@@ -1534,8 +1539,22 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         </div>
       </SlideOver>
 
-      <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
-        {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
+      <SlideOver
+        open={!!drilldownSymbol}
+        onClose={() => setDrilldownSymbol(null)}
+        title={drilldownSymbol ? <SymbolDrilldownTitle quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} /> : "Symbol"}
+        ariaLabel={drilldownSymbol ? `${drilldownSymbol.symbol} details` : "Symbol details"}
+        width="max-w-xl"
+      >
+        {drilldownSymbol && (
+          <SymbolDrilldown
+            quote={drilldownSymbol}
+            logoDisplay={tickerLogoDisplay}
+            onQuoteUpdate={(patch) => {
+              setDrilldownSymbol((current) => current && current.symbol === drilldownSymbol.symbol ? { ...current, ...patch } : current);
+            }}
+          />
+        )}
       </SlideOver>
 
       <LearnedContextQueue
@@ -1876,6 +1895,11 @@ function DecisionView({
       {pending.length > 0 && (
         <Card className="overflow-hidden">
           <PanelHeader title="Pending Approval" subtitle="Review And Approve Or Reject" icon={<CheckCircle size={16} />} />
+          {snapshot.policy.strategyAuthority === "decide" && (
+            <div className="mx-4 mt-3 rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[12px] leading-snug text-muted">
+              Run once stages manual proposals for review. Start runs scheduled autonomous placement while the system is running and account/risk checks pass.
+            </div>
+          )}
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
             {pending.map((p) => {
               const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
@@ -2397,9 +2421,9 @@ const SCAN_COLUMNS: ScanColumn[] = [
 // Default-visible columns — chosen by UI + market specialists for fast triage:
 // identity → verdict → price action → relative strength/execution cost → sector/value/growth/news.
 // The order in this list is rendered directly; hidden columns stay available in Configure columns.
-const DEFAULT_SCAN_COLS = ["symbol", "score", "price", "intradayChangePct", "sectorRelStrength", "vsVwap", "dollarVolM", "spreadBps", "sector", "peRatio", "epsGrowth", "fcfYield", "sentiment", "senateTrades"];
-// v4: investment/market UX review moved Score near identity and replaced raw bid/ask with Spread.
-const SCAN_COLS_KEY = "scan-visible-cols-v4";
+const DEFAULT_SCAN_COLS = ["symbol", "score", "price", "intradayChangePct", "sector", "sectorRelStrength", "vsVwap", "dollarVolM", "spreadBps", "peRatio", "epsGrowth", "fcfYield", "sentiment", "senateTrades"];
+// v5: Sector is visible before Sec RS by default, and the chooser persists column order.
+const SCAN_COLS_KEY = "scan-visible-cols-v5";
 
 function MarketScanView({
   snapshot,
@@ -2434,15 +2458,34 @@ function MarketScanView({
     }
   }, []);
 
-  function toggleCol(id: string) {
-    if (id === "symbol") return; // symbol is always shown
-    const next = visible.includes(id) ? visible.filter((c) => c !== id) : [...visible, id];
+  function saveVisibleColumns(next: string[]) {
     setVisible(next);
     try {
       localStorage.setItem(SCAN_COLS_KEY, JSON.stringify(next));
     } catch {
       /* ignore */
     }
+  }
+
+  function toggleCol(id: string) {
+    if (id === "symbol") return; // symbol is always shown, but can still be reordered.
+    const next = visible.includes(id) ? visible.filter((c) => c !== id) : [...visible, id];
+    saveVisibleColumns(next);
+  }
+
+  function moveCol(id: string, delta: -1 | 1) {
+    const from = visible.indexOf(id);
+    if (from === -1) return;
+    const to = Math.max(0, Math.min(visible.length - 1, from + delta));
+    if (from === to) return;
+    const next = visible.slice();
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    saveVisibleColumns(next);
+  }
+
+  function resetScanColumns() {
+    saveVisibleColumns(DEFAULT_SCAN_COLS);
   }
 
   const refreshScan = useCallback(async () => {
@@ -2502,6 +2545,10 @@ function MarketScanView({
   const cols = visible
     .map((id) => SCAN_COLUMNS.find((c) => c.id === id))
     .filter((column): column is ScanColumn => Boolean(column));
+  const columnChooserRows = [
+    ...cols,
+    ...SCAN_COLUMNS.filter((column) => !visible.includes(column.id))
+  ];
   // The quote `asOf` is a display string, not a timestamp; the scan's ISO generatedAt
   // is the real "received" time for every value in this table.
   const dataReceived = receivedLabel(scan.generatedAt);
@@ -2521,6 +2568,13 @@ function MarketScanView({
     ? scan.warnings.length === 1
       ? scan.warnings[0]
       : `${scan.warnings[0]} (${scan.warnings.length - 1} more warning${scan.warnings.length === 2 ? "" : "s"})`
+    : "";
+  const scanAgeMs = Date.now() - Date.parse(scan.generatedAt);
+  const scanTime = new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const scanFallbackText = scanError
+    ? Number.isFinite(scanAgeMs) && scanAgeMs >= 0 && scanAgeMs < 15 * 60_000
+      ? `Fresh scan refresh failed; still showing the recent scan from ${scanTime}.`
+      : `${scanError} Showing the last scan from ${scanTime}.`
     : "";
   const mobileSubtitle = scan.returnedQuotes === 0
     ? "No quotes returned"
@@ -2550,14 +2604,47 @@ function MarketScanView({
               {colsOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setColsOpen(false)} />
-                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-48 overflow-auto rounded-lg border border-line bg-surface/50 backdrop-blur-xl p-1.5 shadow-[var(--shadow-lg)]">
-                    <p className="px-2 py-1 text-[11px] font-semibold uppercase text-faint">Show columns</p>
-                    {SCAN_COLUMNS.map((c) => (
-                      <label key={c.id} className={cn("flex items-center gap-2 rounded px-2 py-1 text-[13px] text-muted", c.id === "symbol" ? "opacity-50" : "cursor-pointer hover:bg-surface-2/50 backdrop-blur-lg")} title={c.title}>
-                        <input type="checkbox" checked={visible.includes(c.id)} onChange={() => toggleCol(c.id)} disabled={c.id === "symbol"} className="accent-[var(--accent)]" />
-                        {c.label}
-                      </label>
-                    ))}
+                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-72 overflow-auto rounded-lg border border-line bg-surface/50 backdrop-blur-xl p-1.5 shadow-[var(--shadow-lg)]">
+                    <div className="flex items-center justify-between gap-2 px-2 py-1">
+                      <p className="text-[11px] font-semibold uppercase text-faint">Columns</p>
+                      <button type="button" onClick={resetScanColumns} className="text-[11px] font-medium text-muted hover:text-fg">Reset</button>
+                    </div>
+                    {columnChooserRows.map((c) => {
+                      const isVisible = visible.includes(c.id);
+                      const index = visible.indexOf(c.id);
+                      return (
+                        <div key={c.id} className={cn("grid grid-cols-[1fr_auto] items-center gap-2 rounded px-2 py-1 text-[13px] text-muted hover:bg-surface-2/50 backdrop-blur-lg", !isVisible && "opacity-70")} title={c.title}>
+                          <label className={cn("flex min-w-0 items-center gap-2", c.id === "symbol" ? "opacity-70" : "cursor-pointer")}>
+                            <input type="checkbox" checked={isVisible} onChange={() => toggleCol(c.id)} disabled={c.id === "symbol"} className="accent-[var(--accent)]" />
+                            <span className="truncate">{c.label}</span>
+                          </label>
+                          <div className="flex items-center gap-1">
+                            {isVisible && (
+                              <>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${c.label} earlier`}
+                                  onClick={() => moveCol(c.id, -1)}
+                                  disabled={index <= 0}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-3 hover:text-fg disabled:opacity-30"
+                                >
+                                  <ArrowUp size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${c.label} later`}
+                                  onClick={() => moveCol(c.id, 1)}
+                                  disabled={index === visible.length - 1}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-3 hover:text-fg disabled:opacity-30"
+                                >
+                                  <ArrowDown size={12} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -2586,7 +2673,7 @@ function MarketScanView({
         // alarming red banner, so "Couldn't reach the scan service" never contradicts a populated
         // table (the previous behavior the user flagged).
         <p className="mx-4 mt-3 rounded-lg border border-line bg-surface-2/40 px-3 py-1.5 text-[12px] text-faint">
-          {scanError} Showing the last scan from {new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+          {scanFallbackText}
         </p>
       )}
       {scan.warnings && scan.warnings.length > 0 && (
@@ -2825,7 +2912,12 @@ function PerformanceView({
   const subtractTax = Boolean(snapshot.policy.taxSettings?.subtractFromResults && snapshot.tax);
   const taxBurden = subtractTax ? snapshot.tax!.estimatedTaxLiability : 0;
   const realized = realizedGross - taxBurden;
-  const unrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
+  const trackedUnrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
+  const currentPositionUnrealized = snapshot.positions.reduce((sum, position) => {
+    if (!(position.averageCost > 0) || !Number.isFinite(position.marketValue) || !Number.isFinite(position.quantity)) return sum;
+    return sum + (position.marketValue - position.averageCost * position.quantity);
+  }, 0);
+  const unrealized = snapshot.positions.length > 0 ? currentPositionUnrealized : trackedUnrealized;
   const winRate = mode === "paper" ? perf?.paperWinRate ?? 0 : perf?.liveWinRate ?? 0;
   const avgReturn = mode === "paper" ? perf?.paperAverageReturnPct ?? 0 : perf?.liveAverageReturnPct ?? 0;
   const benchmark = perf?.benchmark;
@@ -2838,7 +2930,7 @@ function PerformanceView({
         <PanelHeader title="Equity" subtitle={`${modeLabel} account`} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
           <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={pnlTone(realized)} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={pnlTone(unrealized)} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={pnlTone(unrealized)} title={`${modeLabel} gain/loss on current open positions, marked to current prices. Realized learning stats below still use closed app-recorded lots.`} />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={pnlTone(avgReturn)} title="Average percentage return per closed lot." />
         </div>

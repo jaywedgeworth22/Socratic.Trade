@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPolicy } from "@/lib/db";
+import { audit, getPolicy } from "@/lib/db";
 import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { mergeGroupedBarData, mergeQuoteData, scanMarket } from "@/lib/market";
 import { allowedSymbolsForPolicy } from "@/lib/policy";
@@ -15,8 +15,9 @@ export const dynamic = "force-dynamic";
 // the scan captured at the last strategy run. Cheap on repeat calls: scanMarket caches
 // the screener (~5 min) and per-symbol enrichment (~6 h). Read-only; places nothing.
 export async function GET(request: Request) {
+  let userId = "local";
   try {
-    const userId = resolveRequestUserId(request);
+    userId = resolveRequestUserId(request);
     const policy = getPolicy(userId);
     const symbols = allowedSymbolsForPolicy(policy);
     const gateway = getBrokerGateway(policy, userId);
@@ -62,6 +63,13 @@ export async function GET(request: Request) {
     }
     return NextResponse.json(scan);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "scan failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "scan failed";
+    console.warn("[api/scan] market scan failed", message);
+    try {
+      audit("market_scan_failed", { message }, userId);
+    } catch {
+      /* audit is diagnostic only */
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

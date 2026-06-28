@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 
 interface ChartBar {
   time: string; // YYYY-MM-DD
-  open: number;
-  high: number;
-  low: number;
+  open?: number;
+  high?: number;
+  low?: number;
   close: number;
   volume?: number;
   vwap?: number; // only present when the source supplies it (e.g. Massive `vw`)
@@ -31,14 +31,15 @@ export async function GET(req: Request) {
       return NextResponse.json({ symbol, bars: [], note: "no price history available" });
     }
 
-    // Map to chart-ready candles: require a full OHLC quad, normalize the date, dedup, sort.
+    // Map to chart-ready daily bars. Keyed providers usually give full OHLC candles; shared/imported
+    // caches may only have closes. Keep close-only rows so the drawer can still render a line chart.
     const byDay = new Map<string, ChartBar>();
     for (const b of bars) {
       const time = toBusinessDay(b.time);
       if (!time) continue;
-      const { open, high, low, close } = b;
-      if (![open, high, low, close].every((v) => typeof v === "number" && Number.isFinite(v))) continue;
-      byDay.set(time, { time, open: open as number, high: high as number, low: low as number, close, volume: numOrUndef(b.volume), vwap: numOrUndef(b.vwap) });
+      const close = numOrUndef(b.close);
+      if (close == null) continue;
+      byDay.set(time, { time, open: numOrUndef(b.open), high: numOrUndef(b.high), low: numOrUndef(b.low), close, volume: numOrUndef(b.volume), vwap: numOrUndef(b.vwap) });
     }
     const chartBars = [...byDay.values()].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
     return NextResponse.json({ symbol, bars: chartBars });

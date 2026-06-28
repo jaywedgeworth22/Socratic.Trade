@@ -4,6 +4,30 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Proposal/dashboard UI diagnostics polish
+Branch `codex/proposal-dashboard-ui-fixes`. Follow-up to the live proposal and
+dashboard screenshots: opening proposals now keep `referencePrice` as the
+decision-time market anchor while bracket legs use the intended entry price, and
+proposal performance chips wait until a proposal is at least 15 minutes old so a
+fresh below-market limit order does not show an instant fake gain. Approval
+errors with `{status:"error"}` now toast as failed broker placement and refresh
+the queue. Pending approval cards explain that `Run once` is manual/proposal-only
+even in Autonomous mode. Market Scan defaults to `Sector` before `Sec RS`, the
+column chooser can reorder visible columns, and refresh-failure copy distinguishes
+a recent fallback scan from a genuinely stale one while `/api/scan` records
+`market_scan_failed` audit events. Symbol drilldowns now use the fixed slide-over
+header for logo/ticker/company/sector/price, preserve `quotesBySymbol` metadata,
+and render close-only history as a line chart instead of dropping it as empty.
+Macro header copy is aligned inside the header block. The Performance tab's
+Unrealized tile uses current displayed positions' mark-to-cost P&L so broker-held
+open positions match the portfolio rail. Verification so far: `npx tsc --noEmit`,
+focused Vitest (`strategy-hardening`, `history-route`, `proposal-performance`),
+and Playwright checks against `http://localhost:4124/` for Macro, Performance,
+Market Scan column chooser, and BAC symbol drawer. Full verification passed:
+`npx tsc --noEmit`, `npm test` (155 files / 1,494 tests), and `npm run build`
+(existing Next middleware deprecation warning only). See
+`docs/rollouts/2026-06-28-proposal-dashboard-ui-fixes.md`.
+
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header
 login path with Auth.js Google as the only configured identity source.
