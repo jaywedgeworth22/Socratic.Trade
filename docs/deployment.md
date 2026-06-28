@@ -146,4 +146,6 @@ pm2 restart trading && pm2 save
   on `http://localhost:4001`.
 - Auth.js Google sign-in is the site auth layer. The Cloudflare tunnel may stay in
   front of the app, but Cloudflare Access should not be the login gate for
-  `trading.jays.services`.
+  `trading.jays.services`. As of 2026-06-28, the Zero Trust Access app
+  `agentic-trading-dashboard` keeps a bypass policy
+  `42c4adc9-1421-416b-b744-f291afc87938` for that root hostname.
