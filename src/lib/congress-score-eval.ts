@@ -226,7 +226,7 @@ function exportRowToObservation(row: unknown, horizonDays: number): CongressScor
   const signed = finiteNumber(r.congressSignedScore ?? r.signedScore);
   const dir = direction(r.congressDirection ?? r.direction);
   if (signed === undefined && dir === undefined) return undefined;
-  if (hasPitLabels && (!label || !pitLabelIsPointInTime(r, label, date) || !pitMemberSkillIsPointInTime(r, date))) return undefined;
+  if (hasPitLabels && (!pitValidityAllowsHistoricalValidation(r) || !label || !pitLabelIsPointInTime(r, label, date) || !pitMemberSkillIsPointInTime(r, date))) return undefined;
   const explicitExcessReturn = hasPitLabels ? finiteNumber(label?.excessReturn) : finiteNumber(r.forwardExcessReturn ?? r.excessReturn);
   const forwardReturn = hasPitLabels
     ? finiteNumber(label?.assetReturn) ?? explicitExcessReturn
@@ -257,6 +257,15 @@ function exportRowToObservation(row: unknown, horizonDays: number): CongressScor
 function pitLabelsPresent(labels: unknown): boolean {
   if (!labels || typeof labels !== "object") return false;
   return Array.isArray((labels as { horizons?: unknown }).horizons);
+}
+
+function pitValidityAllowsHistoricalValidation(row: Record<string, unknown>): boolean {
+  const validity = objectValue(row.pitValidity);
+  if (!validity) return true;
+  if (validity.scoreInputsPitSafe === false) return false;
+  if (validity.historicalValidationReady === false) return false;
+  if (validity.ready === false || validity.pitSafe === false) return false;
+  return true;
 }
 
 function pitAvailabilityDate(row: Record<string, unknown>): string | undefined {

@@ -131,10 +131,16 @@ npm run eval:congress-score -- --input congress-score-export.jsonl
 The input can be either flat rows or Congress.Trade PIT rows from
 `/api/export/congress-pit-scores`; App B reads nested `labels.horizons[]` for the selected
 `--horizon-days` value and maps only `baselines.appBPreCongressScanScore` / `preCongressScore` into
-marginal-IC baselines. PIT rows are intentionally stricter than flat rows:
+marginal-IC baselines. If a Congress.Trade response envelope includes
+`validationReadiness.historicalValidationReady=false`, App B refuses to evaluate it and exits `2`.
+This is deliberate: `scoreInputsPitSafe=true` can be useful for research plumbing while
+`historicalValidationReady=false` still means the export cannot support validation claims. PIT rows are
+intentionally stricter than flat rows:
 
 - `asOf`, `disclosureAvailableAt`, or `marketAvailableAt` is the observation date; trade-date `date`
   fields are ignored for PIT rows.
+- row-level `pitValidity.scoreInputsPitSafe=false` or
+  `pitValidity.historicalValidationReady=false` causes the row to be dropped.
 - `dataCutoffAt` must not be after `asOf`.
 - the selected horizon label must exist, and its `entryDate` must be on or after the availability date.
 - when `labels.horizons[]` exists, top-level `forwardReturn` / `return` values are ignored so the
