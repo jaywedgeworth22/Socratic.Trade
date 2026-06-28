@@ -18,6 +18,7 @@ export interface McpOAuthClient {
   clientId: string;
   clientSecret?: string;
   tokenEndpointAuthMethod?: "none" | "client_secret_post";
+  redirectUri?: string;
 }
 
 export interface McpOAuthState {
@@ -229,7 +230,7 @@ async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClie
   }
 
   const existing = getInternalSetting<McpOAuthClient>(CLIENT_SETTING);
-  if (existing) return existing;
+  if (existing && existing.redirectUri === config.redirectUri) return existing;
   if (!config.registrationUrl) {
     throw new Error("ROBINHOOD_MCP_CLIENT_ID or ROBINHOOD_MCP_CLIENT_REGISTRATION_URL is required for MCP OAuth.");
   }
@@ -250,7 +251,8 @@ async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClie
   const client: McpOAuthClient = {
     clientId: String(raw.client_id ?? ""),
     clientSecret: raw.client_secret ? String(raw.client_secret) : undefined,
-    tokenEndpointAuthMethod: raw.token_endpoint_auth_method === "client_secret_post" ? "client_secret_post" : "none"
+    tokenEndpointAuthMethod: raw.token_endpoint_auth_method === "client_secret_post" ? "client_secret_post" : "none",
+    redirectUri: config.redirectUri
   };
   if (!client.clientId) throw new Error("Robinhood MCP OAuth registration did not return a client_id.");
   setInternalSetting(CLIENT_SETTING, client);

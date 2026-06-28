@@ -95,4 +95,53 @@ describe("mcp oauth", () => {
     expect(refreshed.refreshToken).toBe("refresh");
     expect(refreshed.expiresAt).toBeTruthy();
   });
+
+  it("re-registers client dynamically if redirectUri changes", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
+
+    const { buildMcpAuthorizationUrl } = await import("../src/lib/mcp-oauth");
+
+    // Mock global fetch for dynamic client registration
+    let fetchCallCount = 0;
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation(async (url, options) => {
+      if (url === "https://auth.example.test/register") {
+        fetchCallCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            client_id: `dynamic-client-${fetchCallCount}`,
+            client_secret: "secret",
+            token_endpoint_auth_method: "client_secret_post"
+          })
+        };
+      }
+      return originalFetch(url, options);
+    });
+
+    try {
+      // First, register with redirectUri 1
+      vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:3000/callback-1");
+      const url1 = new URL(await buildMcpAuthorizationUrl("user-a"));
+      expect(url1.searchParams.get("client_id")).toBe("dynamic-client-1");
+      expect(url1.searchParams.get("redirect_uri")).toBe("http://localhost:3000/callback-1");
+      expect(fetchCallCount).toBe(1);
+
+      // Now build again with the SAME redirectUri, should reuse the cached client without fetching again
+      const url1Reuse = new URL(await buildMcpAuthorizationUrl("user-a"));
+      expect(url1Reuse.searchParams.get("client_id")).toBe("dynamic-client-1");
+      expect(fetchCallCount).toBe(1);
+
+      // Now change the redirectUri, should trigger a new registration
+      vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:3000/callback-2");
+      const url2 = new URL(await buildMcpAuthorizationUrl("user-a"));
+      expect(url2.searchParams.get("client_id")).toBe("dynamic-client-2");
+      expect(url2.searchParams.get("redirect_uri")).toBe("http://localhost:3000/callback-2");
+      expect(fetchCallCount).toBe(2);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

@@ -4,6 +4,10 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Fix: Robinhood MCP OAuth Dynamic Re-registration on Hostname Change
+Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Robinhood OAuth Dynamic Registration:** fixed a redirection error page on `robinhood.com/oauth/error` ("Uh oh! Something's gone wrong") when reconnecting a Robinhood account in a different workspace preview environment (e.g. `antigravity.jays.services`) than where the client was originally registered (e.g. `trading.jays.services`). Dynamically registered OAuth client configurations now store and enforce the `redirectUri` they were created with. If the requested `redirectUri` differs from the cached registration, `getOrRegisterClient` dynamically registers a new client for the current environment.
+Verify: tsc ✓ · 1446/1446 ✓ · build ✓. See `docs/rollouts/2026-06-28-robinhood-mcp-oauth-dynamic-reregistration.md`.
+
 ## 2026-06-27 — Fix: Alpaca key fallback + FMP premium warnings
 Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Alpaca key resolution:** updated `resolveAlpacaMarketData` to look up credentials in the `connected_accounts` table before falling back to `user_api_keys` / env. This resolves the persistent HTTP 401 unauthorized failures for the user-scoped `alpaca-news` and `alpaca-snapshot` data enrichment providers by using their actual configured broker keys. (2) **FMP warnings:** disabled health logging on optional/premium endpoints (`insider-trading`, `senate-trading`, `price-target-consensus`) returning HTTP 403 on standard tiers, preventing false-positive yellow warning dots on the dashboard connections health status page.
 Verify: tsc ✓ · 1255/1255 ✓ · build ✓. See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
