@@ -5,10 +5,12 @@ each getting analysis and trade proposals tailored to **their own preferences an
 their own API keys**. Test mode stays the default; no live-trading behavior change.
 
 **Current identity model:** middleware derives the request user from a verified
-Cloudflare Access email header or an Auth.js v5 session. The primary operator and
-configured aliases still map to the legacy `local` dataset; other allowed users
-map to isolated hashed user IDs. When auth is not configured locally, development
-falls back to `local`.
+Auth.js v5 Google session. The Cloudflare tunnel may still expose the app, but
+Cloudflare Access email headers are not trusted as app identity. The primary
+operator and configured aliases still map to the legacy `local` dataset; other
+allowed users map to isolated hashed user IDs only when present in
+`ALLOWED_EMAILS`. When auth is not configured locally, development falls back to
+`local`.
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/
@@ -206,18 +208,17 @@ The background scheduler `src/lib/scheduler.ts` iterates over all active users a
 
 ### M6 `[done]` Identity / auth (last)
 
-Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
+Real identity via Auth.js v5 Google sign-in. Key changes:
 
 - **Fail-closed arming signal fixed**: the previous `NODE_ENV === "production"` gate was
   unreliable in the edge runtime (Next.js inlines NODE_ENV at build time — at runtime in
   the live deployment `isProd` was always `false`, causing every request to fail open).
-  Replaced with: `authConfigured = (CF_ACCESS_TRUST_EMAIL_HEADER === "1") || !!AUTH_SECRET`.
-  This is evaluated at request time. The moment either is set, auth is armed.
+  Replaced with: `authConfigured = !!AUTH_SECRET`. This is evaluated at request
+  time. The moment `AUTH_SECRET` is set, auth is armed.
 
 - **Identity sources** (first match wins):
-  1. CF Access `cf-access-authenticated-user-email` header (when `CF_ACCESS_TRUST_EMAIL_HEADER=1`).
-  2. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
-  3. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
+  1. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
+  2. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
 
 - **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, Google provider, JWT strategy),
   `src/lib/auth/session-token.ts` (shared HS256 session encode/decode helper),
@@ -226,11 +227,8 @@ Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
   (Sign in with Google), and `app/logout/route.ts`.
 
 - **Visible session controls**: the dashboard shows the signed-in email when available,
-  exposes a Sign out command, and `/logout` clears Auth.js cookies before routing through
-  Cloudflare Access logout when CF Access is trusted. As of 2026-06-27, `/logout`
-  resolves that Cloudflare Access logout and `returnTo` URL through the public app
-  origin (`x-forwarded-host`, `NEXT_PUBLIC_SITE_URL`, or the production fallback)
-  so production sign-out does not redirect to internal `localhost:4000`.
+  exposes a Sign out command, and `/logout` clears Auth.js cookies before redirecting
+  to the app's public `/login` page. It no longer calls Cloudflare Access logout.
 
 - **Robinhood OAuth redirect/client integrity**: the OAuth callback route is public
   but state-bound, callback completion uses the redirect URI stored at OAuth start,
@@ -239,9 +237,9 @@ Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
   static client id or callback-time localhost default from replacing the public
   production redirect/client during reconnect.
 
-- **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
-  unchanged (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior,
-  Auth.js cookies, CF Access, public Auth.js routes, and protected Robinhood OAuth routes.
+- **Inert until configured**: with no `AUTH_SECRET`/Google creds, behavior is unchanged
+  (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior, Auth.js cookies,
+  ignored Cloudflare Access headers, public Auth.js routes, and protected Robinhood OAuth routes.
 
 Per-user Robinhood account linking (originally noted in M6 scope) is deferred as a follow-up.
 

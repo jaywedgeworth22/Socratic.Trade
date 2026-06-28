@@ -1,7 +1,7 @@
 // Minimal login page — redirects unauthenticated users here when authConfigured=true.
 // When AUTH_GOOGLE_ID/SECRET are set, the "Sign in with Google" button triggers
-// the Auth.js signIn flow. When neither Auth.js nor CF Access is configured, this
-// page is unreachable (middleware falls back to PRIMARY_EMAIL for all requests).
+// the Auth.js signIn flow. When Auth.js is not configured, this page is unreachable
+// (middleware falls back to PRIMARY_EMAIL for all requests).
 
 import { signIn } from "../../src/lib/auth/auth";
 
