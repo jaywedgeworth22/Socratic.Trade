@@ -770,7 +770,7 @@ export async function runStrategyOnce(
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
-  audit("strategy_run", result, userId);
+  audit("strategy_run", result, userId, connectedAccountId);
   // Push a dashboard event so open clients refresh immediately instead of waiting for their
   // next poll (the SSE bus is in-process; no-op when nothing is subscribed).
   emitDashboardEvent({ type: "run-complete", userId, at: new Date().toISOString(), detail: { runId } });
@@ -2238,6 +2238,9 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     newsSent: quote.sentiment,
     insiderSent: quote.insiderSentiment,
     senateNet: quote.senateTrades,
+    congressScore: quote.congressCompositeScore,
+    congressDir: quote.congressCompositeDirection,
+    congressConf: quote.congressCompositeConfidence,
     smartMoney: quote.evidenceBulletins?.slice(0, 3),
     rating: quote.analystRating,
     ratingScore: quote.analystScore,

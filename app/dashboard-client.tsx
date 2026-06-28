@@ -283,6 +283,19 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
   return deriveExecutionState(snapshot.policy, activeConnectedAccountFor(snapshot));
 }
 
+function visibleConnectedAccounts(
+  accounts: ConnectedAccount[] | undefined,
+  hideTestAccount: boolean,
+  activeAccountId?: string
+): ConnectedAccount[] {
+  return (accounts ?? []).filter((account) => {
+    if (!hideTestAccount || account.broker !== "test") return true;
+    // Keep the active Test row visible until the user switches away; hiding the active
+    // selection would make the account state look blank while Test is still in force.
+    return Boolean(activeAccountId && account.id === activeAccountId);
+  });
+}
+
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
 // decides the color + message so a live (Brokerage) session can never be mistaken for a
 // Test sandbox. Display-only — it does not place or gate orders.
@@ -1010,11 +1023,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const dailyStats = snapshot.dailyStats ?? { orderCount: 0, openingOrderCount: 0, notional: 0 };
   const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
   const remainingOrders = Math.max(0, policy.maxDailyOrders - (dailyStats.openingOrderCount ?? dailyStats.orderCount));
-  const enableBlockedReason = !policy.accountNumber
-    ? "Select an account before enabling autonomy."
-    : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
+  const accountReadiness = snapshot.accountReadiness;
+  const accountBlockedReason = accountReadiness
+    ? (accountReadiness.ok ? undefined : accountReadiness.reason ?? accountReadiness.detail)
+    : (!policy.accountNumber ? "Select an account before enabling autonomy." : undefined);
+  const enableBlockedReason = accountBlockedReason ?? (
+    policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
-      : undefined;
+      : undefined
+  );
   // A strategy session is LLM-driven. When NO LLM provider has a resolvable credential for this user
   // (own key OR operator failover; see userHasAnyLlmCredential), "Run once" is gated with an actionable
   // message — matching the /api/strategy/run 412 — rather than firing a run that only errors deep inside.
@@ -1035,6 +1052,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
   const executionState = executionStateFor(snapshot);
   const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
+  const selectorAccounts = visibleConnectedAccounts(snapshot.connectedAccounts, hideTestAccount, activeAccountId);
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
@@ -1061,12 +1079,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
   function routeSetupBlocker(reason: string) {
+    const accountIsBlocked = accountReadiness ? !accountReadiness.ok : (!policy.accountNumber && !policy.connectedAccountId);
     toast.warning(reason, {
-      description: !policy.accountNumber && !policy.connectedAccountId
+      description: accountIsBlocked
         ? "Open Accounts to connect or select a supported account."
         : "Open Settings to choose a tradable universe."
     });
-    if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
+    if (accountIsBlocked) setAccountsOpen(true);
     else openSettings("operate");
   }
 
@@ -1091,7 +1110,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
-  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === executionState.accountNumber);
   const riskCapsReady =
     (policy.maxDailyNotional ?? 0) > 0 &&
     (policy.maxOrderNotional ?? 0) > 0 &&
@@ -1099,8 +1117,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const readinessItems: ReadinessItem[] = [
     {
       label: "Account",
-      ok: Boolean(policy.accountNumber),
-      detail: policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected.",
+      ok: accountReadiness?.ok ?? Boolean(policy.accountNumber),
+      detail: accountReadiness?.detail ?? (policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected."),
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
     },
@@ -1195,13 +1213,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           {/* Sub-container 1: Selects and Utility tools */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
-              className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
+              className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-2 py-0.5 backdrop-blur-xl md:flex lg:h-9 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
-              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode:</span>
+              <span className="text-xs font-medium text-muted lg:text-sm">Mode:</span>
               <select
                 aria-label="Approval mode"
-                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
+                className="min-w-[9.5rem] bg-transparent text-xs font-medium text-fg outline-none lg:min-w-[11rem] lg:text-sm"
                 value={policy.strategyAuthority}
                 onChange={(e) => {
                   const next = e.target.value as TradingPolicy["strategyAuthority"];
@@ -1219,7 +1237,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
-                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
+                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:h-9 lg:max-w-[14rem] lg:px-2.5 lg:text-sm"
                 value={activeAccountId}
                 onChange={async (e) => {
                   const id = e.target.value;
@@ -1232,7 +1250,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               >
                 <option value="" disabled>Select Account...</option>
                 {(() => {
-                  const accts = (snapshot.connectedAccounts ?? []).filter(acc => acc.id === activeAccountId || !hideTestAccount || acc.broker !== "test");
+                  const accts = selectorAccounts;
                   // Append the environment only when two accounts would otherwise render the same option
                   // text — disambiguating identical labels (e.g. two "Alpaca") so a live account is never
                   // mistaken for paper in this real-money switcher, while distinct labels stay uncluttered.
@@ -1244,7 +1262,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                     return <option key={acc.id} value={acc.id}>{ambiguous ? `${acc.label} (${acc.environment})` : acc.label}</option>;
                   });
                 })()}
-                <option value="manage">Manage Accounts...</option>
+                <option value="manage" className="italic">Manage Accounts...</option>
               </select>
             </div>
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
@@ -1473,7 +1491,26 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        title="Settings"
+        icon={<SettingsIcon size={18} />}
+        size="lg"
+        headerAction={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSettingsOpen(false);
+              setAccountsOpen(true);
+            }}
+          >
+            <Wallet size={14} />
+            Manage Accounts
+          </Button>
+        }
+      >
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -5326,6 +5363,9 @@ function IntegrationsSection({
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
 
+  const robinhoodAuthIssue = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) =>
+    acc.broker === "robinhood" && Boolean(mcpHealth && (!mcpHealth.configured || !mcpHealth.authenticated || !mcpHealth.ok));
+
   const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
     if (acc.broker === "test") {
       return {
@@ -5337,7 +5377,7 @@ function IntegrationsSection({
     if (acc.broker === "robinhood") {
       return {
         title: acc.label || "Agentic Robinhood",
-        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}`,
+        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}${robinhoodAuthIssue(acc) ? " · OAuth not connected" : ""}`,
         showBadges: true
       };
     }
@@ -5621,6 +5661,7 @@ function IntegrationsSection({
   // The app's active account: prefer the explicitly-selected one, else the flagged-active row (mirrors
   // activeConnectedAccountFor). Used to mark which row is ACTIVE vs merely Connected.
   const activeId = policy.connectedAccountId ?? accounts?.find((a) => a.isActive)?.id;
+  const visibleAccounts = visibleConnectedAccounts(accounts, hideTestAccount, activeId);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5640,15 +5681,16 @@ function IntegrationsSection({
         </div>
       </div>
 
-      {!accounts?.length ? (
+      {!visibleAccounts.length ? (
         <div className="rounded-lg border border-line border-dashed p-6 text-center text-sm text-faint">
           No connected accounts yet. Use the buttons above to connect any supported account when you want broker-backed execution; Paper accounts are optional.
         </div>
       ) : (
         <div className="space-y-2">
-          {accounts.map(acc => {
+          {visibleAccounts.map(acc => {
             const info = formatAccountInfo(acc);
             const isActive = acc.id === activeId;
+            const needsRobinhoodReconnect = robinhoodAuthIssue(acc);
             return (
               <div
                 key={acc.id}
@@ -5660,7 +5702,12 @@ function IntegrationsSection({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-fg">{info.title}</span>
-                    {info.showBadges && (isActive ? (
+                    {info.showBadges && needsRobinhoodReconnect && (
+                      <span className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                        OAuth Needed
+                      </span>
+                    )}
+                    {info.showBadges && !needsRobinhoodReconnect && (isActive ? (
                       <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
                         Active
                       </span>
@@ -5669,6 +5716,11 @@ function IntegrationsSection({
                         Connected
                       </span>
                     ))}
+                    {info.showBadges && needsRobinhoodReconnect && isActive && (
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                        Active
+                      </span>
+                    )}
                     {info.showBadges && isActive && policy?.strategyAuthority === "decide" && (
                       <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
                         Autonomous
@@ -5677,6 +5729,11 @@ function IntegrationsSection({
                   </div>
                   <div className="mt-1 text-xs text-faint">
                     {info.subtitle}
+                    {needsRobinhoodReconnect && (
+                      <span className="block pt-1 text-amber-300">
+                        Robinhood needs to be reconnected.
+                      </span>
+                    )}
                     {acc.capabilities && (
                       <span className="ml-2">
                         {acc.capabilities.accountType !== "brokerage" && (
@@ -5706,7 +5763,11 @@ function IntegrationsSection({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1 sm:justify-end">
-                  {!isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
+                  {needsRobinhoodReconnect ? (
+                    <Button variant="primary" size="sm" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }} disabled={busy}>Reconnect</Button>
+                  ) : (
+                    !isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => openAccountEditor(acc)} disabled={busy}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>
@@ -5717,7 +5778,7 @@ function IntegrationsSection({
       )}
       {accounts?.some((a) => a.broker === "test") && (
         <label className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-xs text-faint">
-          <span>Hide the Test account from the account selector</span>
+          <span>Hide the Test account from Accounts and the account selector</span>
           <Switch checked={hideTestAccount} onChange={setHideTestAccount} label="Hide Test account" />
         </label>
       )}

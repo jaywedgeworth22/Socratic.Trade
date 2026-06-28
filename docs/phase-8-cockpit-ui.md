@@ -95,6 +95,11 @@ Route/global error screens show the actual error message when available, and an
 app-level browser listener surfaces uncaught runtime errors and unhandled promise
 rejections as bottom-right error toasts.
 
+As of 2026-06-27, recoverable broker/data fallbacks that would otherwise only
+hit `console.warn` write throttled `recoverable_issue` audit rows and render in
+Activity. This keeps resilience for transient broker/provider misses while
+leaving a visible trail for later correction.
+
 ## Accessibility
 
 - All dialogs render through a single reusable `Modal` component. It provides
@@ -146,6 +151,17 @@ across panels, feeds, popovers, or status chips.
   Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Accounts distinguishes a stored Robinhood account row from an
+  authenticated Robinhood MCP session. If `/api/broker/mcp/health` reports
+  configured-but-unauthenticated, the Robinhood row shows `OAuth Needed` plus a
+  Reconnect action instead of a plain `Connected` badge. As of 2026-06-27, the
+  row warning copy is intentionally concise: `Robinhood needs to be reconnected.`
+- The top readiness strip must use the server-provided selected-account
+  readiness result, not only `policy.accountNumber`. A stored/backfilled account
+  row may stay visible for management, but Account is not ready if broker
+  OAuth is needed, selected-account enumeration fails, the selected
+  account is absent from live broker results, the broker marks it non-agentic,
+  or portfolio/balance data cannot be read.
 - Standalone ticker text should use the shared clickable ticker treatment so
   hover/click styling and symbol drilldown are consistent in Market Scan,
   Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.
@@ -195,7 +211,14 @@ across panels, feeds, popovers, or status chips.
   UI iteration should replace it with an in-app modal that shows the same fields.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
-  incomplete account list does not strand the user away from Settings.
+  incomplete account list does not strand the user away from Settings. The
+  Settings modal also keeps a `Manage Accounts` header action beside the close
+  button, and command-bar Mode/Account selectors should use matching typography
+  without truncating `Autonomous Mode`.
+- The Hide Test account preference filters inactive Test rows from both
+  Settings -> Accounts and the command-bar selector; if Test is still active, it
+  stays visible until the user switches away so the current execution mode is not
+  hidden.
 - Account rows should remain readable on narrow screens: stack account details
   above actions, make inactive `Use` the primary action, keep Edit/Remove as
   secondary actions, and visually anchor the active account with a subtle left

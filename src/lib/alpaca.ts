@@ -123,16 +123,29 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : undefined;
     this.isMcp = activeAccount?.broker === "alpaca-mcp";
     this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
-    // A connected-account key (per-user account data) wins; otherwise the per-user key store.
+    // A connected-account key (per-user account data) wins. If an Alpaca account is explicitly
+    // selected, never fall back to generic/operator Alpaca keys: those can belong to a different
+    // account and surface as a misleading "Account Mismatch" instead of the real credential problem.
     // SECURITY: route through resolveApiKey so the env fallback is operator-only (alpaca keys are
     // a per-user-only tier). A non-`local` user with no stored key gets "" → broker construction
     // fails loudly instead of silently trading on the operator's Alpaca account via process.env.
-    const keyId = accountKeys?.apiKey || resolveApiKey("alpaca_paper_api_key", userId) || "";
-    const secretKey = accountKeys?.apiSecret || resolveApiKey("alpaca_paper_secret_key", userId) || "";
-    
+    const keyId = accountKeys?.apiKey?.trim() || (!accountKeys ? resolveApiKey("alpaca_paper_api_key", userId) || "" : "");
+    const secretKey = accountKeys?.apiSecret?.trim() || (!accountKeys ? resolveApiKey("alpaca_paper_secret_key", userId) || "" : "");
+
     let baseUrl = accountKeys?.baseUrl?.trim();
     if (this.isMcp) {
       this.mcpUrl = baseUrl || undefined;
+    }
+
+    if (accountKeys && !this.isMcp && !keyId) {
+      throw new Error(
+        `Alpaca credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the API key.`
+      );
+    }
+    if (accountKeys && this.isMcp && !this.mcpUrl && !keyId) {
+      throw new Error(
+        `Alpaca MCP credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the MCP endpoint or API key.`
+      );
     }
 
     if (baseUrl && !this.isMcp) {

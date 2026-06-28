@@ -44,6 +44,7 @@ const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
   "/api/auth/error",
   "/api/auth/providers",
+  "/api/auth/robinhood/callback",
   "/api/auth/session",
   "/api/auth/signin",
   "/api/auth/signout"

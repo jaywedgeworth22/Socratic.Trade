@@ -11,6 +11,143 @@ Verify: tsc ✓ · 1446/1446 ✓ · build ✓. See `docs/rollouts/2026-06-28-rob
 ## 2026-06-27 — Fix: Alpaca key fallback + FMP premium warnings
 Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Alpaca key resolution:** updated `resolveAlpacaMarketData` to look up credentials in the `connected_accounts` table before falling back to `user_api_keys` / env. This resolves the persistent HTTP 401 unauthorized failures for the user-scoped `alpaca-news` and `alpaca-snapshot` data enrichment providers by using their actual configured broker keys. (2) **FMP warnings:** disabled health logging on optional/premium endpoints (`insider-trading`, `senate-trading`, `price-target-consensus`) returning HTTP 403 on standard tiers, preventing false-positive yellow warning dots on the dashboard connections health status page.
 Verify: tsc ✓ · 1255/1255 ✓ · build ✓. See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
+## 2026-06-27 — Congress.Trade PIT readiness markers fail closed
+Branch `codex/congress-pit-readiness-gate`. Follow-up to App A PR #96: the App B
+Congress score evaluator now honors App A response-level `validationReadiness`
+and row-level `pitValidity`. Export envelopes with
+`validationReadiness.historicalValidationReady=false` refuse evaluation with exit
+`2`; PIT rows marked unsafe/not-ready are dropped before metrics. This preserves
+the distinction between PIT-safe score inputs and full historical-validation
+readiness, so reconstructed/history-seeded exports cannot accidentally become
+validation truth. See
+`docs/rollouts/2026-06-27-congress-pit-readiness-gate.md`.
+
+## 2026-06-27 — Congress.Trade composite score + PIT evaluation harness
+Branch `codex/congress-score-eval-clean`. Added a direction-aware, confidence-capped
+Congress.Trade research composite and a strict PIT export evaluator. BUY composites
+can promote below-cutoff names only when score, confidence, and supporting
+breadth/flow/cluster/skill evidence are strong; weak/proxy-only analytics remain
+advisory evidence. Export parsing now anchors PIT rows to disclosure availability,
+uses selected nested horizon labels, rejects ambiguous unsigned rows, rejects future
+member-skill vintages, accepts explicit excess-return rows as benchmark-covered, and
+uses only explicit pre-Congress baselines for marginal IC. Local DB has no usable
+historical Congress-composite snapshots yet, so real historical validation is blocked
+on an App A PIT export. Verified focused Congress tests (121), synthetic passing and
+failing PIT fixtures, `npm run lint` (0 errors / 225 existing warnings), `npx tsc --noEmit`,
+full `npm test` (1,484), and `npm run build`. See
+`docs/rollouts/2026-06-27-congress-score-evaluation.md`.
+
+## 2026-06-27 — Account UI polish + production logout/OAuth reconnect hardening
+Branch `codex/account-ui-logout-oauth`. Follow-up to the Robinhood OAuth/readiness
+work: Settings -> Accounts now shows the concise reconnect line
+`Robinhood needs to be reconnected.` instead of leaking low-level MCP token
+details, Settings has a header `Manage Accounts` action beside the close button,
+the command-bar `Manage Accounts...` account option is italicized, and the Mode
+and Account selectors share desktop sizing/typography so `Autonomous Mode` is
+not truncated. `/logout` now builds the Cloudflare Access logout URL from the
+public app origin instead of internal `localhost:4000`, and Robinhood OAuth
+callback completion reuses the stored public redirect/client instead of
+re-registering a localhost callback client. When dynamic client registration is
+configured, it takes precedence over any stale static client id. Verified
+focused OAuth/logout regressions, `npx tsc --noEmit`, full `npm test`
+(1467/1467), `npm run build`, and `npm run lint` (0 errors / 214 existing
+warnings). See
+`docs/rollouts/2026-06-27-account-ui-logout-oauth.md`.
+
+## 2026-06-27 — Robinhood OAuth production callback host fix
+Branch `codex/robinhood-oauth-callback-host`. The reported Robinhood OAuth
+return to `http://localhost:4000/api/auth/robinhood/callback?...` was caused by
+two production-hosting gaps: OAuth start trusted a loopback
+`ROBINHOOD_MCP_REDIRECT_URI`, and the app middleware treated
+`/api/auth/robinhood/callback` as protected, so the provider could land on a
+plain `Unauthorized` response before the callback handler ran. Fix: OAuth start
+now replaces loopback callback config with the forwarded/public app origin,
+callback is public in middleware while forged identity headers are stripped,
+callback completion still cross-checks a verified app user when present and
+otherwise binds by the one-time server-side state row, and success redirects
+back to the public site origin. Dynamic OAuth client registration now
+re-registers when the callback redirect changes, so an old localhost-registered
+client is not reused for the public callback. `.env.example` and README now say
+to leave `ROBINHOOD_MCP_REDIRECT_URI` blank in hosted environments. Verified focused
+OAuth/middleware tests, `npx tsc --noEmit`, full `npm test` (1457/1457),
+`npm run build`, and `npm run lint` (0 errors / 218 existing warnings). See
+`docs/rollouts/2026-06-27-robinhood-oauth-callback-host.md`.
+
+## 2026-06-27 — Account readiness now gates on broker health, OAuth, and balance reads
+Branch `codex/readiness-oauth-needed`. The dashboard readiness strip and
+Start/Run blockers no longer treat `policy.accountNumber` alone as an Account
+green check. `/api/dashboard` now returns a shared `accountReadiness` result
+derived from the selected connected account, live broker account enumeration,
+Robinhood MCP OAuth health, broker agentic-allowed flags, and portfolio/balance
+read success. Stored/backfilled account rows can still remain visible for
+management, but they do not make the account ready if Robinhood OAuth is needed,
+Alpaca credentials fail, the selected account is missing from broker results,
+the broker marks it non-agentic, or portfolio data cannot be read. The strategy
+enable API now returns a clear 400 if broker account enumeration fails. Verified
+focused readiness tests, `npx tsc --noEmit`, full `npm test` (1463/1463),
+`npm run build`, and `npm run lint` (0 errors / 214 existing warnings). See
+`docs/rollouts/2026-06-27-account-readiness-broker-health.md`.
+
+## 2026-06-27 — Robinhood balance visibility + recoverable-fallback audit trail
+Branch `codex/robinhood-balance-failover-audit`. Investigated production via
+local authenticated `GET /api/dashboard` and `/api/broker/mcp/health`: the active
+execution account was Alpaca Roth IRA, while the stored Robinhood Agentic row was
+not MCP-authenticated (`No Robinhood MCP access token...`), so Robinhood balances
+could not refresh even though the row appeared connected. Fix: Settings ->
+Accounts now marks unauthenticated Robinhood rows as `OAuth Needed` with a
+Reconnect action instead of a plain `Connected` badge. Robinhood portfolio
+parsing now accepts cash-only/nested buying-power payloads so a $100 cash account
+does not show zero if Robinhood omits old total/cash field names. Broker
+dashboard fallbacks, selected-account backfills, and Robinhood quote/average-cost
+fallbacks now write throttled `recoverable_issue` audit events that render in
+Activity. Vitest now caps workers at 4 and uses a 20s global timeout to match
+the repo's loaded-runner behavior; the previous uncapped/5s default produced
+unrelated cold-import failures in full-suite runs. Focused tests and
+`npx tsc --noEmit` are green; full `npm test` (1451/1451), `npm run build`, and
+`npm run lint` (0 errors / 218 warnings) are green. See
+`docs/rollouts/2026-06-27-robinhood-balance-failover-audit.md`.
+
+## 2026-06-27 — ESLint configured + wired into required `verify` CI gate
+Branch `cursor/configure-eslint-f266`. Added `eslint.config.mjs` (flat config
+extending `eslint-config-next` core-web-vitals + typescript), changed the `lint`
+script to `eslint .`, pinned `eslint` to `^9` (ESLint 10 is incompatible with
+`eslint-config-next@16`'s bundled `eslint-plugin-react`, which calls the removed
+`context.getFilename()`), and added `npm run lint` to `.github/workflows/ci.yml`'s
+`verify` job. Baseline: 0 errors / 218 warnings — a pre-existing backlog
+(`@typescript-eslint/no-explicit-any` ×94, `react-hooks/set-state-in-effect` ×20,
+plus a few small rules) is pinned to "warn" so the gate is green today while
+still surfacing the debt; all other Next/TS error-level rules stay on to block
+new regressions. No app code changed. Verified the full CI sequence locally:
+`npm ci` → `npm run lint` (0 errors) → `npx tsc --noEmit` → `npm test` (1444
+passing) → `npm run build`, all green. See
+`docs/rollouts/2026-06-27-configure-eslint.md`.
+
+## 2026-06-27 — Account selector hide-Test + scoped Latest Decisions fix
+Branch `codex/account-mismatch-selector`. Hidden Test accounts are now filtered
+consistently from both the command-bar account selector and Settings -> Accounts
+while keeping Test visible if it is still the active execution account. Strategy
+run audit rows are now written and read with `connectedAccountId`, so Latest
+Decisions and Strategy Tuning no longer show a stale Account Mismatch from a
+different account after switching to the Roth IRA/Alpaca account. Selected Alpaca
+connected accounts no longer fall back to generic/operator paper keys when their
+stored credentials are missing or unreadable; they fail with an actionable
+credential message instead of a misleading cross-account mismatch. Verified
+focused regressions, TypeScript, full tests (first full run hit a timing timeout
+in `correlation-cluster-gate`, that file passed alone, then the full suite
+passed), and production build; see
+`docs/rollouts/2026-06-27-account-mismatch-selector.md`.
+
+## 2026-06-27 — Cursor Cloud dev-env verification + browser `localhost` note
+Branch `cursor/setup-dev-environment-f266`. Set up and verified the dev
+environment on a fresh Cursor Cloud VM: `npm install` (811 pkgs, clean),
+`npx tsc --noEmit` (clean), `npm test` (1444 passing), `npm run build` (clean),
+and `npm run dev` serving on port 3000. Confirmed core functionality end-to-end —
+`GET /api/scan` returns 501 live S&P 500 quotes (Yahoo + NASDAQ + FINRA +
+Congress, no API keys), and the dashboard + Market Scan render in-browser.
+Only doc change: AGENTS.md now notes to open the dev server via
+`http://localhost:3000` (not `127.0.0.1`) so Next 16 doesn't block cross-origin
+HMR. No app code changed. See
+`docs/rollouts/2026-06-27-cursor-cloud-dev-env.md`.
 
 ## 2026-06-27 — Chat Assistant Enrichment & O-Series Model Pricing
 Branch `agent/antigravity` (`resolve-prod-merge-prs`). Added `get_fundamentals` and `get_market_signals` tools to the chat assistant tool registry, enabling the LLM to access company metrics (P/E ratio, analyst ratings, target prices, etc.) and market-wide gainers/losers/breadth. Added token pricing definitions for OpenAI `o1`, `o1-mini`, `o1-preview`, and `o3-mini` models in `llm-usage.ts`. All 1,440 unit tests passing clean.

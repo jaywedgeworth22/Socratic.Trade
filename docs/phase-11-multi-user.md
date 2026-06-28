@@ -18,13 +18,11 @@ falls back to `local`.
   shared fallback.
 - `connected_accounts` account storage for the default `local` user.
   Connected account credentials are encrypted at rest, omitted from dashboard
-  snapshots,  decrypted only for backend active-account use, and preserved when
-  editing account metadata with blank key fields. Alpaca resolves credentials
-  from the connected accounts (preferring active status, then live environment,
-  falling back to the first available connected Alpaca account) before falling back
-  to legacy per-user/env keys. This fixes the HTTP 401 connection warnings for
-  market data providers like `alpaca-news` and `alpaca-snapshot` when broker keys
-  are updated. Robinhood is connected through the MCP OAuth/status flow rather than manual API
+  snapshots, decrypted only for backend active-account use, and preserved when
+  editing account metadata with blank key fields. Alpaca now resolves credentials
+  from the active connected account and does not fall back to generic paper/env
+  keys for a selected connected account with missing or unreadable credentials.
+  Robinhood is connected through the MCP OAuth/status flow rather than manual API
   key fields, and users may connect one or more supported account types from
   Accounts. Paper accounts are optional; users do not need to connect one unless
   they want broker-hosted sandbox execution.
@@ -34,11 +32,28 @@ falls back to `local`.
   so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
   labels can distinguish Test from broker-hosted paper environments such as
   Alpaca Paper, and Brokerage from live broker production accounts.
+- Strategy-run audit lookups for Latest Decisions and Strategy Tuning are scoped
+  by `connectedAccountId`, matching the per-account run lock/state model so a
+  stale failure from one account does not appear under another selected account.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
   responses, unwraps Robinhood's `data` envelope, and exposes
-  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
+  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics. As of
+  2026-06-27, Settings -> Accounts uses that health result to label stored
+  Robinhood rows without a usable token as `OAuth Needed` with Reconnect instead
+  of implying the account is fully connected. Robinhood OAuth start remains
+  authenticated, but the provider callback is public, strips forged identity
+  hints in middleware, and completes only against the one-time server-side OAuth
+  state row. Hosted callback URLs are derived from forwarded/public site origin
+  when the configured redirect is loopback, preventing production from sending
+  Robinhood back to `localhost`.
+- Dashboard snapshots now include `accountReadiness`, a server-derived status for
+  the selected execution account. It keeps stored/backfilled connected-account
+  rows visible for management while failing closed for actual execution readiness
+  when OAuth/auth, broker account enumeration, selected-account availability,
+  broker `agenticAllowed`, or portfolio/balance reads fail. This applies to
+  Robinhood and Alpaca paths.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,
@@ -98,7 +113,9 @@ Accounts continues to own brokerage-account credentials. Settings -> Accounts
 presents Robinhood through the same supported-account button
 row as Alpaca. The client still checks `GET /api/broker/mcp/health` silently so
 the Robinhood button can sync an authenticated MCP session or start OAuth, but it
-does not render a separate disconnected MCP status panel. Mutable
+does not render a separate disconnected MCP status panel. Stored Robinhood rows
+now show `OAuth Needed` when the MCP token is absent/invalid, so stored metadata
+cannot masquerade as a live balance/order connection. Mutable
 account/key/order/policy route handlers touched by this flow are marked
 `dynamic = "force-dynamic"` so production builds do not attempt static page-data
 collection for request-bound operations.
@@ -208,7 +225,17 @@ Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
 
 - **Visible session controls**: the dashboard shows the signed-in email when available,
   exposes a Sign out command, and `/logout` clears Auth.js cookies before routing through
-  Cloudflare Access logout when CF Access is trusted.
+  Cloudflare Access logout when CF Access is trusted. As of 2026-06-27, `/logout`
+  resolves that Cloudflare Access logout and `returnTo` URL through the public app
+  origin (`x-forwarded-host`, `NEXT_PUBLIC_SITE_URL`, or the production fallback)
+  so production sign-out does not redirect to internal `localhost:4000`.
+
+- **Robinhood OAuth redirect/client integrity**: the OAuth callback route is public
+  but state-bound, callback completion uses the redirect URI stored at OAuth start,
+  and dynamic client registration takes precedence when
+  `ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` is configured. This prevents a stale
+  static client id or callback-time localhost default from replacing the public
+  production redirect/client during reconnect.
 
 - **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
   unchanged (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior,

@@ -60,11 +60,14 @@ export interface CongressAnalytics {
   cluster?: boolean; // appears in App A's cluster-buys (many members → same ticker)
   clusterMemberCount?: number;
   topMemberScore?: number; // 0–100 best member-quality among the ticker's cluster members
+  topMemberScoreSource?: "realized_skill" | "activity_prominence";
   /** App A composite conviction score 0–100; null = too thin (< 3 resolved-side trades). */
   convictionScore?: number | null;
   /** Direction the conviction score points: "BUY" or "SELL". null = no directional signal. */
   convictionDirection?: "BUY" | "SELL" | null;
-  /** Trades flagged as potential committee conflict of interest in the analytics window. */
+  /** True when App A's conviction score used proxy/fallback inputs due sparse realized-skill coverage. */
+  convictionFallback?: boolean;
+  /** Committee-sector overlap flags in the analytics window. Context only; not a legal conclusion. */
   conflictCount?: number;
 }
 

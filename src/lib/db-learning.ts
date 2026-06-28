@@ -5,28 +5,38 @@ import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPending
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
 
-export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string }> {
   const rows = getDb()
-    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
-    .all(userId, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+    .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit) as Array<{ id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string }>;
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.created_at,
     kind: row.kind,
-    payload: JSON.parse(row.payload)
+    payload: JSON.parse(row.payload),
+    connectedAccountId: row.connected_account_id ?? undefined
   }));
 }
 
-export function latestAuditByKind(kind: string, userId: string = "local"): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
-  const row = getDb()
-    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
-    .get(kind, userId) as { id: string; created_at: string; kind: string; payload: string } | undefined;
+export function latestAuditByKind(
+  kind: string,
+  userId: string = "local",
+  connectedAccountId?: string
+): { id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string } | undefined {
+  const row = (connectedAccountId
+    ? getDb()
+      .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? AND connected_account_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId, connectedAccountId)
+    : getDb()
+      .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId)) as { id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string } | undefined;
   if (!row) return undefined;
   return {
     id: row.id,
     createdAt: row.created_at,
     kind: row.kind,
-    payload: JSON.parse(row.payload)
+    payload: JSON.parse(row.payload),
+    connectedAccountId: row.connected_account_id ?? undefined
   };
 }
 

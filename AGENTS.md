@@ -43,13 +43,25 @@ Before every commit/push to the GitHub repo, you MUST update the following:
 
 ## Verify before claiming done
 
-Run all three, in this order, before saying a change is complete:
+Run all four, in this order, before saying a change is complete:
 
 ```bash
+npm run lint       # eslint (flat config); REQUIRED `verify` CI step — fails on errors only
 npx tsc --noEmit   # type errors — fast, do this first
 npm test           # vitest, ~723 tests across 81 files as of 2026-06-21
 npm run build      # full Next.js build; also re-checks types
 ```
+
+`npm run lint` runs `eslint .` against `eslint.config.mjs` (flat config). It is
+pinned to **ESLint 9**, not 10: `eslint-config-next@16` bundles
+`eslint-plugin-react@7.x`, which calls `context.getFilename()` — an API ESLint 10
+removed, so ESLint 10 throws `getFilename is not a function` at load. Keep
+`eslint` on `^9` until a Next/react-plugin release supports ESLint 10. ESLint
+exits non-zero only on **errors**, not warnings; a large grandfathered backlog
+(`@typescript-eslint/no-explicit-any`, `react-hooks/set-state-in-effect`, etc.)
+is intentionally pinned to "warn" in `eslint.config.mjs` so the gate is green
+today while still surfacing the debt — promote those to "error" as you burn them
+down.
 
 `npm run build` deletes and regenerates `.next/`. If a dev server is running
 (via Claude Code's preview tool or otherwise), it will start erroring with
@@ -310,16 +322,25 @@ local multi-worktree/PM2 setup and does NOT apply here.
 - The Cloud VM is a single `/workspace` checkout. There are no per-agent
  worktrees, no PM2 processes, and no ports 4100/4101/4102/4000 — ignore that
  entire worktree/PM2 table for cloud work.
-- Run the dev server with `npm run dev` (Next.js on `http://127.0.0.1:3000`).
- Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
- port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
- dev` after a build.
+- Run the dev server with `npm run dev` (Next.js on port `3000`).
+  Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
+  port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
+  dev` after a build.
+- When opening the dev server in a browser, use `http://localhost:3000`, NOT
+  `http://127.0.0.1:3000`. Next 16 blocks cross-origin dev resources (the
+  `/_next/webpack-hmr` socket) from the `127.0.0.1` origin by default, so HMR /
+  live-reload breaks and the console logs a "Blocked cross-origin request"
+  warning. The page still server-renders either way; `localhost` just avoids the
+  block without needing an `allowedDevOrigins` code change. `curl`/API checks
+  against `127.0.0.1:3000` are unaffected.
 - Standard verification commands live in `README.md`/the "Verify before claiming
- done" section: `npx tsc --noEmit`, `npm test` (vitest), `npm run build`. All
- pass clean in this environment.
-- `next lint` is NOT configured (no eslint config is committed); it drops into
- an interactive setup prompt, so it is not part of verification. Use the
- tsc/test/build trio instead.
+ done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
+ build`. All pass clean in this environment.
+- `npm run lint` is now configured (`eslint.config.mjs`, flat config extending
+ `eslint-config-next`) and is a REQUIRED step in the `verify` CI gate. It is
+ pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s
+ bundled react plugin — see the "Verify before claiming done" section). It fails
+ only on errors; an existing backlog is grandfathered to "warn".
 - No secrets or API keys are required to run the app. It defaults to **Test
  mode** (a local SQLite simulator at `data/app.db`) and the Market Scan pulls
  live Yahoo Finance quotes with no key. `DATABASE_URL` defaults to

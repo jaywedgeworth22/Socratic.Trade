@@ -591,14 +591,19 @@ export function getSignalEfficacy(
   // now records the full scored set (chosen + skipped); only CHOSEN entries can have a
   // matching closed lot, so skip the rest (older snapshots predate the flag → undefined,
   // which we keep, preserving the chosen-only behavior they had).
-  const signalByKey = new Map<string, { congressNet?: number; insiderSentiment?: number }>();
+  const signalByKey = new Map<string, { congressNet?: number; congressCompositeScore?: number; congressCompositeDirection?: string; insiderSentiment?: number }>();
   for (const event of listAudit(500, userId)) {
     if (event.kind !== "signal_snapshot") continue;
-    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; congressNet?: number; insiderSentiment?: number }> };
+    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; congressNet?: number; congressCompositeScore?: number; congressCompositeDirection?: string; insiderSentiment?: number }> };
     if (!payload?.runId || !Array.isArray(payload.signals)) continue;
     for (const s of payload.signals) {
       if (!s.symbol || s.chosen === false) continue;
-      signalByKey.set(`${payload.runId}|${normalizeSymbol(s.symbol)}`, { congressNet: s.congressNet, insiderSentiment: s.insiderSentiment });
+      signalByKey.set(`${payload.runId}|${normalizeSymbol(s.symbol)}`, {
+        congressNet: s.congressNet,
+        congressCompositeScore: s.congressCompositeScore,
+        congressCompositeDirection: s.congressCompositeDirection,
+        insiderSentiment: s.insiderSentiment
+      });
     }
   }
 
@@ -617,6 +622,13 @@ export function getSignalEfficacy(
     const sig = lot.entryRunId && lot.symbol ? signalByKey.get(`${lot.entryRunId}|${normalizeSymbol(lot.symbol)}`) : undefined;
     if (!sig) continue;
     if (typeof sig.congressNet === "number" && sig.congressNet > 0) bump("Congressional buying tailwind", lot);
+    if (
+      sig.congressCompositeDirection === "BUY" &&
+      typeof sig.congressCompositeScore === "number" &&
+      sig.congressCompositeScore >= 60
+    ) {
+      bump("Congress.Trade BUY signal at entry", lot);
+    }
     if (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) bump("Insider buying tailwind", lot);
   }
 

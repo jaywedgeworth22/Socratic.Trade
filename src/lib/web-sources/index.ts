@@ -50,6 +50,7 @@ import {
   isCongressAnalyticsRefreshDue,
   refreshCongressAnalytics
 } from "./congress-analytics";
+import { scoreCongressSignal } from "../congress-score";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -196,6 +197,13 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
   for (const [symbol, a] of Object.entries(analytics)) {
     const entry = (out[symbol] ??= { bulletins: [] });
     entry.congressAnalytics = a;
+    const composite = scoreCongressSignal({ congress: entry.congress, congressAnalytics: a }, now);
+    if (composite.score > 0) {
+      const capped = a.convictionScore != null && composite.score < a.convictionScore ? ", confidence-capped" : "";
+      entry.bulletins.push(
+        `Congress.Trade advisory composite: ${composite.direction} ${composite.score}/100, coverage ${Math.round(composite.confidence * 100)}%${capped}`
+      );
+    }
     if (a.cluster) {
       entry.bulletins.push(
         `Congress cluster buy${a.clusterMemberCount ? ` (${a.clusterMemberCount} members)` : ""}` +
@@ -203,10 +211,12 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
       );
     }
     if (a.convictionScore !== null && a.convictionScore !== undefined && a.convictionDirection) {
-      entry.bulletins.push(`Congress conviction: ${a.convictionDirection} score ${a.convictionScore}/100`);
+      entry.bulletins.push(
+        `Congress.Trade conviction input/pre-cap: ${a.convictionDirection} ${a.convictionScore}/100${a.convictionFallback ? " (proxy inputs)" : ""}`
+      );
     }
     if ((a.conflictCount ?? 0) > 0) {
-      entry.bulletins.push(`Congress conflict: ${a.conflictCount} conflicted trade${a.conflictCount === 1 ? "" : "s"}`);
+      entry.bulletins.push(`Congress committee-sector overlap context: ${a.conflictCount} disclosure${a.conflictCount === 1 ? "" : "s"}, legalConclusion:false`);
     }
   }
   const insider = insiderEnabled() ? getInsiderSignals(symbols, now) : {};

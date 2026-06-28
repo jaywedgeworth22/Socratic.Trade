@@ -220,4 +220,18 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     const res = await middleware(req);
     expect(res.status).toBe(401);
   });
+
+  it("Robinhood OAuth callback is public but strips forged identity hints", async () => {
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/auth/robinhood/callback?code=abc&state=xyz", {
+      "x-authenticated-user-email": "attacker@evil.example",
+      "x-user-id": "attacker-id"
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
+    expect(res.headers.get("x-middleware-request-x-user-id")).toBeNull();
+  });
 });

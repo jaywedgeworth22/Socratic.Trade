@@ -1,7 +1,11 @@
 import { deleteInternalSetting, findInternalSettingByKeyLike, getDb, getInternalSetting, setInternalSetting } from "./db";
+import { isLoopbackUrl, resolvePublicAppOrigin } from "./public-origin";
+export { resolvePublicAppOrigin } from "./public-origin";
 
 // CLIENT registration is global (one OAuth app client shared across users).
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
+export const ROBINHOOD_MCP_CALLBACK_PATH = "/api/auth/robinhood/callback";
+const LOCAL_DEFAULT_REDIRECT_URI = `http://localhost:3000${ROBINHOOD_MCP_CALLBACK_PATH}`;
 
 // Per-user key builders.  The state key embeds the random part last so LIKE
 // queries can scan by prefix without exposing userId in the OAuth redirect URL.
@@ -46,7 +50,15 @@ export interface McpOAuthConfig {
   clientName: string;
 }
 
-export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
+export interface McpOAuthConfigOptions {
+  redirectUri?: string;
+}
+
+export interface BuildMcpAuthorizationUrlOptions {
+  redirectUri?: string;
+}
+
+export function getMcpOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuthConfig | undefined {
   const authorizationUrl = process.env.ROBINHOOD_MCP_AUTHORIZATION_URL;
   const tokenUrl = process.env.ROBINHOOD_MCP_TOKEN_URL;
   if (!authorizationUrl || !tokenUrl) return undefined;
@@ -54,14 +66,22 @@ export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
     authorizationUrl,
     tokenUrl,
     registrationUrl: process.env.ROBINHOOD_MCP_CLIENT_REGISTRATION_URL || undefined,
-    redirectUri: process.env.ROBINHOOD_MCP_REDIRECT_URI || "http://localhost:3000/api/auth/robinhood/callback",
+    redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
     clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
   };
 }
 
-export async function buildMcpAuthorizationUrl(userId: string): Promise<string> {
-  const config = requireOAuthConfig();
+export function resolveMcpOAuthRedirectUri(request: Request): string {
+  const configured = process.env.ROBINHOOD_MCP_REDIRECT_URI?.trim();
+  const requestRedirectUri = new URL(ROBINHOOD_MCP_CALLBACK_PATH, resolvePublicAppOrigin(request)).toString();
+  if (!configured) return requestRedirectUri;
+  if (isLoopbackUrl(configured) && !isLoopbackUrl(requestRedirectUri)) return requestRedirectUri;
+  return configured;
+}
+
+export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcpAuthorizationUrlOptions = {}): Promise<string> {
+  const config = requireOAuthConfig(options);
   const client = await getOrRegisterClient(config);
   const randomPart = randomBase64Url(32);
   const codeVerifier = randomBase64Url(64);
@@ -103,14 +123,12 @@ export async function completeMcpOAuthCallback(input: {
    * The userId resolved from the browser session that hit the callback. When provided, it
    * must match the userId the flow was initiated under (`stateBlob.userId`). This stops an
    * attacker-initiated flow (state bound to the attacker) from being completed in a victim's
-   * session — i.e. binding a freshly-minted broker token under the wrong userId. In
-   * production the callback request always carries a verified identity (middleware enforces
-   * it); in single-operator/dev both sides are 'local', so the check is a no-op there.
+   * session — i.e. binding a freshly-minted broker token under the wrong userId. OAuth
+   * provider callbacks may arrive without app-session identity, so callers can omit this
+   * and bind by the one-time server-side state row alone.
    */
   expectedUserId?: string;
 }): Promise<McpOAuthTokens> {
-  const config = requireOAuthConfig();
-
   // Recover the state blob by scanning on the random suffix — the redirect carries only the
   // random `state`, not the userId (the userId is never placed in the OAuth redirect URL).
   const found = findMcpOAuthStateByRandom(input.state);
@@ -124,6 +142,7 @@ export async function completeMcpOAuthCallback(input: {
     throw new Error("Robinhood MCP OAuth state does not belong to the current session.");
   }
 
+  const config = requireOAuthConfig({ redirectUri: stateBlob.redirectUri });
   const client = await getOrRegisterClient(config);
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -220,18 +239,19 @@ async function refreshMcpAccessToken(userId: string, existing: McpOAuthTokens): 
 }
 
 async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClient> {
-  const configuredClientId = process.env.ROBINHOOD_MCP_CLIENT_ID;
-  if (configuredClientId) {
-    return {
-      clientId: configuredClientId,
-      clientSecret: process.env.ROBINHOOD_MCP_CLIENT_SECRET || undefined,
-      tokenEndpointAuthMethod: process.env.ROBINHOOD_MCP_CLIENT_SECRET ? "client_secret_post" : "none"
-    };
-  }
-
   const existing = getInternalSetting<McpOAuthClient>(CLIENT_SETTING);
-  if (existing && existing.redirectUri === config.redirectUri) return existing;
-  if (!config.registrationUrl) {
+  if (config.registrationUrl) {
+    if (existing && existing.redirectUri === config.redirectUri) return existing;
+  } else {
+    if (existing) return existing;
+    const configuredClientId = process.env.ROBINHOOD_MCP_CLIENT_ID;
+    if (configuredClientId) {
+      return {
+        clientId: configuredClientId,
+        clientSecret: process.env.ROBINHOOD_MCP_CLIENT_SECRET || undefined,
+        tokenEndpointAuthMethod: process.env.ROBINHOOD_MCP_CLIENT_SECRET ? "client_secret_post" : "none"
+      };
+    }
     throw new Error("ROBINHOOD_MCP_CLIENT_ID or ROBINHOOD_MCP_CLIENT_REGISTRATION_URL is required for MCP OAuth.");
   }
 
@@ -274,8 +294,8 @@ function isExpiring(tokens: McpOAuthTokens): boolean {
   return new Date(tokens.expiresAt).getTime() - Date.now() < 60_000;
 }
 
-function requireOAuthConfig(): McpOAuthConfig {
-  const config = getMcpOAuthConfig();
+function requireOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuthConfig {
+  const config = getMcpOAuthConfig(options);
   if (!config) throw new Error("ROBINHOOD_MCP_AUTHORIZATION_URL and ROBINHOOD_MCP_TOKEN_URL are required for MCP OAuth.");
   return config;
 }
