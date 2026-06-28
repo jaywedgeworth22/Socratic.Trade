@@ -15,6 +15,16 @@ and refresh-token exchange include the protected MCP resource indicator
 (`https://agent.robinhood.com/mcp/trading` by default). This preserves the
 hosted/public callback path rather than reverting to localhost. See
 `docs/rollouts/2026-06-28-robinhood-mcp-resource-indicator.md`.
+## 2026-06-28 — Quiet tile first-paint dashboard loader
+Branch `codex/quiet-tiles-loading`. The first-paint dashboard shell now shows
+quiet skeleton tiles instead of three separate visible loading labels, keeps a
+single screen-reader status (`Preparing dashboard.`), and preserves an explicit
+alert card for load failures. App-facing metadata and welcome-page wording now
+use dashboard language. Verified desktop/mobile first-paint screenshots with
+`/api/dashboard` held pending and confirmed the first-paint document contains
+no disliked wording. `npx tsc --noEmit`, `npm test` (153 files / 1,485 tests),
+and `npm run build` are green. See
+`docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
 
 ## 2026-06-27 — Congress.Trade PIT readiness markers fail closed
 Branch `codex/congress-pit-readiness-gate`. Follow-up to App A PR #96: the App B

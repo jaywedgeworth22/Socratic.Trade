@@ -425,34 +425,101 @@ function DashboardBootstrap() {
   }, []);
 
   if (snapshot) return <DashboardApp initialSnapshot={snapshot} />;
-  return <DashboardSsrShell message={loadError ?? "Loading cockpit..."} detail={loadError ? "Refresh the page after checking the preview server." : undefined} />;
+  return <DashboardSsrShell message={loadError ?? undefined} detail={loadError ? "Refresh the page after checking the preview server." : undefined} />;
 }
 
-function DashboardSsrShell({ snapshot, message = "Loading cockpit...", detail = "Preparing the local dashboard view." }: { snapshot?: DashboardSnapshot | null; message?: string; detail?: string }) {
+function DashboardSsrShell({ snapshot, message, detail }: { snapshot?: DashboardSnapshot | null; message?: string; detail?: string }) {
   const executionState = snapshot ? executionStateFor(snapshot) : undefined;
-  const mode = executionState ? `${executionState.label} Mode` : "Loading";
+  const mode = executionState ? `${executionState.label} Mode` : undefined;
   const state = snapshot ? (snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed") : "starting";
+  const hasError = Boolean(message);
+  const tiles = [
+    { label: "Portfolio", tone: "accent", wide: false },
+    { label: "Decision", tone: "info", wide: false },
+    { label: "Market Scan", tone: "warn", wide: false },
+    { label: "Activity", tone: "down", wide: false },
+    { label: "Performance", tone: "accent", wide: true },
+    { label: "Signals", tone: "info", wide: true }
+  ] as const;
   return (
-    <div className="flex min-h-dvh flex-col bg-bg text-fg">
-      <header className="flex min-h-14 items-center justify-between border-b border-line bg-surface/70 px-4">
+    <div className="flex min-h-dvh flex-col overflow-hidden bg-bg text-fg">
+      <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
             <Zap size={17} className="fill-current" />
           </span>
           <div>
             <div className="text-sm font-semibold">Agentic Trading</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-              <span>{mode}</span>
-              <span>{labelize(state)}</span>
+              {mode ? (
+                <span>{mode}</span>
+              ) : (
+                <span aria-hidden="true" className="skeleton h-2.5 w-20 rounded-full" />
+              )}
+              {snapshot ? (
+                <span>{labelize(state)}</span>
+              ) : (
+                <span aria-hidden="true" className="skeleton h-2.5 w-16 rounded-full" />
+              )}
             </div>
           </div>
         </div>
-        <span className="text-xs text-faint">{message}</span>
+        {!hasError && (
+          <div aria-hidden="true" className="flex w-full items-center gap-2 sm:w-auto sm:justify-end">
+            <span className="skeleton h-8 flex-1 rounded-lg sm:w-28 sm:flex-none" />
+            <span className="skeleton h-8 w-20 rounded-lg" />
+            <span className="skeleton h-8 w-10 rounded-lg" />
+          </div>
+        )}
       </header>
-      <main className="flex flex-1 items-center justify-center p-6">
-        <div className="rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted">
-          {detail}
-        </div>
+      <main
+        className={cn("flex flex-1 p-4 sm:p-6", hasError ? "items-center justify-center" : "overflow-auto")}
+        role={hasError ? "alert" : "status"}
+        aria-live={hasError ? "assertive" : "polite"}
+        aria-busy={!hasError}
+        aria-atomic="true"
+      >
+        {hasError ? (
+          <div className="w-full max-w-md rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted shadow-[var(--shadow)] backdrop-blur-md">
+            <p className="font-medium text-fg">{message}</p>
+            {detail && <p className="mt-1 text-xs text-faint">{detail}</p>}
+          </div>
+        ) : (
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <span className="sr-only">Preparing dashboard.</span>
+            {tiles.map((tile) => (
+              <section
+                key={tile.label}
+                aria-hidden="true"
+                className={cn(
+                  "min-h-32 rounded-lg border border-line bg-surface/70 p-4 shadow-[var(--shadow)] backdrop-blur-md",
+                  tile.wide && "sm:col-span-2",
+                  tile.tone === "accent" && "bg-accent/5",
+                  tile.tone === "info" && "bg-info/5",
+                  tile.tone === "warn" && "bg-warn/5",
+                  tile.tone === "down" && "bg-down/5"
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="skeleton h-3 w-24 rounded" />
+                  <span className="skeleton h-8 w-8 rounded-lg" />
+                </div>
+                <div className="mt-5 space-y-2.5">
+                  <span className="skeleton block h-9 w-3/4 rounded" />
+                  <span className="skeleton block h-2.5 w-full rounded" />
+                  <span className="skeleton block h-2.5 w-2/3 rounded" />
+                </div>
+                {tile.wide && (
+                  <div className="mt-5 grid grid-cols-3 gap-2">
+                    <span className="skeleton h-16 rounded" />
+                    <span className="skeleton h-16 rounded" />
+                    <span className="skeleton h-16 rounded" />
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
