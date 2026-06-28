@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Quiet tile first-paint dashboard loader
+Branch `codex/quiet-tiles-loading`. The first-paint dashboard shell now shows
+quiet skeleton tiles instead of three separate visible loading labels, keeps a
+single screen-reader status (`Preparing dashboard.`), and preserves an explicit
+alert card for load failures. App-facing metadata and welcome-page wording now
+use dashboard language. Verified desktop/mobile first-paint screenshots with
+`/api/dashboard` held pending and confirmed the first-paint document contains
+no disliked wording. `npx tsc --noEmit`, `npm test` (153 files / 1,485 tests),
+and `npm run build` are green. See
+`docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
+
 ## 2026-06-27 — Congress.Trade PIT readiness markers fail closed
 Branch `codex/congress-pit-readiness-gate`. Follow-up to App A PR #96: the App B
 Congress score evaluator now honors App A response-level `validationReadiness`

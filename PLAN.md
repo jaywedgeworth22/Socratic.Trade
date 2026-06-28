@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-28 (`codex/quiet-tiles-loading`): first-paint dashboard loader polish —
+> replaced the duplicated visible loading labels with quiet skeleton tiles,
+> kept one screen-reader status plus an explicit failure alert, and updated
+> app-facing metadata/welcome wording to dashboard language. No roadmap change;
+> see `docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
+>
 > 2026-06-26 (`claude/portfolio-market-scan-ui-27azkz`): operator-driven mobile-UX + correctness pass —
 > Portfolio/Readiness/header, Market Scan (icons + universe: top-N + outliers + holdings), Congress/
 > Insider (future-date rejection, Congress.Trade casing, time span), System Help + Settings rework,
