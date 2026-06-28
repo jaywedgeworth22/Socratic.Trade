@@ -3,21 +3,21 @@ import { notFound } from "next/navigation";
 import { Card, buttonClass } from "../ui/primitives";
 
 export const metadata: Metadata = {
-  title: "AI market research & strategy cockpit",
+  title: "AI market research & strategy dashboard",
   description:
-    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+    "Agentic Trading is an AI-assisted dashboard for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
   alternates: { canonical: "/welcome" },
   openGraph: {
     type: "website",
     siteName: "Agentic Trading",
     url: "/welcome",
-    title: "Agentic Trading — AI market research & strategy cockpit",
+    title: "Agentic Trading — AI market research & strategy dashboard",
     description:
-      "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
+      "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "Agentic Trading — AI market research & strategy cockpit",
+    title: "Agentic Trading — AI market research & strategy dashboard",
     description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
   },
   robots:
@@ -52,7 +52,7 @@ const FEATURES: Array<{ title: string; body: string }> = [
   },
   {
     title: "You stay in control",
-    body: "The cockpit surfaces research and proposals. You decide. No autonomous real-money trading without your say-so."
+    body: "The dashboard surfaces research and proposals. You decide. No autonomous real-money trading without your say-so."
   }
 ];
 
@@ -93,7 +93,7 @@ export default function WelcomePage() {
             applicationCategory: "FinanceApplication",
             operatingSystem: "Web",
             description:
-              "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow.",
+              "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow.",
             offers: { "@type": "Offer", price: "0", priceCurrency: "USD" }
           })
         }}
@@ -114,7 +114,7 @@ export default function WelcomePage() {
           {/* ── Hero ───────────────────────────────────────────────────────── */}
           <section className="text-center space-y-6">
             <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
-              AI market research &amp; strategy cockpit
+              AI market research &amp; strategy dashboard
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
               Scan and enrich markets, evaluate ideas across multiple research lenses, test
