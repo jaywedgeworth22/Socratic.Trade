@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Robinhood MCP OAuth discovery from documented MCP link
+Branch `codex/robinhood-mcp-discovery-auth`. Follow-up to the reconnect flow
+still landing on Robinhood `/oauth/error`: Robinhood's current support
+instructions tell clients to add the Trading MCP link
+`https://agent.robinhood.com/mcp/trading` and authenticate from there, not to
+manually configure a browser OAuth URL. OAuth start now discovers protected
+resource and authorization-server metadata from the MCP challenge when the
+official Robinhood MCP URL is configured; discovered auth/token/registration
+endpoints take precedence over manual Infisical endpoint values. Manual endpoint
+env remains available for custom providers or by setting
+`ROBINHOOD_MCP_OAUTH_DISCOVERY=off`. See
+`docs/rollouts/2026-06-28-robinhood-mcp-oauth-discovery.md`.
+
 ## 2026-06-28 — Robinhood MCP OAuth resource indicator
 Branch `codex/robinhood-mcp-resource-param`. Follow-up to the persisted
 `robinhood.com/oauth/error` after stale OAuth DB rows were cleared: production
