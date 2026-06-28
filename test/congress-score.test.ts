@@ -235,6 +235,31 @@ describe("congressScoreObservationsFromExportRows", () => {
     expect(rows).toEqual([]);
   });
 
+  it("rejects PIT rows that App A marks as not historically validation-ready", () => {
+    const rows = congressScoreObservationsFromExportRows([
+      {
+        asOf: "2026-01-02T00:00:00.000Z",
+        dataCutoffAt: "2026-01-02T00:00:00.000Z",
+        ticker: "NVDA",
+        congressScore: 83,
+        signedScore: 83,
+        direction: "BUY",
+        pitValidity: {
+          scoreInputsPitSafe: true,
+          historicalValidationReady: false,
+          blockers: ["missing true PIT metadata vintages"]
+        },
+        labels: {
+          horizons: [
+            { horizon: "63d", days: 63, entryDate: "2026-01-03", assetReturn: 0.12, spxReturn: 0.03 }
+          ]
+        }
+      }
+    ], { horizonDays: 63 });
+
+    expect(rows).toEqual([]);
+  });
+
   it("maps top-level preCongressScore for flat exports", () => {
     const rows = congressScoreObservationsFromExportRows([
       { date: "2026-01-02", symbol: "MSFT", congressScore: 70, signedScore: 70, forwardReturn: 0.04, benchmarkReturn: 0.01, preCongressScore: 65 }

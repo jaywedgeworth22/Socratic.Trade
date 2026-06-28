@@ -24,6 +24,13 @@ interface Args {
   placeboSeed?: number;
 }
 
+class CongressExportNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CongressExportNotReadyError";
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const observations = args.input
@@ -90,9 +97,35 @@ function readExport(path: string, horizonDays: number): CongressScoreObservation
   const parsed = text.startsWith("[") || text.startsWith("{")
     ? JSON.parse(text)
     : text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  assertExportValidationReady(parsed);
   const rows = Array.isArray(parsed) ? parsed : parsed.rows ?? parsed.observations ?? [];
   if (!Array.isArray(rows)) throw new Error("Expected a JSON array, JSONL rows, or { rows: [...] }.");
   return congressScoreObservationsFromExportRows(rows, { horizonDays });
+}
+
+function assertExportValidationReady(parsed: unknown): void {
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") return;
+  const readiness = (parsed as { validationReadiness?: unknown }).validationReadiness;
+  if (!readiness || typeof readiness !== "object") return;
+  const r = readiness as Record<string, unknown>;
+  if (r.historicalValidationReady !== false) return;
+  throw new CongressExportNotReadyError(
+    [
+      "Congress.Trade export is not historical-validation ready.",
+      "validationReadiness.historicalValidationReady=false.",
+      summarizeReadinessReason(r)
+    ].filter(Boolean).join(" ")
+  );
+}
+
+function summarizeReadinessReason(readiness: Record<string, unknown>): string {
+  const values: string[] = [];
+  for (const key of ["reason", "reasons", "blocker", "blockers", "missing", "notes"]) {
+    const value = readiness[key];
+    if (typeof value === "string" && value.trim()) values.push(value.trim());
+    else if (Array.isArray(value)) values.push(...value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()));
+  }
+  return values.length ? `Reason(s): ${values.join("; ")}` : "";
 }
 
 function numberArg(value: string, fallback: number): number {
@@ -123,10 +156,16 @@ Options:
 Input rows may be flat rows with date/asOf, symbol/ticker, congressScore/compositeScore, forwardReturn,
 and benchmarkReturn/spxReturn, or App A PIT rows from /api/export/congress-pit-scores with labels.horizons[].
 Optional: congressSignedScore/signedScore, congressDirection/direction, and preCongressScore.
+If a Congress.Trade export envelope sets validationReadiness.historicalValidationReady=false, the
+command refuses to evaluate it and exits 2.
 `);
 }
 
 main().catch((error) => {
+  if (error instanceof CongressExportNotReadyError) {
+    console.error(error.message);
+    process.exit(2);
+  }
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exit(1);
 });

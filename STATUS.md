@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-27 — Congress.Trade PIT readiness markers fail closed
+Branch `codex/congress-pit-readiness-gate`. Follow-up to App A PR #96: the App B
+Congress score evaluator now honors App A response-level `validationReadiness`
+and row-level `pitValidity`. Export envelopes with
+`validationReadiness.historicalValidationReady=false` refuse evaluation with exit
+`2`; PIT rows marked unsafe/not-ready are dropped before metrics. This preserves
+the distinction between PIT-safe score inputs and full historical-validation
+readiness, so reconstructed/history-seeded exports cannot accidentally become
+validation truth. See
+`docs/rollouts/2026-06-27-congress-pit-readiness-gate.md`.
+
 ## 2026-06-27 — Congress.Trade composite score + PIT evaluation harness
 Branch `codex/congress-score-eval-clean`. Added a direction-aware, confidence-capped
 Congress.Trade research composite and a strict PIT export evaluator. BUY composites

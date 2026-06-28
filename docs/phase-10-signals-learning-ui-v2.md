@@ -24,6 +24,8 @@ COT market-wide signals; Voyage/Pinecone RAG scaffolding for retrieved context.
 Congress.Trade now has an App B composite score, advisory candidate-promotion
 guardrails, forward evidence persistence, and a strict point-in-time evaluator;
 real historical claims remain gated on an App A PIT export.
+App A PR #96 now marks export readiness explicitly; App B honors those markers and
+refuses historical evaluation while `historicalValidationReady=false`.
 
 Codex review findings P2(attribution), P3(/api/scan merge), P3(shrinkPrior=0), and
 the discovery half of P2 are all **done**. What remains of P2 is the *ranking* half
@@ -65,8 +67,11 @@ add smart-money/catalyst sub-scores instead of leaving the LLM to infer from pro
   signals remain evidence for learning. `signal_snapshot` now persists Congress composite
   fields and `preCongressScore`; `npm run eval:congress-score` evaluates rank IC,
   marginal IC, quantile spread, hit rate, and placebo checks from future snapshots or an
-  App A PIT export. Still open: real App A PIT export validation and whole-pipeline
-  ablations before sizing or live-trading trust changes.
+  App A PIT export. App A `validationReadiness` / row `pitValidity` markers now fail
+  closed in App B, so reconstructed exports cannot be treated as validation truth.
+  Still open: real App A PIT export validation once App A marks
+  `historicalValidationReady=true`, plus whole-pipeline ablations before sizing or
+  live-trading trust changes.
 
 ## Phase B — Richer learning + full EvidenceDigest
 Codex: "store full EvidenceDigest for chosen AND skipped … sector/factor-dimensional

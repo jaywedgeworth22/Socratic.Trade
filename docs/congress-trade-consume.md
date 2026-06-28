@@ -103,6 +103,10 @@ cursor-paged exports, and `baselines.appBPreCongressScanScore` / `preCongressSco
 For PIT rows, App B anchors observations to `asOf` / disclosure availability, rejects labels whose
 entry date precedes availability, ignores top-level returns when nested horizon labels are present,
 requires `signedScore` or `direction`, and rejects member-skill inputs whose vintage is after `asOf`.
+After App A PR #96, App B also honors `validationReadiness` and `pitValidity`: an export envelope with
+`historicalValidationReady=false` exits `2` without evaluation, and rows marked unsafe/not-ready are
+dropped. This keeps reconstructed/history-seeded rows useful for contract testing without letting them
+become validation truth.
 
 ## 4. Push receiver — webhook + SSE
 App A pushes events (see `docs/push-to-app-b.md`); both transports feed the same handler,
