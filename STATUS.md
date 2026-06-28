@@ -37,6 +37,20 @@ env remains available for custom providers or by setting
 `ROBINHOOD_MCP_OAUTH_DISCOVERY=off`. See
 `docs/rollouts/2026-06-28-robinhood-mcp-oauth-discovery.md`.
 
+## 2026-06-28 — Proposal age, sizing caps, and Alpaca bracket diagnostics
+Branch `codex/proposal-age-alpaca-sizing`. Live investigation found the recent
+small proposals were caused by a hidden stale `$100` max-order cap coexisting
+with the visible `5% NAV` cap; the backend used the smaller effective cap, so a
+~$100k account still produced $50-$70 buys. Settings now clears mutually
+exclusive dollar/% risk fields in one request, and the policy API normalizes
+legacy hidden cap pairs. Alpaca native bracket routing now avoids sending
+sub-one-share dollar brackets: when risk capacity allows, sizing raises opening
+dollar orders to at least one whole share; otherwise it skips native broker
+brackets and says so in the rationale. Alpaca REST errors now include response
+body/status detail, with an explicit hint for bare 403s. Proposal cards now show
+relative age for items under 24 hours old and date/time for older decisions. See
+`docs/rollouts/2026-06-28-proposal-age-alpaca-sizing.md`.
+
 ## 2026-06-28 — Robinhood MCP OAuth resource indicator
 Branch `codex/robinhood-mcp-resource-param`. Follow-up to the persisted
 `robinhood.com/oauth/error` after stale OAuth DB rows were cleared: production

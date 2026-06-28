@@ -18,6 +18,11 @@
 > 2026-06-28: The SSR first-paint dashboard shell now uses quiet skeleton tiles
 > instead of repeated visible loading labels. The loader keeps one screen-reader
 > status and still renders an explicit alert card when `/api/dashboard` fails.
+>
+> 2026-06-28: Proposal cards show relative age while a decision is under 24
+> hours old and switch to date/time for older decisions. Settings risk controls
+> that present dollar vs percent modes must write the selected mode and clear the
+> other mode in the same policy update so hidden stale caps cannot bind.
 
 
 This phase restructures the dashboard from a long vertical page into a

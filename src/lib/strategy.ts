@@ -1049,6 +1049,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const boundedMultiplier = unproven ? floor : Math.max(floor, Math.min(ceiling, multiplier));
   
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
+  let effectiveOpeningCap = openingCapacity.cap;
   const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
   const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * boundedMultiplier);
   const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
@@ -1070,6 +1071,19 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
         advCapNote = `\n\n[Sizing] ADV cap: trimmed ${formatWholeDollars(targetNotional)} → ${formatWholeDollars(advCap)} (${policy.maxOrderPctOfAdv}% of ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume) to bound market impact.`;
         targetNotional = advCap;
       }
+      if (advCap > 0) effectiveOpeningCap = Math.min(effectiveOpeningCap, advCap);
+    }
+  }
+
+  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan);
+  let bracketMinNote = "";
+  if (bracketMinimum != null && targetNotional > 0 && targetNotional < bracketMinimum) {
+    const minNotional = Math.ceil(bracketMinimum);
+    if (minNotional <= effectiveOpeningCap) {
+      bracketMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(minNotional)} so Alpaca can place a native whole-share bracket at the reference price.`;
+      targetNotional = minNotional;
+    } else {
+      bracketMinNote = `\n\n[Sizing] Native Alpaca bracket requires about ${formatWholeDollars(minNotional)} for one whole share at the reference price, but risk capacity is ${formatWholeDollars(effectiveOpeningCap)}; broker bracket will be skipped for this sub-share order.`;
     }
   }
 
@@ -1082,7 +1096,9 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const advisedSizeNote = advisedNotional && advisedNotional > 0
     ? targetNotional < Math.floor(advisedNotional)
       ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; risk controls limited it to ${formatWholeDollars(targetNotional)}${openingCapacity.reason ? ` (${openingCapacity.reason})` : ""}.`
-      : `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; preserved within risk limits.`
+      : targetNotional > Math.ceil(advisedNotional)
+        ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; raised to ${formatWholeDollars(targetNotional)} for broker/order constraints.`
+        : `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; preserved within risk limits.`
     : "";
   const fallbackSizeNote = advisedNotional && advisedNotional > 0
     ? ""
@@ -1092,10 +1108,31 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + (unproven
+    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
       : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote
   };
+}
+
+function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy, marketScan?: MarketScan): number | undefined {
+  if (proposal.side !== "buy" && proposal.side !== "short") return undefined;
+  if (policy.brokerBracketsEnabled === false) return undefined;
+  if (policy.activeBroker !== "alpaca" && policy.activeBroker !== "alpaca-mcp") return undefined;
+  const stopPct = proposal.side === "short"
+    ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
+    : (policy.riskRules?.stopLossPct ?? 0);
+  const takePct = policy.riskRules?.takeProfitPct ?? 0;
+  if (stopPct <= 0 && takePct <= 0) return undefined;
+  const symbol = normalizeSymbol(proposal.symbol);
+  const referencePrice =
+    proposal.limitPrice ??
+    proposal.stopPrice ??
+    proposal.referencePrice ??
+    marketScan?.quotesBySymbol[symbol]?.price ??
+    marketScan?.topCandidates.find((quote) => normalizeSymbol(quote.symbol) === symbol)?.price;
+  return typeof referencePrice === "number" && Number.isFinite(referencePrice) && referencePrice > 0
+    ? referencePrice
+    : undefined;
 }
 
 function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: MarketScan): number | undefined {
@@ -1711,7 +1748,7 @@ async function proposeTrades(input: {
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
-    "You must choose the advised size for each proposal. `limits.maxOrderNotional` and remaining notional/order counts are hard caps, not target sizes. Do not default every BUY to the max or to a flat setting-derived amount. For buys, set `dollarAmount` to the amount you actually advise based on risk/reward, conviction, liquidity, diversification, and account context; it may be well below the cap. For sells/trims, set an explicit `quantity` or `dollarAmount` that reflects whether you advise a partial trim, risk-reduction sale, profit-taking sale, or full exit.",
+    "You must choose the advised size for each proposal. `limits.maxOrderNotional` is the effective per-order cap after absolute/% settings; remaining notional/order counts are hard caps, not target sizes. Do not default every BUY to the max or to a flat setting-derived amount. For buys, set `dollarAmount` to the amount you actually advise based on risk/reward, conviction, liquidity, diversification, and account context; it may be well below the cap, but when native Alpaca brackets are enabled it must be large enough to buy at least one whole share unless you intentionally want the backend to skip broker-held brackets. For sells/trims, set an explicit `quantity` or `dollarAmount` that reflects whether you advise a partial trim, risk-reduction sale, profit-taking sale, or full exit.",
     "",
     "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, pb (price/book), shortFloat (% of float sold short), beta, range52w (0=at 52-week low, 100=at 52-week high), secRelStr (today's % move minus its sector's average — positive = outperforming its sector, a relative-strength tell), newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
     "Backend-derived ratios (computed by us, not invented — present only when their inputs exist): peg = P/E ÷ EPS-growth% (<1 cheap for its growth, >2 pricey; absent for unprofitable or no-growth names); earnYld = earnings yield % = EPS÷price (use this instead of P/E when pe is missing — a negative earnYld means the company is losing money); roe = return-on-equity % (capital efficiency; higher is better, negative = losing money on equity); payout = dividend payout ratio % (>100 = paying out more than it earns, dividend at risk); dollarVolM = daily $ volume in millions (liquidity — prefer names that can absorb the order size without slippage; thin names warrant smaller size or limit orders); spreadBps = bid-ask spread in basis points (execution cost; wide spreads argue for limit orders); grahamNumber = Graham intrinsic-value estimate ($) and marginOfSafety = % the price sits below (positive) or above (negative) it — a value cushion for defensive names; pctFromHigh = % from the 52-week high (0 = at the high/breakout zone, deeply negative = a big pullback); rr52w = reward:risk to the 52-week band (>1 = more upside room to the high than downside to the low). Use these as quantitative cross-checks on valuation, quality, income safety, tradability, and entry timing.",
@@ -1762,6 +1799,12 @@ async function proposeTrades(input: {
     note: "All proposals must strictly be selected from `marketScan.topCandidates`. Do not propose symbols outside this list. You may SELL/TRIM any current position."
   };
 
+  const effectiveMaxOrderNotional = Math.min(
+    input.policy.maxOrderNotional ?? Infinity,
+    input.policy.maxOrderPctOfNav && input.portfolio.totalMarketValue > 0
+      ? (input.policy.maxOrderPctOfNav / 100) * input.portfolio.totalMarketValue
+      : Infinity
+  );
   const userContent = {
     currentDate: new Date().toISOString(),
     executionMode,
@@ -1773,7 +1816,8 @@ async function proposeTrades(input: {
     allowedSymbols: allowedSymbolsForPrompt,
     marketScan: compactMarketScanForPrompt(input.marketScan),
     limits: {
-      maxOrderNotional: input.policy.maxOrderNotional,
+      maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Math.floor(effectiveMaxOrderNotional) : undefined,
+      maxOrderPctOfNav: input.policy.maxOrderPctOfNav,
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
@@ -2439,7 +2483,9 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
-  if (bracketsEnabled && brokerSupportsBrackets) {
+  const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / refPrice) : undefined;
+  const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
+  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
     const stopPct = proposal.side === "short"
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);
@@ -2452,6 +2498,11 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(refPrice * (1 + stopPct / 100)) };
       if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(refPrice * (1 - takePct / 100)) };
     }
+  } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
+    next = {
+      ...next,
+      rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(refPrice)} reference price; this avoids a broker rejection for sub-share brackets.`
+    };
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
     // Transparency for non-bracket brokers (e.g. Robinhood): the broker can't hold an OCO bracket at
     // its matching engine, so this position's protective exit is the synthetic scheduler-tick monitor

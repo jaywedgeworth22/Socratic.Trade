@@ -11,6 +11,14 @@ filling the missing pieces.
 > auth/token endpoint env remains a fallback/custom-provider path. No roadmap change; see
 > `docs/rollouts/2026-06-28-robinhood-mcp-oauth-discovery.md`.
 >
+> 2026-06-28 (`codex/proposal-age-alpaca-sizing`): proposal age and Alpaca sizing fixes —
+> proposal cards now show age for decisions under 24 hours old, the risk settings/API
+> clear hidden mutually-exclusive dollar/% caps, and Alpaca bracket orders no longer
+> attempt native whole-share brackets for sub-one-share dollar amounts. This addresses
+> the recent $50-$70 proposals on a ~$100k account, which were caused by a stale hidden
+> `$100` max-order cap binding ahead of the visible `5% NAV` setting. No roadmap change;
+> see `docs/rollouts/2026-06-28-proposal-age-alpaca-sizing.md`.
+>
 > 2026-06-28 (`codex/google-auth-primary`): Google auth primary —
 > Cloudflare Tunnel remains supported, but Cloudflare Access headers are no longer
 > trusted as app login. `AUTH_SECRET` is the fail-closed auth switch, Google/Auth.js
