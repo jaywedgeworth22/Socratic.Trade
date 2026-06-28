@@ -170,6 +170,17 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     expect(p.bracketStopLoss).toBe(92);
     expect(p.bracketTakeProfit).toBe(120);
   });
+  it("keeps the decision-time market anchor separate from a below-market limit entry", () => {
+    const p = enrichOpeningProposal(
+      buy({ type: "limit", dollarAmount: undefined, quantity: 1, limitPrice: 95 }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan
+    );
+    expect(p.referencePrice).toBe(100);
+    expect(p.limitPrice).toBe(95);
+    expect(p.bracketStopLoss).toBe(87.4);
+    expect(p.bracketTakeProfit).toBe(114);
+  });
   it("inverts bracket legs for a short (stop above, take below)", () => {
     const p = enrichOpeningProposal(buy({ side: "short" }), policy({ activeBroker: "alpaca", shortSellingEnabled: true, riskRules: { shortStopLossPct: 5, takeProfitPct: 20 } }), marketScan);
     expect(p.bracketStopLoss).toBe(105);

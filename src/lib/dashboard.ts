@@ -39,6 +39,8 @@ import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, M
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
+const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
+
 export interface AccountReadiness {
   ok: boolean;
   reason?: string;
@@ -389,8 +391,9 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // Performance-since-proposal: side-adjusted move from each proposal's referencePrice to the current
   // price. For REJECTED proposals this is the realized counterfactual ("what it did after we passed");
   // for accepted ones, how the entry has fared. Reuses prices already in hand (held-position quotes +
-  // the latest scan's quotes), so it's a free read — no new network calls. Degrades to undefined when
-  // no anchor or current price is available (UI then shows no badge).
+  // the latest scan's quotes), so it's a free read — no new network calls. Fresh proposals are
+  // intentionally left blank: delayed/intraday quote sources can otherwise show noisy "since" moves
+  // seconds after creation. Degrades to undefined when no anchor or current price is available.
   const scanQuotes = scanForInternals?.quotesBySymbol;
   const proposalCurrentPrice = (symbol: string): number | undefined => {
     const sym = normalizeSymbol(symbol);
@@ -398,8 +401,15 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     const q = scanQuotes?.[sym];
     return q && typeof q.price === "number" && q.price > 0 ? q.price : undefined;
   };
-  const withProposalPerf = <T extends { proposal: TradeProposal }>(items: T[]): T[] =>
+  const proposalIsOldEnoughForPerformance = (createdAt?: string): boolean => {
+    if (!createdAt) return true;
+    const createdMs = Date.parse(createdAt);
+    if (!Number.isFinite(createdMs)) return true;
+    return Date.now() - createdMs >= PROPOSAL_PERFORMANCE_MIN_AGE_MS;
+  };
+  const withProposalPerf = <T extends { proposal: TradeProposal; createdAt?: string }>(items: T[]): T[] =>
     items.map((item) => {
+      if (!proposalIsOldEnoughForPerformance(item.createdAt)) return item;
       const current = proposalCurrentPrice(item.proposal.symbol);
       const pct = returnSinceProposalPct(item.proposal.referencePrice, current, item.proposal.side);
       if (pct == null) return item;

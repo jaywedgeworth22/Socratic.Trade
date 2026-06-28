@@ -4,9 +4,9 @@ import { deriveMetrics } from "@/lib/derived-metrics";
 import { friendlySource, orderedSourceEntries, provenanceLabel } from "@/lib/dashboard-ui";
 import type { TickerLogoDisplay } from "@/lib/ticker-logos";
 import { Chip } from "./primitives";
-import { PriceChart } from "./price-chart";
+import { PriceChart, type LatestChartBar } from "./price-chart";
 import { TickerLogo } from "./ticker-logo";
-import { Database, LineChart, BrainCircuit, Activity, Zap, TrendingUp, Search, Calculator } from "lucide-react";
+import { Database, BrainCircuit, Zap, TrendingUp, Search, Calculator } from "lucide-react";
 
 /** Compact dollar formatter for daily $ volume (input is in $millions). */
 function formatDollarsM(millions: number): string {
@@ -15,7 +15,57 @@ function formatDollarsM(millions: number): string {
   return `$${(millions * 1000).toFixed(0)}K`;
 }
 
-export function SymbolDrilldown({ quote, logoDisplay = "tile" }: { quote: MarketQuote; logoDisplay?: TickerLogoDisplay }) {
+function displayPrice(price?: number): string {
+  return typeof price === "number" && Number.isFinite(price) && price > 0
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(price)
+    : "—";
+}
+
+function displayChange(pct?: number): string {
+  return typeof pct === "number" && Number.isFinite(pct)
+    ? `${pct >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2 }).format(pct / 100)}`
+    : "—";
+}
+
+function logoFallbackFor(symbol: string) {
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/20 px-1 text-center text-[11px] font-bold text-[var(--accent)]">
+      {symbol}
+    </div>
+  );
+}
+
+export function SymbolDrilldownTitle({ quote, logoDisplay = "tile" }: { quote: MarketQuote; logoDisplay?: TickerLogoDisplay }) {
+  const price = displayPrice(quote.price);
+  const change = displayChange(quote.intradayChangePct);
+  const changeTone = quote.intradayChangePct >= 0 ? "text-up" : "text-down";
+  return (
+    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+      <TickerLogo symbol={quote.symbol} display={logoDisplay} fallback={logoFallbackFor(quote.symbol)} />
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 text-base font-semibold text-fg">{quote.symbol}</span>
+          <span className="truncate text-sm font-medium text-muted">{quote.companyName || quote.symbol}</span>
+        </div>
+        <div className="truncate text-xs text-faint">{quote.sector || "Unknown sector"}{quote.industry && quote.industry !== quote.sector ? ` · ${quote.industry}` : ""}</div>
+      </div>
+      <div className="shrink-0 text-right">
+        <div className="tnum text-sm font-semibold text-fg">{price}</div>
+        <div className={`tnum text-xs ${changeTone}`}>{change}</div>
+      </div>
+    </div>
+  );
+}
+
+export function SymbolDrilldown({
+  quote,
+  logoDisplay = "tile",
+  onQuoteUpdate
+}: {
+  quote: MarketQuote;
+  logoDisplay?: TickerLogoDisplay;
+  onQuoteUpdate?: (patch: Partial<MarketQuote>) => void;
+}) {
   // Local parser for the "Why this matters" summary
   const generateSummary = (q: MarketQuote) => {
     const pros = [];
@@ -55,11 +105,19 @@ export function SymbolDrilldown({ quote, logoDisplay = "tile" }: { quote: Market
   const fb = quote.factorBreakdown;
   const dm = deriveMetrics(quote);
   const sourceEntries = orderedSourceEntries(quote.sources);
-  const logoFallback = (
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/20 px-1 text-center text-[13px] font-bold text-[var(--accent)]">
-      {quote.symbol}
-    </div>
-  );
+  const handleLatestBar = React.useCallback((bar: LatestChartBar) => {
+    const latest = bar.latest;
+    const previousClose = bar.previous?.close;
+    const patch: Partial<MarketQuote> = {
+      price: latest.close,
+      ...(typeof latest.volume === "number" ? { volume: latest.volume } : {}),
+      ...(typeof latest.vwap === "number" ? { vwap: latest.vwap } : {})
+    };
+    if (typeof previousClose === "number" && previousClose > 0) {
+      patch.intradayChangePct = ((latest.close - previousClose) / previousClose) * 100;
+    }
+    onQuoteUpdate?.(patch);
+  }, [onQuoteUpdate]);
 
   // Backend-computed ratios (not returned by any API) — see src/lib/derived-metrics.ts.
   const derivedTiles: { label: string; value: string | null; title: string; tone?: "up" | "down" }[] = [
@@ -107,31 +165,8 @@ export function SymbolDrilldown({ quote, logoDisplay = "tile" }: { quote: Market
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto p-6 pb-24 text-sm text-fg">
-      {/* Header Info */}
-      <div className="flex items-center gap-4 border-b border-line pb-4">
-        <TickerLogo symbol={quote.symbol} display={logoDisplay} size="lg" fallback={logoFallback} />
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-xl font-semibold text-fg">{quote.companyName || quote.symbol}</h2>
-          <div className="text-faint flex items-center gap-2 mt-1 truncate">
-            <span className="truncate">{quote.sector || "Unknown Sector"}</span>
-            {quote.industry && quote.industry !== quote.sector && (
-              <>
-                <span>&middot;</span>
-                <span className="truncate">{quote.industry}</span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="text-xl font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(quote.price)}</div>
-          <div className={`text-sm ${quote.intradayChangePct >= 0 ? "text-up" : "text-down"}`}>
-            {quote.intradayChangePct >= 0 ? "+" : ""}{new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 2 }).format(quote.intradayChangePct / 100)}
-          </div>
-        </div>
-      </div>
-
       {/* Price chart (TradingView Lightweight Charts, fed our own free OHLC) */}
-      <PriceChart symbol={quote.symbol} />
+      <PriceChart symbol={quote.symbol} onLatestBar={handleLatestBar} />
 
       {/* Why this matters */}
       <div className="rounded-xl border border-line bg-surface/50 p-4 backdrop-blur-md">

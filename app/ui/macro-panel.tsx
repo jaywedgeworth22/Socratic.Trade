@@ -322,14 +322,16 @@ export function MacroBoardView({ snapshot, scan, onDrilldown, tickerLogoDisplay 
 
   return (
     <div className="flex flex-col gap-4 text-sm text-fg">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-4">
-        <div className="flex items-center gap-2 font-semibold text-fg"><Landmark size={16} className="text-[var(--accent)]" /> Macro &amp; Market Regime</div>
-        <div className="flex items-center gap-2">
-          <Chip tone="info">{regime}</Chip>
-          {macro.asOf && <span className="text-faint text-xs">as of {macro.asOf}</span>}
+      <div className="rounded-xl border border-line p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-semibold text-fg"><Landmark size={16} className="text-[var(--accent)]" /> Macro &amp; Market Regime</div>
+          <div className="flex items-center gap-2">
+            <Chip tone="info">{regime}</Chip>
+            {macro.asOf && <span className="text-faint text-xs">as of {macro.asOf}</span>}
+          </div>
         </div>
+        <p className="mt-2 text-faint text-xs">All values computed in the backend from free sources (FRED, Cboe, CFTC, Kenneth French) plus Massive (full-market breadth) — the same data fed to the agent. Factor returns lag ~6 weeks; CFTC is weekly.</p>
       </div>
-      <p className="text-faint text-xs -mt-2">All values computed in the backend from free sources (FRED, Cboe, CFTC, Kenneth French) plus Massive (full-market breadth) — the same data fed to the agent. Factor returns lag ~6 weeks; CFTC is weekly.</p>
       <TrendsSection history={board.history} />
       <Section icon={<TrendingUp size={16} className="text-info" />} title="Rates & Yield Curve" tiles={rates} />
       <Section icon={<Activity size={16} className="text-info" />} title="Inflation & Growth" tiles={inflationGrowth} />

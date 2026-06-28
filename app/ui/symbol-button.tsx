@@ -11,11 +11,12 @@ import { TickerLogo } from "./ticker-logo";
  */
 function resolveScanQuote(symbol: string, scan: MarketScan | null | undefined): MarketQuote | null {
   if (!scan) return null;
-  const full = scan.topCandidates.find((q) => q.symbol === symbol);
+  const normalized = symbol.trim().toUpperCase();
+  const full = scan.topCandidates.find((q) => q.symbol.trim().toUpperCase() === normalized);
   if (full) return full;
-  const summary = scan.quotesBySymbol[symbol];
+  const summary = scan.quotesBySymbol[normalized] ?? Object.values(scan.quotesBySymbol).find((q) => q.symbol.trim().toUpperCase() === normalized);
   if (!summary) return null;
-  return { ...summary, volume: 0, intradayChangePct: 0, positionMarketValue: 0 };
+  return { volume: 0, intradayChangePct: 0, positionMarketValue: 0, ...summary };
 }
 
 /**
@@ -45,7 +46,7 @@ export function SymbolButton({
   showLogo?: boolean;
 }) {
   const quote = quoteProp ?? (onDrilldown ? resolveScanQuote(symbol, scan) : null);
-  const drilldownTarget = quote ?? ({ symbol, price: 0, score: 0, source: "", generatedAt: new Date().toISOString() } as unknown as MarketQuote);
+  const drilldownTarget = quote ?? ({ symbol, companyName: title, price: 0, volume: 0, intradayChangePct: 0, positionMarketValue: 0, score: 0, source: "", asOf: new Date().toISOString() } as MarketQuote);
   const content = showLogo && variant !== "chip" && logoDisplay && logoDisplay !== "off"
     ? (
       <span className="inline-flex items-center gap-1.5">

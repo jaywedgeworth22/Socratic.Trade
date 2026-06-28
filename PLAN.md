@@ -11,6 +11,16 @@ filling the missing pieces.
 > auth/token endpoint env remains a fallback/custom-provider path. No roadmap change; see
 > `docs/rollouts/2026-06-28-robinhood-mcp-oauth-discovery.md`.
 >
+> 2026-06-28 (`codex/proposal-dashboard-ui-fixes`): proposal/dashboard polish —
+> proposal reference prices now stay tied to the decision-time market quote rather
+> than below-market limit entries, fresh proposal performance chips wait 15
+> minutes, approval errors refresh with broker-placement failure copy, the Market
+> Scan column chooser supports ordering with `Sector` before `Sec RS` by default,
+> Symbol drilldowns use a fixed identity header and keep close-only history, Macro
+> header copy is aligned, and Performance Unrealized uses current positions'
+> mark-to-cost P&L. No roadmap change; see
+> `docs/rollouts/2026-06-28-proposal-dashboard-ui-fixes.md`.
+>
 > 2026-06-28 (`codex/proposal-age-alpaca-sizing`): proposal age and Alpaca sizing fixes —
 > proposal cards now show age for decisions under 24 hours old, the risk settings/API
 > clear hidden mutually-exclusive dollar/% caps, and Alpaca bracket orders no longer

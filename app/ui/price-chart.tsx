@@ -9,12 +9,17 @@ type Timeframe = typeof timeframes[number];
 
 interface ChartBar {
   time: string; // YYYY-MM-DD
-  open: number;
-  high: number;
-  low: number;
+  open?: number;
+  high?: number;
+  low?: number;
   close: number;
   volume?: number;
   vwap?: number;
+}
+
+export interface LatestChartBar {
+  latest: ChartBar;
+  previous?: ChartBar;
 }
 
 /** Resolve a theme CSS variable to a concrete color for the canvas (with a fallback). */
@@ -37,22 +42,31 @@ function smaLine(bars: ChartBar[], period: number): Array<{ time: string; value:
   return out;
 }
 
+function hasFullOhlc(bar: ChartBar): bar is ChartBar & { open: number; high: number; low: number } {
+  return [bar.open, bar.high, bar.low, bar.close].every((value) => typeof value === "number" && Number.isFinite(value));
+}
+
 /**
  * Daily price chart for the symbol drilldown — TradingView Lightweight Charts (MIT, v5),
  * fed our own free OHLC via /api/history. The library is dynamically imported so it loads
  * only when the drawer opens (kept out of the main bundle). Themed from the app's CSS
  * variables so it follows the dark/light terminal theme.
  */
-export function PriceChart({ symbol }: { symbol: string }) {
+export function PriceChart({ symbol, onLatestBar }: { symbol: string; onLatestBar?: (bar: LatestChartBar) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const barsRef = useRef<ChartBar[]>([]);
+  const onLatestBarRef = useRef(onLatestBar);
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [meta, setMeta] = useState<{ change?: number; label?: string } | null>(null);
   // Latest close vs the latest bar's VWAP (volume-weighted avg price) — a standard strength tell.
   const [vwapMeta, setVwapMeta] = useState<{ vwap: number; vsPct: number } | null>(null);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("1Y");
   const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    onLatestBarRef.current = onLatestBar;
+  }, [onLatestBar]);
 
   const updateTimeframe = (tf: Timeframe, chartToUse?: IChartApi, barsToUse?: ChartBar[]) => {
     setActiveTimeframe(tf);
@@ -148,11 +162,18 @@ export function PriceChart({ symbol }: { symbol: string }) {
         chart = c;
         chartRef.current = c;
         barsRef.current = bars;
+        onLatestBarRef.current?.({ latest: bars[bars.length - 1], previous: bars.at(-2) });
 
-        const candle = c.addSeries(lc.CandlestickSeries, {
-          upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
-        });
-        candle.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+        if (bars.every(hasFullOhlc)) {
+          const candle = c.addSeries(lc.CandlestickSeries, {
+            upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
+          });
+          candle.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+        } else {
+          c.addSeries(lc.LineSeries, { color: up, lineWidth: 2, priceLineVisible: true }).setData(
+            bars.map((b) => ({ time: b.time, value: b.close }))
+          );
+        }
 
         const sma50 = smaLine(bars, 50);
         if (sma50.length > 0) {
@@ -187,7 +208,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
         vol.setData(
           bars
             .filter((b) => typeof b.volume === "number")
-            .map((b) => ({ time: b.time, value: b.volume as number, color: b.close >= b.open ? up : down }))
+            .map((b) => ({ time: b.time, value: b.volume as number, color: typeof b.open === "number" && b.close < b.open ? down : up }))
         );
 
         updateTimeframe(activeTimeframe, c, bars);

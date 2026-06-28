@@ -125,6 +125,13 @@ notional and records the reason. If the cap does not allow a full share, the
 proposal may remain a fractional dollar order, but native Alpaca bracket legs
 are skipped so the broker is not asked for an impossible sub-share bracket.
 
+As of 2026-06-28, `TradeProposal.referencePrice` is explicitly the decision-time
+market quote used for entry-drift checks and proposal/counterfactual performance
+readouts. A limit or stop entry may be different; bracket legs and Alpaca
+whole-share bracket feasibility use the intended entry price (`limitPrice` /
+`stopPrice` / market anchor fallback) so a below-market limit order does not
+make a fresh proposal look as though it already gained versus its market anchor.
+
 ### D. Token Efficiency & Asynchronous Post-Mortems
 Feeding dozens of raw rationales, P&L lines, and redundant daily news into the trading prompt wastes massive amounts of tokens and degrades LLM reasoning. To optimize this:
 
