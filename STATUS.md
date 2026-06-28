@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Robinhood MCP OAuth resource indicator
+Branch `codex/robinhood-mcp-resource-param`. Follow-up to the persisted
+`robinhood.com/oauth/error` after stale OAuth DB rows were cleared: production
+already has the public callback configured, dynamic registration enabled, and no
+static client id, and the live DB showed a freshly registered dynamic client for
+`https://trading.jays.services/api/auth/robinhood/callback`. Added
+`ROBINHOOD_MCP_RESOURCE` support so authorization, authorization-code exchange,
+and refresh-token exchange include the protected MCP resource indicator
+(`https://agent.robinhood.com/mcp/trading` by default). This preserves the
+hosted/public callback path rather than reverting to localhost. See
+`docs/rollouts/2026-06-28-robinhood-mcp-resource-indicator.md`.
 ## 2026-06-28 — Quiet tile first-paint dashboard loader
 Branch `codex/quiet-tiles-loading`. The first-paint dashboard shell now shows
 quiet skeleton tiles instead of three separate visible loading labels, keeps a

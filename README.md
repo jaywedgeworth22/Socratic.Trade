@@ -208,6 +208,7 @@ For hosted MCP servers that require OAuth instead of a static bearer token, leav
 ```bash
 ROBINHOOD_MCP_AUTHORIZATION_URL=https://...
 ROBINHOOD_MCP_TOKEN_URL=https://...
+ROBINHOOD_MCP_RESOURCE=https://agent.robinhood.com/mcp/trading
 ROBINHOOD_MCP_CLIENT_ID=...
 ROBINHOOD_MCP_CLIENT_SECRET=... # only when required by the provider
 # Optional. Leave blank in hosted environments; the app derives the public callback URL.
@@ -218,6 +219,8 @@ ROBINHOOD_MCP_SCOPES=tools:call
 If the provider supports dynamic client registration, set
 `ROBINHOOD_MCP_CLIENT_REGISTRATION_URL`; it takes precedence over a configured
 `ROBINHOOD_MCP_CLIENT_ID` so the app can register the correct callback origin.
+`ROBINHOOD_MCP_RESOURCE` defaults to `ROBINHOOD_MCP_URL` and is sent as the
+OAuth resource indicator on authorization and token requests.
 Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
 or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
