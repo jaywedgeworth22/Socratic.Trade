@@ -9,9 +9,11 @@
 - Updated Help -> Tax -> Account Sheltering to remove the leading `though` from
   the parenthetical.
 - Updated Help -> Data Sources to use `Keyless / Core`, link source/provider
-  names in new tabs, list Congress.Trade as the politicians' trades aggregator,
-  and remove stale Senate/Capitol wording unless a runtime source key actually
-  reports Capitol Trades.
+  names in new tabs, derive the politicians' trades source line from active
+  `webSources.congress.sources`, and remove stale Senate/Capitol wording unless
+  runtime source keys actually report those feeds.
+- Added a Settings -> Connections warning when the selected Green Team model's
+  provider key is missing, without restoring any special OpenAI `Required` badge.
 - Changed visible app-facing metadata/login/welcome/strategy copy and MCP client
   names to generic dashboard language while the app has no final product name.
 - Documented that Help/Data Sources copy should be updated whenever provider,
@@ -55,10 +57,10 @@ or more formally branded than intended.
   - Overview contains `System Help` and `How the System Works`.
   - Overview does not contain `Welcome to`, the old Robinhood-prefixed product
     name, `Agentic Trading`, `(e.g. Claude)`, or `Fintech Studios`.
-  - Data Sources contains `Keyless / Core` and the Congress.Trade politicians'
-    trades line.
-  - Data Sources does not contain `Keyless & Core`, `Capitol Trades`,
-    `Senate eFD`, or `Fintech Studios`.
+  - Data Sources contains `Keyless / Core` and derives the politicians' trades
+    source line from the active congressional source keys.
+  - Data Sources does not contain `Keyless & Core` or `Fintech Studios`, and
+    only names Senate/Capitol/Congress.Trade when those source keys are active.
   - All Data Sources links have `target="_blank"` and
     `rel="noopener noreferrer"`.
   - Tax Account Sheltering contains `(losses in taxable accounts still apply)`

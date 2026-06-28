@@ -45,16 +45,18 @@ Branch `codex/settings-connection-status`. The top Help action is now a visible
 accent-soft Help button on desktop with a `?` mobile fallback, instead of an
 easy-to-miss icon-only control. System Help removes the welcome sentence,
 temporary app-name branding, `(e.g. Claude)`, the Fintech Studios-only pricing
-section, and stale Senate/Capitol source copy. Data Sources now uses
-`Keyless / Core`, links each source/provider in a new tab, lists Congress.Trade
-as the aggregated politicians' trades source, and keeps API-key links aligned
-with Connection Status. App-facing metadata/login/welcome/strategy copy and MCP
-client names now use generic dashboard language instead of the temporary name.
-Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153 files /
-1,487 tests), `npm run build`, and in-app browser desktop/mobile Help checks
-against `http://127.0.0.1:4119/`. The Playwright smoke selector was updated to
-expect `Trading Dashboard` instead of the temporary app name; local focused
-smoke passed against a started production server on port 4201. See
+section, and stale hard-coded Senate/Capitol source copy. Data Sources now uses
+`Keyless / Core`, links each source/provider in a new tab, derives the
+politicians' trades source line from active `webSources.congress.sources`, and
+keeps API-key links aligned with Connection Status. Settings still avoids a
+special OpenAI `Required` badge, but warns when the selected Green Team model's
+provider key is missing. App-facing metadata/login/welcome/strategy copy and
+MCP client names now use generic dashboard language instead of the temporary
+name. Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153
+files / 1,487 tests), `npm run build`, and in-app browser desktop/mobile Help
+checks against `http://127.0.0.1:4119/`. The Playwright smoke selector was
+updated to expect `Trading Dashboard` instead of the temporary app name; local
+focused smoke passed against a started production server on port 4201. See
 `docs/rollouts/2026-06-28-help-data-sources-copy.md`.
 
 ## 2026-06-28 — Quiet tile first-paint dashboard loader

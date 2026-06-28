@@ -4294,7 +4294,7 @@ function SettingsContent({
                 </Button>
               </div>
             </div>
-            <ApiKeysSection />
+            <ApiKeysSection policy={policy} />
           </div>
         )}
 
@@ -5287,7 +5287,26 @@ type ApiKeyStatus = {
   updatedAt?: string;
 };
 
-function ApiKeysSection() {
+type LlmApiService = "openai" | "xai" | "gemini" | "mistral" | "deepseek";
+
+const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
+  openai: "OpenAI",
+  xai: "xAI",
+  gemini: "Gemini",
+  mistral: "Mistral",
+  deepseek: "DeepSeek"
+};
+
+function strategyLlmServiceForModel(model?: string | null): LlmApiService {
+  const value = (model || "gpt-5.4-mini").trim();
+  if (/^grok/i.test(value)) return "xai";
+  if (/^gemini/i.test(value)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(value)) return "mistral";
+  if (/^deepseek/i.test(value)) return "deepseek";
+  return "openai";
+}
+
+function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
   const [keys, setKeys] = useState<ApiKeyStatus[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -5347,6 +5366,11 @@ function ApiKeysSection() {
   }
 
   const requiredUnsetLabels = keys.filter((row) => row.required && row.source === "none").map((row) => row.label);
+  const strategyModel = policy.llmModel || "gpt-5.4-mini";
+  const strategyService = strategyLlmServiceForModel(strategyModel);
+  const strategyServiceLabel = LLM_SERVICE_LABELS[strategyService];
+  const selectedStrategyRow = keys.find((row) => row.service === strategyService);
+  const selectedStrategyModelMissing = selectedStrategyRow?.source === "none";
 
   if (loading) {
     return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={18} className="animate-spin" />} />;
@@ -5357,6 +5381,11 @@ function ApiKeysSection() {
       {requiredUnsetLabels.length > 0 && (
         <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
           Required connection missing: {requiredUnsetLabels.join(", ")}.
+        </p>
+      )}
+      {selectedStrategyModelMissing && (
+        <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+          Selected Green Team model <strong>{strategyModel}</strong> needs a {strategyServiceLabel} key before Run once can use it. Save a {strategyServiceLabel} key below or choose a different Green Team model in Strategy Studio.
         </p>
       )}
       <div className="grid gap-2">
@@ -5411,7 +5440,7 @@ function ApiKeysSection() {
         })}
       </div>
       <p className="text-xs text-faint">
-        Yahoo Finance, Congress.Trade, SEC EDGAR, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
+        Yahoo Finance, configured congressional-trade feeds, SEC EDGAR, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
       </p>
     </div>
   );
@@ -5872,11 +5901,45 @@ function HelpSourceLink({ href, children }: { href: string; children: React.Reac
   );
 }
 
+function joinHelpSourceLinks(items: React.ReactNode[]): React.ReactNode {
+  if (items.length === 0) return null;
+  if (items.length === 1) return items[0];
+  return items.map((item, index) => (
+    <React.Fragment key={index}>
+      {index > 0 && (index === items.length - 1 ? " and " : ", ")}
+      {item}
+    </React.Fragment>
+  ));
+}
+
+function CongressionalTradesHelpLine({ sources }: { sources: string[] }) {
+  const sourceSet = new Set(sources);
+  const hasCongressTrade = sourceSet.has("congress.trade");
+  const hasSenate = sourceSet.has("senate-efd");
+  const hasCapitolTrades = sourceSet.has("capitol-trades");
+  const hasApify = sourceSet.has("apify-congress");
+  const sourceLinks: React.ReactNode[] = [];
+
+  if (hasCongressTrade) sourceLinks.push(<HelpSourceLink href="https://congress.trade/">Congress.Trade</HelpSourceLink>);
+  if (hasSenate) sourceLinks.push(<HelpSourceLink href="https://efdsearch.senate.gov/search/">U.S. Senate eFD</HelpSourceLink>);
+  if (hasCapitolTrades) sourceLinks.push(<HelpSourceLink href="https://www.capitoltrades.com/">Capitol Trades</HelpSourceLink>);
+  if (hasApify) sourceLinks.push(<HelpSourceLink href="https://apify.com/">Apify congressional feeds</HelpSourceLink>);
+
+  if (hasCongressTrade && sourceLinks.length === 1) {
+    return <>Politicians&apos; trades: aggregated House/Senate reporting via {sourceLinks[0]}.</>;
+  }
+  if (sourceLinks.length > 0) {
+    return <>Politicians&apos; trades: configured public disclosure feeds via {joinHelpSourceLinks(sourceLinks)}.</>;
+  }
+  return <>Politicians&apos; trades: configured congressional-trade feeds; source attribution appears after the next refresh.</>;
+}
+
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
   type Section = "overview" | "guardrails" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
+  const congressionalSources = snapshot.webSources?.congress?.sources ?? [];
 
   return (
     <div className="space-y-4">
@@ -5991,7 +6054,7 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
               </div>
               <ul className="list-disc pl-4 space-y-0.5">
                 <li><HelpSourceLink href="https://finance.yahoo.com/">Yahoo Finance</HelpSourceLink>: quotes and price history with no API key - the floor every symbol falls back to.</li>
-                <li>Politicians&apos; trades: aggregated House/Senate reporting via <HelpSourceLink href="https://congress.trade/">Congress.Trade</HelpSourceLink>.</li>
+                <li><CongressionalTradesHelpLine sources={congressionalSources} /></li>
                 <li><HelpSourceLink href="https://www.sec.gov/os/accessing-edgar-data">SEC EDGAR</HelpSourceLink>: insider activity from Form 4 filings.</li>
                 <li><HelpSourceLink href="https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data">FINRA</HelpSourceLink>: daily short-volume data.</li>
                 <li>Connected broker: <HelpSourceLink href="https://alpaca.markets/">Alpaca</HelpSourceLink> or <HelpSourceLink href="https://robinhood.com/">Robinhood</HelpSourceLink> for account quotes, positions, and execution.</li>
