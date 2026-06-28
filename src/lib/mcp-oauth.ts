@@ -385,7 +385,7 @@ async function discoverMcpOAuthConfig(options: McpOAuthConfigOptions = {}): Prom
     redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
     resource: process.env.ROBINHOOD_MCP_RESOURCE || resource,
     scope: process.env.ROBINHOOD_MCP_SCOPES || firstString(authorizationServerMetadata.scopes_supported) || "tools:call",
-    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Trading Dashboard"
   };
 }
 
