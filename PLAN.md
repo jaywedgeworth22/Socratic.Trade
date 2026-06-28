@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-28 (`codex/thin-boot-strip`): first-paint loader selection —
+> replaced the Quiet Tiles SSR loading shell with option 4, the thin boot strip:
+> a single lightweight animated strip plus one screen-reader status and the
+> existing explicit failure alert. No roadmap change; see
+> `docs/rollouts/2026-06-28-thin-boot-strip-loading.md`.
+>
 > 2026-06-28 (`codex/robinhood-mcp-discovery-auth`): Robinhood MCP OAuth discovery —
 > reconnect now follows Robinhood's documented Trading MCP link first and discovers OAuth
 > endpoints from the MCP auth challenge when the official MCP URL is configured. Manual
