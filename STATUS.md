@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-28 — Thin boot strip first-paint loader
+Branch `codex/thin-boot-strip`. Replaced the Quiet Tiles SSR dashboard loading
+shell with option 4, the thin boot strip: the first-paint non-error state now
+keeps the brand header and shows one lightweight animated strip plus subtle
+tick marks instead of a page grid of skeleton tiles. It still exposes a single
+screen-reader status (`Preparing dashboard.`), respects reduced-motion settings,
+and keeps the explicit alert card for `/api/dashboard` load failures. Verification
+passed: `npm run lint -- --quiet`, `npx tsc --noEmit`, `npm test` (155 files /
+1,494 tests), `npm run build`, and in-app browser first-paint checks on desktop
+and 390px mobile against `http://127.0.0.1:4125/`. See
+`docs/rollouts/2026-06-28-thin-boot-strip-loading.md`.
+
 ## 2026-06-28 — Proposal/dashboard UI diagnostics polish
 Branch `codex/proposal-dashboard-ui-fixes`. Follow-up to the live proposal and
 dashboard screenshots: opening proposals now keep `referencePrice` as the
