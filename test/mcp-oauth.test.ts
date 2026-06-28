@@ -29,6 +29,67 @@ describe("mcp oauth", () => {
     expect(authorizationUrl.searchParams.get("state")).toBeTruthy();
   });
 
+  it("discovers OAuth endpoints from the documented Robinhood MCP link before manual endpoint env", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://agent.robinhood.com/mcp/trading");
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://wrong.example.test/oauth");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://wrong.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://wrong.example.test/register");
+    vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "https://trading.jays.services/api/auth/robinhood/callback");
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
+      requestedUrls.push(href);
+      if (href === "https://agent.robinhood.com/mcp/trading") {
+        return new Response("authentication required", {
+          status: 401,
+          headers: {
+            "www-authenticate":
+              'Bearer resource_metadata="https://agent.robinhood.com/.well-known/oauth-protected-resource/mcp/trading"'
+          }
+        });
+      }
+      if (href === "https://agent.robinhood.com/.well-known/oauth-protected-resource/mcp/trading") {
+        return new Response(
+          JSON.stringify({
+            resource: "https://agent.robinhood.com/mcp/trading",
+            authorization_servers: ["https://agent.robinhood.com/mcp/trading"],
+            scopes_supported: ["internal"]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (href === "https://agent.robinhood.com/.well-known/oauth-authorization-server/mcp/trading") {
+        return new Response(
+          JSON.stringify({
+            authorization_endpoint: "https://auth.discovered.test/authorize",
+            token_endpoint: "https://auth.discovered.test/token",
+            registration_endpoint: "https://auth.discovered.test/register",
+            scopes_supported: ["internal"]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (href === "https://auth.discovered.test/register") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { redirect_uris?: string[] };
+        expect(body.redirect_uris).toEqual(["https://trading.jays.services/api/auth/robinhood/callback"]);
+        return new Response(JSON.stringify({ client_id: "discovered-client" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    });
+    const { buildMcpAuthorizationUrl } = await import("../src/lib/mcp-oauth");
+
+    const authorizationUrl = new URL(await buildMcpAuthorizationUrl("user-a"));
+
+    expect(authorizationUrl.origin + authorizationUrl.pathname).toBe("https://auth.discovered.test/authorize");
+    expect(authorizationUrl.searchParams.get("client_id")).toBe("discovered-client");
+    expect(authorizationUrl.searchParams.get("scope")).toBe("internal");
+    expect(authorizationUrl.searchParams.get("resource")).toBe("https://agent.robinhood.com/mcp/trading");
+    expect(requestedUrls).not.toContain("https://wrong.example.test/register");
+  });
+
   it("uses a public callback URL instead of a loopback redirect for production-hosted OAuth", async () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
@@ -127,7 +188,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
-    vi.stubEnv("ROBINHOOD_MCP_URL", "https://agent.robinhood.com/mcp/trading");
+    vi.stubEnv("ROBINHOOD_MCP_RESOURCE", "https://agent.robinhood.com/mcp/trading");
     const publicRedirect = "https://trading.jays.services/api/auth/robinhood/callback";
     const registrationRedirects: string[] = [];
     let tokenRequest: URLSearchParams | undefined;
