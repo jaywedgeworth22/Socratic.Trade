@@ -5,6 +5,7 @@
 - Fixed fresh proposal performance readouts so they do not show an immediate noisy gain/loss from delayed quotes or below-market limit anchors.
 - Improved approval error handling for broker placement failures.
 - Polished Market Scan column order/reordering, stale-refresh copy, Symbol drilldowns, Macro header alignment, and Performance unrealized P&L.
+- Moved the scan fallback timestamp read out of render state after CI lint flagged the original implementation.
 
 ## Why
 
@@ -43,6 +44,7 @@ The Performance tab's top-line Unrealized value was based on app-recorded open l
 - `npx vitest run test/strategy-hardening.test.ts test/history-route.test.ts test/proposal-performance.test.ts` — passed, 42 tests.
 - `npm test` — passed, 155 files / 1,494 tests.
 - `npm run build` — passed, existing Next middleware-to-proxy deprecation warning only.
+- `npm run lint -- --quiet` — passed after the scan timestamp follow-up.
 - Playwright against `http://localhost:4124/`:
   - dashboard loaded with no page errors;
   - Macro tab showed the title and aligned helper copy;

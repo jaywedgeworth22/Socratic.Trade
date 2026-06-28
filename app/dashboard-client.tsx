@@ -2445,6 +2445,7 @@ function MarketScanView({
   const [liveScan, setLiveScan] = useState<MarketScan | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState("");
+  const [scanCheckedAt, setScanCheckedAt] = useState(0);
 
   useEffect(() => {
     try {
@@ -2489,8 +2490,10 @@ function MarketScanView({
   }
 
   const refreshScan = useCallback(async () => {
+    const checkedAt = Date.now();
     setScanLoading(true);
     setScanError("");
+    setScanCheckedAt(checkedAt);
     try {
       const res = await fetch("/api/scan");
       if (!res.ok) throw await responseError(res, "Market scan failed");
@@ -2569,7 +2572,7 @@ function MarketScanView({
       ? scan.warnings[0]
       : `${scan.warnings[0]} (${scan.warnings.length - 1} more warning${scan.warnings.length === 2 ? "" : "s"})`
     : "";
-  const scanAgeMs = Date.now() - Date.parse(scan.generatedAt);
+  const scanAgeMs = scanCheckedAt > 0 ? scanCheckedAt - Date.parse(scan.generatedAt) : Number.NaN;
   const scanTime = new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const scanFallbackText = scanError
     ? Number.isFinite(scanAgeMs) && scanAgeMs >= 0 && scanAgeMs < 15 * 60_000

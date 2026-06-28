@@ -15,7 +15,8 @@ the queue. Pending approval cards explain that `Run once` is manual/proposal-onl
 even in Autonomous mode. Market Scan defaults to `Sector` before `Sec RS`, the
 column chooser can reorder visible columns, and refresh-failure copy distinguishes
 a recent fallback scan from a genuinely stale one while `/api/scan` records
-`market_scan_failed` audit events. Symbol drilldowns now use the fixed slide-over
+`market_scan_failed` audit events. A CI lint follow-up keeps the refresh timestamp
+in scan state instead of reading the clock during render. Symbol drilldowns now use the fixed slide-over
 header for logo/ticker/company/sector/price, preserve `quotesBySymbol` metadata,
 and render close-only history as a line chart instead of dropping it as empty.
 Macro header copy is aligned inside the header block. The Performance tab's
@@ -25,7 +26,8 @@ focused Vitest (`strategy-hardening`, `history-route`, `proposal-performance`),
 and Playwright checks against `http://localhost:4124/` for Macro, Performance,
 Market Scan column chooser, and BAC symbol drawer. Full verification passed:
 `npx tsc --noEmit`, `npm test` (155 files / 1,494 tests), and `npm run build`
-(existing Next middleware deprecation warning only). See
+(existing Next middleware deprecation warning only). Lint follow-up verification:
+`npm run lint -- --quiet` passed. See
 `docs/rollouts/2026-06-28-proposal-dashboard-ui-fixes.md`.
 
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
