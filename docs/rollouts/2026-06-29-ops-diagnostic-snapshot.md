@@ -25,14 +25,15 @@
 
 ## Production setup (owner)
 1. Generate a long random token: `openssl rand -hex 32`
-2. Set `OPS_DIAGNOSTIC_TOKEN` on `trading-live` (Infisical prod / `.env.local`)
-3. Restart pm2 `trading`
-4. Probe:
+2. Set `OPS_DIAGNOSTIC_TOKEN` on `trading-live` (Infisical prod / `.env.local`) — **done 2026-06-29**
+3. Restart pm2 `trading` (required after Infisical change so `start:secrets` reloads env)
+4. Merge PR #249 and deploy release to `trading-live`
+5. Probe:
    ```bash
    curl -sS -H "x-ops-token: $OPS_DIAGNOSTIC_TOKEN" \
      "https://trading.jays.services/api/ops/snapshot?runs=15&audit=30" | jq .
    ```
-5. Optional: add the same token as a Cursor Cloud secret so agents can call the endpoint.
+6. Cursor Cloud runtime secret `OPS_DIAGNOSTIC_TOKEN` — **done 2026-06-29** (start a **new** agent session so it is injected into the shell).
 
 ## Cursor Cloud automatic fetch
 
