@@ -20,6 +20,9 @@ the setup-node npm cache.
 Required jobs now fail closed before checkout for fork PRs and bot-authored PRs
 instead of being skipped; `gitleaks/gitleaks-action` is pinned to a reviewed
 commit SHA before running on the self-hosted runner.
+Main Security then exposed a macOS runner cache issue where the pinned action
+refused to overwrite `${TMPDIR}/gitleaks.tmp`; `codex/gitleaks-temp-cleanup`
+removes that stale temp file before invoking the action.
 
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google

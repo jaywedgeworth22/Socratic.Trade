@@ -50,6 +50,10 @@ sync already use it successfully.
   caching enabled; cache was removed before re-running PR checks.
 - `git ls-remote https://github.com/gitleaks/gitleaks-action.git refs/tags/v3`
   resolved the pinned `v3` action commit SHA.
+- Main Security run `28349078730` failed after PR #225 merged because the
+  pinned action refused to overwrite `${TMPDIR}/gitleaks.tmp` on the macOS
+  runner; the workflow now removes that stale download file before invoking
+  gitleaks.
 
 ## Follow-ups
 
