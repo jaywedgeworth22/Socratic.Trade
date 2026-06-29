@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
+Branch `codex/google-auth-infisical-note`. PR #225 initially passed local
+`scripts/land.sh` verification (`npx tsc --noEmit`, `npm test` 155 files /
+1,494 tests, `npm run build`) but GitHub-hosted `ubuntu-latest` jobs failed
+before running any steps. Check-run annotations reported: `The job was not
+started because recent account payments have failed or your spending limit
+needs to be increased.` CI, Playwright smoke, and Security now run on the
+existing self-hosted `trading-live` runner for same-repo branches/PRs, with a
+guard preventing fork PRs from executing on the production Mac. See
+`docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`.
+
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google
 login after later deploys (`/` -> app `/login`, `/login` shows `Sign in with

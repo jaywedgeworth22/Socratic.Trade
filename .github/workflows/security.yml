@@ -11,7 +11,9 @@ on:
 
 jobs:
   gitleaks:
-    runs-on: ubuntu-latest
+    # Run only trusted same-repo PRs on the self-hosted production Mac.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
       pull-requests: read

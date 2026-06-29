@@ -12,7 +12,11 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # GitHub-hosted runners can fail before job startup when account billing or
+    # spending limits block usage. Use the existing self-hosted runner for
+    # trusted same-repo branches/PRs, never untrusted forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
     steps:

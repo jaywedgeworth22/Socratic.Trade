@@ -11,7 +11,9 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    # Run only trusted same-repo PRs on the self-hosted production Mac.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
     steps:
@@ -21,5 +23,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - name: Install Playwright browser
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS:-}" = "Linux" ]; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
       - run: npm run test:e2e

@@ -1,0 +1,45 @@
+# 2026-06-29 - Self-hosted CI while GitHub billing is blocked
+
+## Summary
+
+- Moved the required `verify` job from GitHub-hosted `ubuntu-latest` to the
+  existing self-hosted `trading-live` runner.
+- Moved Playwright smoke and gitleaks Security checks to the same runner.
+- Added same-repo PR guards so untrusted fork PRs do not execute on the
+  production Mac.
+- Made Playwright browser installation OS-aware: Linux uses `--with-deps`,
+  macOS installs Chromium only.
+
+## Why
+
+PR #225 passed the local landing gate, but GitHub-hosted Actions failed before
+running any workflow steps. Check-run annotations for `verify`, `smoke`, and
+`gitleaks` all reported:
+
+`The job was not started because recent account payments have failed or your spending limit needs to be increased.`
+
+The repo already has an online self-hosted runner named `trading-live-mac` with
+labels `self-hosted`, `macOS`, `trading-live`, and `ARM64`; Deploy and preview
+sync already use it successfully.
+
+## Files
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/e2e.yml`
+- `.github/workflows/security.yml`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`
+
+## Verification
+
+- `npx tsc --noEmit` - passed.
+- `npm test` - passed, 155 files / 1,494 tests.
+- `npm run build` - passed; Next.js emitted the existing middleware-to-proxy deprecation warning.
+
+## Follow-ups
+
+- If GitHub billing/spending limits are fixed and GitHub-hosted runners are
+  preferred again, revert the `runs-on` values in CI, Playwright Smoke, and
+  Security back to `ubuntu-latest`.
+- Keep the same-repo guard if any self-hosted PR workflow remains enabled.
