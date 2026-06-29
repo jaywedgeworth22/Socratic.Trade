@@ -20,10 +20,10 @@ import GitHub from "next-auth/providers/github";
 import type { Account, Profile, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Provider } from "next-auth/providers";
+import { normalizeAuthEmail, selectVerifiedGitHubEmail, type GitHubEmail } from "./github-email";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
 
 type EmailProfile = Profile & { email?: string | null };
-type GitHubEmail = { email?: string; primary?: boolean; verified?: boolean };
 
 const providers: Provider[] = [];
 
@@ -46,14 +46,8 @@ if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
   );
 }
 
-function normalizeEmail(email: string | null | undefined): string | undefined {
-  const normalized = email?.trim().toLowerCase();
-  return normalized && normalized.includes("@") ? normalized : undefined;
-}
-
 async function verifiedGitHubEmail(accessToken: string | undefined, fallbackEmail?: string | null): Promise<string | undefined> {
   if (!accessToken) return undefined;
-  const fallback = normalizeEmail(fallbackEmail);
   try {
     const response = await fetch("https://api.github.com/user/emails", {
       headers: {
@@ -64,14 +58,7 @@ async function verifiedGitHubEmail(accessToken: string | undefined, fallbackEmai
     });
     if (!response.ok) return undefined;
     const emails = (await response.json()) as GitHubEmail[];
-    const verified = emails
-      .filter((entry) => entry.verified && normalizeEmail(entry.email))
-      .map((entry) => ({ ...entry, email: normalizeEmail(entry.email)! }));
-    return (
-      verified.find((entry) => fallback && entry.email === fallback)?.email ??
-      verified.find((entry) => entry.primary)?.email ??
-      verified[0]?.email
-    );
+    return selectVerifiedGitHubEmail(emails, fallbackEmail);
   } catch {
     return undefined;
   }
@@ -96,7 +83,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     // Persist the email in the JWT so it survives across requests without a DB lookup.
     async jwt({ token, user, account, profile }: { token: JWT; user?: User; account?: Account | null; profile?: EmailProfile }) {
-      let email = normalizeEmail(user?.email ?? profile?.email);
+      let email = normalizeAuthEmail(user?.email ?? profile?.email);
       if (account?.provider === "github" && !email) {
         email = await verifiedGitHubEmail(account.access_token, profile?.email);
       }

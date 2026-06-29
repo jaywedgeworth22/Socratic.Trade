@@ -5,6 +5,7 @@
 - Updated the login page to render every configured Auth.js provider instead of hardcoding Google.
 - Required GitHub to return a verified email through the `user:email` scope before accepting sign-in.
 - Kept app identity email-based, so Google and GitHub sign-ins with the same verified email map to the same app account.
+- Prefer an app-allowed verified GitHub email (`PRIMARY_USER_EMAIL`, aliases, or `ALLOWED_EMAILS`) before GitHub's primary verified email when a GitHub account has several verified addresses.
 - Updated account-deletion copy, auth docs, env docs, and focused identity/middleware tests.
 
 ## Why
@@ -21,8 +22,10 @@ The app already derives users from normalized verified email. Adding GitHub shou
 - `docs/rollouts/2026-06-28-github-login.md`
 - `middleware.ts`
 - `src/lib/auth/auth.ts`
+- `src/lib/auth/github-email.ts`
 - `src/lib/auth/identity.ts`
 - `src/lib/request-user.ts`
+- `test/auth-github-email.test.ts`
 - `test/auth-identity.test.ts`
 - `test/middleware-auth.test.ts`
 
@@ -36,6 +39,7 @@ The app already derives users from normalized verified email. Adding GitHub shou
 - Landing: `bash scripts/land.sh` passed local gate again, pushed `codex/github-login`, and opened PR #224.
 - Initial GitHub PR checks were blocked before runner startup by an account billing/spending-limit annotation. After the billing issue was fixed, rerunning checks on PR #224 passed `verify`, `smoke`, and `gitleaks` on head `9dd2778c`.
 - Merged current `origin/main` from PR #225 into this branch after GitHub reported PR #224 was behind; final revalidation/push is in progress.
+- Codex review follow-up: added `test/auth-github-email.test.ts` for choosing an app-allowed verified GitHub email before GitHub's primary email.
 
 ## Follow-ups
 - Set `AUTH_GITHUB_ID` and `AUTH_GITHUB_SECRET` in production before expecting the GitHub button to appear live.

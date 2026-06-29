@@ -91,7 +91,9 @@ port 4126 showing both Google and GitHub when both provider env pairs are set.
 PR #224 is open with squash auto-merge armed. After the GitHub billing/spending
 limit issue was fixed, the required `verify`, `smoke`, and `gitleaks` checks ran
 green on the pre-merge branch head. The branch then merged current `origin/main`
-from PR #225 and is being revalidated/pushed before merge/deploy.
+from PR #225 and PR #226. Codex review found a GitHub multi-email edge case;
+GitHub login now prefers a verified app-allowed email before GitHub's primary
+verified email.
 
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header
