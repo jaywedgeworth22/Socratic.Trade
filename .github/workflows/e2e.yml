@@ -27,8 +27,15 @@ jobs:
           fi
           actor="${{ github.actor }}"
           if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
-            echo "::error::Bot PRs cannot run package installs on the self-hosted production runner."
-            exit 1
+            case "$actor" in
+              'cursor[bot]'|'dependabot[bot]')
+                echo "Trusted same-repo bot: $actor"
+                ;;
+              *)
+                echo "::error::Bot PRs cannot run package installs on the self-hosted production runner (untrusted bot: $actor)."
+                exit 1
+                ;;
+            esac
           fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
