@@ -5,8 +5,9 @@ import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat } from "./performance";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
@@ -87,26 +88,16 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
   });
 
   const model = resolvedModel;
-  const isChatCompletions = transport === "chat-completions";
 
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ]
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ]
-      },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection, model, reasoningEffort: policy.llmReasoningEffort }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent,
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
+      reasoningEffort: policy.llmReasoningEffort
+    }
   );
 
   try {
@@ -129,10 +120,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       async () => {
         const response = await llmFetch(url, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${openaiKey}`
-          },
+          headers: llmAuthHeaders({ provider, key: openaiKey }),
           body: JSON.stringify(body)
         });
 
@@ -143,9 +131,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
 
         const payload = await response.json();
         recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, ...extractLlmUsage(payload) });
-        const text = payload.choices?.[0]?.message?.content ??
-                     payload.output_text ??
-                     payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
+        const text = extractLlmText(payload);
 
         return { text: typeof text === "string" ? text : undefined };
       }
