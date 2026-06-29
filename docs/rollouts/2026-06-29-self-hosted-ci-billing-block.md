@@ -7,11 +7,17 @@
 - Moved Playwright smoke and gitleaks Security checks to the same runner.
 - Added same-repo PR guards so untrusted fork PRs do not execute on the
   production Mac.
+- Changed those guards to fail the required jobs before checkout for fork PRs
+  and bot-authored PRs, instead of skipping jobs that GitHub can count as
+  successful.
 - Disabled the `actions/setup-node` npm cache in CI and smoke; on the
   self-hosted runner the meaningful steps passed but the cache post-action
   cleanup wedged before the job could complete.
 - Made Playwright browser installation OS-aware: Linux uses `--with-deps`,
   macOS installs Chromium only.
+- Pinned `gitleaks/gitleaks-action` to
+  `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` before running it on the
+  self-hosted runner.
 
 ## Why
 
@@ -42,6 +48,8 @@ sync already use it successfully.
 - Remote CI attempt on the self-hosted runner completed lint, typecheck, tests,
   and build, then hung in `actions/setup-node` post-action cleanup with npm
   caching enabled; cache was removed before re-running PR checks.
+- `git ls-remote https://github.com/gitleaks/gitleaks-action.git refs/tags/v3`
+  resolved the pinned `v3` action commit SHA.
 
 ## Follow-ups
 
