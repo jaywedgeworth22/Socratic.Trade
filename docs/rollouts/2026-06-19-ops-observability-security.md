@@ -134,7 +134,12 @@ Notable verification fixes:
 Initial `npm install` reported 9 audit findings (5 moderate, 3 high, 1 critical).
 This rollout cleared them without `npm audit fix --force`: Vitest was upgraded to
 4.1.9, Alpaca's transitive Axios is overridden to 1.18.0, and Next's nested
-PostCSS is overridden to 8.5.15.
+PostCSS was overridden to 8.5.15.
+
+2026-06-29 correction: the PostCSS override was later removed because `postcss`
+is also a direct devDependency, and npm rejects Dependabot's direct PostCSS
+updates when the package is simultaneously listed in `overrides`. PostCSS stays
+patched through the direct devDependency and lockfile.
 
 ## Follow-ups
 

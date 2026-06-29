@@ -21,8 +21,10 @@ This app now has opt-in scaffolding for the seven selected tools:
 - **Dependabot**: `.github/dependabot.yml` watches npm dependencies. CI/e2e/
   security workflows were intentionally left out of this push because GitHub
   rejects workflow-file changes unless the credentials include `workflow` scope.
-- **Audit hardening**: npm overrides pin transitive Axios and PostCSS to patched
-  releases, and Vitest is on the current major so its Vite dependency is patched.
+- **Audit hardening**: npm overrides pin transitive Axios to a patched release.
+  PostCSS is kept as a direct devDependency so Dependabot can update it without
+  npm direct-dependency override conflicts. Vitest is on the current major so its
+  Vite dependency is patched.
 - **Litestream**: continuous WAL replication of `data/app.db` to Cloudflare R2, run as
   a PM2 sidecar (`litestream`) via `scripts/run-litestream.sh` against `litestream.yml`.
   Restore with `scripts/litestream-restore.sh`. Full setup, monitoring, and DR steps are

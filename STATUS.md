@@ -18,6 +18,15 @@ middleware deprecation warning only), and Playwright desktop/mobile menu smoke
 against `http://127.0.0.1:4137/`. See
 `docs/rollouts/2026-06-29-profile-menu.md` for Antigravity handoff notes.
 
+## 2026-06-29 — Dependabot PostCSS override CI autofix
+Branch `cursor/ci-autofix-automation-b6d9`. Dependabot failed on main because
+the repo listed `postcss` both as a direct devDependency and in npm `overrides`;
+when Dependabot tested `postcss@8.5.16`, npm raised `EOVERRIDE` because the
+override no longer matched the direct dependency spec. The fix removes only the
+redundant PostCSS override while keeping the Axios override, and documents that
+PostCSS remains patched through the direct devDependency/lockfile. Verification
+planned/recorded in `docs/rollouts/2026-06-29-dependabot-postcss-override.md`.
+
 ## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
 Branch `codex/google-auth-infisical-note`. PR #225 initially passed local
 `scripts/land.sh` verification (`npx tsc --noEmit`, `npm test` 155 files /

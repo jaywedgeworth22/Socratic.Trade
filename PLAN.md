@@ -12,6 +12,12 @@ filling the missing pieces.
 > photo-or-initials fallback. No roadmap change; see
 > `docs/rollouts/2026-06-29-profile-menu.md`.
 >
+> 2026-06-29 (`cursor/ci-autofix-automation-b6d9`): Dependabot PostCSS override
+> cleanup — removed the redundant `postcss` npm override that conflicted with
+> Dependabot direct dependency updates. PostCSS remains a direct devDependency;
+> Axios stays overridden for transitive security hardening. No roadmap change;
+> see `docs/rollouts/2026-06-29-dependabot-postcss-override.md`.
+>
 > 2026-06-29 (`codex/google-auth-infisical-note`): CI runner billing unblock —
 > GitHub-hosted `ubuntu-latest` jobs are failing before startup due account
 > billing/spending-limit errors, so CI verify, Playwright smoke, and Security now
