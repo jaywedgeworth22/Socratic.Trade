@@ -44,7 +44,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
   sellToFundBuy: "off",
-  llmModel: "gpt-5.4-mini",
+  llmModel: "gpt-4o-mini",
   llmReasoningEffort: "medium",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,

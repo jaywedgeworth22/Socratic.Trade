@@ -19,7 +19,7 @@ import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
-import { fetchYahooFinanceQuote } from "./yahoo-finance";
+import { fetchYahooFinanceQuote, fetchYahooFinanceQuotesBatch } from "./yahoo-finance";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
 const TEST_SIM_STARTING_CASH = (() => {
@@ -637,64 +637,63 @@ class TestBrokerGateway implements BrokerGateway {
   }
 
   async getEquityQuotes(_accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
-    const quotes = await Promise.all(
-      symbols.map(async (symbol) => {
-        const normalized = normalizeSymbol(symbol);
+    const result: Record<string, BrokerQuote> = {};
+    const remainingSymbols: string[] = [];
+    const normalizedSymbols = symbols.map(s => normalizeSymbol(s));
 
-        // Fetch live quotes from Yahoo Finance first in non-test environments
-        if (process.env.NODE_ENV !== "test") {
-          const yf = await fetchYahooFinanceQuote(normalized);
+    if (process.env.NODE_ENV !== "test") {
+      try {
+        const yfQuotes = await fetchYahooFinanceQuotesBatch(normalizedSymbols);
+        for (const symbol of normalizedSymbols) {
+          const yf = yfQuotes.get(symbol);
           if (yf) {
-            return [
-              normalized,
-              {
-                symbol: normalized,
-                price: yf.price,
-                bid: yf.bid,
-                ask: yf.ask,
-                volume: yf.volume > 0 ? yf.volume : undefined,
-                asOf: new Date().toISOString(),
-                provider: "yahoo-finance"
-              }
-            ] as const;
+            result[symbol] = {
+              symbol,
+              price: yf.price,
+              bid: yf.bid,
+              ask: yf.ask,
+              volume: yf.volume > 0 ? yf.volume : undefined,
+              asOf: yf.asOf || new Date().toISOString(),
+              provider: "yahoo-finance"
+            };
+          } else {
+            remainingSymbols.push(symbol);
           }
         }
+      } catch (err) {
+        console.error("[robinhood] batch quote fetch failed, falling back", err);
+        remainingSymbols.push(...normalizedSymbols);
+      }
+    } else {
+      remainingSymbols.push(...normalizedSymbols);
+    }
 
-        if (MOCK_PRICES[normalized]) {
-          const price = MOCK_PRICES[normalized];
-          return [
-            normalized,
-            {
-              symbol: normalized,
-              price,
-              bid: price * 0.999,
-              ask: price * 1.001,
-              asOf: new Date().toISOString(),
-              provider: "test"
-            }
-          ] as const;
-        }
+    for (const symbol of remainingSymbols) {
+      if (MOCK_PRICES[symbol]) {
+        const price = MOCK_PRICES[symbol];
+        result[symbol] = {
+          symbol,
+          price,
+          bid: price * 0.999,
+          ask: price * 1.001,
+          asOf: new Date().toISOString(),
+          provider: "test"
+        };
+      } else if (process.env.NODE_ENV === "test") {
+        result[symbol] = {
+          symbol,
+          price: 100,
+          bid: 99.9,
+          ask: 100.1,
+          asOf: new Date().toISOString(),
+          provider: "test"
+        };
+      } else {
+        throw new Error(`Real-time quote for symbol ${symbol} is unavailable.`);
+      }
+    }
 
-        // Fallback for non-mock symbols in test mode (so tests never make network calls or fail)
-        if (process.env.NODE_ENV === "test") {
-          return [
-            normalized,
-            {
-              symbol: normalized,
-              price: 100,
-              bid: 99.9,
-              ask: 100.1,
-              asOf: new Date().toISOString(),
-              provider: "test"
-            }
-          ] as const;
-        }
-
-        // In normal development/production mode, if we can't find the Yahoo Finance quote and it's not a mock symbol, throw an error!
-        throw new Error(`Real-time quote for symbol ${normalized} is unavailable.`);
-      })
-    );
-    return Object.fromEntries(quotes);
+    return result;
   }
 
   async getEquityTradability(_accountNumber: string, symbols: string[]) {

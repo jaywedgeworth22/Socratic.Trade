@@ -54,10 +54,12 @@ export async function cancelBrokerProtectiveStop(
     if (normalizeSymbol(row.symbol) !== sym) continue;
     try {
       await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+      deleteBrokerProtectiveStop(row.id, userId);
     } catch (err) {
       audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId);
+      // Mark as pending_cancel in DB instead of deleting immediately, to retry later
+      upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
     }
-    deleteBrokerProtectiveStop(row.id, userId);
   }
 }
 
@@ -85,29 +87,85 @@ export async function reconcileBrokerProtectiveStops(args: {
   if (!brokerProtectiveStopsEnabled(policy, executionMode)) return out;
   const stopPct = policy.riskRules!.stopLossPct!;
 
+  // 1. Retry pending cancellations first
+  for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+    if (row.status === "pending_cancel") {
+      try {
+        await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+        deleteBrokerProtectiveStop(row.id, userId);
+        out.cancelled++;
+      } catch (err) {
+        // Keep it in DB as pending_cancel to retry on the next tick
+        console.error(`[protective-stops] retry cancel failed for ${row.symbol} order ${row.brokerOrderId}:`, err);
+      }
+    }
+  }
+
   // Robinhood is long-only, so protective stops only apply to long positions.
   const liveLongs = new Map<string, EquityPosition>();
   for (const p of positions) {
     if (p.quantity > 0.000001) liveLongs.set(normalizeSymbol(p.symbol), p);
   }
 
-  // Cancel-on-close (runs regardless of `running` — cancelling is always risk-reducing).
+  // 2. Cancel-on-close (runs regardless of `running` — cancelling is always risk-reducing).
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+    if (row.status === "pending_cancel") continue; // already handled
     if (!liveLongs.has(normalizeSymbol(row.symbol))) {
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+        deleteBrokerProtectiveStop(row.id, userId);
+        out.cancelled++;
       } catch (err) {
         audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId);
+        // Mark as pending_cancel to retry later
+        upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
       }
-      deleteBrokerProtectiveStop(row.id, userId);
-      out.cancelled++;
     }
   }
 
   if (!running) return out;
 
-  // Place-if-missing for each open long without a resting stop.
-  const existing = new Set(listBrokerProtectiveStops(accountNumber, userId).map((r) => normalizeSymbol(r.symbol)));
+  // 3. Mismatch detection: if quantity or stop price has drifted, cancel the existing stop.
+  // On the next loop, it will be re-placed with correct values.
+  const existingStops = listBrokerProtectiveStops(accountNumber, userId);
+  for (const [sym, pos] of liveLongs) {
+    const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
+    if (existingStop && existingStop.status === "resting") {
+      const qty = Math.abs(pos.quantity);
+      const targetStopPrice = round2(pos.averageCost * (1 - stopPct / 100));
+
+      const qtyMismatch = Math.abs(existingStop.quantity - qty) > 0.000001;
+      const priceMismatch = Math.abs(existingStop.stopPrice - targetStopPrice) > 0.02;
+
+      if (qtyMismatch || priceMismatch) {
+        audit("broker_protective_stop_mismatch", {
+          symbol: sym,
+          oldQty: existingStop.quantity,
+          newQty: qty,
+          oldStopPrice: existingStop.stopPrice,
+          newStopPrice: targetStopPrice
+        }, userId);
+
+        try {
+          await gateway.cancelEquityOrder(accountNumber, existingStop.brokerOrderId);
+          deleteBrokerProtectiveStop(existingStop.id, userId);
+          out.cancelled++;
+        } catch (err) {
+          audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId);
+          upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
+        }
+      }
+    }
+  }
+
+  // 4. Place-if-missing for each open long without a resting stop (excluding pending_cancel ones).
+  const currentStops = listBrokerProtectiveStops(accountNumber, userId);
+  const existing = new Set(
+    currentStops
+      .filter((r) => r.status !== "pending_cancel")
+      .map((r) => normalizeSymbol(r.symbol))
+  );
+
   for (const [sym, pos] of liveLongs) {
     if (existing.has(sym)) continue;
     if (!(pos.averageCost > 0)) continue;

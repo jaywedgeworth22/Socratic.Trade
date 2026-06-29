@@ -81,6 +81,7 @@ export function ModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -98,7 +99,19 @@ export function ModelPicker({
     <div ref={ref} className={cn("relative", className)}>
       <button
         type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen(true);
+            setTimeout(() => {
+              const firstOpt = listRef.current?.querySelector('[role="option"]:not([disabled])') as HTMLButtonElement | null;
+              firstOpt?.focus();
+            }, 0);
+          }
+        }}
         className="flex w-full items-center gap-2 rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
         title="Chat model — pick any provider. Providers without a key are marked “no key” and disabled."
       >
@@ -111,7 +124,12 @@ export function ModelPicker({
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 max-h-80 w-[20rem] max-w-[80vw] overflow-y-auto rounded-lg border border-line bg-surface shadow-lg">
+        <div
+          ref={listRef}
+          role="listbox"
+          aria-label="Model options"
+          className="absolute z-50 mt-1 max-h-80 w-[20rem] max-w-[80vw] overflow-y-auto rounded-lg border border-line bg-surface shadow-lg"
+        >
           {groups.map((g) => {
             const missing = g.provider !== "offline" && providerStatus[g.provider] === false;
             return (
@@ -127,15 +145,32 @@ export function ModelPicker({
                     <button
                       key={o.value}
                       type="button"
+                      role="option"
+                      aria-selected={active}
                       disabled={missing}
                       onClick={() => {
                         onChange(o.value);
                         setOpen(false);
                       }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setOpen(false);
+                          ref.current?.querySelector("button")?.focus();
+                        } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                          e.preventDefault();
+                          const opts = Array.from(listRef.current?.querySelectorAll('[role="option"]:not([disabled])') ?? []) as HTMLElement[];
+                          const idx = opts.indexOf(document.activeElement as HTMLElement);
+                          if (idx !== -1) {
+                            const nextIdx = (idx + (e.key === "ArrowDown" ? 1 : -1) + opts.length) % opts.length;
+                            opts[nextIdx]?.focus();
+                          }
+                        }
+                      }}
                       className={cn(
-                        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs",
+                        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs focus:outline-none focus:bg-surface-2",
                         missing ? "cursor-not-allowed text-faint" : "text-fg hover:bg-surface-2",
-                        active && "bg-accent/10"
+                        active && "bg-accent/10 focus:bg-accent/15"
                       )}
                     >
                       <ProviderLogo provider={g.provider} size={16} />

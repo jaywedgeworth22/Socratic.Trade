@@ -209,7 +209,7 @@ export function acquireStrategyLock(userId: string = "local", connectedAccountId
     return true;
   });
 
-  return acquire() as boolean;
+  return acquire.immediate() as boolean;
 }
 
 export function releaseStrategyLock(userId: string = "local", connectedAccountId?: string): void {

@@ -97,7 +97,7 @@ export function acquireLease(owner: string, ttlMs: number, now: Date = new Date(
   });
 
   try {
-    return acquire() as boolean;
+    return acquire.immediate() as boolean;
   } catch {
     // Fail closed: if we can't prove leadership, behave as non-leader.
     return false;
@@ -132,7 +132,7 @@ export function renewLease(owner: string, ttlMs: number, now: Date = new Date())
   });
 
   try {
-    return renew() as boolean;
+    return renew.immediate() as boolean;
   } catch {
     return false;
   }
@@ -152,7 +152,7 @@ export function releaseLease(owner: string): void {
   });
 
   try {
-    release();
+    release.immediate();
   } catch {
     // Swallow — shutdown path must never throw.
   }

@@ -2,6 +2,7 @@ import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, P
 import { normalizeSymbol } from "./money";
 import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./index-universes";
 import { getUserWashSaleLockedSymbols } from "./tax";
+import { getDb } from "./db";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -52,7 +53,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   const symbol = normalizeSymbol(proposal.symbol);
   const estimatedNotional = context.estimatedNotional ?? estimateNotional(proposal);
 
-  if (context.policy.systemState === "halted") reasons.push("System is halted.");
+  if (context.policy.systemState === "halted" && proposal.side !== "sell" && proposal.side !== "cover") {
+    reasons.push("System is halted.");
+  }
   if (context.policy.systemState === "liquidating" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is liquidating. Only close orders allowed.");
   if (context.policy.systemState === "close_only" && proposal.side !== "sell" && proposal.side !== "cover") reasons.push("System is close-only. New entries are disabled.");
   if (!context.policy.accountNumber) reasons.push("No Robinhood account is selected.");
@@ -66,7 +69,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     if (allowedSymbols.length === 0 && !hasDynamicUniverse) reasons.push("Allowed universe is required.");
     if (!allowedSymbols.includes(symbol) && !isDynamicScanSymbol(symbol, context)) reasons.push(`${symbol} is not in the allowed universe.`);
   }
-  if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
+  if (proposal.side !== "sell" && proposal.side !== "cover" && !context.policy.permittedOrderTypes.includes(proposal.type)) {
+    reasons.push(`${proposal.type} orders are not permitted.`);
+  }
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
   // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
   // Permissive default — brackets should be encouraged when stop rules are active.
@@ -78,7 +83,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
     }
   }
-  if (!context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
+  if (proposal.side !== "sell" && proposal.side !== "cover" && !context.policy.permitExtendedHours && proposal.marketHours !== "regular_hours") {
     reasons.push("Extended-hours orders are disabled.");
   }
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
@@ -468,7 +473,7 @@ function projectedExposurePct(
   const current = Math.abs(position?.marketValue ?? 0);
   const isOpening = proposal.side === "buy" || proposal.side === "short";
   const projected = isOpening ? current + notional : Math.max(0, current - notional);
-  if (portfolio.totalMarketValue <= 0) return 0;
+  if (portfolio.totalMarketValue <= 0) return Infinity;
   return (projected / portfolio.totalMarketValue) * 100;
 }
 
@@ -545,11 +550,25 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
 }
 
 function sectorForSymbol(symbol: string, positions: EquityPosition[], marketScan?: MarketScan): string | undefined {
-  return (
-    positions.find((position) => normalizeSymbol(position.symbol) === symbol)?.sector ??
-    marketScan?.sectorBySymbol[symbol] ??
-    marketScan?.quotesBySymbol[symbol]?.sector
-  );
+  const positionSector = positions.find((position) => normalizeSymbol(position.symbol) === symbol)?.sector;
+  if (positionSector) return positionSector;
+
+  if (marketScan) {
+    const scanSector = marketScan.sectorBySymbol[symbol] ?? marketScan.quotesBySymbol[symbol]?.sector;
+    if (scanSector) return scanSector;
+  }
+
+  // Fallback: query the local SQLite imported_securities_ref table
+  try {
+    const row = getDb()
+      .prepare("SELECT sector FROM imported_securities_ref WHERE ticker = ?")
+      .get(symbol) as { sector: string | null } | undefined;
+    if (row?.sector) return row.sector;
+  } catch {
+    // DB query error or database not initialized (e.g. during tests)
+  }
+
+  return undefined;
 }
 
 function sectorCapFor(policy: TradingPolicy, sector: string): number | undefined {

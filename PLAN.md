@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`antigravity/multi-agent-optimizations`): multi-agent optimizations —
+> implemented a set of 18 system optimizations and UX improvements spanning DB indexing,
+> scheduler lease locks, serial SEC 8-K crawls, cache GC sweeps, faster 10-K parsing, stop
+> cancel/drift reconciliation, zero-NAV & sizer boundaries, backtest timeline fixes, WCAG AA contrast,
+> responsive mobile tabs, ARIA accessible model pickers, P&L bar charts, and button standardization.
+> No roadmap change; see `docs/rollouts/2026-06-29-multi-agent-system-optimizations.md`.
+>
 > 2026-06-29 (`codex/google-auth-infisical-note`): CI runner billing unblock —
 > GitHub-hosted `ubuntu-latest` jobs are failing before startup due account
 > billing/spending-limit errors, so CI verify, Playwright smoke, and Security now

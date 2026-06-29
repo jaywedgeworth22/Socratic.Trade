@@ -226,6 +226,8 @@ export function SlideOver({
   );
 }
 
+import { Button } from "./primitives";
+
 export function ConfirmModal({
   open,
   onClose,
@@ -251,18 +253,15 @@ export function ConfirmModal({
       size="sm"
       footer={
         <>
-          <button onClick={onClose} className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg hover:bg-surface-2">
+          <Button variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={tone === "danger" ? "danger" : "primary"}
             onClick={onConfirm}
-            className={cn(
-              "h-9 rounded-lg px-4 text-sm font-medium",
-              tone === "danger" ? "bg-down text-down-fg hover:brightness-110" : "bg-accent text-accent-fg hover:brightness-110"
-            )}
           >
             {confirmLabel}
-          </button>
+          </Button>
         </>
       }
     >

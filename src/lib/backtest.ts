@@ -447,15 +447,21 @@ export interface OOSResult {
  */
 export function splitWalkForward(
   observations: FactorObservation[],
-  trainFraction: number = 0.7
+  trainFraction: number = 0.7,
+  horizonDays: number = 0
 ): { train: FactorObservation[]; test: FactorObservation[] } {
   const dates = [...new Set(observations.map((o) => o.date))].sort();
   if (dates.length < 2) return { train: observations, test: [] };
   const cutIdx = Math.max(1, Math.floor(dates.length * trainFraction));
   const trainDates = new Set(dates.slice(0, cutIdx));
+  
+  // To avoid overlap leakage: remove dates from the test set that are within `horizonDays` after the training fold's end date.
+  const testCutIdx = cutIdx + horizonDays;
+  const testDates = new Set(dates.slice(testCutIdx));
+
   return {
     train: observations.filter((o) => trainDates.has(o.date)),
-    test: observations.filter((o) => !trainDates.has(o.date))
+    test: observations.filter((o) => testDates.has(o.date))
   };
 }
 
@@ -642,7 +648,7 @@ export async function runWalkForwardOOS(
   const uniqueDates = [...new Set(rawObservations.map((o) => o.date))].sort();
   if (uniqueDates.length < 4) return null;
 
-  const { train, test } = splitWalkForward(rawObservations, trainFraction);
+  const { train, test } = splitWalkForward(rawObservations, trainFraction, horizonDays);
   if (train.length === 0 || test.length === 0) return null;
 
   const trainICs = computeFactorICs(train);
@@ -677,7 +683,7 @@ export async function runWalkForwardOOS(
     const firstTs = Date.parse(equityCurve[0].date);
     const lastTs = Date.parse(equityCurve[equityCurve.length - 1].date);
     const calendarDays = Math.max(1, (lastTs - firstTs) / DAY_MS);
-    const annualFactor = 252 / calendarDays;
+    const annualFactor = 365 / calendarDays;
     const last = equityCurve[equityCurve.length - 1];
 
     annualizedReturn = Math.pow(1 + last.cumulativeReturn, annualFactor) - 1;

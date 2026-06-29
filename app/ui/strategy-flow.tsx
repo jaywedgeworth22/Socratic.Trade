@@ -220,8 +220,21 @@ function buildSpecs(snapshot: FlowSnapshot): { specs: Spec[]; edges: Edge[] } {
 const COL_X = [20, 280, 540, 820, 1090, 1360];
 const ROW_Y = 130;
 
+function useWindowWidth(): number {
+  const [width, setWidth] = useState(1200);
+  useEffect(() => {
+    setWidth(window.innerWidth);
+    const handle = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", handle);
+    return () => window.removeEventListener("resize", handle);
+  }, []);
+  return width;
+}
+
 export function StrategyFlow({ snapshot }: { snapshot?: FlowSnapshot }) {
   const colorMode = useColorMode();
+  const width = useWindowWidth();
+  
   const { initialNodes, initialEdges } = useMemo(() => {
     const { specs, edges } = buildSpecs(snapshot);
     const byId = new Map(specs.map((s) => [s.id, s.data.status]));
@@ -254,6 +267,76 @@ export function StrategyFlow({ snapshot }: { snapshot?: FlowSnapshot }) {
     setNodes(initialNodes);
     setEdges(initialEdges);
   }, [initialNodes, initialEdges, setNodes, setEdges]);
+
+  if (width < 768) {
+    const { specs } = buildSpecs(snapshot);
+    const datas = specs.filter((s) => s.col === 0);
+    const pipelineSteps = specs.filter((s) => s.col > 0).sort((a, b) => {
+      if (a.col !== b.col) return a.col - b.col;
+      return a.row - b.row;
+    });
+
+    return (
+      <div className="flex flex-col gap-4 overflow-y-auto p-1 h-full max-h-[500px]">
+        <div>
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-faint mb-2">Data Feeds</h4>
+          <div className="grid grid-cols-1 gap-2">
+            {datas.map((s) => {
+              const sm = STATUS_META[s.data.status];
+              return (
+                <div key={s.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/60 p-3 shadow-sm backdrop-blur-xl">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`rounded-lg p-1.5 text-white ${s.data.iconColor} shrink-0`}>{s.data.icon}</div>
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-semibold text-fg">{s.data.label}</div>
+                      <div className="truncate text-[10px] text-faint">{s.data.subtext}</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end shrink-0 leading-tight">
+                    <span className={`inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide ${sm.text}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} /> {sm.label}
+                    </span>
+                    {s.data.detail && <span className="text-[10px] text-muted mt-0.5">{s.data.detail}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-faint mb-2">Pipeline Flow</h4>
+          <div className="flex flex-col gap-2">
+            {pipelineSteps.map((s, index) => {
+              const sm = STATUS_META[s.data.status];
+              return (
+                <div key={s.id} className="relative">
+                  {index > 0 && (
+                    <div className="absolute -top-2 left-6 h-2 w-0.5 bg-line-strong" />
+                  )}
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/60 p-3 shadow-sm backdrop-blur-xl">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`rounded-lg p-1.5 text-white ${s.data.iconColor} shrink-0`}>{s.data.icon}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-semibold text-fg">{s.data.label}</div>
+                        <div className="truncate text-[10px] text-faint">{s.data.subtext}</div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end shrink-0 leading-tight">
+                      <span className={`inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide ${sm.text}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} /> {sm.label}
+                      </span>
+                      {s.data.detail && <span className="text-[10px] text-muted mt-0.5">{s.data.detail}</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full w-full flex-col gap-2">

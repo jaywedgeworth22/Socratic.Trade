@@ -925,15 +925,15 @@ export function shouldSkipNegativeExpectancy(
   const account = policy.accountNumber;
   if (!account) return { skip: false };
 
-  const stat = selectThesisStat(
-    getThesisRegimeScorecard(account, source, {}, userId),
-    getThesisScorecard(account, source, {}, userId),
-    proposal
-  );
-  const sampleTrades = stat?.trades ?? 0;
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const parentStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
+  const parentTrades = parentStat?.trades ?? 0;
   const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
-  if (sampleTrades < minLots) return { skip: false }; // never skip an UNPROVEN (exploratory) thesis
+  if (parentTrades < minLots) return { skip: false }; // parent thesis is unproven
 
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
+  const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
+  const sampleTrades = stat?.trades ?? 0;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
   const threshold = policy.tuning?.skipNegativeExpectancyEdgePct ?? 0;
   if (avgReturn <= threshold) {
@@ -1039,14 +1039,13 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
   const ceiling = (policy.tuning?.sizingCeilingPct ?? 100) / 100;
 
-  // Evidence floor: an UNPROVEN thesis (fewer than minLots closed lots) has no realized edge to
-  // justify a data-driven size — its shrunk win-rate/avgReturn are dominated by the neutral prior,
-  // so the raw multiplier would still allocate ~28% on AI conviction alone. Hold it at the floor
-  // (exploratory) until it accumulates a real sample, rather than sizing up on faith. Mirrors the
-  // auto-tuner's closed-lot gate so the fast (sizing) path is held to the same bar as weight shifts.
   const minLotsForSizing = policy.tuning?.minClosedLotsForWeightShift ?? 20;
   const unproven = sampleTrades < minLotsForSizing;
-  const boundedMultiplier = unproven ? floor : Math.max(floor, Math.min(ceiling, multiplier));
+  const boundedMultiplier = unproven
+    ? floor
+    : avgReturn < 0
+      ? 0
+      : Math.max(floor, Math.min(ceiling, multiplier));
   
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
   let effectiveOpeningCap = openingCapacity.cap;
@@ -1158,8 +1157,11 @@ function openingRiskCapacity(
   positions: EquityPosition[],
   marketScan?: MarketScan
 ): { cap: number; reason?: string } {
+  if (portfolio.totalMarketValue <= 0) {
+    return { cap: 0, reason: "Account NAV is zero or negative — entries blocked." };
+  }
   const symbol = normalizeSymbol(proposal.symbol);
-  const totalValue = portfolio.totalMarketValue > 0 ? portfolio.totalMarketValue : 0;
+  const totalValue = portfolio.totalMarketValue;
   const caps: Array<{ value: number; reason: string }> = [];
   if (policy.maxOrderNotional != null && policy.maxOrderNotional > 0) {
     caps.push({ value: policy.maxOrderNotional, reason: "per-order cap" });

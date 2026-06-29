@@ -135,6 +135,13 @@ async function tick(): Promise<void> {
     console.error("[scheduler] heartbeat write error:", err);
   }
 
+  // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
+  // true/on/yes), only the lease holder runs the background updates and per-account tick body
+  // — preventing duplicate API scrapes and broker EXIT orders on multi-process deploys.
+  if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
+    return; // not the leader this tick — no side effects
+  }
+
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
   // keep the dashboard + agent context fresh even while autonomous trading is paused.
@@ -181,14 +188,6 @@ async function tick(): Promise<void> {
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
 
   try {
-    // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
-    // true/on/yes), only the lease holder runs the per-account tick body (synthetic-stop monitor
-    // + strategy runs) — preventing duplicate broker EXIT orders on multi-process deploys.
-    // When the flag is OFF, singleLeaderEnabled() short-circuits to false, acquireOrRenewLeadership
-    // is never called, the lease row is never touched, and the body below runs exactly as today.
-    if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
-      return; // not the leader this tick — no side effects
-    }
 
     // --- Per-Account Scheduling ---
     // Each connected account is scheduled independently: its own per-account policy

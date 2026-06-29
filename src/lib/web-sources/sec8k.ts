@@ -14,7 +14,7 @@
 import { audit, getInternalSetting, setInternalSetting } from "../db";
 import { normalizeSymbol } from "../money";
 import { retryBackoffMs } from "./congress";
-import { politeFetchText, secUserAgent } from "./http";
+import { politeFetchText, runRateLimited, secUserAgent } from "./http";
 
 const DATASET_KEY = "webSource:sec8k:dataset";
 const ATTEMPT_KEY = "webSource:sec8k:lastAttempt";
@@ -237,19 +237,18 @@ export function parseEightKItemsFromHtml(html: string): string[] {
 async function enrichEightKEvents(events: EightKEvent[]): Promise<EightKEvent[]> {
   const limit = Number(process.env.WEB_SOURCE_SEC8K_DETAIL_LIMIT ?? 25);
   const maxDetails = Number.isFinite(limit) && limit > 0 ? limit : 25;
-  const enriched = await Promise.all(
-    events.slice(0, maxDetails).map(async (event) => {
-      const url = absoluteSecUrl(event.filingUrl);
-      if (!url) return event;
-      try {
-        const html = await politeFetchText(url, { headers: { "user-agent": secUserAgent(), accept: "text/html" } });
-        const items = parseEightKItemsFromHtml(html);
-        return items.length > 0 ? { ...event, filingUrl: url, items } : { ...event, filingUrl: url };
-      } catch {
-        return { ...event, filingUrl: url };
-      }
-    })
-  );
+  const slice = events.slice(0, maxDetails);
+  const enriched = await runRateLimited(slice, 250, async (event) => {
+    const url = absoluteSecUrl(event.filingUrl);
+    if (!url) return event;
+    try {
+      const html = await politeFetchText(url, { headers: { "user-agent": secUserAgent(), accept: "text/html" } });
+      const items = parseEightKItemsFromHtml(html);
+      return items.length > 0 ? { ...event, filingUrl: url, items } : { ...event, filingUrl: url };
+    } catch {
+      return { ...event, filingUrl: url };
+    }
+  });
   return [...enriched, ...events.slice(maxDetails)];
 }
 

@@ -55,19 +55,15 @@ function ApproveConfirmModal({
       size="sm"
       footer={
         <>
-          <button
-            onClick={onClose}
-            className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg hover:bg-surface-2"
-          >
+          <Button variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => { if (!busy) onConfirm(); }}
             disabled={busy}
-            className="h-9 rounded-lg bg-accent text-accent-fg px-4 text-sm font-medium hover:brightness-110 disabled:opacity-50"
           >
             Approve
-          </button>
+          </Button>
         </>
       }
     >

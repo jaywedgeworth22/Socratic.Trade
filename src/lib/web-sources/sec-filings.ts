@@ -180,13 +180,15 @@ export async function fetchFilingHtml(url: string): Promise<string> {
  *  5. Collapse whitespace runs.
  */
 export function extractFilingText(html: string): string {
-  // 1. Remove script / style blocks
-  let text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ");
-
-  // 2. Inject newlines around structural block elements
-  text = text.replace(/<\/?(div|p|h[1-6]|li|tr|td|th|table|thead|tbody|tfoot|blockquote|article|section|header|footer|main|aside|figure|figcaption|pre|hr|br)[^>]*>/gi, "\n");
+  // 1, 2, 4. Unified tag extraction in a single pass to minimize massive intermediate string allocations
+  let text = html.replace(
+    /(<script[\s\S]*?<\/script>)|(<style[\s\S]*?<\/style>)|(<\/?(?:div|p|h[1-6]|li|tr|td|th|table|thead|tbody|tfoot|blockquote|article|section|header|footer|main|aside|figure|figcaption|pre|hr|br)[^>]*>)|(<[^>]+>)/gi,
+    (match, script, style, blockTag) => {
+      if (script || style) return " ";
+      if (blockTag) return "\n";
+      return " ";
+    }
+  );
 
   // 3. Decode XML entities (mirrors sec8k.ts decodeXmlEntities)
   text = text
@@ -197,9 +199,6 @@ export function extractFilingText(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
-
-  // 4. Strip remaining tags
-  text = text.replace(/<[^>]+>/g, " ");
 
   // 5. Collapse whitespace: replace runs of spaces/tabs with a single space,
   //    preserve structural newlines (collapse 3+ newlines to 2).

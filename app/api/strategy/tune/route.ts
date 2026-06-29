@@ -6,7 +6,9 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
-    return NextResponse.json(await proposeStrategyTuning(resolveRequestUserId(request)));
+    const body = await request.json().catch(() => ({}));
+    const model = typeof body?.model === "string" ? body.model : undefined;
+    return NextResponse.json(await proposeStrategyTuning(resolveRequestUserId(request), model));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Strategy tuning failed.";
     return NextResponse.json({ error: message }, { status: 500 });
