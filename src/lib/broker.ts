@@ -4,7 +4,7 @@ import { getAlpacaGateway } from "./alpaca";
 
 export function getBrokerGateway(policy: TradingPolicy, userId: string = "local"): BrokerGateway {
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") {
-    return getAlpacaGateway(userId);
+    return getAlpacaGateway(userId, policy.connectedAccountId);
   }
   if (policy.activeBroker === "robinhood") {
     return getRobinhoodGateway(userId);

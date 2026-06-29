@@ -1,16 +1,16 @@
 import { resolveLlmCredential } from "./db";
-import { resolveOpenAiModel, type OpenAiTransport } from "./llm-request";
+import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
 
 export interface LlmEndpoint {
-  provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek";
+  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
   url: string;
   key?: string;
   model: string;
   keySource: "operator" | "user";
   keyRef?: string;
-  transport: OpenAiTransport;
+  transport: LlmTransport;
 }
 
 function resolveRoleModel(policy: { llmModel?: string | null; redTeamLlmModel?: string | null } | undefined | null, role: LlmTeamRole): string {
@@ -19,11 +19,13 @@ function resolveRoleModel(policy: { llmModel?: string | null; redTeamLlmModel?: 
 }
 
 /**
- * Provider is derived from the model name (no separate provider flag): grok-* → xAI, gemini-* →
- * Google Gemini, mistral/ministral/codestral/… → Mistral, else OpenAI. xAI/Gemini/Mistral are all
- * OpenAI-compatible (chat/completions), so the call sites treat them like OpenAI but with a
- * per-provider base URL + key. The user selects a provider simply by choosing one of its models.
- * The Anthropic chat path is NOT affected by this function (it has its own Messages loop).
+ * Provider is derived from the model name (no separate provider flag): claude-* → Anthropic
+ * (Messages API), grok-* → xAI, gemini-* → Google Gemini, mistral/ministral/codestral/… → Mistral,
+ * else OpenAI. xAI/Gemini/Mistral/DeepSeek are all OpenAI-compatible (chat/completions), so those
+ * call sites treat them like OpenAI but with a per-provider base URL + key. Anthropic returns its
+ * own `anthropic-messages` transport so the shared request builder (`llm-call.ts`) shapes the
+ * Messages-API body/headers and forced-tool JSON output. The user selects a provider simply by
+ * choosing one of its models — for both the Green (proposal) and Red (review) teams.
  */
 export function resolveLlmEndpoint(
   policy?: { llmModel?: string | null; redTeamLlmModel?: string | null } | null,
@@ -35,6 +37,22 @@ export function resolveLlmEndpoint(
 ): LlmEndpoint {
 
   const model = resolveRoleModel(policy, role);
+
+  if (/^claude/i.test(model)) {
+    const url =
+      process.env.ANTHROPIC_API_URL?.trim() ||
+      "https://api.anthropic.com/v1/messages";
+    const cred = resolveLlmCredential("anthropic", userId);
+    return {
+      provider: "anthropic",
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "anthropic-messages"
+    };
+  }
 
   if (/^grok/i.test(model)) {
     const url =
@@ -116,7 +134,7 @@ export function resolveLlmEndpoint(
 
   const url = process.env.OPENAI_API_URL?.trim() || defaultOpenAiUrl;
   const cred = resolveLlmCredential("openai", userId);
-  const transport: OpenAiTransport = url.includes("/chat/completions")
+  const transport: LlmTransport = url.includes("/chat/completions")
     ? "chat-completions"
     : "responses";
   return {

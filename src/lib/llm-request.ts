@@ -1,6 +1,15 @@
 import type { LlmReasoningEffort } from "./types";
 
+/** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
 export type OpenAiTransport = "responses" | "chat-completions";
+
+/**
+ * Every LLM wire transport the app speaks. Anthropic's Messages API ("anthropic-messages") is NOT
+ * OpenAI-compatible (top-level `system`, `max_tokens`, `x-api-key` header, content-block responses,
+ * forced tool-use for structured JSON), so it is modelled as its own transport rather than folded
+ * into the OpenAI-compatible pair. See `llm-call.ts` for the per-transport request/response shaping.
+ */
+export type LlmTransport = OpenAiTransport | "anthropic-messages";
 
 /** Default model when neither the per-user policy nor OPENAI_MODEL is set. */
 export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
@@ -65,11 +74,25 @@ type RequestBounds = {
   reasoningEffort?: LlmReasoningEffort;
 };
 
+/**
+ * Floor on Anthropic's REQUIRED `max_tokens`. Anthropic bills only tokens actually emitted, so a
+ * generous ceiling has no cost downside but prevents a long structured (tool-use) JSON answer from
+ * being truncated mid-object the way a tight per-call cap (e.g. 1500) would. Visible-output caps for
+ * OpenAI-compatible providers are unaffected.
+ */
+const ANTHROPIC_MIN_MAX_TOKENS = 4096;
+
 export function withLlmRequestBounds<T extends Record<string, unknown>>(
   body: T,
-  transport: OpenAiTransport,
+  transport: LlmTransport,
   bounds: RequestBounds
 ): T & Record<string, unknown> {
+  if (transport === "anthropic-messages") {
+    // Anthropic's Messages API takes a REQUIRED top-level `max_tokens` (not max_output_tokens /
+    // max_completion_tokens) and an optional 0–1 `temperature`; it has no `reasoning_effort` knob.
+    const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
+    return { ...body, max_tokens: Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS), temperature };
+  }
   if (isReasoningModel(bounds.model)) {
     // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
     // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.

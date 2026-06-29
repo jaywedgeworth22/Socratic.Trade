@@ -19,7 +19,8 @@
 import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { determineMarketRegime, fetchMacroData } from "./macro";
@@ -142,20 +143,6 @@ function quoteForSymbol(scan: MarketScan | undefined, symbol: string): Record<st
   return undefined;
 }
 
-function extractText(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const root = payload as {
-    output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof root.output_text === "string") return root.output_text;
-  const chatText = root.choices?.[0]?.message?.content;
-  if (typeof chatText === "string") return chatText;
-  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
-  return typeof responseText === "string" ? responseText : undefined;
-}
-
 /**
  * Supplemental run task: ask the LLM whether each old, still-pending proposal still stands
  * against the fresh scan, withdrawing the ones it no longer advises and stamping the rest.
@@ -249,30 +236,16 @@ export async function revalidatePendingProposals(input: {
     }
   };
 
-  const isChatCompletions = transport === "chat-completions";
-
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) }
-          ],
-          response_format: provider === "deepseek"
-            ? { type: "json_object" }
-            : { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
-        }
-      : {
-          model,
-          input: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) }
-          ],
-          text: { format: { type: "json_schema", name: "proposal_revalidation", schema } }
-        },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation, model, reasoningEffort: policy.llmReasoningEffort }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent: JSON.stringify(userContent),
+      schema: { name: "proposal_revalidation", schema, description: "Reaffirm-or-withdraw verdicts for each pending proposal." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation,
+      reasoningEffort: policy.llmReasoningEffort
+    }
   );
 
   let assessments: RevalidationAssessment[] = [];
@@ -290,7 +263,7 @@ export async function revalidatePendingProposals(input: {
       async () => {
         const response = await llmFetch(url, {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${openaiKey}` },
+          headers: llmAuthHeaders({ provider, key: openaiKey }),
           body: JSON.stringify(body)
         });
         if (!response.ok) {
@@ -299,7 +272,7 @@ export async function revalidatePendingProposals(input: {
         }
         const payload = await response.json();
         recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, ...extractLlmUsage(payload) });
-        const text = extractText(payload);
+        const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };

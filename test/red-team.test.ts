@@ -13,6 +13,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_URL;
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_URL;
 });
 
 describe("debateProposal — T11 fail-open contract", () => {
@@ -108,5 +110,61 @@ describe("debateProposal LLM request bounds", () => {
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.redTeamDebate);
     expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
     expect(bodies[0].max_output_tokens).toBeUndefined();
+  });
+});
+
+describe("debateProposal — Claude Red Team (first-class anthropic routing)", () => {
+  it("routes a claude-* redTeamLlmModel to Anthropic Messages with a forced verdict tool", async () => {
+    const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { debateProposal } = await import("../src/lib/red-team");
+
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", paperMode: true, llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" });
+    setStrategyPrompt("BASE STRATEGY");
+
+    const calls: Array<{ url: string; headers: Record<string, string>; body: any }> = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        body: JSON.parse(String(init?.body ?? "{}"))
+      });
+      // Anthropic Messages tool_use response shape.
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "tool_use", name: "red_team_verdict", input: { rejected: true, reason: "Overbought into earnings." } }],
+          usage: { input_tokens: 100, output_tokens: 20 }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const result = await debateProposal(
+      {
+        symbol: "AAPL",
+        side: "buy",
+        type: "market",
+        dollarAmount: 25,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "High-quality setup.",
+        tradeThesisTag: "Quality-Compounder",
+        entryMarketRegime: "Neutral (Normal Volatility)",
+        confidenceScore: 90
+      } as any,
+      undefined,
+      true
+    );
+
+    expect(result).toEqual({ rejected: true, available: true, reason: "Overbought into earnings." });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("api.anthropic.com");
+    expect(calls[0].headers["x-api-key"]).toBe("sk-ant-test");
+    expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
+    expect(calls[0].headers.authorization).toBeUndefined();
+    // Forced tool-use is how Claude returns guaranteed JSON.
+    expect(calls[0].body.system).toContain("Red Team");
+    expect(calls[0].body.tool_choice).toEqual({ type: "tool", name: "red_team_verdict" });
+    expect(calls[0].body.max_tokens).toBeGreaterThan(0);
   });
 });

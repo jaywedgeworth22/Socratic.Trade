@@ -137,6 +137,19 @@ import { ConfirmationModal } from "./components/ConfirmationModal";
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
+
+// The model ids that appear as explicit options in the Green/Red Team selects. Anything else is
+// treated as a "Custom Model ID..." free-text entry. Kept in one place so the <select> value
+// mapping and the custom-input fallback can't drift apart across the four call sites that use it.
+const STRATEGY_MODEL_IDS = [
+  "gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5",
+  "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8",
+  "grok-build-0.1", "grok-4.3",
+  "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash",
+  "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest",
+  "deepseek-chat", "deepseek-reasoner",
+  "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"
+];
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
 type SettingsSection = "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
 type AccountDeletionPreview = {
@@ -1854,6 +1867,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         onClose={() => setDecideConfirm(false)}
         onConfirm={() => {
           setDecideConfirm(false);
+          setSnapshot((s) => ({ ...s, policy: { ...s.policy, strategyAuthority: "decide" } }));
           void updatePolicy({ strategyAuthority: "decide" });
         }}
         title="Enable autonomous execution?"
@@ -3923,7 +3937,7 @@ function StrategyStudio({
           <div className="grid gap-3">
             <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
               <div className="space-y-2">
-                <select className={inputClass} value={["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
+                <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
                     updatePolicy({ llmModel: "gpt-5.4-mini" });
                   } else {
@@ -3940,6 +3954,11 @@ function StrategyStudio({
                     <option value="o1-mini">o1-mini — fast reasoning</option>
                     <option value="o3-mini">o3-mini — balanced reasoning</option>
                     <option value="o1">o1 — deepest reasoning</option>
+                  </optgroup>
+                  <optgroup label="Anthropic (Claude)">
+                    <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast review</option>
+                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced Claude analysis</option>
+                    <option value="claude-opus-4-8">claude-opus-4-8 — strongest Claude analysis, highest cost</option>
                   </optgroup>
                   <optgroup label="xAI (Grok)">
                     <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
@@ -3961,7 +3980,7 @@ function StrategyStudio({
                   </optgroup>
                   <option value="custom">Custom Model ID...</option>
                 </select>
-                {!["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") && (
+                {!STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") && (
                   <input
                     type="text"
                     className={inputClass}
@@ -3974,7 +3993,7 @@ function StrategyStudio({
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
               <div className="space-y-2">
-                <select className={inputClass} value={!policy.redTeamLlmModel ? "" : ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
+                <select className={inputClass} value={!policy.redTeamLlmModel ? "" : STRATEGY_MODEL_IDS.includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
                     updatePolicy({ redTeamLlmModel: "gpt-5.4-mini" });
                   } else {
@@ -3992,6 +4011,11 @@ function StrategyStudio({
                     <option value="o1-mini">o1-mini — fast reasoning</option>
                     <option value="o3-mini">o3-mini — balanced reasoning</option>
                     <option value="o1">o1 — deepest reasoning</option>
+                  </optgroup>
+                  <optgroup label="Anthropic (Claude)">
+                    <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast critique</option>
+                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced Claude critique</option>
+                    <option value="claude-opus-4-8">claude-opus-4-8 — strongest Claude critique, highest cost</option>
                   </optgroup>
                   <optgroup label="xAI (Grok)">
                     <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
@@ -4013,7 +4037,7 @@ function StrategyStudio({
                   </optgroup>
                   <option value="custom">Custom Model ID...</option>
                 </select>
-                {policy.redTeamLlmModel !== undefined && !["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) && (
+                {policy.redTeamLlmModel !== undefined && !STRATEGY_MODEL_IDS.includes(policy.redTeamLlmModel) && (
                   <input
                     type="text"
                     className={inputClass}
@@ -5706,10 +5730,11 @@ type ApiKeyStatus = {
   updatedAt?: string;
 };
 
-type LlmApiService = "openai" | "xai" | "gemini" | "mistral" | "deepseek";
+type LlmApiService = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
 
 const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
   openai: "OpenAI",
+  anthropic: "Anthropic",
   xai: "xAI",
   gemini: "Gemini",
   mistral: "Mistral",
@@ -5718,6 +5743,7 @@ const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
 
 function strategyLlmServiceForModel(model?: string | null): LlmApiService {
   const value = (model || "gpt-5.4-mini").trim();
+  if (/^claude/i.test(value)) return "anthropic";
   if (/^grok/i.test(value)) return "xai";
   if (/^gemini/i.test(value)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(value)) return "mistral";

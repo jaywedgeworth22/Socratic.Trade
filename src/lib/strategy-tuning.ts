@@ -10,7 +10,8 @@ import {
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { policyUniverseSymbolCount } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
@@ -426,7 +427,6 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
   const policy = getPolicy(userId);
   const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
   const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policyForResolution, userId);
-  const isChatCompletions = transport === "chat-completions";
   const schema = tuningSchema();
   const systemPrompt = [
     "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
@@ -439,34 +439,16 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
     "Return strict JSON only."
   ].join("\n");
 
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: JSON.stringify(context) }
-        ],
-        response_format: provider === "deepseek"
-          ? { type: "json_object" }
-          : { type: "json_schema", json_schema: { name: "strategy_tuning", strict: true, schema } }
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: JSON.stringify(context) }
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "strategy_tuning",
-            schema
-          }
-        }
-      },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning, model, reasoningEffort: policyForResolution.llmReasoningEffort }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent: JSON.stringify(context),
+      schema: { name: "strategy_tuning", schema, description: "Conservative, reviewable strategy-tuning suggestions." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning,
+      reasoningEffort: policyForResolution.llmReasoningEffort
+    }
   );
 
   const traced = await withLlmGeneration(
@@ -491,10 +473,7 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
     async () => {
       const response = await llmFetch(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${openaiKey}`
-        },
+        headers: llmAuthHeaders({ provider, key: openaiKey }),
         body: JSON.stringify(body)
       });
 
@@ -505,7 +484,7 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
 
       const payload = await response.json();
       recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
-      const text = extractResponseText(payload);
+      const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       return { text, payload: JSON.parse(text) as LlmTuningPayload };
     }
@@ -590,20 +569,6 @@ function tuningSchema() {
       confidenceScore: { type: "number" }
     }
   };
-}
-
-function extractResponseText(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const root = payload as {
-    output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof root.output_text === "string") return root.output_text;
-  const chatText = root.choices?.[0]?.message?.content;
-  if (typeof chatText === "string") return chatText;
-  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
-  return typeof responseText === "string" ? responseText : undefined;
 }
 
 function toPatch(payload: LlmTuningPayload, currentPrompt: string, currentWeights?: ScoringWeights): StrategyTuningPatch {
