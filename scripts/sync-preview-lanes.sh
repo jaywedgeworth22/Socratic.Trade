@@ -20,6 +20,8 @@ trap 'rmdir "$LOCK_DIR"' EXIT
 INTEGRATION_DIR="${TRADING_INTEGRATION_DIR:-$HOME/Code/Agentic Trading}"
 APPS_DIR="${TRADING_APPS_DIR:-$HOME/apps}"
 HEALTH_PATH="${TRADING_SYNC_HEALTH_PATH:-/api/health}"
+HEALTH_ATTEMPTS="${TRADING_SYNC_HEALTH_ATTEMPTS:-15}"
+HEALTH_DELAY_SECONDS="${TRADING_SYNC_HEALTH_DELAY_SECONDS:-2}"
 FETCH_REPO="${GITHUB_REPOSITORY:-jaywedgeworth22/agentic-trading}"
 
 log() {
@@ -83,11 +85,11 @@ restart_pm2() {
 check_url() {
   local url="$1"
   local attempt
-  for attempt in 1 2 3 4 5; do
+  for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1)); do
     if curl -fsS --max-time 20 -o /dev/null "$url"; then
       return 0
     fi
-    sleep 2
+    sleep "$HEALTH_DELAY_SECONDS"
   done
   return 1
 }

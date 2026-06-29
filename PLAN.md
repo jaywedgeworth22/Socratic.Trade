@@ -12,6 +12,12 @@ filling the missing pieces.
 > threshold (`minProposalScoreThreshold`) skips the LLM when all candidates score
 > below the bar. See `docs/rollouts/2026-06-29-strategy-engine-improvements.md`.
 >
+> 2026-06-29 (`cursor/ci-autofix-automation-bfd3`): preview sync CI resilience —
+> `scripts/sync-preview-lanes.sh` now gives PM2/Next dev restarts a longer,
+> configurable health-check window before rolling beta back. No product roadmap
+> scope change; see
+> `docs/rollouts/2026-06-29-preview-sync-health-window.md`.
+>
 > 2026-06-29 (`codex/profile-menu`): profile menu and header cleanup —
 > Auth.js sessions now retain display identity metadata, the dashboard snapshot
 > exposes provider avatar/name/login provider, and the header consolidates

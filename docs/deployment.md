@@ -109,6 +109,11 @@ worktrees, unexpected branches, and merge conflicts. If a lane advances but
 fails local `/api/health` or root-page checks, the script rolls that lane back
 to its previous commit and restarts the PM2 app.
 
+Health polling defaults to 15 attempts with a 2-second delay for each checked
+URL so PM2/Next dev restarts can warm after a fast-forward. Operators can tune
+the window with `TRADING_SYNC_HEALTH_ATTEMPTS` and
+`TRADING_SYNC_HEALTH_DELAY_SECONDS` in the workflow or runner environment.
+
 Optional PM2 polling fallback:
 
 ```bash

@@ -4,6 +4,15 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Preview sync health window (Cursor / ci autofix)
+Branch `cursor/ci-autofix-automation-bfd3` addresses the `sync-previews` CI
+failure on main commit `1640919`. The self-hosted sync advanced beta, restarted
+PM2, then rolled back after repeated connect/empty/reset responses from port
+4001 within a short health window. `scripts/sync-preview-lanes.sh` now uses
+configurable health retry settings with a longer default so Next dev/PM2 restarts
+can finish warming before rollback. See
+`docs/rollouts/2026-06-29-preview-sync-health-window.md`.
+
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
 `z-[1300]` so the Settings/Help/Accounts modal no longer sits behind the dashboard header
