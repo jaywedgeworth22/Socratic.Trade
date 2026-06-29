@@ -85,10 +85,10 @@ deployment notes, and tests. Verified `npx tsc --noEmit`, focused auth tests,
 full `npm test` (155 files / 1,495 tests), `npm run build` (existing Next.js
 middleware-to-proxy deprecation warning only), and a local `/login` smoke on
 port 4126 showing both Google and GitHub when both provider env pairs are set.
-PR #224 is open with squash auto-merge armed, but GitHub failed all required
-checks before runner startup because account payments failed or the Actions
-spending limit needs to be increased. Production is not deployed until billing is
-fixed and the PR checks are rerun/green.
+PR #224 is open with squash auto-merge armed. After the GitHub billing/spending
+limit issue was fixed, the required `verify`, `smoke`, and `gitleaks` checks ran
+green on the pre-merge branch head. The branch then merged current `origin/main`
+from PR #225 and is being revalidated/pushed before merge/deploy.
 
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header

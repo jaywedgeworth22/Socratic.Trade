@@ -34,9 +34,9 @@ The app already derives users from normalized verified email. Adding GitHub shou
 - `npm run build` - passed; existing Next.js middleware-to-proxy deprecation warning only.
 - Local smoke with dummy provider envs on `http://127.0.0.1:4126`: `/login` rendered both `Sign in with Google` and `Sign in with GitHub`; `/api/auth/providers` returned both provider IDs and callback URLs.
 - Landing: `bash scripts/land.sh` passed local gate again, pushed `codex/github-login`, and opened PR #224.
-- GitHub PR checks: blocked before runner startup. The annotation says recent account payments failed or the Actions spending limit needs to be increased. Squash auto-merge is armed, but production is not deployed until those required checks can run green.
+- Initial GitHub PR checks were blocked before runner startup by an account billing/spending-limit annotation. After the billing issue was fixed, rerunning checks on PR #224 passed `verify`, `smoke`, and `gitleaks` on head `9dd2778c`.
+- Merged current `origin/main` from PR #225 into this branch after GitHub reported PR #224 was behind; final revalidation/push is in progress.
 
 ## Follow-ups
 - Set `AUTH_GITHUB_ID` and `AUTH_GITHUB_SECRET` in production before expecting the GitHub button to appear live.
-- Fix GitHub billing/spending-limit so PR #224 required checks can start; then rerun failed checks or push a no-op/docs update to retrigger auto-merge.
 - A future provider-account-id table can link accounts even when provider emails differ; this change intentionally links only same verified email plus configured primary aliases.
