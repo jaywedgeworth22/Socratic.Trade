@@ -46,6 +46,10 @@ already lists `gpt-5.4-nano` as the cheapest GPT-5-class option.
 
 - Same-day UI placement update is documented in
   `docs/rollouts/2026-06-23-ui-expert-strategy-macro-errors.md`.
+- 2026-06-29: Claude (Anthropic) is now a first-class Green/Red Team model too —
+  `resolveLlmEndpoint` routes `claude-*` through a new `anthropic-messages`
+  transport and a shared request builder uses Anthropic forced tool-use for JSON.
+  See `docs/rollouts/2026-06-29-claude-green-red-team.md`.
 - The broader dirty `agent/codex` patch also contained `/api/llm-settings` and
   richer usage UI, plus unrelated Alpaca/account edits. Those were not copied
   wholesale to avoid overwriting or mixing active work.

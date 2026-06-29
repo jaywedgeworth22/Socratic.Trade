@@ -144,4 +144,46 @@ describe("resolveLlmEndpoint", () => {
     const mis = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "mistral-large-latest" }, "local", "https://api.openai.com/v1/responses", "red");
     expect(mis.provider).toBe("mistral");
   });
+
+  it("routes claude-* (Green Team) to Anthropic with the anthropic-messages transport", () => {
+    const savedUrl = process.env.ANTHROPIC_API_URL;
+    delete process.env.ANTHROPIC_API_URL;
+    try {
+      for (const model of ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "Claude-Haiku-4-5-20251001"]) {
+        const endpoint = resolveLlmEndpoint({ llmModel: model });
+        expect(endpoint.provider).toBe("anthropic");
+        expect(endpoint.url).toContain("api.anthropic.com");
+        expect(endpoint.url).toContain("/v1/messages");
+        expect(endpoint.transport).toBe("anthropic-messages");
+        expect(endpoint.model).toBe(model);
+      }
+    } finally {
+      if (savedUrl !== undefined) process.env.ANTHROPIC_API_URL = savedUrl;
+    }
+  });
+
+  it("routes the Red Team to Claude via redTeamLlmModel (Green stays OpenAI)", () => {
+    const endpoint = resolveLlmEndpoint(
+      { llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" },
+      "local",
+      "https://api.openai.com/v1/responses",
+      "red"
+    );
+    expect(endpoint.provider).toBe("anthropic");
+    expect(endpoint.model).toBe("claude-opus-4-8");
+    expect(endpoint.transport).toBe("anthropic-messages");
+
+    // Green role with the same policy still resolves to OpenAI — the two teams are independent.
+    const green = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" }, "local");
+    expect(green.provider).toBe("openai");
+  });
+
+  it("honors the ANTHROPIC_API_URL override", () => {
+    process.env.ANTHROPIC_API_URL = "https://custom.anthropic.example.com/v1/messages";
+    try {
+      expect(resolveLlmEndpoint({ llmModel: "claude-opus-4-8" }).url).toBe("https://custom.anthropic.example.com/v1/messages");
+    } finally {
+      delete process.env.ANTHROPIC_API_URL;
+    }
+  });
 });

@@ -32,7 +32,7 @@ const API_KEY_CATALOG = [
     label: "Anthropic (Claude)",
     category: "LLM",
     required: false,
-    unlocks: "Claude models for the Assistant chat. Select a claude-* model in the Assistant to use.",
+    unlocks: "Claude models for the Assistant chat and for the Green/Red Team (trade proposals, strategy review, red-team debate). Select a claude-* model in Strategy Studio or the Assistant to use.",
     docsUrl: "https://console.anthropic.com/settings/keys"
   },
   {

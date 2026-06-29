@@ -29,8 +29,9 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
@@ -1877,7 +1878,6 @@ async function proposeTrades(input: {
   };
 
   const model = resolvedModel;
-  const isChatCompletions = transport === "chat-completions";
 
   const schema = {
     type: "object",
@@ -1925,34 +1925,16 @@ async function proposeTrades(input: {
     }
   };
 
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: JSON.stringify(userContent) }
-        ],
-        response_format: provider === "deepseek"
-          ? { type: "json_object" }
-          : { type: "json_schema", json_schema: { name: "trade_proposals", strict: true, schema } }
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: JSON.stringify(userContent) }
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "trade_proposals",
-            schema
-          }
-        }
-      },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model, reasoningEffort: input.policy.llmReasoningEffort }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent: JSON.stringify(userContent),
+      schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+      reasoningEffort: input.policy.llmReasoningEffort
+    }
   );
 
   const bullResult = await withLlmGeneration(
@@ -1979,10 +1961,7 @@ async function proposeTrades(input: {
     async () => {
       const response = await llmFetch(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${openaiKey}`
-        },
+        headers: llmAuthHeaders({ provider, key: openaiKey }),
         body: JSON.stringify(body)
       });
 
@@ -1992,7 +1971,7 @@ async function proposeTrades(input: {
       }
       const payload = await response.json();
       recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
-      const text = extractOpenAiText(payload);
+      const text = extractLlmText(payload);
 
       if (!text) {
         throw new Error("Empty response returned from LLM API.");
@@ -2129,36 +2108,17 @@ async function proposeTrades(input: {
     console.warn("Bear Agent skipped because the Red Team LLM key is not configured; falling back to Bull proposals");
     return bullProposals;
   }
-  const bearIsChatCompletions = bearTransport === "chat-completions";
 
-  const bearBody = withLlmRequestBounds(
-    bearIsChatCompletions
-      ? {
-        model: bearModel,
-        messages: [
-          { role: "system", content: bearSystemPrompt },
-          { role: "user", content: JSON.stringify(bearUserContent) }
-        ],
-        response_format: bearProvider === "deepseek"
-          ? { type: "json_object" }
-          : { type: "json_schema", json_schema: { name: "bear_proposals", strict: true, schema: bearSchema } }
-      }
-      : {
-        model: bearModel,
-        input: [
-          { role: "system", content: bearSystemPrompt },
-          { role: "user", content: JSON.stringify(bearUserContent) }
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "bear_proposals",
-            schema: bearSchema
-          }
-        }
-      },
-    bearTransport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique, model: bearModel, reasoningEffort: input.policy.llmReasoningEffort }
+  const bearBody = buildLlmRequestBody(
+    { provider: bearProvider, transport: bearTransport },
+    {
+      model: bearModel,
+      systemPrompt: bearSystemPrompt,
+      userContent: JSON.stringify(bearUserContent),
+      schema: { name: "bear_proposals", schema: bearSchema, description: "The proposals that survive Red-Team review." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique,
+      reasoningEffort: input.policy.llmReasoningEffort
+    }
   );
 
   const bearResult = await withLlmGeneration(
@@ -2186,10 +2146,7 @@ async function proposeTrades(input: {
     async () => {
       const bearResponse = await llmFetch(bearUrl, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${bearKey}`
-        },
+        headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
         body: JSON.stringify(bearBody)
       });
 
@@ -2200,7 +2157,7 @@ async function proposeTrades(input: {
 
       const bearPayload = await bearResponse.json();
       recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
-      const bearText = extractOpenAiText(bearPayload);
+      const bearText = extractLlmText(bearPayload);
 
       if (!bearText) {
         return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
@@ -2226,20 +2183,6 @@ async function proposeTrades(input: {
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
-}
-
-function extractOpenAiText(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const root = payload as {
-    output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof root.output_text === "string") return root.output_text;
-  const chatText = root.choices?.[0]?.message?.content;
-  if (typeof chatText === "string") return chatText;
-  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
-  return typeof responseText === "string" ? responseText : undefined;
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
