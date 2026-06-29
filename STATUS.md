@@ -376,6 +376,46 @@ resolution"), NOT by "agent pushes don't trigger CI" (that earlier conclusion wa
 re-merging `origin/main` into the branch (commit `6476919`) clears it. Cutover on the box is still
 operator-only and outstanding (incl. rotating the two compromised Client Secrets).
 
+## 2026-06-25 — Cross-app consumer reads (fundamentals/analyst from Congress.Trade)
+Branch `claude/crossapp-consumer-reads-y8ojii`. Added the App B half of the
+fundamentals/analyst data-sharing: `getAppAFundamentals()` / `getAppAAnalyst()` in
+`congress-trade-client.ts` and a `CongressTradeEnrichmentProvider` registered ahead
+of the paid fundamentals providers in `data-providers.ts`, **gated OFF by its OWN
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`** (separate from the price-read
+`CONGRESS_TRADE_READS_ENABLED`). Congress.Trade now serves the matching
+`/api/market/fundamentals/:ticker` + `/api/market/analyst/:ticker` reader routes.
+Supplies only fundamentals/analyst (no price) so quote ordering is unchanged; no new
+`SymbolEnrichment` field. tsc clean, 1184 tests pass, build OK. Next: flag flip to
+enable in prod. Now includes an **opt-in paid-call short-circuit**
+(`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): when App A covers a symbol's fundamentals (`peRatio`+`eps`), the
+paid fundamentals providers are skipped for it (`costTier:"paid"` tags; default OFF, +2 tests). App A
+misses are negative-cached 1h. A→B push wired: `APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` set as App A
+Worker secrets (App B needs the same token + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`). tsc clean, 1205
+tests, build OK. See `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`. **Codex round 2 (PR #160):**
+drop non-positive App A peRatio/52w sentinels. **Codex round 3:** replaced the whole-provider skip (it
+silently dropped bundled paid providers' news/insider/senate/quote fields) with a per-symbol
+`EnrichmentContext` coverage hint — paid providers now skip only redundant *sub-calls* (FMP skips
+ratios-ttm/grades-consensus when App A has P/E+analyst, still fetches insider/senate); plus key App A's
+analyst under its upstream source so the cascade doesn't double-count the same consensus. **Codex round 4:**
+freshness now keys off the data `date` (not `updatedAt`) so today's backfill of old data falls through;
+FMP skips consensus only when App A's analyst is fmp-sourced (carries `analystSource` in the hint); a
+coverage-trimmed FMP fetch is no longer cached as a full hit. **Codex round 5:** transport errors no longer
+negative-cached (retry next scan); App A reads merge latest-non-null across all fresh rows; FMP also skips
+the price-target call when App A covers all four targets; cascade credits `congress.trade` as a contributor
+only when its analyst entry survives the same-source de-dupe. **Flag split (owner chose):** fundamentals
+tier now gated by its own `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (default off), independent of price reads;
+set on in Infisical. **Codex round 6:** App A positive cache honors `ttlMs()`/`NEWS_CACHE_TTL_MS`; reads
+bounded with `from=today−maxStaleDays`; FMP target-skip only suppresses caching when targets were actually
+going to be fetched. **Codex round 7:** positive-value guard on App A price targets; short-circuit awaits
+only the congress.trade tier (paid providers no longer serialized behind unrelated free tiers); PLAN.md
+flag ref fixed. **Codex round 8 (doc-only):** rollout enablement steps point at the new
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`. Merged `origin/main` (5f83ec2) 2026-06-25. 1224 tests.
+**Codex round 12 (PR #160):** `rowIsFresh` now rejects future-dated App A rows (2-day skew) so clock-skew/
+bad-import rows can't win first-wins; the short-circuit FMP cache-hit path treats a stripped leftover as a
+MISS when App A already covers the remaining field (e.g. `peRatio`) so FMP's unique insider/senate/target
+fields get refetched. Other non-outdated Codex threads this round were already implemented earlier (verified
++ resolved). Merged `origin/main` 2026-06-27. tsc clean, 1450 tests, build OK.
+
 ## 2026-06-26 — Cutover crash root cause: macOS bash 3.2 mis-parses a multibyte char next to `$VAR`
 Branch `claude/practical-mendel-cqtduf`. The operator's `scripts/infisical-prod-cutover.sh: line 200:
 SHARED_PROJECT_ID?: unbound variable` was **neither** a `set -u` default gap (line 43 always defaults
@@ -644,6 +684,7 @@ available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · 
 200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
 for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
 
+>>>>>>> origin/main
 ## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
 Branch `feat/deepseek-ntfy-price-tiers` (throwaway worktree `~/apps/trading-ag13`). (1) **DeepSeek** =
 6th provider (chat + strategy), same OpenAI-compatible wiring as gemini/mistral: db-api-keys

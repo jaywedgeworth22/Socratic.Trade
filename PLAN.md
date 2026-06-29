@@ -210,6 +210,21 @@ scope, timeline, or approach changed.
   previously null, are now ALSO fillable via the opt-in FMP `price-target-consensus` provider
   (`FMP_PRICE_TARGETS_ENABLED`) — **BUILT 2026-06-25**; they thread through the enrichment
   surface onto the quote and into `marketQuoteToAnalyst`.
+  (3) **Fundamentals/analyst read-back tier** — App A now exposes
+  `GET /api/market/fundamentals|analyst/:ticker` (the donated tables finally have readers);
+  App B reads them via `getAppAFundamentals`/`getAppAAnalyst` + a
+  `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated by its OWN
+  `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (separate from the price-read `CONGRESS_TRADE_READS_ENABLED`), with a
+  `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and `NEWS_CACHE_TTL_MS` caching
+  — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
+  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Paid-call elimination is an **opt-in coverage
+  hint** (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): the cascade hands paid providers a per-symbol set of the
+  fields App A already covers (+ the analyst source) so they skip only the redundant SUB-calls (e.g. FMP's
+  ratios-ttm / grades-consensus / price-target calls) while still fetching their unique fields
+  (insider/senate); no whole provider is skipped → no field lost; default OFF. App A reads are merged
+  across all fresh rows, freshness-gated by the data `date`, and negative-cached 1h (transport errors are
+  NOT cached). A→B push wired (`APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` on App A; App B needs the same token
+  + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`).
 - **congress.trade — App A handoff: new analytics endpoints + adjusted-close fix** (2026-06-25,
   `docs/rollouts/2026-06-25-app-a-handoff-integration.md`): consumes three new App A endpoints
   now live/merging (App A PRs #77/#79/#80): `GET /api/analytics/conviction` (composite 0–100
