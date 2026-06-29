@@ -132,6 +132,7 @@ import {
 } from "./ui/primitives";
 import { useTheme } from "./ui/theme";
 import { CommandPalette, type Command } from "./ui/command-palette";
+import { ConfirmationModal } from "./components/ConfirmationModal";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
@@ -819,6 +820,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [killConfirm, setKillConfirm] = useState(false);
   const [decideConfirm, setDecideConfirm] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [liveConfirmation, setLiveConfirmation] = useState<{
+    proposalId: string;
+    symbol: string;
+    side: string;
+    quantity?: number;
+    dollarAmount?: number;
+    price?: number;
+    estimatedNotional?: number;
+    accountNumber?: string;
+  } | null>(null);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
   // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
@@ -1076,38 +1087,37 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       return;
     }
     const pending = snapshot.pendingProposals.find((proposal) => proposal.id === proposalId);
-    let requestBody: Record<string, unknown> = {};
     if (executionState.mode === "broker/live") {
       if (!pending) {
         toast.error("Live approval is unavailable because the proposal snapshot is stale. Refresh and try again.");
         return;
       }
-      const symbol = pending.proposal.symbol.trim().toUpperCase();
-      const expectedText = `APPROVE LIVE ${symbol}`;
-      const typedText = window.prompt(
-        `This can submit a live brokerage order for ${symbol}. Type ${expectedText} to continue.`
-      );
-      if (typedText === null) return;
-      if (typedText.trim().toUpperCase() !== expectedText) {
-        toast.warning("Live approval cancelled.", { description: `Required phrase: ${expectedText}` });
-        return;
-      }
-      requestBody = {
-        liveConfirmation: {
-          proposalId,
-          accountNumber: pending.accountNumber || snapshot.policy.accountNumber,
-          executionMode: executionState.mode,
-          estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
-          typedText
-        }
-      };
+      // Show the in-app confirmation modal instead of window.prompt()
+      setLiveConfirmation({
+        proposalId,
+        symbol: pending.proposal.symbol,
+        side: pending.proposal.side,
+        quantity: pending.proposal.quantity,
+        dollarAmount: pending.proposal.dollarAmount,
+        price: pending.proposal.limitPrice ?? pending.proposal.referencePrice,
+        estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
+        accountNumber: pending.accountNumber || snapshot.policy.accountNumber
+      });
+      return; // The modal flow takes over from here
     }
+    await submitProposalApproval(proposalId, {});
+  }
+
+  /** Submit a proposal approval request, optionally with live-confirmation payload. */
+  async function submitProposalApproval(proposalId: string, liveConfirmationPayload: Record<string, unknown>) {
     setBusy(true);
     try {
       const response = await fetch(`/api/proposals/${proposalId}/approve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(requestBody)
+        body: liveConfirmationPayload && Object.keys(liveConfirmationPayload).length > 0
+          ? JSON.stringify({ liveConfirmation: liveConfirmationPayload })
+          : JSON.stringify({})
       });
       if (!response.ok) throw await responseError(response, "Proposal approval failed");
       const body = (await response.json()) as { status: string; orderId?: string; brokerState?: string; fillStatus?: string; reasons?: string[] };
@@ -1143,6 +1153,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Called by the ConfirmationModal when the user has typed the confirmation phrase and clicks Confirm. */
+  function handleLiveConfirm() {
+    const pending = liveConfirmation;
+    if (!pending) return;
+    setLiveConfirmation(null);
+    const confirmationPayload = {
+      proposalId: pending.proposalId,
+      accountNumber: pending.accountNumber,
+      executionMode: executionState.mode,
+      estimatedNotional: pending.estimatedNotional,
+      typedText: `APPROVE LIVE ${pending.symbol.trim().toUpperCase()}`
+    };
+    void submitProposalApproval(pending.proposalId, confirmationPayload);
   }
 
   async function rejectProposal(proposalId: string) {
@@ -1810,6 +1835,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         body="Autonomous mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
         confirmLabel="Enable auto-execute"
         tone="danger"
+      />
+
+      <ConfirmationModal
+        open={!!liveConfirmation}
+        onClose={() => setLiveConfirmation(null)}
+        onConfirm={handleLiveConfirm}
+        symbol={liveConfirmation?.symbol ?? ""}
+        side={liveConfirmation?.side ?? ""}
+        quantity={liveConfirmation?.quantity}
+        dollarAmount={liveConfirmation?.dollarAmount}
+        price={liveConfirmation?.price}
+        estimatedNotional={liveConfirmation?.estimatedNotional}
+        accountNumber={liveConfirmation?.accountNumber}
       />
     </div>
   );
@@ -3080,7 +3118,7 @@ function PerformanceView({
             <span className="text-faint">
               (you {benchmark.accountReturnPct >= 0 ? "+" : ""}{benchmark.accountReturnPct.toFixed(1)}% · {benchmark.benchmarkSymbol} {benchmark.benchmarkReturnPct >= 0 ? "+" : ""}{benchmark.benchmarkReturnPct.toFixed(1)}%, {benchmark.startDate}→{benchmark.endDate})
             </span>
-            <span className="text-faint/70" title="Compares equity growth from the first snapshot date. Not adjusted for deposits/withdrawals.">ⓘ</span>
+            <span className="text-faint/85" title="Compares equity growth from the first snapshot date. Not adjusted for deposits/withdrawals.">ⓘ</span>
           </div>
         ) : null}
       </Card>
@@ -4651,6 +4689,13 @@ function SettingsContent({
               value={tuning.crisisMaxOpeningExposurePct ?? 0}
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, crisisMaxOpeningExposurePct: v } })}
             />
+            <NumberField
+              label="Min proposal score threshold"
+              value={tuning.minProposalScoreThreshold ?? 0}
+              min={0}
+              max={100}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, minProposalScoreThreshold: v } })}
+            />
             <OptionalNumberField
               label="FCF-yield veto floor %"
               value={tuning.bearVetoFcfYieldFloorPct}
@@ -4687,6 +4732,9 @@ function SettingsContent({
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Red-team threshold</span> sends proposals at or above that confidence score to the adversarial review (default 80).{" "}
             <span className="font-medium text-muted">Crisis open cap</span> blocks new buy/short notional above that portfolio percentage when the deterministic regime is crisis or inverted curve; 0 leaves it off.
+          </p>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">Min proposal score threshold</span> drops candidates below this scan score (0–100) before they reach the LLM. If ALL candidates are below the threshold, the entire LLM call is skipped and the system sits on its hands (proactive stop-loss/take-profit exits still fire). Default 0 = no filtering. Set to e.g. 30 to skip when every candidate is mediocre.
           </p>
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">FCF-yield veto floor</span> deterministically vetoes BUYS whose free-cash-flow yield is below this value (e.g. 0 vetoes any negative-FCF buy); blank disables.{" "}

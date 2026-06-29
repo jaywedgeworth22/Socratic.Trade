@@ -211,6 +211,13 @@ export interface TuningSettings {
    * so tuning input is byte-for-byte unchanged unless an operator opts in.
    */
   useEntryRunAttribution?: boolean;
+  /**
+   * Minimum scan score (0–100) a candidate must have to be sent to the LLM for proposal generation.
+   * Candidates below this threshold are dropped before the LLM sees them. If ALL candidates are below
+   * the threshold, the LLM call is skipped entirely and an audit event is emitted.
+   * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
+   */
+  minProposalScoreThreshold?: number;
 }
 
 export interface RiskRules {

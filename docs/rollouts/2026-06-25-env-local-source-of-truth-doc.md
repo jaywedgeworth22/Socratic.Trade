@@ -1,5 +1,17 @@
 # 2026-06-25 — Document `.env.local` source-of-truth (GCP Secret Manager)
 
+> **SUPERSEDED later the same day (2026-06-25):** The GCP Secret Manager path was removed
+> entirely. **Infisical is now the single source of truth for all secrets.**
+> `scripts/gcp-secrets-run.mjs`, the `*:gcp` npm scripts, and the
+> `@google-cloud/secret-manager` dependency were all deleted. The `*:secrets` runner
+> (Infisical) is the only supported path. `docs/secrets.md` and `docs/deployment.md`
+> were rewritten to Infisical-only. See
+> `docs/rollouts/2026-06-25-switch-to-infisical-remove-gcp.md` for the full switch record.
+>
+> This note is preserved as a historical record of what was documented before the
+> GCP→Infisical consolidation. The GCP-specific details below (runner, env vars,
+> fail-open behavior) no longer apply.
+
 ## Summary
 
 Documented, in one authoritative place, where `.env.local` lives across the
