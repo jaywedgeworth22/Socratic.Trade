@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Google auth Infisical verification
+Follow-up to `codex/google-auth-primary`: production still reaches app Google
+login after later deploys (`/` -> app `/login`, `/login` shows `Sign in with
+Google`, `/api/auth/providers` exposes Google, unauthenticated `/api/dashboard`
+returns app `401`). Sanitized Infisical verification through
+`scripts/infisical-run.mjs` confirmed `AUTH_SECRET`, `AUTH_GOOGLE_ID`,
+`AUTH_GOOGLE_SECRET`, `NEXT_PUBLIC_SITE_URL`, `AUTH_URL`, `PRIMARY_USER_EMAIL`,
+`PRIMARY_USER_EMAIL_ALIASES`, and `ALLOWED_EMAILS` are configured for prod. The
+shared secret overlay still contains legacy `CF_ACCESS_TRUST_EMAIL_HEADER=1`, so
+the app project now overrides it with `CF_ACCESS_TRUST_EMAIL_HEADER=0`; app code
+ignores that variable, but the override prevents old Access-header auth behavior
+from reappearing if a stale branch reads it. See
+`docs/rollouts/2026-06-28-google-auth-primary.md`.
+
 ## 2026-06-28 — Thin boot strip first-paint loader
 Branch `codex/thin-boot-strip`. Replaced the Quiet Tiles SSR dashboard loading
 shell with option 4, the thin boot strip: the first-paint non-error state now

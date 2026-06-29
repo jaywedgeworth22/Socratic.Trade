@@ -149,3 +149,6 @@ pm2 restart trading && pm2 save
   `trading.jays.services`. As of 2026-06-28, the Zero Trust Access app
   `agentic-trading-dashboard` keeps a bypass policy
   `42c4adc9-1421-416b-b744-f291afc87938` for that root hostname.
+- The shared Infisical overlay still has legacy `CF_ACCESS_TRUST_EMAIL_HEADER=1`;
+  the app prod project overrides it to `0`. App code ignores the variable, but
+  keep the override while the shared key exists.
