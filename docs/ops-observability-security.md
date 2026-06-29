@@ -9,11 +9,16 @@ This app now has opt-in scaffolding for the seven selected tools:
 - **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
   Security workflow runs the pinned gitleaks action on the self-hosted runner
   and clears stale macOS installer temp files before invoking the action.
-- **Sentry**: add `SENTRY_DSN` for server/edge runtime errors. The app initializes
-  Sentry from the Next.js instrumentation hook for runtime/request errors, but
-  does not enable the Sentry build wrapper or browser SDK by default
-  because that wrapper made Next's app-route manifest generation unstable in local
-  verification. Browser Session Replay remains a follow-up.
+- **Sentry**: full Next.js coverage across all three runtimes, env-gated and off by
+  default. Set `SENTRY_DSN` for the server + edge runtimes
+  (`sentry.server.config.ts` / `sentry.edge.config.ts`, loaded via the instrumentation
+  hook) and `NEXT_PUBLIC_SENTRY_DSN` for the browser (`instrumentation-client.ts`).
+  `next.config.mjs` is wrapped with `withSentryConfig` (org `jays-services`, project
+  `agentic-trading`); set the build-time secret `SENTRY_AUTH_TOKEN` to upload source maps
+  for de-minified production stack traces. `app/global-error.tsx` reports root-layout
+  render errors. The previous build-wrapper instability did not reproduce on
+  `@sentry/nextjs@10` + Next 16. Browser Session Replay is opt-in
+  (`NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true`) and masks all text + blocks all media when on.
 - **Langfuse**: add `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. LLM calls are
   traced around Bull, Bear, Red Team, post-mortem, and strategy-tuning requests.
   The default `LANGFUSE_CAPTURE_IO=summary` captures model/schema/counts and
@@ -72,6 +77,8 @@ The telemetry path treats this as a financial application:
 - Litestream runs under PM2 (`litestream` sidecar) next to production `next start` — see
   `docs/litestream.md`. Periodically verify a restore to a scratch path
   (`scripts/litestream-restore.sh /tmp/app.db.restored`) before treating backups as ready.
-- Browser Sentry, Session Replay, and source-map upload should be enabled in a
-  follow-up only after revalidating the Sentry Next.js build wrapper against
-  `npm run build`.
+- Browser Sentry and the `withSentryConfig` build wrapper are now enabled and validated
+  against `npm run build`. To activate telemetry in prod, set `SENTRY_DSN` +
+  `NEXT_PUBLIC_SENTRY_DSN` (the `NEXT_PUBLIC_*` values are inlined at build time, so set
+  them before `next build`/`build:secrets`). Add `SENTRY_AUTH_TOKEN` (store in Infisical) to
+  turn on source-map upload. Session Replay stays opt-in via `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED`.

@@ -16,6 +16,14 @@ filling the missing pieces.
 > cancel/drift reconciliation, zero-NAV & sizer boundaries, backtest timeline fixes, WCAG AA contrast,
 > responsive mobile tabs, ARIA accessible model pickers, P&L bar charts, and button standardization.
 > No roadmap change; see `docs/rollouts/2026-06-29-multi-agent-system-optimizations.md`.
+> 2026-06-29 (`cursor/complete-sentry-setup-8bed`, Cursor): **Sentry integration
+> completed** — browser-runtime init (`instrumentation-client.ts`),
+> `global-error.tsx` → `Sentry.captureException`, and the `withSentryConfig` build
+> wrapper (source-map upload gated on `SENTRY_AUTH_TOKEN`) are now enabled,
+> finishing the server/edge-only setup. Env-gated, redacted, `sendDefaultPii:false`;
+> Session Replay opt-in. No roadmap change; see
+> `docs/rollouts/2026-06-29-sentry-browser-and-build-wrapper.md`.
+>
 > 2026-06-29 (`cursor/claude-green-red-team-f06c`, Cursor): **Claude as a
 > first-class Green/Red Team model** — `claude-*` models are now selectable for
 > both the Bull proposer and Bear reviewer (not just chat), via a new
