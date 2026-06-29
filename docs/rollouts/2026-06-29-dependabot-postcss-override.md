@@ -2,9 +2,10 @@
 
 ## Summary
 
-Removed the redundant top-level `postcss` npm override so Dependabot can update
-the direct PostCSS devDependency without npm `EOVERRIDE` failures. The Axios
-security override remains in place.
+Changed the top-level `postcss` npm override from a literal range to npm's
+`"$postcss"` direct-dependency reference so Dependabot can update the direct
+PostCSS devDependency without npm `EOVERRIDE` failures. The Axios security
+override remains in place.
 
 ## Why
 
@@ -18,8 +19,10 @@ npm error Override for postcss@8.5.16 conflicts with direct dependency
 
 `postcss` is already a direct devDependency, and npm requires direct-dependency
 overrides to match the direct dependency spec exactly. Dependabot tests concrete
-new versions during updates, so the separate override made routine PostCSS
-updates unresolvable.
+new versions during updates, so the literal override range made routine PostCSS
+updates unresolvable. The `$postcss` reference keeps transitive PostCSS pinned to
+the direct devDependency while remaining compatible when Dependabot changes that
+direct dependency.
 
 ## Files
 
@@ -44,6 +47,5 @@ npm run build
 
 ## Follow-ups
 
-- Leave PostCSS as a direct devDependency; do not re-add it to npm `overrides`
-  unless the direct dependency is removed or the override uses a direct-dependency
-  compatible form.
+- Leave PostCSS as a direct devDependency and keep the transitive override in
+  npm's direct-dependency-compatible `$postcss` form.

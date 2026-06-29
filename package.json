@@ -68,6 +68,7 @@
     "vitest": "^4.1.9"
   },
   "overrides": {
-    "axios": "^1.18.0"
+    "axios": "^1.18.0",
+    "postcss": "$postcss"
   }
 }
