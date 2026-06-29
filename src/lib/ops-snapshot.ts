@@ -28,6 +28,9 @@ export interface OpsAccountSnapshot {
   redTeamLlmModel: string | null;
   llmProvider: string | null;
   llmKeyConfigured: boolean;
+  redTeamLlmProvider: string | null;
+  redTeamLlmKeyConfigured: boolean;
+  policyReadError: string | null;
   lastRunStartedAt: string | null;
 }
 
@@ -184,14 +187,6 @@ function listOpsAudit(userId: string, limit: number, labels: Map<string, string>
   });
 }
 
-function llmKeyConfiguredForPolicy(userId: string, llmModel: string | null | undefined): boolean {
-  try {
-    return Boolean(resolveLlmEndpoint({ llmModel }, userId).key);
-  } catch {
-    return false;
-  }
-}
-
 export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: number } = {}): OpsSnapshot {
   const runsPerUser = input.runsPerUser ?? 20;
   const auditPerUser = input.auditPerUser ?? 40;
@@ -202,22 +197,47 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
   for (const userId of listUsers()) {
     const labels = accountLabelById(userId);
     const accounts: OpsAccountSnapshot[] = listConnectedAccounts(userId).map((account) => {
-      const policy = peekPolicy(userId, account.id);
-      const endpoint = resolveLlmEndpoint(policy, userId);
-      return {
-        connectedAccountId: account.id,
-        label: account.label || account.broker,
-        broker: account.broker,
-        accountNumber: account.accountNumber ?? null,
-        isActive: account.isActive,
-        systemState: policy.systemState,
-        strategyAuthority: policy.strategyAuthority,
-        llmModel: policy.llmModel ?? null,
-        redTeamLlmModel: policy.redTeamLlmModel ?? null,
-        llmProvider: endpoint.provider,
-        llmKeyConfigured: llmKeyConfiguredForPolicy(userId, policy.llmModel),
-        lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id)
-      };
+      try {
+        const policy = peekPolicy(userId, account.id);
+        const greenEndpoint = resolveLlmEndpoint(policy, userId);
+        const redEndpoint = resolveLlmEndpoint({ llmModel: policy.redTeamLlmModel }, userId);
+        return {
+          connectedAccountId: account.id,
+          label: account.label || account.broker,
+          broker: account.broker,
+          accountNumber: account.accountNumber ?? null,
+          isActive: account.isActive,
+          systemState: policy.systemState,
+          strategyAuthority: policy.strategyAuthority,
+          llmModel: policy.llmModel ?? null,
+          redTeamLlmModel: policy.redTeamLlmModel ?? null,
+          llmProvider: greenEndpoint.provider,
+          llmKeyConfigured: Boolean(greenEndpoint.key),
+          redTeamLlmProvider: redEndpoint.provider,
+          redTeamLlmKeyConfigured: Boolean(redEndpoint.key),
+          policyReadError: null,
+          lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id)
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          connectedAccountId: account.id,
+          label: account.label || account.broker,
+          broker: account.broker,
+          accountNumber: account.accountNumber ?? null,
+          isActive: account.isActive,
+          systemState: "unknown",
+          strategyAuthority: "unknown",
+          llmModel: null,
+          redTeamLlmModel: null,
+          llmProvider: null,
+          llmKeyConfigured: false,
+          redTeamLlmProvider: null,
+          redTeamLlmKeyConfigured: false,
+          policyReadError: message,
+          lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id)
+        };
+      }
     });
 
     users.push({
