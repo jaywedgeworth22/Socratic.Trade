@@ -12,6 +12,12 @@ filling the missing pieces.
 > threshold (`minProposalScoreThreshold`) skips the LLM when all candidates score
 > below the bar. See `docs/rollouts/2026-06-29-strategy-engine-improvements.md`.
 >
+> 2026-06-29 (`cursor/ci-autofix-automation-934a`): scheduled gitleaks baseline —
+> Security's scheduled full-history scan now ignores only the 10 known historical
+> fingerprints reported by gitleaks, preserving failures for any new leak. No
+> roadmap change; see
+> `docs/rollouts/2026-06-29-gitleaks-history-baseline.md`.
+>
 > 2026-06-29 (`codex/profile-menu`): profile menu and header cleanup —
 > Auth.js sessions now retain display identity metadata, the dashboard snapshot
 > exposes provider avatar/name/login provider, and the header consolidates

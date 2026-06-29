@@ -8,7 +8,9 @@ This app now has opt-in scaffolding for the seven selected tools:
   token in the host environment. Do not commit `.env.local`.
 - **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
   Security workflow runs the pinned gitleaks action on the self-hosted runner
-  and clears stale macOS installer temp files before invoking the action.
+  and clears stale macOS installer temp files before invoking the action. The
+  root `.gitleaksignore` baselines exact historical fingerprints reported by the
+  scheduled full-history scan; do not add broad allowlists for live files.
 - **Sentry**: add `SENTRY_DSN` for server/edge runtime errors. The app initializes
   Sentry from the Next.js instrumentation hook for runtime/request errors, but
   does not enable the Sentry build wrapper or browser SDK by default

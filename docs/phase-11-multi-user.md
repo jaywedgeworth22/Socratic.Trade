@@ -69,7 +69,9 @@ allowed users map to isolated hashed user IDs only when present in
   Dependabot, Litestream SQLite backup scripts, and a Playwright dashboard smoke
   test. GitHub CI, Playwright smoke, and gitleaks Security workflows are active
   under `.github/workflows/` and currently use the self-hosted runner while
-  GitHub-hosted billing is blocked. See `docs/ops-observability-security.md`.
+  GitHub-hosted billing is blocked; the scheduled full-history gitleaks run uses
+  `.gitleaksignore` only for exact known historical fingerprints. See
+  `docs/ops-observability-security.md`.
 - Market-data sharing is now explicit for the first keyed OHLC path: free/env-key
   history is cached as shared market data, while history fetched through a saved
   user key is private unless `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is set.

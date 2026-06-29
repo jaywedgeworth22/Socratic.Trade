@@ -1,0 +1,10 @@
+e3894526c78dfd03bfa18254bcb5705e48ceb720:.env.example:generic-api-key:27
+c980797369325090b5a6d7cf0c737c2fedd9f882:test/connected-accounts-route.test.ts:generic-api-key:20
+c980797369325090b5a6d7cf0c737c2fedd9f882:test/connected-accounts-route.test.ts:generic-api-key:43
+685ffee045318f6e414790ed82cc1b080e6ef269:test/data-providers.test.ts:finnhub-access-token:202
+685ffee045318f6e414790ed82cc1b080e6ef269:test/data-providers.test.ts:finnhub-access-token:237
+685ffee045318f6e414790ed82cc1b080e6ef269:test/data-providers.test.ts:finnhub-access-token:272
+685ffee045318f6e414790ed82cc1b080e6ef269:test/data-providers.test.ts:finnhub-access-token:301
+e700b9f17d03d872c4f7d16da683323e246aa5e5:docs/rollouts/2026-06-21-logo-dev-toggle.md:generic-api-key:17
+178f076c7f17b54f42163973925501969ca7cc5c:test/data-providers.test.ts:finnhub-access-token:167
+178f076c7f17b54f42163973925501969ca7cc5c:test/data-providers.test.ts:finnhub-access-token:190
