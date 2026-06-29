@@ -1,7 +1,7 @@
 // Edge auth gate (Phase-11 M6). Runs before every non-static request.
 //
 // Identity sources (first match wins):
-//   1. Auth.js v5 Google session JWT cookie — verified with the same edge-safe HS256
+//   1. Auth.js v5 session JWT cookie — verified with the same edge-safe HS256
 //      helper configured in src/lib/auth/auth.ts.
 //   2. Dev/local fallback to PRIMARY_USER_EMAIL — ONLY when auth is NOT configured.
 //
@@ -64,7 +64,7 @@ function isAuthConfigured(): boolean {
 
 function isEmailAllowed(email: string): boolean {
   if (PRIMARY_SET.has(email)) return true; // primary operator + aliases
-  if (ALLOWED.length === 0) return false; // Google is the app gate; fail closed for non-primary users.
+  if (ALLOWED.length === 0) return false; // Auth.js is the app gate; fail closed for non-primary users.
   return ALLOWED.includes(email);
 }
 

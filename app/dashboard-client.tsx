@@ -4734,7 +4734,7 @@ function AccountDeletionPanel({ signedInEmail, onOpen }: { signedInEmail?: strin
             <div className="text-sm font-semibold text-fg">Delete this app account</div>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
               Deletes app data and stored broker/API connections for {signedInEmail ?? "the signed-in user"}.
-              Broker positions, open broker orders, and your Google or Apple account are not deleted.
+              Broker positions, open broker orders, and external login accounts are not deleted.
             </p>
           </div>
         </div>
@@ -4935,7 +4935,7 @@ function AccountDeletionModal({
               <ul className="space-y-1.5 text-xs leading-relaxed">
                 <li><CheckCircle size={13} className="mr-1 inline text-up" />Stored API keys, broker links, and Robinhood MCP OAuth tokens for this user.</li>
                 <li><CheckCircle size={13} className="mr-1 inline text-up" />Settings, strategy profiles, watchlists, alerts, chat history, memories, proposals, fills, snapshots, notifications, and private learned context.</li>
-                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, Google accounts, and Apple IDs are not deleted by this app.</li>
+                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, and Google, GitHub, or Apple login accounts are not deleted by this app.</li>
               </ul>
               <div className="mt-3 rounded-lg border border-line bg-bg/55 px-3 py-2 text-xs text-faint">
                 {preview.connectedAccounts.length} connection{preview.connectedAccounts.length === 1 ? "" : "s"} and about {accountDeletionRecordTotal(preview)} private app row{accountDeletionRecordTotal(preview) === 1 ? "" : "s"} are in scope.
@@ -4944,7 +4944,7 @@ function AccountDeletionModal({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3">
               <div className="mb-2 text-sm font-semibold text-fg">Sign-in and provider access</div>
               <p className="text-xs leading-relaxed">
-                Signing in later with Google or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke this app in your Google Account third-party access page or Apple ID Sign in with Apple settings.
+                Signing in later with Google, GitHub, or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke this app in your Google Account third-party access page, GitHub Authorized OAuth Apps, or Apple ID Sign in with Apple settings.
               </p>
               {preview.isLocalOperatorAccount && (
                 <p className="mt-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
@@ -4976,7 +4976,7 @@ function AccountDeletionModal({
             {check("deleteAppData", "Delete my app data for this signed-in user.")}
             {check("deleteBrokerConnections", "Delete stored broker/API connections from this app.")}
             {check("understandBrokerPositionsRemain", "I understand broker positions and open broker orders are not closed or cancelled.")}
-            {check("understandProviderRevocation", "I understand I may need to revoke Google, Apple, or broker access in those provider settings too.")}
+            {check("understandProviderRevocation", "I understand I may need to revoke Google, GitHub, Apple, or broker access in those provider settings too.")}
             {check("understandCanSignInAgain", "I understand signing in again later can create a fresh empty app account.")}
             {preview?.isLocalOperatorAccount && check("confirmLocalOperator", "I understand this deletes the local operator dataset shared by primary aliases.")}
           </div>

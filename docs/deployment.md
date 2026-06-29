@@ -144,7 +144,7 @@ pm2 restart trading && pm2 save
   app `/login` page is expected for an unauthenticated request — it means the app is up).
 - `curl -I https://trading-beta.jays.services/` should reach the beta tunnel service
   on `http://localhost:4001`.
-- Auth.js Google sign-in is the site auth layer. The Cloudflare tunnel may stay in
+- Auth.js sign-in is the site auth layer. The Cloudflare tunnel may stay in
   front of the app, but Cloudflare Access should not be the login gate for
   `trading.jays.services`. As of 2026-06-28, the Zero Trust Access app
   `agentic-trading-dashboard` keeps a bypass policy

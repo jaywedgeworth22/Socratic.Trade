@@ -1,5 +1,5 @@
 // Multi-user identity (Q3). The app derives a per-user id from a VERIFIED email — never from a
-// client-supplied hint. In production, `middleware.ts` verifies the Auth.js/Google session at the edge
+// client-supplied hint. In production, `middleware.ts` verifies the Auth.js session at the edge
 // and forwards a trusted `x-authenticated-user-email` header that this module maps to a stable userId.
 // See docs/chat-multiuser-learning-design.md §2.
 //
@@ -59,7 +59,7 @@ export function userIdForEmail(email: string): string {
 
 /**
  * Allowlist gate. The primary email and its aliases are always allowed. When `ALLOWED_EMAILS` is unset,
- * non-primary users are denied; Google authenticates identity, while this app still authorizes access.
+ * non-primary users are denied; Auth.js authenticates identity, while this app still authorizes access.
  */
 export function isEmailAllowed(email: string): boolean {
   const e = normalizeEmail(email);

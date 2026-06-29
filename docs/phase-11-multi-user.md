@@ -5,7 +5,7 @@ each getting analysis and trade proposals tailored to **their own preferences an
 their own API keys**. Test mode stays the default; no live-trading behavior change.
 
 **Current identity model:** middleware derives the request user from a verified
-Auth.js v5 Google session. The Cloudflare tunnel may still expose the app, but
+Auth.js v5 session. The Cloudflare tunnel may still expose the app, but
 Cloudflare Access email headers are not trusted as app identity. The primary
 operator and configured aliases still map to the legacy `local` dataset; other
 allowed users map to isolated hashed user IDs only when present in
@@ -208,7 +208,7 @@ The background scheduler `src/lib/scheduler.ts` iterates over all active users a
 
 ### M6 `[done]` Identity / auth (last)
 
-Real identity via Auth.js v5 Google sign-in. Key changes:
+Real identity via Auth.js v5 sign-in. Key changes:
 
 - **Fail-closed arming signal fixed**: the previous `NODE_ENV === "production"` gate was
   unreliable in the edge runtime (Next.js inlines NODE_ENV at build time — at runtime in
@@ -220,11 +220,16 @@ Real identity via Auth.js v5 Google sign-in. Key changes:
   1. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
   2. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
 
-- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, Google provider, JWT strategy),
+- **Auth providers**: `src/lib/auth/auth.ts` configures Auth.js v5 with Google and GitHub
+  providers when their credentials are present. GitHub requests `user:email` and accepts
+  only a verified GitHub email, so a Google and GitHub sign-in with the same verified email
+  lands on the same app user ID.
+
+- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, provider wiring, JWT strategy),
   `src/lib/auth/session-token.ts` (shared HS256 session encode/decode helper),
   `src/lib/auth/session-edge.ts` (edge-safe session cookie verifier),
   `app/api/auth/[...nextauth]/route.ts` (route handlers), `app/login/page.tsx`
-  (Sign in with Google), and `app/logout/route.ts`.
+  (provider sign-in buttons), and `app/logout/route.ts`.
 
 - **Visible session controls**: the dashboard shows the signed-in email when available,
   exposes a Sign out command, and `/logout` clears Auth.js cookies before redirecting
@@ -237,7 +242,7 @@ Real identity via Auth.js v5 Google sign-in. Key changes:
   static client id or callback-time localhost default from replacing the public
   production redirect/client during reconnect.
 
-- **Inert until configured**: with no `AUTH_SECRET`/Google creds, behavior is unchanged
+- **Inert until configured**: with no `AUTH_SECRET`/provider creds, behavior is unchanged
   (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior, Auth.js cookies,
   ignored Cloudflare Access headers, public Auth.js routes, and protected Robinhood OAuth routes.
 
@@ -278,10 +283,10 @@ version, timestamps, and row counts; it does not store raw email, raw userId,
 symbols, broker account numbers, chat text, proposal JSON, or credentials.
 
 Provider identity deletion is intentionally separate. This app cannot delete a
-Google account, Apple ID, or broker account. After app-data deletion, signing in
-again with Google or Apple can create a fresh empty app account; users who also
+Google account, GitHub account, Apple ID, or broker account. After app-data deletion, signing in
+again with Google, GitHub, or Apple can create a fresh empty app account; users who also
 want to remove the OAuth grant should revoke the app from their Google Account
-third-party access page or Apple ID Sign in with Apple settings. Before
+third-party access page, GitHub Authorized OAuth Apps, or Apple ID Sign in with Apple settings. Before
 Apple private-relay identities become a first-class login path, add a
 `user_identities` table keyed by provider + provider account id so identity is
 not derived from relay email alone.

@@ -14,6 +14,13 @@ describe("auth identity — multi-user keystone (Q3)", () => {
     expect(userIdForEmail("ALICE@example.com")).toBe(a); // deterministic + case-insensitive
   });
 
+  it("same verified email from different Auth.js providers maps to the same app account", () => {
+    const googleEmail = "Investor@Example.com";
+    const githubEmail = " investor@example.com ";
+
+    expect(userIdForEmail(googleEmail)).toBe(userIdForEmail(githubEmail));
+  });
+
   it("invalid emails fall back to the dev user rather than minting a junk tenant", () => {
     expect(userIdForEmail("")).toBe("local");
     expect(userIdForEmail("not-an-email")).toBe("local");

@@ -42,6 +42,19 @@ Market Scan column chooser, and BAC symbol drawer. Full verification passed:
 `npm run lint -- --quiet` passed. See
 `docs/rollouts/2026-06-28-proposal-dashboard-ui-fixes.md`.
 
+## 2026-06-28 — GitHub login on same-email Auth.js identity
+Branch `codex/github-login`. Added conditional Auth.js GitHub OAuth support next
+to Google: the login page now renders any configured provider, GitHub requests
+`read:user user:email`, and GitHub sign-in is rejected unless GitHub returns a
+verified email. The app still derives user identity from normalized verified
+email, so Google and GitHub sign-ins with the same verified email resolve to the
+same app account/user ID; different emails remain separate unless listed in
+`PRIMARY_USER_EMAIL_ALIASES`. Updated account-deletion copy, env docs, Phase 11,
+deployment notes, and tests. Verified `npx tsc --noEmit`, focused auth tests,
+full `npm test` (155 files / 1,495 tests), `npm run build` (existing Next.js
+middleware-to-proxy deprecation warning only), and a local `/login` smoke on
+port 4126 showing both Google and GitHub when both provider env pairs are set.
+
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header
 login path with Auth.js Google as the only configured identity source.
