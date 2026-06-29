@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`codex/google-auth-infisical-note`): CI runner billing unblock —
+> GitHub-hosted `ubuntu-latest` jobs are failing before startup due account
+> billing/spending-limit errors, so CI verify, Playwright smoke, and Security now
+> target the existing self-hosted `trading-live` runner for same-repo branches/PRs
+> only. No roadmap change; see
+> `docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`.
+>
 > 2026-06-28 (`codex/thin-boot-strip`): first-paint loader selection —
 > replaced the Quiet Tiles SSR loading shell with option 4, the thin boot strip:
 > a single lightweight animated strip plus one screen-reader status and the
