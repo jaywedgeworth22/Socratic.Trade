@@ -21,10 +21,10 @@
   --faint: #3d4d62;
   --accent: #0e9f6e;
   --accent-fg: #ffffff;
-  --up: #0e9f6e;
+  --up: #15803d;
   --down: #e11d48;
   --down-fg: #ffffff;
-  --warn: #c2740a;
+  --warn: #a16207;
   --info: #2563eb;
   --ring: rgba(14, 159, 110, 0.45);
   --shadow: 0 12px 32px -8px rgba(15, 23, 34, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.6);
@@ -146,7 +146,12 @@ body::after {
 /* Tabular, monospace numerals everywhere numbers matter. */
 .tnum {
   font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono);
+}
+
+/* Scroll fade edge mask */
+.scroll-fade-edge {
+  mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
 }
 
 /* Thin, themed scrollbars. */

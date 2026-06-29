@@ -7,7 +7,7 @@ type ButtonVariant = "primary" | "ghost" | "subtle" | "danger" | "accentSoft";
 type ButtonSize = "sm" | "md";
 
 const buttonBase =
-  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-colors touch-manipulation disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2";
+  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-colors touch-manipulation disabled:opacity-50 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-fg hover:brightness-110 shadow-sm",
@@ -48,7 +48,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cn(
-        "inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg border border-line bg-surface text-muted transition-colors hover:text-fg hover:bg-surface-2",
+        "inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg border border-line bg-surface text-muted transition-colors hover:text-fg hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         className
       )}
       {...props}
@@ -154,7 +154,7 @@ export function Switch({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         checked ? "bg-accent" : "bg-surface-3"
       )}
     >
@@ -190,7 +190,7 @@ export function Segmented<T extends string>({
             title={opt.title}
             onClick={() => onChange(opt.value)}
             className={cn(
-              "rounded-md px-3 py-1 text-xs font-semibold transition-colors",
+              "rounded-md px-3 py-1 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
               active ? activeTone : "text-muted hover:text-fg"
             )}
           >
@@ -233,7 +233,7 @@ export function Tabs<T extends string>({
               }
             }}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors touch-manipulation max-sm:min-h-[44px]",
+              "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors touch-manipulation max-sm:min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
               active ? "bg-surface-3 text-fg shadow-sm" : "text-muted hover:text-fg"
             )}
           >
@@ -267,7 +267,7 @@ export function Field({
 }
 
 export const inputClass =
-  "w-full rounded-lg border border-line bg-bg/60 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-faint focus:border-accent";
+  "w-full rounded-lg border border-line bg-bg/60 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-faint focus:border-accent focus:ring-1 focus:ring-accent";
 
 export function StatTile({
   label,

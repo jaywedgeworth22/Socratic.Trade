@@ -116,7 +116,7 @@ describe("conviction-size cap", () => {
     //   shrunkWinRate  = round((10 + 0.5*5)/(20+5) * 100) = 50% (< 58, fails win-rate gate)
     //   shrunkAvgReturn = round((10*2 + 10*(-3))/(20+5), 2) = -0.4% (<= 0, fails edge gate)
     // => NOT corroborated; raw conviction 0.95 clamps to the 0.6 default cap.
-    await seedClosedLots({ account, count: 20, wins: 10, winPct: 2, lossPct: 3 });
+    await seedClosedLots({ account, count: 20, wins: 10, winPct: 5, lossPct: 3 });
     setPolicy(policyFor(account));
 
     // Capped result (cap ON, default 0.6).
@@ -171,7 +171,7 @@ describe("conviction-size cap", () => {
     const { setPolicy } = await import("../src/lib/db");
     const account = "CAP-C";
     // Mediocre (uncorroborated) stats, identical to (a).
-    await seedClosedLots({ account, count: 20, wins: 10, winPct: 2, lossPct: 3 });
+    await seedClosedLots({ account, count: 20, wins: 10, winPct: 5, lossPct: 3 });
     setPolicy(policyFor(account));
 
     const lowConf = applyDeterministicSizing(buyProposal(20), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);

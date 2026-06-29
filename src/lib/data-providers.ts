@@ -236,6 +236,18 @@ const DEFAULT_MAX_SYMBOLS = 30;
 const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
+const originalSet = cache.set.bind(cache);
+cache.set = function (key: string, value: { expiresAt: number; data: SymbolEnrichment }) {
+  if (cache.size > 2000) {
+    const nowMs = Date.now();
+    for (const [k, val] of cache.entries()) {
+      if (val.expiresAt <= nowMs) {
+        cache.delete(k);
+      }
+    }
+  }
+  return originalSet(key, value);
+};
 
 // Well-known ticker mock data — real-ish values updated periodically.
 const MOCK_METRICS: Record<string, Omit<SymbolEnrichment, "volume"> & Required<Pick<SymbolEnrichment, "sector" | "industry" | "peRatio" | "analystRating" | "sentiment" | "dividendYield" | "eps" | "headlines">>> = {

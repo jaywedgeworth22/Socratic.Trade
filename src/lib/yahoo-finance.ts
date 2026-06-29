@@ -41,3 +41,67 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     return undefined;
   }
 }
+
+export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<Map<string, YahooFinanceQuote>> {
+  const result = new Map<string, YahooFinanceQuote>();
+  if (symbols.length === 0) return result;
+
+  // Chunk symbols into groups of 50
+  const chunkSize = 50;
+  for (let i = 0; i < symbols.length; i += chunkSize) {
+    const chunk = symbols.slice(i, i + chunkSize);
+    const cleanSymbols = chunk.map((s) => encodeURIComponent(s.toUpperCase().trim())).join(",");
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${cleanSymbols}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      clearTimeout(timeout);
+      if (!response.ok) continue;
+      const payload = await response.json() as {
+        quoteResponse?: {
+          result?: Array<{
+            symbol: string;
+            regularMarketPrice?: number;
+            bid?: number;
+            ask?: number;
+            regularMarketPreviousClose?: number;
+            regularMarketVolume?: number;
+            regularMarketTime?: number;
+          }>;
+        };
+      };
+
+      const items = payload?.quoteResponse?.result;
+      if (!items) continue;
+
+      for (const item of items) {
+        if (!item.symbol) continue;
+        const price = Number(item.regularMarketPrice);
+        if (!Number.isFinite(price) || price <= 0) continue;
+        const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
+        const bid = item.bid && item.bid > 0 ? Number(item.bid) : price * 0.999;
+        const ask = item.ask && item.ask > 0 ? Number(item.ask) : price * 1.001;
+        const volume = Number(item.regularMarketVolume ?? 0);
+        const t = Number(item.regularMarketTime);
+        const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+
+        result.set(item.symbol.toUpperCase().trim(), {
+          price,
+          bid,
+          ask,
+          prevClose,
+          volume,
+          asOf
+        });
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      console.error("[yahoo-finance] batch fetch failed for chunk:", chunk, err);
+    }
+  }
+
+  return result;
+}
+

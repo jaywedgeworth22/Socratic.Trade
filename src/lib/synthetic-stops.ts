@@ -168,8 +168,14 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   let quotes: Record<string, { price?: number; symbol?: string }> = {};
   try {
     quotes = await gateway.getEquityQuotes(accountNumber, stops.map((s) => normalizeSymbol(s.symbol)));
-  } catch {
-    return result;
+  } catch (err) {
+    // API outage fallback: populate quotes with the last known price from database
+    console.error("[synthetic-stops] gateway quotes fetch failed, using lastPrice database cache fallback:", err);
+    for (const stop of stops) {
+      if (stop.lastPrice && stop.lastPrice > 0) {
+        quotes[normalizeSymbol(stop.symbol)] = { price: stop.lastPrice, symbol: stop.symbol };
+      }
+    }
   }
   const priceFor = (sym: string): number | undefined => {
     const q = quotes[sym] ?? quotes[normalizeSymbol(sym)];

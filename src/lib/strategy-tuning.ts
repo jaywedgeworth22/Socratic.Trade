@@ -149,7 +149,7 @@ function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", 
   return undefined;
 }
 
-export async function proposeStrategyTuning(userId: string = "local"): Promise<StrategyTuningProposal> {
+export async function proposeStrategyTuning(userId: string = "local", modelOverride?: string): Promise<StrategyTuningProposal> {
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
@@ -230,15 +230,16 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     macro
   };
 
-  const { key: llmKey } = resolveLlmEndpoint(policy, userId);
+  const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
+  const { key: llmKey } = resolveLlmEndpoint(policyForResolution, userId);
   if (!llmKey) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard });
     return applyOosGate(localProposal, userId);
   }
 
-  const payload = await requestLlmTuning(context, userId);
+  const payload = await requestLlmTuning(context, userId, modelOverride);
   const proposedPatch = toPatch(payload, prompt, policy.scoringWeights);
-  const cautions = [...payload.cautions];
+  const cautions = Array.isArray(payload.cautions) ? [...payload.cautions] : [];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
   // null factor weights below the gate, but never trust prose for a safety rule —
   // strip any weight changes it returned anyway when the closed-lot sample is too thin.
@@ -247,13 +248,13 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     cautions.push(`Withheld model-proposed factor-weight changes: only ${closedLotCount}/${minLotsForWeights} closed lots (insufficient evidence).`);
   }
   const llmProposal: StrategyTuningProposal = {
-    summary: payload.summary,
-    rationale: payload.rationale,
-    marketContext: payload.marketContext,
-    performanceReadout: payload.performanceReadout,
+    summary: payload.summary || "No summary provided by LLM.",
+    rationale: payload.rationale || "No rationale provided by LLM.",
+    marketContext: payload.marketContext || "No market context provided by LLM.",
+    performanceReadout: payload.performanceReadout || "No performance readout provided by LLM.",
     proposedPatch,
     cautions,
-    confidenceScore: clamp(payload.confidenceScore, 0, 100),
+    confidenceScore: typeof payload.confidenceScore === "number" ? clamp(payload.confidenceScore, 0, 100) : 50,
     generatedBy: "llm"
   };
   return applyOosGate(llmProposal, userId);
@@ -422,9 +423,10 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTuningPayload> {
+async function requestLlmTuning(context: unknown, userId: string, modelOverride?: string): Promise<LlmTuningPayload> {
   const policy = getPolicy(userId);
-  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
+  const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policyForResolution, userId);
   const schema = tuningSchema();
   const systemPrompt = [
     "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
@@ -445,7 +447,7 @@ async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTu
       userContent: JSON.stringify(context),
       schema: { name: "strategy_tuning", schema, description: "Conservative, reviewable strategy-tuning suggestions." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policyForResolution.llmReasoningEffort
     }
   );
 
@@ -571,9 +573,6 @@ function tuningSchema() {
 
 function toPatch(payload: LlmTuningPayload, currentPrompt: string, currentWeights?: ScoringWeights): StrategyTuningPatch {
   const rawWeights = pruneNumeric(payload.scoringWeights);
-  // Clamp each proposed weight so the delta from the current weight is bounded to MAX_WEIGHT_STEP
-  // (Phase-7 §3.E / strategic-framework §5: "no more than a 5-point change per factor at a time").
-  // This prevents an LLM from proposing a jump from e.g. 1.4 → 2.5 in a single step.
   const scoringWeights: Partial<Record<keyof ScoringWeights, number>> = {};
   for (const [key, proposed] of Object.entries(rawWeights) as [keyof ScoringWeights, number][]) {
     const current = currentWeights?.[key];
@@ -586,7 +585,7 @@ function toPatch(payload: LlmTuningPayload, currentPrompt: string, currentWeight
   const policyPatch = prunePolicy(payload.policy);
   const riskRules = pruneNumeric(payload.riskRules);
   return {
-    ...(payload.proposedPrompt.trim() && payload.proposedPrompt.trim() !== currentPrompt.trim()
+    ...(payload.proposedPrompt && typeof payload.proposedPrompt === "string" && payload.proposedPrompt.trim() && payload.proposedPrompt.trim() !== currentPrompt.trim()
       ? { prompt: payload.proposedPrompt.trim() }
       : {}),
     ...(Object.keys(scoringWeights).length ? { scoringWeights } : {}),
@@ -596,13 +595,15 @@ function toPatch(payload: LlmTuningPayload, currentPrompt: string, currentWeight
   };
 }
 
-function pruneNumeric<T extends Record<string, number | null | undefined>>(value: T): Partial<Record<keyof T, number>> {
+function pruneNumeric<T extends Record<string, number | null | undefined>>(value: T | null | undefined): Partial<Record<keyof T, number>> {
+  if (!value) return {};
   return Object.fromEntries(
     Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
   ) as Partial<Record<keyof T, number>>;
 }
 
-function prunePolicy(value: LlmTuningPayload["policy"]): NonNullable<StrategyTuningPatch["policy"]> {
+function prunePolicy(value: LlmTuningPayload["policy"] | null | undefined): NonNullable<StrategyTuningPatch["policy"]> {
+  if (!value) return {};
   const patch: NonNullable<StrategyTuningPatch["policy"]> = {};
   for (const key of [
     "maxOrderNotional",

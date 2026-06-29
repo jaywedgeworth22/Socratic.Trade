@@ -185,6 +185,34 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE chat_turns ADD COLUMN model TEXT");
       }
     }
+  },
+  {
+    version: 6,
+    name: "performance_indexing_fixes",
+    up: (database) => {
+      // 1. Remove redundant index
+      database.exec("DROP INDEX IF EXISTS idx_imported_price_eod_ticker");
+
+      // 2. Index for joining strategy_runs and trade_proposals (Dashboard bottleneck)
+      database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_run_id ON trade_proposals (run_id)");
+
+      // 3. Composite indices for capping and sorting listPending/listRecent
+      database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_status_created ON trade_proposals (user_id, account_number, status, created_at DESC)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_created ON trade_proposals (user_id, account_number, created_at DESC)");
+
+      // 4. Composite index for day-trade counting and excursions
+      database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_user_account_symbol_filled ON fill_events (user_id, account_number, symbol, filled_at DESC)");
+
+      // 5. Composite index for portfolio snapshots
+      database.exec("CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_user_account_source_created ON portfolio_snapshots (user_id, account_number, source, created_at DESC)");
+
+      // 6. Indices for audit_events querying
+      database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_user_account_kind ON audit_events (user_id, connected_account_id, kind)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_user_created ON audit_events (user_id, created_at DESC)");
+      
+      // 7. Composite index for matured skipped counterfactuals sorting
+      database.exec("CREATE INDEX IF NOT EXISTS idx_skipped_counterfactuals_user_account_status_return ON skipped_candidate_counterfactuals (user_id, connected_account_id, status, return_pct DESC, updated_at DESC)");
+    }
   }
 ];
 

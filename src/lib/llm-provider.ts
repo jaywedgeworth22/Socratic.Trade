@@ -118,6 +118,20 @@ export function resolveLlmEndpoint(
     };
   }
 
+  if (/^(claude|anthropic)/i.test(model)) {
+    const url = "https://api.anthropic.com/v1/messages";
+    const cred = resolveLlmCredential("anthropic", userId);
+    return {
+      provider: "openai" as any,
+      url,
+      key: cred.key,
+      model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
   const url = process.env.OPENAI_API_URL?.trim() || defaultOpenAiUrl;
   const cred = resolveLlmCredential("openai", userId);
   const transport: LlmTransport = url.includes("/chat/completions")

@@ -853,6 +853,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [compactExecutionBanner, setCompactExecutionBanner] = useState(false);
   const [executionBannerHidden, setExecutionBannerHidden] = useState(false);
   const [hideTestAccount, setHideTestAccount] = useState(false);
+
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const updateHeight = () => {
+      if (headerRef.current) {
+        const rect = headerRef.current.getBoundingClientRect();
+        document.documentElement.style.setProperty("--header-height", `${rect.height}px`);
+      }
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(headerRef.current);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -1255,11 +1270,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     }
   }
 
-  async function requestStrategyTuning() {
+  async function requestStrategyTuning(tuningModel?: string) {
     setTuningBusy(true);
     setTuningError("");
     try {
-      const response = await fetch("/api/strategy/tune", { method: "POST" });
+      const response = await fetch("/api/strategy/tune", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: tuningModel || undefined })
+      });
       const body = await response.json();
       if (!response.ok) throw new Error(plainAppError(typeof body?.error === "string" ? body.error : JSON.stringify(body), "Strategy tuning review failed."));
       setStrategyTuning(body as StrategyTuningProposal);
@@ -1435,24 +1454,29 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
-      {!executionBannerHidden && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={cn(
-            "shrink-0 border-b text-center font-semibold tracking-wide",
-            compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
-            safetyBanner.className
-          )}
-          title={safetyBanner.title}
-        >
-          {safetyBanner.content}
-        </div>
-      )}
-      {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="relative z-[1100] flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:gap-3 xl:py-0 xl:px-4">
+      {/* Sticky top container for Safety Banner and Header/Command Bar */}
+      <div
+        ref={headerRef}
+        className="sticky top-0 z-[1100] flex shrink-0 flex-col"
+      >
+        {!executionBannerHidden && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={cn(
+              "shrink-0 border-b text-center font-semibold tracking-wide",
+              compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
+              safetyBanner.className
+            )}
+            title={safetyBanner.title}
+          >
+            {safetyBanner.content}
+          </div>
+        )}
+        {/* ── Command bar ─────────────────────────────────────────── */}
+        <header className="relative z-10 flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 lg:flex-row lg:items-center lg:justify-between lg:h-16 lg:gap-3 lg:py-0 lg:px-4">
         {/* Left Side: Logo, Title, Status, and Pills */}
-        <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 w-full xl:w-auto xl:justify-start xl:gap-4">
+        <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 w-full lg:w-auto lg:justify-start lg:gap-4">
           <div className="flex items-start gap-2.5">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
               <Zap size={17} className="fill-current" />
@@ -1479,7 +1503,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         </div>
 
         {/* Right Side: Selects, Utilities, Actions */}
-        <div className="flex flex-col gap-1.5 w-full sm:gap-2 lg:flex-row lg:items-center lg:justify-end xl:w-auto xl:flex-nowrap xl:gap-3">
+        <div className="flex flex-col gap-1.5 w-full sm:gap-2 lg:flex-row lg:items-center lg:justify-end lg:w-auto lg:flex-nowrap lg:gap-3">
           {/* Sub-container 1: Selects and Utility tools */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
@@ -1587,6 +1611,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
         </div>
       </header>
+      </div>
 
       {/* ── Body grid ───────────────────────────────────────────── */}
       <div className="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -1599,7 +1624,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <MobilePortfolioSummary snapshot={snapshot} mode={mode} modeLabel={accountModeLabel} />
           </div>
           <ReadinessStrip items={readinessItems} />
-          <div className="flex min-w-0 items-center justify-between overflow-x-auto">
+          <div className="scroll-fade-edge flex min-w-0 items-center justify-between overflow-x-auto">
             <Tabs
               value={workspaceTab}
               onChange={setWorkspaceTab}
@@ -3317,7 +3342,7 @@ function StrategyView({
   newProfileName: string;
   setNewProfileName: (v: string) => void;
   createProfile: () => void;
-  requestStrategyTuning: () => void;
+  requestStrategyTuning: (tuningModel?: string) => void;
   tuningBusy: boolean;
   tuningError: string;
   strategyTuning: StrategyTuningProposal | null;
@@ -3325,6 +3350,12 @@ function StrategyView({
 }) {
   // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
   const [copyTarget, setCopyTarget] = useState("");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
+  useEffect(() => {
+    if (policy.llmModel) {
+      setTuningModel(policy.llmModel);
+    }
+  }, [policy.llmModel]);
   const activeAccountId = snapshot.policy.connectedAccountId;
   const copyTargets = (snapshot.connectedAccounts ?? []).filter((a) => a.id !== activeAccountId);
   const selectedProfileId = snapshot.activeProfile?.id ?? "";
@@ -3477,7 +3508,49 @@ function StrategyView({
       </Card>
 
       <Card>
-        <PanelHeader title="LLM Strategy Review" subtitle="Advisory — review past performance & suggest tuning" icon={<Sparkles size={16} />} actions={<Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}</Button>} />
+        <PanelHeader
+          title="LLM Strategy Review"
+          subtitle="Advisory — review past performance & suggest tuning"
+          icon={<Sparkles size={16} />}
+          actions={
+            <div className="flex items-center gap-2">
+              <select
+                className={cn(inputClass, "w-44 text-[12px] py-1 h-8 bg-surface-3 border-line")}
+                value={tuningModel}
+                onChange={(e) => setTuningModel(e.target.value)}
+              >
+                <optgroup label="OpenAI">
+                  <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="o1-mini">o1-mini</option>
+                  <option value="o3-mini">o3-mini</option>
+                  <option value="o1">o1</option>
+                </optgroup>
+                <optgroup label="xAI (Grok)">
+                  <option value="grok-build-0.1">grok-build-0.1</option>
+                  <option value="grok-4.3">grok-4.3</option>
+                </optgroup>
+                <optgroup label="Google Gemini">
+                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+                  <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                </optgroup>
+                <optgroup label="Mistral">
+                  <option value="mistral-small-latest">mistral-small-latest</option>
+                  <option value="mistral-medium-latest">mistral-medium-latest</option>
+                  <option value="mistral-large-latest">mistral-large-latest</option>
+                </optgroup>
+                <optgroup label="DeepSeek">
+                  <option value="deepseek-chat">deepseek-chat</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner</option>
+                </optgroup>
+              </select>
+              <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
+                <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}
+              </Button>
+            </div>
+          }
+        />
         <div className="p-4 pt-3">
           {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           {strategyTuning ? <TuningCard proposal={strategyTuning} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
@@ -3825,12 +3898,24 @@ function StrategyStudio({
   editStrategyPrompt: (v: string) => void;
   resetPrompt: () => void;
   updatePolicy: (patch: PolicyPatch) => void;
-  requestStrategyTuning: () => void;
+  requestStrategyTuning: (tuningModel?: string) => void;
   tuningBusy: boolean;
   tuningError: string;
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
 }) {
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
+  useEffect(() => {
+    if (policy.llmModel) {
+      setTuningModel(policy.llmModel);
+    }
+  }, [policy.llmModel]);
+
+  function isReasoningModel(model: string | undefined): boolean {
+    return /^(gpt-5|o\d)/i.test((model ?? "").trim());
+  }
+
+  const showReasoningEffort = isReasoningModel(policy.llmModel) || isReasoningModel(policy.redTeamLlmModel) || isReasoningModel(tuningModel);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="space-y-2">
@@ -3841,7 +3926,7 @@ function StrategyStudio({
         <textarea
           value={snapshot.strategyPrompt}
           onChange={(e) => editStrategyPrompt(e.target.value)}
-          className={cn(inputClass, "h-72 resize-none font-mono text-[13px] leading-relaxed")}
+          className={cn(inputClass, "h-72 lg:h-[480px] resize-none font-mono text-[13px] leading-relaxed")}
         />
         <p className="text-xs text-faint">Autosaves ~1s after you stop typing.</p>
       </div>
@@ -3854,18 +3939,16 @@ function StrategyStudio({
               <div className="space-y-2">
                 <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
-                    updatePolicy({ llmModel: "gpt-4o-mini" });
+                    updatePolicy({ llmModel: "gpt-5.4-mini" });
                   } else {
                     updatePolicy({ llmModel: e.target.value });
                   }
                 }}>
-                  <optgroup label="OpenAI (Simulated)">
+                  <optgroup label="OpenAI">
                     <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
                     <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
                     <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
                     <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
-                  </optgroup>
-                  <optgroup label="OpenAI (Real)">
                     <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
                     <option value="gpt-4o">gpt-4o — standard large</option>
                     <option value="o1-mini">o1-mini — fast reasoning</option>
@@ -3912,19 +3995,17 @@ function StrategyStudio({
               <div className="space-y-2">
                 <select className={inputClass} value={!policy.redTeamLlmModel ? "" : STRATEGY_MODEL_IDS.includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
-                    updatePolicy({ redTeamLlmModel: "gpt-4o-mini" });
+                    updatePolicy({ redTeamLlmModel: "gpt-5.4-mini" });
                   } else {
                     updatePolicy({ redTeamLlmModel: e.target.value || undefined });
                   }
                 }}>
                   <option value="">Same as Green Team model</option>
-                  <optgroup label="OpenAI (Simulated)">
+                  <optgroup label="OpenAI">
                     <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
                     <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
                     <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
                     <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
-                  </optgroup>
-                  <optgroup label="OpenAI (Real)">
                     <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
                     <option value="gpt-4o">gpt-4o — standard large</option>
                     <option value="o1-mini">o1-mini — fast reasoning</option>
@@ -3967,13 +4048,15 @@ function StrategyStudio({
                 )}
               </div>
             </Field>
-            <Field label="Reasoning Effort" hint="For gpt-5 / o-series reasoning models: higher effort = deeper analysis, more tokens, higher cost & latency. Other model families use their provider defaults.">
-              <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
-                <option value="low">Low — fastest & cheapest</option>
-                <option value="medium">Medium — balanced (recommended)</option>
-                <option value="high">High — deepest analysis, priciest</option>
-              </select>
-            </Field>
+            {showReasoningEffort && (
+              <Field label="Reasoning Effort" hint="For gpt-5 / o-series reasoning models: higher effort = deeper analysis, more tokens, higher cost & latency. Other model families use their provider defaults.">
+                <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
+                  <option value="low">Low — fastest & cheapest</option>
+                  <option value="medium">Medium — balanced (recommended)</option>
+                  <option value="high">High — deepest analysis, priciest</option>
+                </select>
+              </Field>
+            )}
           </div>
         </div>
         <div>
@@ -3983,12 +4066,51 @@ function StrategyStudio({
       </div>
 
       <div className="lg:col-span-2">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h4 className="text-sm font-semibold text-fg">LLM Strategy Review</h4>
             <p className="text-xs text-faint">Reviews performance, scan context, macro & current prompt. Advisory — apply is manual.</p>
           </div>
-          <Button size="sm" onClick={requestStrategyTuning} disabled={tuningBusy}><Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}</Button>
+          <div className="flex items-center gap-2">
+            <select
+              className={cn(inputClass, "w-44 text-[12px] py-1 h-8 bg-surface-3 border-line")}
+              value={tuningModel}
+              onChange={(e) => setTuningModel(e.target.value)}
+            >
+              <optgroup label="OpenAI">
+                <option value="gpt-5.4-nano">gpt-5.4-nano</option>
+                <option value="gpt-5.4-mini">gpt-5.4-mini (default)</option>
+                <option value="gpt-5.4">gpt-5.4</option>
+                <option value="gpt-5.5">gpt-5.5</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="o1-mini">o1-mini</option>
+                <option value="o3-mini">o3-mini</option>
+                <option value="o1">o1</option>
+              </optgroup>
+              <optgroup label="xAI (Grok)">
+                <option value="grok-build-0.1">grok-build-0.1</option>
+                <option value="grok-4.3">grok-4.3</option>
+              </optgroup>
+              <optgroup label="Google Gemini">
+                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+              </optgroup>
+              <optgroup label="Mistral">
+                <option value="mistral-small-latest">mistral-small-latest</option>
+                <option value="mistral-medium-latest">mistral-medium-latest</option>
+                <option value="mistral-large-latest">mistral-large-latest</option>
+              </optgroup>
+              <optgroup label="DeepSeek">
+                <option value="deepseek-chat">deepseek-chat</option>
+                <option value="deepseek-reasoner">deepseek-reasoner</option>
+              </optgroup>
+            </select>
+            <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
+              <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}
+            </Button>
+          </div>
         </div>
         {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
         {strategyTuning ? <TuningCard proposal={strategyTuning} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}

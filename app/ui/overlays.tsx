@@ -182,7 +182,13 @@ export function SlideOver({
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-[900]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div
+          className="fixed left-0 right-0 bottom-0 z-[900]"
+          style={{ top: "var(--header-height, 64px)" }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
           <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
           <motion.aside
             ref={ref}
@@ -226,6 +232,8 @@ export function SlideOver({
   );
 }
 
+import { Button } from "./primitives";
+
 export function ConfirmModal({
   open,
   onClose,
@@ -251,18 +259,15 @@ export function ConfirmModal({
       size="sm"
       footer={
         <>
-          <button onClick={onClose} className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg hover:bg-surface-2">
+          <Button variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={tone === "danger" ? "danger" : "primary"}
             onClick={onConfirm}
-            className={cn(
-              "h-9 rounded-lg px-4 text-sm font-medium",
-              tone === "danger" ? "bg-down text-down-fg hover:brightness-110" : "bg-accent text-accent-fg hover:brightness-110"
-            )}
           >
             {confirmLabel}
-          </button>
+          </Button>
         </>
       }
     >

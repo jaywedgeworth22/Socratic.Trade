@@ -120,6 +120,7 @@ const CHAT_MODEL_GROUPS: ModelGroup[] = [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest", tier: "$" },
       { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default", tier: "$$" },
       { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost", tier: "$$$" },
+      { value: "gpt-5.5", label: "gpt-5.5 — ultra reasoning, highest cost", tier: "$$$" },
       { value: "gpt-4o-mini", label: "gpt-4o-mini — standard mini", tier: "$" },
       { value: "gpt-4o", label: "gpt-4o — standard large", tier: "$$" },
       { value: "o1-mini", label: "o1-mini — fast reasoning", tier: "$$" },
