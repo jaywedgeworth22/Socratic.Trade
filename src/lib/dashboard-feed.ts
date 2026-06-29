@@ -23,6 +23,7 @@ interface SourceAuditEvent {
 
 export interface StrategyDecisionLike {
   runId: string;
+  createdAt?: string;
   status: "completed" | "failed";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
@@ -133,7 +134,9 @@ function formatAuditEvent(
     const detail =
       joinDetail([
         result === "paper" ? "Test mode" : undefined,
-        result === "placed" ? "Order placed" : undefined,
+        result === "placed" && stringValue(payload.fillStatus) === "pending_reconciliation" ? "Broker accepted order; pending execution" : undefined,
+        result === "placed" && stringValue(payload.fillStatus) !== "pending_reconciliation" ? "Order placed" : undefined,
+        result === "placed" && stringValue(payload.brokerState) ? `Broker state ${readableBrokerState(stringValue(payload.brokerState))}` : undefined,
         stringValue(payload.orderId) ? `Order ${stringValue(payload.orderId)}` : undefined,
         firstReason(payload)
       ]) ?? "Awaiting next update";
@@ -198,6 +201,20 @@ function formatAuditEvent(
     return {
       title: "Post Mortem Reflection",
       detail: stringValue(payload.summary) ?? "No reflection summary"
+    };
+  }
+
+  if (kind === "recoverable_issue") {
+    const source = stringValue(payload.source) ?? "system";
+    const operation = stringValue(payload.operation) ?? "operation";
+    const repeats = numberValue(payload.suppressedSinceLastAudit);
+    return {
+      title: `${capitalize(source)} issue`,
+      detail: joinDetail([
+        shortText(stringValue(payload.message) ?? operation),
+        stringValue(payload.fallback) ? `Fallback: ${shortText(stringValue(payload.fallback) ?? "")}` : undefined,
+        repeats && repeats > 0 ? `${repeats} repeat${repeats === 1 ? "" : "s"} suppressed` : undefined
+      ]) ?? operation
     };
   }
 
@@ -299,6 +316,40 @@ function trimCurrency(value: number): string {
 function joinDetail(parts: Array<string | undefined>): string | undefined {
   const filtered = parts.filter(Boolean);
   return filtered.length > 0 ? filtered.join(" · ") : undefined;
+}
+
+function readableBrokerState(state?: string): string {
+  if (!state) return "Pending";
+  return state.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function isTerminalBrokerState(state?: string): boolean {
+  return Boolean(state && ["canceled", "cancelled", "rejected", "failed", "expired"].includes(state));
+}
+
+function isPendingBrokerState(state?: string): boolean {
+  return Boolean(state && ["accepted", "accepted_for_bidding", "new", "pending_new", "pending_cancel", "pending_replace", "held", "queued", "done_for_day", "stopped", "calculated"].includes(state));
+}
+
+function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string): string {
+  if (!order) {
+    if (fillStatus === "pending_reconciliation") return "Broker order accepted; awaiting broker status update.";
+    if (fillStatus === "filled") return "Filled by broker.";
+    if (fillStatus === "partially_filled") return "Partially filled by broker.";
+    if (isTerminalBrokerState(fillStatus)) return `Broker reported ${readableBrokerState(fillStatus)}.`;
+    return "Awaiting broker status update.";
+  }
+  const formattedFilled = formatQuantity(order.filledQuantity, normalizeSymbol(order.symbol));
+  const formattedTotal = formatQuantity(order.quantity, normalizeSymbol(order.symbol));
+  const prefix =
+    order.state === "filled"
+      ? "Filled by broker"
+      : order.state === "partially_filled"
+        ? "Partially filled by broker"
+        : isTerminalBrokerState(order.state)
+          ? `Broker reported ${readableBrokerState(order.state)}`
+          : "Accepted by broker; awaiting fill";
+  return `${prefix}: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${order.type}`;
 }
 
 import { formatNotificationDisplay } from "./dashboard-ui";
@@ -415,7 +466,7 @@ export function buildUnifiedFeed(input: {
       type: "audit",
       title: feed.title,
       detail: feed.detail,
-      raw: { kind: event.kind, payload: event.payload }
+      raw: { kind: event.kind }
     };
 
     const groupId = proposalId ? `prop-${proposalId}` : `audit-${event.id}`;
@@ -477,7 +528,9 @@ export function buildUnifiedFeed(input: {
       createdAt: fill.filledAt,
       type: "fill",
       title: `${fill.source === "paper" ? "Test " : ""}${fill.side.toUpperCase()} ${fill.symbol}`,
-      detail: `${formattedQty} shares @ ${trimCurrency(fill.price)} · ${fill.status}`,
+      detail: fill.status === "pending_reconciliation"
+        ? `${formattedQty} shares reviewed @ ${trimCurrency(fill.price)} · broker order pending execution`
+        : `${formattedQty} shares @ ${trimCurrency(fill.price)} · ${fill.status}`,
       status: fill.status,
       raw: fill.raw
     };
@@ -576,13 +629,27 @@ export function buildUnifiedFeed(input: {
 
     if (proposalId) {
       const hasFill = events.find(ev => ev.type === "fill");
+      const hasOrder = events.find(ev => ev.type === "order") as UnifiedActivitySubEvent | undefined;
       const hasApproval = events.find(ev => ev.type === "audit" && ev.title.includes("Approved"));
       const hasRejection = events.find(ev => ev.type === "audit" && ev.title.includes("Rejected"));
       const hasBlock = events.find(ev => ev.type === "notification" && ev.title.includes("Blocked"));
       const hasPendingApproval = events.find(ev => ev.type === "notification" && ev.title.includes("Approval Pending"));
+      const order = hasOrder?.raw as EquityOrder | undefined;
 
       if (hasFill) {
-        status = hasFill.status === "filled" ? "filled" : "pending_reconciliation";
+        if (hasFill.status === "filled") {
+          status = "filled";
+        } else if (order?.state === "filled") {
+          status = "filled";
+        } else if (order?.state === "partially_filled") {
+          status = "partially_filled";
+        } else if (isTerminalBrokerState(order?.state)) {
+          status = order!.state;
+        } else if (isPendingBrokerState(order?.state) || hasFill.status === "pending_reconciliation") {
+          status = "pending_order";
+        } else {
+          status = hasFill.status ?? "pending_order";
+        }
       } else if (hasRejection) {
         status = "rejected";
       } else if (hasApproval) {
@@ -620,7 +687,9 @@ export function buildUnifiedFeed(input: {
         detail = fillEv.detail;
       } else if (status === "pending_reconciliation") {
         const fillEv = events.find(ev => ev.type === "fill")!;
-        detail = `Pending Reconciliation: ${fillEv.detail}`;
+        detail = `Pending Broker Order: ${fillEv.detail}`;
+      } else if (hasFill && (status === "pending_order" || status === "partially_filled" || isTerminalBrokerState(status))) {
+        detail = brokerOrderDetail(order, hasFill?.status);
       } else if (status === "rejected") {
         detail = "Rejected manually";
       } else if (status === "approved") {

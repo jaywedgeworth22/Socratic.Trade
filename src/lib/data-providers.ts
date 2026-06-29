@@ -11,7 +11,11 @@
 
 import { normalizeSymbol } from "./money";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
+import { logApiHealth } from "./db-health";
 import { getStreamedHeadlines } from "./streams/news-store";
+import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
+import { loadTickerCikMap } from "./web-sources/sec8k";
+import { padCik } from "./web-sources/sec-filings";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -107,6 +111,11 @@ export interface SymbolEnrichment {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  // Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED).
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   // Which provider supplied each scalar field (filled by the cascade).
   sources?: Partial<Record<EnrichmentSourcedField, string>>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
@@ -138,12 +147,18 @@ export type EnrichmentSourcedField =
   | "fcfYield"
   | "debtToEquity"
   | "epsGrowth"
-  | "senateTrades";
+  | "senateTrades"
+  | "targetMean"
+  | "targetHigh"
+  | "targetLow"
+  | "targetMedian";
 
 export interface MarketEnrichmentProvider {
   name: string;
   configured: boolean;
   enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
+  /** Registered providers that supplied ≥1 field in the most recent enrich() run (cascade only). */
+  activeSources?: string[];
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -175,9 +190,9 @@ export function analystScoreFromMean(mean: number): number {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-// Cover the full scan candidate set (MARKET_SCAN_LIMIT, default 30) so every row the
-// dashboard displays is enriched — otherwise symbols that climb in rank after enrichment
-// would render blank. The 6h cache means only the first run is heavy.
+// Cover the default scan candidate set so every row the dashboard displays is
+// enriched — otherwise symbols that climb in rank after enrichment would render
+// blank. The 6h cache means only the first run is heavy.
 const DEFAULT_MAX_SYMBOLS = 30;
 const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
@@ -245,17 +260,55 @@ function maxSymbols(): number {
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  options: { retries?: number; backoffMs?: number } = {}
+  options: { retries?: number; backoffMs?: number; service?: string; keySource?: string; userId?: string; deferSuccessLog?: boolean } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
-  for (let attempt = 0; ; attempt++) {
-    const response = await fetch(url, init);
-    if (response.status === 429 && attempt < retries) {
-      await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
-      continue;
+  const start = Date.now();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(url, init);
+      if (response.status === 429 && attempt < retries) {
+        if (options.service) {
+          logApiHealth({
+            service: options.service,
+            ok: false,
+            latencyMs: Date.now() - start,
+            errorText: "HTTP 429 (rate limited, retrying)",
+            keySource: options.keySource,
+            userId: options.userId,
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+        continue;
+      }
+      // When deferSuccessLog is set, skip the auto-success row so the caller can log
+      // after validating the response body (e.g. providers that embed errors in HTTP 200).
+      // HTTP failure rows are still written here regardless of the flag.
+      if (options.service && !(response.ok && options.deferSuccessLog)) {
+        logApiHealth({
+          service: options.service,
+          ok: response.ok,
+          latencyMs: Date.now() - start,
+          errorText: response.ok ? undefined : `HTTP ${response.status}`,
+          keySource: options.keySource,
+          userId: options.userId,
+        });
+      }
+      return response;
     }
-    return response;
+  } catch (err) {
+    if (options.service) {
+      logApiHealth({
+        service: options.service,
+        ok: false,
+        latencyMs: Date.now() - start,
+        errorText: err instanceof Error ? err.message : String(err),
+        keySource: options.keySource,
+        userId: options.userId,
+      });
+    }
+    throw err;
   }
 }
 
@@ -269,6 +322,9 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const alphaVantage = resolveApiKeyWithSource("alphavantage", userId);
   const fmp = resolveApiKeyWithSource("fmp", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
+  const intrinio = resolveApiKeyWithSource("intrinio", userId);
+  const tiingo = resolveApiKeyWithSource("tiingo", userId);
+  const twelvedata = resolveApiKeyWithSource("twelvedata", userId);
   // Alpaca MARKET DATA: own key (individual) → operator's paper key (shared) for background/tenants.
   // Trading is unaffected (alpaca.ts resolves Alpaca strictly per-user).
   const alpacaData = resolveAlpacaMarketData(userId);
@@ -294,13 +350,20 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
+  if (intrinio.key) providers.push(new IntrinioEnrichmentProvider(intrinio.key, intrinio.source, userId));
+  if (tiingo.key) providers.push(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId));
   if (fintech.key) providers.push(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId));
   if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
+  if (twelvedata.key) providers.push(new TwelveDataEnrichmentProvider(twelvedata.key, twelvedata.source, userId));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
   if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
   if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
+  // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity from authoritative SEC filings.
+  // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
+  // data supersedes Yahoo's scraped values when enabled.
+  if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
   providers.push(new YahooFinanceEnrichmentProvider());
   // Always wrap in the cascade — even for a single provider — so per-field source
   // stamping and analyst blending happen uniformly.
@@ -332,15 +395,26 @@ export const noopProvider = mockEnrichmentProvider;
 // rest) and records which provider supplied it. Analyst ratings are NOT first-wins:
 // every provider's read is collected and blended into one 0–100 score + label.
 
-class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
+export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name: string;
   readonly configured = true;
+  // Provider names that supplied ≥1 accepted field during the most recent enrich() run. Reset each run
+  // and exposed via activeSources so MarketScan.source names only providers that ACTUALLY contributed —
+  // a keyless/default-OFF provider that returns nothing for a scan (budget timeout, no CIK, no aligned
+  // fact) must not appear in the source string just because it was registered.
+  private contributingNames = new Set<string>();
 
   constructor(private readonly providers: MarketEnrichmentProvider[]) {
     this.name = providers.map((p) => p.name).join("+");
   }
 
+  /** Registered providers that contributed ≥1 field in the last enrich(), in registration order. */
+  get activeSources(): string[] {
+    return this.providers.map((p) => p.name).filter((n) => this.contributingNames.has(n));
+  }
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    this.contributingNames = new Set();
     // Run all providers in parallel; pair each result set with its provider name.
     const results = await Promise.all(
       this.providers.map((p) =>
@@ -365,6 +439,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       ) => {
         if (base[field] === undefined && value !== undefined) {
           base[field] = value;
+          this.contributingNames.add(sourceName);
           if (field in EMPTY_SOURCED) sources[field as EnrichmentSourcedField] = sourceName;
         }
       };
@@ -396,9 +471,19 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("debtToEquity", name, r.debtToEquity);
         takeScalar("epsGrowth", name, r.epsGrowth);
         takeScalar("senateTrades", name, r.senateTrades);
-        if (!base.headlines?.length && r.headlines?.length) base.headlines = r.headlines;
-        // Collect every provider's analyst read.
-        if (r.analystBySource) Object.assign(analystBySource, r.analystBySource);
+        takeScalar("targetMean", name, r.targetMean);
+        takeScalar("targetHigh", name, r.targetHigh);
+        takeScalar("targetLow", name, r.targetLow);
+        takeScalar("targetMedian", name, r.targetMedian);
+        if (!base.headlines?.length && r.headlines?.length) {
+          base.headlines = r.headlines;
+          this.contributingNames.add(name);
+        }
+        // Collect every provider's analyst read (an analyst contribution counts as a contribution too).
+        if (r.analystBySource && Object.keys(r.analystBySource).length > 0) {
+          Object.assign(analystBySource, r.analystBySource);
+          this.contributingNames.add(name);
+        }
       }
 
       // Blend analyst scores across all sources that reported one.
@@ -419,6 +504,7 @@ class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (typeof avSentiment === "number") {
         base.sentiment = avSentiment;
         sources.sentiment = "alpha-vantage";
+        this.contributingNames.add("alpha-vantage");
       }
 
       base.sources = sources;
@@ -454,7 +540,11 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   fcfYield: true,
   debtToEquity: true,
   epsGrowth: true,
-  senateTrades: true
+  senateTrades: true,
+  targetMean: true,
+  targetHigh: true,
+  targetLow: true,
+  targetMedian: true
 };
 
 // ── Webull unofficial quote bridge (opt-in, market-data only) ────────────────
@@ -467,6 +557,10 @@ const DEFAULT_WEBULL_UNOFFICIAL_MAX = 20;
 
 export function webullUnofficialEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(String(process.env.WEBULL_UNOFFICIAL_ENABLED ?? "").trim().toLowerCase());
+}
+
+export function secXbrlEnrichmentEnabled(): boolean {
+  return ["1", "true", "on", "yes"].includes(String(process.env.SEC_XBRL_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
 }
 
 function webullUnofficialMaxSymbols(): number {
@@ -624,13 +718,21 @@ export function parseRobinhoodFundamentals(row: Record<string, unknown>): Symbol
 export class RobinhoodEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "robinhood-fundamentals";
   readonly configured = true;
+  private readonly scope: CacheScope;
 
   // SECURITY: the Robinhood OAuth token is per-user. This provider is constructed with the
   // request-scoped userId (see getEnrichmentProvider) and threads it into the fundamentals
   // fetch so user B never resolves user A's ('local') broker token. A pass with no user in
   // scope (undefined) fails closed — it returns empty enrichment rather than borrowing the
   // operator's token for a shared/background scan.
-  constructor(private readonly userId?: string) {}
+  //
+  // The fundamentals themselves (pe_ratio, 52-wk hi/lo, avg volume, sector, industry) are PUBLIC
+  // market data — not the user's private account. So, exactly like every other user-keyed source,
+  // they are cached consent-pooled: pool tier when the user opted into the reciprocal data pool,
+  // otherwise kept private to that user (a `user` keySource is never force-shared without consent).
+  constructor(private readonly userId?: string) {
+    this.scope = cacheScopeForKeySource("user", userId);
+  }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
@@ -642,15 +744,32 @@ export class RobinhoodEnrichmentProvider implements MarketEnrichmentProvider {
       for (const symbol of normalized) result[symbol] = {};
       return result;
     }
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId);
+    const misses: string[] = [];
+    // Serve from the consent-aware cache first (private → pool-if-consented → shared). A consenting
+    // user reads bars/fundamentals another consenting user already fetched, without spending a call.
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("robinhood-fundamentals", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
     try {
       const { fetchRobinhoodFundamentals } = await import("./robinhood");
-      const raw = await fetchRobinhoodFundamentals(normalized, this.userId);
-      for (const symbol of normalized) {
+      const raw = await fetchRobinhoodFundamentals(misses, this.userId);
+      for (const symbol of misses) {
         const row = raw[symbol];
-        result[symbol] = row ? parseRobinhoodFundamentals(row) : {};
+        const data = row ? parseRobinhoodFundamentals(row) : {};
+        if (Object.keys(data).length > 0) {
+          writeEnrichmentCache("robinhood-fundamentals", symbol, this.scope, this.userId, data, now + ttlMs());
+        }
+        result[symbol] = data;
       }
     } catch {
-      for (const symbol of normalized) result[symbol] = {};
+      for (const symbol of misses) result[symbol] = {};
     }
     return result;
   }
@@ -666,6 +785,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://data.alpaca.markets/v1beta1/news";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -674,6 +794,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -724,7 +845,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
           headers,
           cache: "no-store",
           signal: controller.signal
-        });
+        }, { service: this.name, keySource: this.keySource, userId: this.userId });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const json = (await response.json()) as { news?: Array<{ headline?: string; symbols?: string[] }> };
         articles = Array.isArray(json.news) ? json.news : [];
@@ -789,6 +910,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
   readonly configured = true;
   private readonly base = "https://data.alpaca.markets/v2/stocks/snapshots";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -797,6 +919,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -832,7 +955,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
             },
             cache: "no-store",
             signal: controller.signal
-          });
+          }, { service: this.name, keySource: this.keySource, userId: this.userId });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           snapshots = (await response.json()) as Record<string, AlpacaSnapshot>;
         } finally {
@@ -924,7 +1047,10 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     if (misses.length === 0) return result;
 
     let creds: YfCreds;
-    try { creds = await this.getCreds(); } catch { return result; }
+    try { creds = await this.getCreds(); } catch (err) {
+      logApiHealth({ service: this.name, ok: false, errorText: err instanceof Error ? err.message : String(err) });
+      return result;
+    }
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
@@ -978,7 +1104,7 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
         cache: "no-store",
         signal: controller.signal
-      });
+      }, { service: this.name });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
       const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
@@ -1067,6 +1193,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   private readonly base = "https://finnhub.io/api/v1";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1074,6 +1201,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1212,7 +1340,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1225,11 +1353,18 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
 // Supplies P/E (ratios-ttm) and analyst consensus (grades-consensus).
 // Sector/industry/headlines are not available on the free plan.
 
+/** Opt-in: fetch FMP price-target-consensus (an extra call per symbol; not on every key tier). */
+export function fmpPriceTargetsEnabled(): boolean {
+  const v = (process.env.FMP_PRICE_TARGETS_ENABLED ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp";
   readonly configured = true;
   private readonly base = "https://financialmodelingprep.com/stable";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1237,6 +1372,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1257,11 +1393,17 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
-          const [peRaw, consensusRaw, insiderRaw, senateRaw] = await Promise.allSettled([
+          // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
+          // and not on every key tier. When off, targets stay undefined and ride null downstream.
+          const wantTargets = fmpPriceTargetsEnabled();
+          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
             this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`)
+            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`),
+            wantTargets
+              ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`)
+              : Promise.resolve(undefined)
           ]);
 
           let peRatio: number | undefined;
@@ -1319,11 +1461,35 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             if (trades.length > 0) senateTrades = net;
           }
 
+          // Price-target-consensus → numeric targets. FMP stable shape:
+          // [{ symbol, targetHigh, targetLow, targetConsensus, targetMedian }]. Only positive values kept.
+          let targetMean: number | undefined;
+          let targetHigh: number | undefined;
+          let targetLow: number | undefined;
+          let targetMedian: number | undefined;
+          if (wantTargets && targetRaw.status === "fulfilled" && Array.isArray(targetRaw.value)) {
+            const row = (targetRaw.value as Array<Record<string, unknown>>)[0];
+            if (row) {
+              const pos = (v: unknown) => {
+                const n = Number(v);
+                return Number.isFinite(n) && n > 0 ? n : undefined;
+              };
+              targetMean = pos(row.targetConsensus);
+              targetHigh = pos(row.targetHigh);
+              targetLow = pos(row.targetLow);
+              targetMedian = pos(row.targetMedian);
+            }
+          }
+
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
             ...(analystBySource !== undefined && { analystBySource }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
-            ...(senateTrades !== undefined && { senateTrades })
+            ...(senateTrades !== undefined && { senateTrades }),
+            ...(targetMean !== undefined && { targetMean }),
+            ...(targetHigh !== undefined && { targetHigh }),
+            ...(targetLow !== undefined && { targetLow }),
+            ...(targetMedian !== undefined && { targetMedian })
           };
 
           const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
@@ -1352,7 +1518,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -1368,6 +1534,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
   readonly configured = true;
   private readonly base = "https://www.alphavantage.co/query";
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1375,6 +1542,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     private readonly userId?: string
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1401,14 +1569,18 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             const timeout = setTimeout(() => controller.abort(), 6000);
             let payload: Record<string, unknown>;
             try {
-              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal });
+              // deferSuccessLog: true — don't mark 200 healthy until body validates;
+              // Alpha Vantage embeds quota/error messages in HTTP 200 responses.
+              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               payload = await response.json() as Record<string, unknown>;
-              
+
               if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
                 const msg = String(payload.Note || payload.Information || payload["Error Message"]);
+                logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
                 throw new Error(`Alpha Vantage API warning/error: ${msg}`);
               }
+              logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
             } finally {
               clearTimeout(timeout);
             }
@@ -1528,6 +1700,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
   readonly configured = true;
   private readonly base: string;
   private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
 
   constructor(
     private readonly apiKey: string,
@@ -1536,6 +1709,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
   ) {
     this.base = process.env.FINTECH_STUDIOS_BASE_URL ?? "https://studio.fintechstudios.com/api/v1";
     this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -1581,7 +1755,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
                 }),
                 cache: "no-store",
                 signal: controller.signal,
-              });
+              }, { service: this.name, keySource: this.keySource, userId: this.userId });
 
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -1624,5 +1798,692 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
     }
 
     return result;
+  }
+}
+
+// ── Intrinio provider ─────────────────────────────────────────────────────────
+// Real-time delayed quotes + company fundamentals from Intrinio v2 API.
+// 14-day trial covers prices/realtime, companies, and data_point endpoints.
+
+export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "intrinio";
+  readonly configured = true;
+  private readonly base = "https://api-v2.intrinio.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("intrinio", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const k = this.apiKey;
+            const [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw] = await Promise.allSettled([
+              this.getJson(`${this.base}/securities/${symbol}/prices/realtime?api_key=${k}`),
+              this.getJson(`${this.base}/companies/${symbol}?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/pe_ratio?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/eps_basic?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/dividend_yield?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/52_week_high?api_key=${k}`),
+              this.getJson(`${this.base}/securities/${symbol}/data_point/52_week_low?api_key=${k}`)
+            ]);
+
+            let price: number | undefined;
+            let bid: number | undefined;
+            let ask: number | undefined;
+            let volume: number | undefined;
+            let intradayChangePct: number | undefined;
+            let asOf: string | undefined;
+
+            if (realtimeRaw.status === "fulfilled" && realtimeRaw.value && typeof realtimeRaw.value === "object") {
+              const rt = realtimeRaw.value as Record<string, unknown>;
+              const last = firstNumber(rt, ["last_price", "close_price", "adj_close_price"]);
+              if (last && last > 0) price = last;
+              const b = firstNumber(rt, ["bid_price"]);
+              if (b && b > 0) bid = b;
+              const a = firstNumber(rt, ["ask_price"]);
+              if (a && a > 0) ask = a;
+              const v = firstNumber(rt, ["market_volume", "exchange_volume"]);
+              if (v && v > 0) volume = v;
+              const chg = firstNumber(rt, ["change_percent"]);
+              if (typeof chg === "number") intradayChangePct = chg;
+              if (typeof rt.last_time === "string") asOf = rt.last_time;
+            }
+
+            let companyName: string | undefined;
+            let sector: string | undefined;
+            let industry: string | undefined;
+
+            if (companyRaw.status === "fulfilled" && companyRaw.value && typeof companyRaw.value === "object") {
+              const co = companyRaw.value as Record<string, unknown>;
+              companyName = firstString(co, ["name", "legal_name"]);
+              // Intrinio nests sector/industry differently depending on plan
+              sector = firstString(co, ["sector"]);
+              if (!sector && co.industry_template && typeof co.industry_template === "object") {
+                sector = firstString(co.industry_template as Record<string, unknown>, ["sector", "name"]);
+              }
+              industry = firstString(co, ["industry_category"]);
+            }
+
+            const peRatio = peRaw.status === "fulfilled" && typeof peRaw.value === "number" && peRaw.value > 0 ? peRaw.value : undefined;
+            const eps = epsRaw.status === "fulfilled" && typeof epsRaw.value === "number" ? epsRaw.value : undefined;
+            let dividendYield: number | undefined;
+            if (divRaw.status === "fulfilled" && typeof divRaw.value === "number" && divRaw.value >= 0) {
+              dividendYield = divRaw.value <= 1 ? normalizePercent(divRaw.value) : divRaw.value;
+            }
+            const fiftyTwoWeekHigh = hiRaw.status === "fulfilled" && typeof hiRaw.value === "number" && hiRaw.value > 0 ? hiRaw.value : undefined;
+            const fiftyTwoWeekLow = loRaw.status === "fulfilled" && typeof loRaw.value === "number" && loRaw.value > 0 ? loRaw.value : undefined;
+
+            const data: SymbolEnrichment = {
+              ...(price !== undefined && { price }),
+              ...(bid !== undefined && { bid }),
+              ...(ask !== undefined && { ask }),
+              ...(volume !== undefined && { volume }),
+              ...(intradayChangePct !== undefined && { intradayChangePct }),
+              ...(asOf !== undefined && { asOf }),
+              ...(companyName !== undefined && { companyName }),
+              ...(sector !== undefined && { sector }),
+              ...(industry !== undefined && { industry }),
+              ...(peRatio !== undefined && { peRatio }),
+              ...(eps !== undefined && { eps }),
+              ...(dividendYield !== undefined && { dividendYield }),
+              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+            };
+
+            const allRejected = [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw].every((p) => p.status === "rejected");
+            const hasTransientErr = [realtimeRaw, companyRaw, peRaw, epsRaw, divRaw, hiRaw, loRaw].some(
+              (p) => p.status === "rejected" && isTransientError(p.reason)
+            );
+
+            if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
+              writeEnrichmentCache("intrinio", symbol, this.scope, this.userId, data, now + ttlMs());
+            }
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── Tiingo provider ───────────────────────────────────────────────────────────
+// Free plan: IEX real-time quotes, ticker meta (company name), and news.
+
+export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "tiingo";
+  readonly configured = true;
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("tiingo", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const headers = { "Authorization": `Token ${this.apiKey}`, "Accept": "application/json" };
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            const ticker = symbol.toLowerCase();
+            const [iexRaw, metaRaw, newsRaw] = await Promise.allSettled([
+              this.getJson(`https://api.tiingo.com/iex/${ticker}?token=${this.apiKey}`, headers),
+              this.getJson(`https://api.tiingo.com/tiingo/daily/${ticker}?token=${this.apiKey}`, headers),
+              this.getJson(`https://api.tiingo.com/tiingo/news?tickers=${ticker}&limit=5&token=${this.apiKey}`, headers)
+            ]);
+
+            let price: number | undefined;
+            let bid: number | undefined;
+            let ask: number | undefined;
+            let volume: number | undefined;
+            let intradayChangePct: number | undefined;
+
+            if (iexRaw.status === "fulfilled") {
+              const arr = Array.isArray(iexRaw.value) ? iexRaw.value : [iexRaw.value];
+              if (arr.length > 0 && arr[0] && typeof arr[0] === "object") {
+                const q = arr[0] as Record<string, unknown>;
+                const last = firstNumber(q, ["tngoLast", "mid", "lastPrice", "last"]);
+                if (last && last > 0) price = last;
+                const b = firstNumber(q, ["bidPrice"]);
+                if (b && b > 0) bid = b;
+                const a = firstNumber(q, ["askPrice"]);
+                if (a && a > 0) ask = a;
+                const v = firstNumber(q, ["volume"]);
+                if (v && v > 0) volume = v;
+                const prevClose = firstNumber(q, ["prevClose"]);
+                if (price && prevClose && prevClose > 0) {
+                  intradayChangePct = Math.round(((price - prevClose) / prevClose) * 10000) / 100;
+                }
+              }
+            }
+
+            let companyName: string | undefined;
+            if (metaRaw.status === "fulfilled" && metaRaw.value && typeof metaRaw.value === "object") {
+              companyName = firstString(metaRaw.value as Record<string, unknown>, ["name"]);
+            }
+
+            let headlines: string[] | undefined;
+            let sentiment: number | undefined;
+            if (newsRaw.status === "fulfilled" && Array.isArray(newsRaw.value)) {
+              const items = newsRaw.value as Array<Record<string, unknown>>;
+              const titles = items.slice(0, 5).map((n) => firstString(n, ["title"])).filter((t): t is string => Boolean(t));
+              if (titles.length > 0) {
+                headlines = titles;
+                sentiment = scoreHeadlines(titles);
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(price !== undefined && { price }),
+              ...(bid !== undefined && { bid }),
+              ...(ask !== undefined && { ask }),
+              ...(volume !== undefined && { volume }),
+              ...(intradayChangePct !== undefined && { intradayChangePct }),
+              ...(companyName !== undefined && { companyName }),
+              ...(headlines !== undefined && { headlines }),
+              ...(sentiment !== undefined && { sentiment })
+            };
+
+            const allRejected = [iexRaw, metaRaw, newsRaw].every((p) => p.status === "rejected");
+            const hasTransientErr = [iexRaw, metaRaw, newsRaw].some(
+              (p) => p.status === "rejected" && isTransientError(p.reason)
+            );
+
+            if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
+              writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, data, now + ttlMs());
+            }
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string, headers: Record<string, string>): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── Twelve Data provider ──────────────────────────────────────────────────────
+// Rich /quote endpoint: price, % change, volume, company name, sector, industry,
+// P/E, EPS, beta, 52-week range — one batched call for all scan symbols.
+
+export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "twelvedata";
+  readonly configured = true;
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("twelvedata", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    if (misses.length === 0) return result;
+
+    // Batch all misses in one request (Twelve Data supports comma-separated symbols).
+    // Chunk at 120 symbols (API limit) in case the scan is very large.
+    const BATCH_SIZE = 120;
+    for (let i = 0; i < misses.length; i += BATCH_SIZE) {
+      const batch = misses.slice(i, i + BATCH_SIZE);
+      try {
+        const url = `https://api.twelvedata.com/quote?symbol=${batch.join(",")}&apikey=${this.apiKey}&country=US`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        let raw: unknown;
+        try {
+          // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
+        // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
+          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          raw = await response.json();
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        if (!raw || typeof raw !== "object") continue;
+
+        // Normalise to a map symbol → quote object.
+        // Single symbol → { symbol: "AAPL", close: "..." }
+        // Multiple symbols → { AAPL: { symbol: "AAPL", ... }, MSFT: { ... } }
+        const quoteMap: Record<string, Record<string, unknown>> = {};
+        const rawObj = raw as Record<string, unknown>;
+
+        // Check for a top-level API error (invalid key, quota exhausted, etc.)
+        if (rawObj.status === "error" || (rawObj.message && !rawObj.symbol && !rawObj.data)) {
+          const msg = typeof rawObj.message === "string" ? rawObj.message : "TwelveData API error";
+          logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
+          continue;
+        }
+        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
+        if (typeof rawObj.symbol === "string") {
+          // Single-symbol response
+          quoteMap[rawObj.symbol as string] = rawObj;
+        } else {
+          for (const [key, val] of Object.entries(rawObj)) {
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              quoteMap[key] = val as Record<string, unknown>;
+            }
+          }
+        }
+
+        for (const symbol of batch) {
+          const q = quoteMap[symbol];
+          if (!q) continue;
+          // Skip error responses
+          if (q.code || q.status === "error" || q.message) {
+            result[symbol] = {};
+            continue;
+          }
+
+          const price = firstNumber(q, ["close", "last"]);
+          const volume = firstNumber(q, ["volume"]);
+          const companyName = firstString(q, ["name"]);
+          const sector = firstString(q, ["sector"]);
+          const industry = firstString(q, ["industry"]);
+          const peRatio = firstNumber(q, ["pe"]);
+          const eps = firstNumber(q, ["eps"]);
+          const beta = firstNumber(q, ["beta"]);
+
+          const pctChange = q.percent_change !== undefined ? firstNumber(q, ["percent_change"]) : undefined;
+
+          const fw = q.fifty_two_week && typeof q.fifty_two_week === "object"
+            ? q.fifty_two_week as Record<string, unknown>
+            : null;
+          const fiftyTwoWeekHigh = fw ? firstNumber(fw, ["high"]) : undefined;
+          const fiftyTwoWeekLow = fw ? firstNumber(fw, ["low"]) : undefined;
+
+          const data: SymbolEnrichment = {
+            ...(price !== undefined && price > 0 && { price }),
+            ...(volume !== undefined && volume > 0 && { volume }),
+            ...(pctChange !== undefined && { intradayChangePct: pctChange }),
+            ...(companyName && { companyName }),
+            ...(sector && { sector }),
+            ...(industry && { industry }),
+            ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
+            ...(eps !== undefined && { eps }),
+            ...(beta !== undefined && { beta }),
+            ...(fiftyTwoWeekHigh !== undefined && fiftyTwoWeekHigh > 0 && { fiftyTwoWeekHigh }),
+            ...(fiftyTwoWeekLow !== undefined && fiftyTwoWeekLow > 0 && { fiftyTwoWeekLow })
+          };
+
+          if (Object.keys(data).length > 0) {
+            writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, data, now + ttlMs());
+          }
+          result[symbol] = data;
+        }
+      } catch (err) {
+        if (isTransientError(err)) {
+          console.warn("[data-providers] TwelveData transient error:", err instanceof Error ? err.message : err);
+        }
+        for (const symbol of batch) {
+          if (!result[symbol]) result[symbol] = {};
+        }
+      }
+    }
+
+    return result;
+  }
+}
+
+// ── SEC EDGAR XBRL company-facts provider (keyless, default-OFF) ─────────────
+// Fills debtToEquity from authoritative SEC 10-K filings via the public
+// companyfacts API (https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json).
+// Polite 300 ms inter-symbol delay per SEC fair-access guidance.
+// Enable with: SEC_XBRL_ENRICHMENT_ENABLED=on
+
+const SEC_XBRL_TTL_MS = 24 * 60 * 60_000; // 24h — filings move slowly
+const SEC_XBRL_DELAY_MS = 300; // polite inter-request delay
+const SEC_XBRL_FETCH_TIMEOUT_MS = 6_000; // per-symbol fetch cap (kept short — SEC is on the scan path)
+const SEC_XBRL_BUDGET_MS = 8_000; // overall wall-clock budget for the SEC pass during a scan
+
+// Only audited PERIODIC reports carry the balance-sheet facts we want. companyfacts also includes
+// facts from non-periodic filings (earnings-release 8-K, S-1, pro-forma); a newer 8-K equity fact with
+// no aligned debt fact would otherwise win the latest-period reducer and either null out enrichment or
+// publish non-periodic leverage. Restrict to 10-K/10-Q and their amendments.
+const SEC_XBRL_PERIODIC_FORMS = new Set(["10-K", "10-K/A", "10-Q", "10-Q/A"]);
+
+// Symbols whose companyfacts fetch is in progress, shared across concurrent enrich() calls. The SEC pass
+// keeps warming the cache in the background past the per-scan budget; without this guard a second scan
+// that starts before the first's warm finishes would re-fetch the same companyfacts URLs concurrently.
+const secXbrlInFlight = new Set<string>();
+
+/** Parse a SEC EDGAR companyfacts JSON blob into debtToEquity (from debt-specific concepts).
+ *  EPS is intentionally NOT returned — see the note below (annual SEC EPS ≠ TTM).
+ *  Pure function — no I/O. Safe to call with any unknown input; never throws. */
+export function parseCompanyFacts(json: unknown): { debtToEquity?: number } {
+  try {
+    if (!json || typeof json !== "object") return {};
+    const root = json as Record<string, unknown>;
+    const facts = root.facts;
+    if (!facts || typeof facts !== "object") return {};
+    const gaap = (facts as Record<string, unknown>)["us-gaap"];
+    if (!gaap || typeof gaap !== "object") return {};
+    const concepts = gaap as Record<string, unknown>;
+
+    type Fact = { end: string; val: number; form?: string; filed?: string };
+
+    // Helper: extract entries array for a concept + unit (keeping form + filed date).
+    function getEntries(concept: string, unit: string): Fact[] {
+      const c = concepts[concept];
+      if (!c || typeof c !== "object") return [];
+      const units = (c as Record<string, unknown>).units;
+      if (!units || typeof units !== "object") return [];
+      const arr = (units as Record<string, unknown>)[unit];
+      if (!Array.isArray(arr)) return [];
+      const out: Fact[] = [];
+      for (const e of arr) {
+        if (e === null || typeof e !== "object") continue;
+        const r = e as Record<string, unknown>;
+        if (typeof r.end !== "string" || typeof r.val !== "number" || !Number.isFinite(r.val)) continue;
+        // Keep only PERIODIC reports — drop 8-K/S-1/pro-forma so a non-periodic fact can't win the
+        // latest-period reducer (which would null out enrichment or publish non-periodic leverage).
+        const form = typeof r.form === "string" ? r.form : undefined;
+        if (!form || !SEC_XBRL_PERIODIC_FORMS.has(form)) continue;
+        out.push({
+          end: r.end,
+          val: r.val,
+          form,
+          filed: typeof r.filed === "string" ? r.filed : undefined
+        });
+      }
+      return out;
+    }
+
+    // Helper: pick the entry for the latest reporting PERIOD across ALL forms (10-K, 10-K/A, AND 10-Q).
+    // debtToEquity is a point-in-time balance-sheet ratio, so a newer 10-Q balance sheet supersedes the
+    // prior fiscal-year 10-K — preferring the annual filing would publish last year's leverage for most of
+    // the year after Q1/Q2/Q3. Tie-break a shared period end by the latest `filed` (an amendment beats the
+    // original) so a 10-K/A restatement supersedes the superseded 10-K.
+    function latestEntry(entries: Fact[]): Fact | undefined {
+      if (entries.length === 0) return undefined;
+      return entries.reduce((best, e) => {
+        if (e.end > best.end) return e;
+        if (e.end === best.end && (e.filed ?? "") > (best.filed ?? "")) return e;
+        return best;
+      }, entries[0]);
+    }
+
+    // Helper: the value of a concept AT a specific reporting-period end date — the latest `filed` at that
+    // end wins (an amendment supersedes the original) — so debt + equity facts stay aligned on the SAME
+    // period regardless of form (the equity anchor may be a 10-Q quarter).
+    function valueAtEnd(entries: Fact[], end: string): number | undefined {
+      const atEnd = entries.filter((e) => e.end === end);
+      if (atEnd.length === 0) return undefined;
+      return atEnd.reduce((best, e) => ((e.filed ?? "") > (best.filed ?? "") ? e : best), atEnd[0]).val;
+    }
+
+    // Total DEBT at a period end from debt-specific concepts (never total Liabilities). Returns undefined
+    // when no debt concept is present (so we omit debtToEquity rather than fabricate it).
+    function debtAtEnd(end: string): number | undefined {
+      // Long-term debt, NONCURRENT portion — prefer the pure concept, fall back to the combined
+      // debt+finance-lease concept some filers tag instead.
+      const noncurrent =
+        valueAtEnd(getEntries("LongTermDebtNoncurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsNoncurrent", "USD"), end);
+      // The COMPLETE long-term total (incl. current maturities) — pure concept then combined-lease variant.
+      const ltdTotal =
+        valueAtEnd(getEntries("LongTermDebt", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndCapitalLeaseObligations", "USD"), end);
+      const debtCurrentAgg = valueAtEnd(getEntries("DebtCurrent", "USD"), end);
+      // Current maturities of LT debt — pure concept then combined-lease variant.
+      const ltdCurrent =
+        valueAtEnd(getEntries("LongTermDebtCurrent", "USD"), end) ??
+        valueAtEnd(getEntries("LongTermDebtAndFinanceLeaseObligationsCurrent", "USD"), end);
+      // Short-term borrowings OUTSIDE long-term debt (revolver / commercial paper).
+      const shortTerm =
+        valueAtEnd(getEntries("ShortTermBorrowings", "USD"), end) ??
+        valueAtEnd(getEntries("CommercialPaper", "USD"), end);
+
+      // Current-debt portion: prefer the aggregate DebtCurrent; otherwise SUM the separate components
+      // (current maturities of LT debt + short-term borrowings) so neither is dropped.
+      let current: number | undefined;
+      if (debtCurrentAgg !== undefined) current = debtCurrentAgg;
+      else if (ltdCurrent !== undefined || shortTerm !== undefined) current = (ltdCurrent ?? 0) + (shortTerm ?? 0);
+
+      if (noncurrent !== undefined) {
+        // When NO separate current maturity of LT debt is tagged (LongTermDebtCurrent / aggregate
+        // DebtCurrent) but the complete LongTermDebt total is larger, use that total — it bundles the
+        // current maturities the noncurrent concept omits — so leverage isn't understated. This gates on
+        // the LT-current concepts ONLY, not on `shortTerm`: a separate ShortTermBorrowings/CommercialPaper
+        // fact is orthogonal (revolver/CP outside LT debt) and is added on top either way, so its presence
+        // must not suppress the ltdTotal-bundles-current-maturities fallback.
+        const hasSeparateLtCurrent = debtCurrentAgg !== undefined || ltdCurrent !== undefined;
+        if (!hasSeparateLtCurrent && ltdTotal !== undefined && ltdTotal > noncurrent) return ltdTotal + (shortTerm ?? 0);
+        return noncurrent + (current ?? 0); // noncurrent-only LT debt + current portion
+      }
+      // LongTermDebt is the COMPLETE long-term total (don't re-add its current maturities), but add any
+      // genuinely-separate ShortTermBorrowings (commercial paper / revolver) — not part of long-term debt.
+      if (ltdTotal !== undefined) return ltdTotal + (shortTerm ?? 0);
+      if (current !== undefined) return current; // only current-debt concepts present
+      return undefined;
+    }
+
+    // ── debtToEquity: DEBT-specific concepts ÷ StockholdersEquity, aligned on equity's latest period ──
+    // The app treats `debtToEquity` as debt/equity for quality scoring + the bear-veto, so total
+    // Liabilities (which includes operating payables/leases/deferred revenue) would over-state leverage.
+    // Compute from debt concepts at the SAME period as equity; omit when no debt concept exists there.
+    //
+    // NOTE: this provider intentionally does NOT publish `eps`. SymbolEnrichment.eps is documented as
+    // TRAILING-TWELVE-MONTHS, but SEC companyfacts EPS facts are per-period (annual 10-K / quarterly
+    // 10-Q) — the latest annual 10-K EPS is last fiscal year's figure, not current TTM. Since this
+    // provider sits ahead of Yahoo in the cascade, publishing annual EPS would override Yahoo's real
+    // TTM EPS mid-year with a stale value. debtToEquity is a point-in-time balance-sheet ratio, so the
+    // latest reporting PERIOD (annual OR quarterly) is correct for it — see latestEntry above. (A true
+    // trailing EPS from quarterly facts could be added later if a TTM-correct computation is wired.)
+    let debtToEquity: number | undefined;
+    // Anchor on the latest equity PERIOD available under EITHER standard equity concept. Some filers tag
+    // the current balance-sheet period only under StockholdersEquityIncludingPortionAttributableToNon-
+    // controllingInterest (total equity incl. minority interest), not the parent-only StockholdersEquity;
+    // anchoring on the pure concept alone would publish a stale older period (or omit SEC leverage) despite
+    // aligned current debt. At the anchored period, PREFER the parent-only value (the conventional D/E
+    // denominator), falling back to the inclusive total when only it is tagged there.
+    const equityPure = getEntries("StockholdersEquity", "USD");
+    const equityIncl = getEntries("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD");
+    const equityAnchor = latestEntry([...equityPure, ...equityIncl]);
+    const equityVal = equityAnchor && (valueAtEnd(equityPure, equityAnchor.end) ?? valueAtEnd(equityIncl, equityAnchor.end));
+    if (equityAnchor !== undefined && equityVal !== undefined && equityVal > 0) {
+      const totalDebt = debtAtEnd(equityAnchor.end);
+      if (totalDebt !== undefined && Number.isFinite(totalDebt) && totalDebt >= 0) {
+        const ratio = Math.round((totalDebt / equityVal) * 100) / 100;
+        // Publish the RAW true ratio (e.g. 1.5, or 12 for a genuinely 12x-levered name). The bear-veto
+        // (strategy.ts) and analytics/exports compare this value directly, so it must NOT be capped or
+        // pre-normalized — a cap would let a >ceiling name escape a strict `> ceiling` veto and would
+        // understate leverage in exports. Display + quality (market.ts, dashboard-client.tsx) apply a
+        // `>10 → ÷100` percentage heuristic for providers that report D/E as a percentage; those call
+        // sites are SOURCE-AWARE and skip the heuristic for sec-xbrl (which always emits a true ratio),
+        // so a raw 12 is no longer misread as 0.12 there. See market.ts qualityScore / the D/E column.
+        debtToEquity = ratio;
+      }
+    }
+
+    return debtToEquity !== undefined ? { debtToEquity } : {};
+  } catch {
+    return {};
+  }
+}
+
+export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "sec-xbrl";
+  readonly configured = true;
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = cache.get(`sec-xbrl:${symbol}`);
+      if (cached && cached.expiresAt > now) {
+        result[symbol] = cached.data;
+      } else {
+        misses.push(symbol);
+      }
+    }
+    if (misses.length === 0) return result;
+
+    const deadline = now + SEC_XBRL_BUDGET_MS;
+
+    // Ticker→CIK map (weekly-cached; preserves dual-class tickers that share a CIK). Bound the load by
+    // the SAME budget so a cold/expired map fetch (its own 9s timeout + retry) can't block the cascade
+    // before the scan budget even starts. On timeout/error, skip SEC this pass and fall through to
+    // FMP/Yahoo; the load keeps running in the background to warm its cache for the next scan.
+    let tickerToCik: Record<string, string>;
+    try {
+      const mapPromise = loadTickerCikMap(now);
+      mapPromise.catch(() => {});
+      const loaded = await Promise.race([
+        mapPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())))
+      ]);
+      if (!loaded) return result;
+      tickerToCik = loaded;
+    } catch {
+      return result;
+    }
+
+    const ua = secUserAgent();
+
+    // Bound the SEC pass on the interactive market-scan critical path: the rate-limited loop keeps
+    // running in the BACKGROUND to warm the cache, but enrich() returns within the budget with whatever
+    // SEC data completed. Symbols not yet fetched fall through to FMP/Yahoo this pass and resolve from
+    // the warmed cache on the next scan — a slow/timing-out SEC endpoint can't hang a scan.
+    //
+    // The budget is enforced SOLELY by the outer Promise.race below — the per-symbol loop deliberately
+    // has NO `Date.now() > deadline` short-circuit. A deadline check here would make every symbol after
+    // the first slow miss return without fetching, so the cache would never warm past that leading miss
+    // and repeated scans would keep retrying it instead of converging. Letting the continuation run to
+    // completion (rate-limited + in-flight-deduped, so it never double-hits SEC) warms the full 24h
+    // cache; the awaited race still caps interactive latency regardless of how long the loop runs.
+    const work = runRateLimited(misses, SEC_XBRL_DELAY_MS, async (symbol) => {
+      const cik = tickerToCik[symbol];
+      if (!cik) return;
+      const cacheKey = `sec-xbrl:${symbol}`;
+      // A concurrent scan may have warmed this symbol since we snapshotted misses — use it, don't refetch.
+      const fresh = cache.get(cacheKey);
+      if (fresh && fresh.expiresAt > Date.now()) { result[symbol] = fresh.data; return; }
+      // Dedup concurrent background warms: if another enrich() is already fetching this symbol, skip it
+      // (it falls through to Yahoo this pass and resolves from the warmed cache next scan).
+      if (secXbrlInFlight.has(symbol)) return;
+      secXbrlInFlight.add(symbol);
+      try {
+        const paddedCik = padCik(cik);
+        const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`;
+        const text = await politeFetchText(url, { headers: { "user-agent": ua }, timeoutMs: SEC_XBRL_FETCH_TIMEOUT_MS });
+        const json = JSON.parse(text) as unknown;
+        const data = parseCompanyFacts(json);
+        cache.set(cacheKey, { expiresAt: now + SEC_XBRL_TTL_MS, data });
+        result[symbol] = data;
+      } catch {
+        // best-effort — this symbol falls through to the next provider
+      } finally {
+        secXbrlInFlight.delete(symbol);
+      }
+    });
+    work.catch(() => {}); // the background continuation must never surface as an unhandled rejection
+    // Use the REMAINING budget (the CIK-map race already consumed part of it) so the whole SEC pass —
+    // map load + companyfacts fetches — shares one SEC_XBRL_BUDGET_MS, not two.
+    await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())))]);
+
+    // Return a SNAPSHOT of what completed within the budget. The background continuation keeps warming
+    // the cache (and may still write into `result` for symbols fetched after the race), but it must not
+    // retroactively change what THIS pass returns: a late SEC write into the already-returned object
+    // could flip a symbol's winning source after enrich() resolved, making the cascade merge order
+    // timing-dependent. The spread decouples the returned value from those post-race mutations.
+    return { ...result };
   }
 }

@@ -22,6 +22,8 @@ export type CounterfactualOHLCFetcher = (symbol: string, now?: number, userId?: 
 
 export interface CounterfactualMaterializationOptions {
   now?: number;
+  /** Scope learning to one connected account: read only its snapshots, tag its candidates, keep its own watermark. */
+  connectedAccountId?: string;
   horizonDays?: number;
   auditLimit?: number;
   pendingLimit?: number;
@@ -68,13 +70,15 @@ export async function materializeSkippedCandidateCounterfactuals(
   const recheckMs = boundedInteger(options.recheckMs, 60_000, 7 * DAY_MS, DEFAULT_RECHECK_MS);
   const fetchOHLC = options.fetchOHLC ?? fetchDailyOHLC;
 
-  const watermark = getCounterfactualLearningWatermark(userId);
-  const auditRows = listSignalSnapshotAuditAfter(userId, watermark, auditLimit);
+  const connectedAccountId = options.connectedAccountId;
+  const watermark = getCounterfactualLearningWatermark(userId, connectedAccountId);
+  const auditRows = listSignalSnapshotAuditAfter(userId, watermark, auditLimit, connectedAccountId);
   let candidatesInserted = 0;
 
   for (const row of auditRows) {
     candidatesInserted += ingestSignalSnapshot(row.payload, {
       userId,
+      connectedAccountId,
       createdAt: row.createdAt,
       horizonDays,
       nowIso
@@ -85,6 +89,7 @@ export async function materializeSkippedCandidateCounterfactuals(
   if (lastAudit) {
     setCounterfactualLearningWatermark({
       userId,
+      connectedAccountId,
       lastAuditRowid: lastAudit.rowid,
       lastAuditCreatedAt: lastAudit.createdAt,
       lastAuditId: lastAudit.id,
@@ -142,9 +147,51 @@ export async function materializeSkippedCandidateCounterfactuals(
   };
 }
 
+/**
+ * Record a user/policy-REJECTED proposal into the same skipped-candidate counterfactual pipeline so
+ * its "what happened after we passed" return matures (via fetchDailyOHLC at the holding horizon) and
+ * feeds missed-opportunity analytics — not just the live readout on the dashboard. The existing
+ * skipped-candidate set only covers LLM-NOT-CHOSEN names; this closes the gap for names the LLM DID
+ * propose but a human/policy then rejected. Additive: reuses insertSkippedCounterfactualCandidate
+ * (INSERT OR IGNORE) so it never double-counts and writes no fills/orders. Returns true if inserted.
+ */
+export function recordRejectedProposalCounterfactual(input: {
+  userId?: string;
+  connectedAccountId?: string;
+  runId: string;
+  symbol: string;
+  refPrice: number | undefined;
+  createdAt: string;
+  regime?: string;
+  now?: number;
+  horizonDays?: number;
+}): boolean {
+  const userId = input.userId ?? "local";
+  const symbol = normalizeSymbol(input.symbol);
+  const refPrice = positiveNumber(input.refPrice);
+  const nowMs = input.now ?? Date.now();
+  const snapshotAt = validIso(input.createdAt) ?? validIso(new Date(nowMs).toISOString());
+  if (!symbol || !refPrice || !snapshotAt) return false;
+  const horizonDays = boundedInteger(input.horizonDays ?? envHorizonDays(), 1, 252, DEFAULT_HORIZON_DAYS);
+  const targetDate = targetBusinessDate(snapshotAt, horizonDays);
+  if (!targetDate) return false;
+  return insertSkippedCounterfactualCandidate({
+    userId,
+    connectedAccountId: input.connectedAccountId,
+    runId: input.runId,
+    symbol,
+    snapshotAt,
+    refPrice,
+    horizonDays,
+    targetDate,
+    regime: nonEmpty(input.regime),
+    now: new Date(nowMs).toISOString()
+  });
+}
+
 function ingestSignalSnapshot(
   payload: unknown,
-  context: { userId: string; createdAt: string; horizonDays: number; nowIso: string }
+  context: { userId: string; connectedAccountId?: string; createdAt: string; horizonDays: number; nowIso: string }
 ): number {
   const snapshot = payload as SignalSnapshotPayload | undefined;
   if (!snapshot?.runId || !Array.isArray(snapshot.signals)) return 0;
@@ -162,6 +209,7 @@ function ingestSignalSnapshot(
     if (
       insertSkippedCounterfactualCandidate({
         userId: context.userId,
+        connectedAccountId: context.connectedAccountId,
         runId: snapshot.runId,
         symbol,
         snapshotAt,

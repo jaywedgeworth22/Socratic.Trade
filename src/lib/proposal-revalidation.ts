@@ -16,10 +16,12 @@
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
 
-import { audit, listPendingProposals, markProposalRevalidated, resolveLlmCredential, updateProposalStatus } from "./db";
+import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -189,10 +191,8 @@ export async function revalidatePendingProposals(input: {
   );
   if (pending.length === 0) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: false };
 
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
   if (!openaiKey) return { checked: pending.length, reaffirmed: 0, withdrawn: 0, skipped: true };
-  const keySource = cred.source === "operator" ? "operator" : "user";
 
   const currentMarketRegime = determineMarketRegime(await fetchMacroData(userId));
 
@@ -249,10 +249,7 @@ export async function revalidatePendingProposals(input: {
     }
   };
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const isChatCompletions = transport === "chat-completions";
 
   const body = withLlmRequestBounds(
     isChatCompletions
@@ -262,7 +259,9 @@ export async function revalidatePendingProposals(input: {
             { role: "system", content: systemPrompt },
             { role: "user", content: JSON.stringify(userContent) }
           ],
-          response_format: { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
+          response_format: provider === "deepseek"
+            ? { type: "json_object" }
+            : { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
         }
       : {
           model,
@@ -273,7 +272,7 @@ export async function revalidatePendingProposals(input: {
           text: { format: { type: "json_schema", name: "proposal_revalidation", schema } }
         },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   let assessments: RevalidationAssessment[] = [];
@@ -295,11 +294,11 @@ export async function revalidatePendingProposals(input: {
           body: JSON.stringify(body)
         });
         if (!response.ok) {
-          console.warn("[revalidation] LLM call failed", await response.text());
+          console.warn("[revalidation] LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "proposal-revalidation", keySource, keyRef: cred.keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, ...extractLlmUsage(payload) });
         const text = extractText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };

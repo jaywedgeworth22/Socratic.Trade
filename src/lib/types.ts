@@ -4,13 +4,30 @@ export type OrderSide = "buy" | "sell" | "short" | "cover";
 export type OrderType = "market" | "limit" | "stop_market" | "stop_limit";
 export type TimeInForce = "gfd" | "gtc";
 export type MarketHours = "regular_hours" | "extended_hours" | "all_day_hours";
-export type IndexUniverse = "sp500" | "nasdaq100" | "dow30";
+export type IndexUniverse =
+  | "sp100"
+  | "sp500"
+  | "nasdaq100"
+  | "nasdaqComposite"
+  | "dow30"
+  | "russell2000"
+  | "nyseComposite"
+  | "ftWilshire5000";
 export type SystemState = "active" | "halted" | "close_only" | "liquidating";
 export type StrategyAuthority = "propose" | "decide";
+
+// Sell-to-fund-buy (PR 3): when a run's intended BUYs exceed buying power, how to raise cash by
+// trimming holdings. "off" (default) = never, behavior unchanged. "suggest" = surface the plan only.
+// "propose" = queue the funding sells for human approval. "automated" = let them execute under the
+// account's existing authority (auto-placed only when the account is already in "decide" mode).
+export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
+
+export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn";
+export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
+export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn" | "provider_degraded";
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
 
@@ -147,18 +164,82 @@ export interface TuningSettings {
   corroborationWinRatePct?: number;
   /** Shrunk realized avg return (%) strictly above which conviction is treated as corroborated. Default 0. */
   corroborationEdgePct?: number;
+  /**
+   * Deterministic fundamentals hard-veto on BUYS, applied model-free in deterministicBearFilter
+   * (independent of the Bull/Bear LLMs). Veto a buy when the candidate's free-cash-flow yield is
+   * below this floor (e.g. 0 → veto any negative-FCF-yield buy). Undefined disables the rule. The
+   * rule is skipped when fcfYield is unavailable so a missing field never false-vetoes.
+   */
+  bearVetoFcfYieldFloorPct?: number;
+  /**
+   * Companion fundamentals hard-veto: veto a buy when the candidate's debt/equity exceeds this
+   * ceiling (e.g. 3 → veto names levered beyond 300%). Undefined disables; skipped when the field
+   * is unavailable.
+   */
+  bearVetoDebtToEquityCeiling?: number;
+  /**
+   * Buffer (basis points) used when policy.marketableLimitEntries converts a deterministic OPENING
+   * market order into a marketable limit: the limit is priced through the quote by this much (above
+   * the ask for buys, below the bid for shorts) so it still fills promptly but can't chase an
+   * arbitrarily bad print in a fast tape. Default 15 bps.
+   */
+  marketableLimitBufferBps?: number;
+  /**
+   * OPTIONAL negative-expectancy skip gate (default OFF). When true, a deterministic opening
+   * proposal is SKIPPED entirely (not opened) if its thesis is PROVEN (≥ minClosedLotsForWeightShift
+   * closed lots) AND its shrunk realized avg edge — already net of the paper cost model — is at or
+   * below `skipNegativeExpectancyEdgePct`. Off by default on purpose: the normal sizer DOWNSIZES
+   * such theses to the exploratory floor rather than skipping, which keeps gathering data; this gate
+   * is the more conservative "don't open a proven money-loser" stance for operators who want it.
+   * UNPROVEN theses are never skipped by this gate (their floor sizing is intentional exploration).
+   */
+  skipNegativeExpectancy?: boolean;
+  /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
+  skipNegativeExpectancyEdgePct?: number;
+  /**
+   * When true (DEFAULT), proposed factor-weight changes are WITHHELD (stripped from the patch)
+   * whenever the OOS walk-forward gate could not validate them (data-fetch failure, insufficient
+   * snapshot history, or missing composite IC). When false, the prior behavior is restored:
+   * weights are kept as proposed with a "NOT out-of-sample validated" caution. Default true is
+   * strictly more conservative — it only ever REMOVES unjustified weight moves, never adds one.
+   */
+  oosWithholdUnvalidated?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the tuner's compacted performance context surfaces per-run
+   * ENTRY-run P&L credit (realizedPnlAsEntry) in addition to the existing exit-keyed attribution.
+   * Pure context/advisory data for the LLM; it does NOT alter sizing or weight math. Off by default
+   * so tuning input is byte-for-byte unchanged unless an operator opts in.
+   */
+  useEntryRunAttribution?: boolean;
 }
 
 export interface RiskRules {
   stopLossPct?: number;
   stopLossNotional?: number;
   takeProfitPct?: number;
+  /**
+   * Fraction of the position to sell when take-profit triggers (1–100; 100 = full exit). Default 50 —
+   * take partial profit and let the rest ride. Laddered by take-profit "band"
+   * (floor(returnPct / takeProfitPct)) so it trims once per band, not every run (state in the
+   * `take_profit_trims` table). NOTE: `mergePolicy` injects the DEFAULT (50) into stored policies that
+   * lack the key, so existing take-profit users move from full-exit to a 50% trim — a deliberate
+   * behavior change, not a no-op upgrade. A literal `undefined` (only reachable in non-merged policy
+   * objects / tests) is clamped to 100 (full exit).
+   */
+  takeProfitTrimPct?: number;
   takeProfitNotional?: number;
   trailingStopPct?: number;
-  stopLossAtrMultiple?: number;
   // SHORT_SELLING: Hard stop-loss for short positions (e.g. 5% max adverse excursion).
   // Required on any short proposal per docs/phase-7-strategy.md §C.
   shortStopLossPct?: number;
+  /**
+   * ATR-based stop tuning (only used when policy.atrStops is on). The protective stop DISTANCE becomes
+   * atrStopMultiple × ATR(atrStopPeriod) expressed as a % of entry, instead of the fixed stopLossPct —
+   * a volatility-aware stop driven by the name's own realized daily range. Falls back to the fixed/beta
+   * stop when bars are unavailable. atrStopPeriod default 14, atrStopMultiple default 2.0.
+   */
+  atrStopPeriod?: number;
+  atrStopMultiple?: number;
   /**
    * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
    * before the system auto-halts new entries (systemState → "close_only") and fires a
@@ -266,6 +347,23 @@ export interface BrokerQuote {
   provider?: string;
 }
 
+/**
+ * Universe eligibility floor — excludes penny / illiquid micro-cap names from the SCANNED candidate set
+ * (index + dynamic-universe sources). It is an opening-eligibility filter only: explicitly listed
+ * `additionalSymbols` and currently-held positions are ALWAYS exempt (deliberate user intent / never trap
+ * an exit), and exits are never affected. Each bound is applied only when set (`> 0`) and, for market cap /
+ * dollar-volume, only when that datum is known for the name — missing data never excludes (the price floor
+ * is the reliable penny gate). Surfaced in settings; see passesUniverseFloor/applyUniverseFloor in market.ts.
+ */
+export interface UniverseFloor {
+  /** Minimum share price in USD (the primary penny-stock gate). */
+  minPrice?: number;
+  /** Minimum market capitalization in USD. Applied only when market cap is known for the name. */
+  minMarketCapUsd?: number;
+  /** Minimum recent daily dollar-volume (latest price × volume) — a liquidity floor. Applied only when volume is known. */
+  minDollarVolume?: number;
+}
+
 export interface TradingPolicy {
   systemState: SystemState;
   paperMode: boolean;
@@ -275,7 +373,18 @@ export interface TradingPolicy {
   includedIndices: IndexUniverse[];
   additionalSymbols: string[];
   blocklist?: string[];
+  /** Penny/illiquid exclusion for the scanned candidate universe (explicit symbols + positions exempt). */
+  universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
+  /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
+  sellToFundBuy?: SellToFundBuyMode;
+  /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
+   *  fallback. This is the Green Team / Bull proposer model. */
+  llmModel?: string;
+  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
+  redTeamLlmModel?: string;
+  /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
+  llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
   maxOrderNotional?: number;
@@ -293,6 +402,17 @@ export interface TradingPolicy {
   maxDailyOrders: number;
   maxProposalsPerRun: number;
   /**
+   * Number of ranked Market Scan candidates that receive expensive enrichment and are exposed to the
+   * LLM as `marketScan.topCandidates`. Lower values reduce cost/noise; higher values broaden choice.
+   */
+  marketScanCandidateLimit?: number;
+  /**
+   * Maximum number of below-cutoff candidates with notable cached web signals (congressional buying,
+   * insider buying, short pressure, or strong technicals) that may replace lower-ranked plain top
+   * candidates inside the candidate limit.
+   */
+  marketScanOutlierReserve?: number;
+  /**
    * Hard time-to-live for a still-pending (unapproved/unrejected) proposal, in minutes.
    * A proposal older than this is auto-expired (status → "expired") so the approval queue
    * never implies the agent is still actively recommending an hours/days-old idea. 0 or
@@ -309,7 +429,6 @@ export interface TradingPolicy {
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
-  evaluatorCadenceHours?: number;
   runDuringExtendedHours: boolean;
   scoringWeights: ScoringWeights;
   sectorCaps: Record<string, number>;
@@ -330,6 +449,114 @@ export interface TradingPolicy {
   maxShortOrderNotional?: number;
   // SHORT_SELLING: Max total short exposure as a percentage of portfolio value.
   maxShortExposurePct?: number;
+  /**
+   * Cap on the projected NET portfolio beta (Σ signedMarketValue·beta ÷ totalEquity, including the
+   * candidate). Bounds the book's aggregate market-directional exposure so a cluster of individually
+   * approved high-beta names can't accumulate a correlated drawdown the per-symbol/sector caps miss.
+   * An opening order is blocked only when it pushes |projected beta| above this cap AND further from
+   * the current level (a risk-reducing trade always passes). Undefined disables. Per-name beta is read
+   * from the market scan; names without a beta count as 1.0. Especially relevant once shorting is on.
+   */
+  maxPortfolioBeta?: number;
+  /**
+   * OPTIONAL correlation cluster cap (0–1; undefined disables). The precise version of the beta cap:
+   * an OPENING buy/short is SKIPPED when the candidate's average daily-return correlation (over ~90
+   * trading days) to the current holdings exceeds this value — i.e. it would pile onto an
+   * already-correlated cluster the per-symbol/sector/beta caps don't see. Exits/reductions are never
+   * blocked; the gate is skipped (never false-rejects) when there is too little overlapping bar data.
+   */
+  maxAvgCorrelation?: number;
+  /**
+   * Max allowed % drift between a proposal's recorded entry anchor (referencePrice) and the current
+   * market price, enforced at the approval/execution moment for OPENING market/dollar orders only
+   * (limit orders are already protected by the broker's limit). Rejects a stale proposal whose
+   * technical entry trigger has moved away — closing the gap where an hours-old market order approved
+   * off the run cadence (or with no LLM revalidation key) still executes at a materially worse price.
+   * Undefined or <=0 disables.
+   */
+  maxEntryDriftPct?: number;
+  /**
+   * Auto-attach broker-held bracket (OCO) legs — a stop-loss and take-profit resting at the broker's
+   * matching engine — to opening orders on brokers that support native brackets (Alpaca), derived
+   * from riskRules.stopLossPct/takeProfitPct. Makes protective exits survive local downtime instead
+   * of relying solely on the synthetic scheduler-tick monitor. Defaults to enabled (treated as true
+   * when undefined); set false to opt out. No-op for brokers without native bracket support.
+   */
+  brokerBracketsEnabled?: boolean;
+  /**
+   * Robinhood-only: maintain a TRUE broker-held protective stop. Robinhood's MCP cannot hold a
+   * native OCO bracket (unlike Alpaca), so a held position is otherwise protected only by the app's
+   * synthetic scheduler-tick monitor — a single point of failure if the app is offline. When enabled,
+   * the monitor places a resting broker-side stop-market SELL (GTC) at riskRules.stopLossPct below
+   * entry for each open Robinhood LIVE position, and cancels it when the position closes or a synthetic
+   * exit fires (so an orphaned stop can't sell shares we no longer hold). DEFAULT OFF (opt-in): the
+   * exact Robinhood MCP stop semantics should be verified against a live account before enabling, and
+   * the synthetic monitor remains the always-on fallback either way.
+   */
+  robinhoodBrokerStops?: boolean;
+  /**
+   * Scale per-position stop-loss distance by the name's beta (clamped 0.5×–2.0×) so high-beta names
+   * get wider stops (fewer noise stop-outs) and low-beta names tighter stops (cut losers sooner),
+   * instead of one flat % for every ticker. Applies to the pre-trade gate, the proactive risk-exit
+   * generator, and the synthetic trailing stop. Default false (flat stops). Beta is read from the
+   * scan; names without a beta are unaffected (factor 1.0).
+   */
+  betaScaledStops?: boolean;
+  /**
+   * ATR-based stops (opt-in, default false). When on, the per-position protective stop DISTANCE is
+   * computed from the name's Average True Range — atrStopMultiple × ATR(atrStopPeriod) as a % of entry
+   * (see riskRules.atrStopPeriod/atrStopMultiple) — instead of the fixed riskRules.stopLossPct. This is
+   * a volatility-aware stop driven by the name's own realized daily range; it adapts per-symbol without
+   * needing a beta. Takes precedence over betaScaledStops for the stop distance when both are on. Only
+   * applies when stopLossPct > 0 (it sets the DISTANCE of the configured stop), and falls back to the
+   * fixed/beta stop whenever recent bars are unavailable — a position is never left unprotected.
+   */
+  atrStops?: boolean;
+  /**
+   * Convert deterministic OPENING market orders into marketable-limit orders (priced through the
+   * quote by tuning.marketableLimitBufferBps) so a fast-regime entry can't fill arbitrarily far past
+   * the quote. Default false. Protective EXIT orders intentionally stay market for fill certainty —
+   * broker brackets are the exit-reliability mechanism.
+   */
+  marketableLimitEntries?: boolean;
+  /**
+   * Cap an opening order's notional at this percentage of the name's recent daily dollar-volume
+   * (ADV proxy = latest scan price × volume; the app ingests no historical bars). Bounds market
+   * impact so a high-edge thesis can't size a position into an illiquid name far past what the tape
+   * can absorb — the slippage the execution-cost model debits but never prevented. Applied both in
+   * deterministic sizing (right-sizes the order) and as an approval-time gate (rejects oversize
+   * proposals from any path). Undefined or <=0 disables. Rarely binds for small accounts / liquid
+   * names; matters at scale. Default 5.
+   */
+  maxOrderPctOfAdv?: number;
+  /**
+   * Volatility panic auto-brake: when ON, an extreme reading on any configured tail-risk gauge
+   * (VIX / Cboe VVIX / Cboe SKEW) at the top of a run flips an active system to "close_only"
+   * (risk-reducing exits still flow; no new entries) and fires a kill-switch notification — the
+   * automatic defensive state the crisis-regime entry cap never triggered on its own. Thresholds
+   * are deliberately set at rare tail extremes so this is a safeguard, not a frequent gate. Default
+   * enabled.
+   */
+  volPanicBrakeEnabled?: boolean;
+  /** VIX level at/above which the vol panic brake trips. Undefined falls back to the built-in default (40). */
+  volPanicVixThreshold?: number;
+  /** Cboe VVIX level at/above which the vol panic brake trips. Undefined falls back to the built-in default (150). */
+  volPanicVvixThreshold?: number;
+  /** Cboe SKEW level at/above which the vol panic brake trips. Undefined falls back to the built-in default (160). */
+  volPanicSkewThreshold?: number;
+  /**
+   * Market-data staleness gate (fail-safe, additive, DEFAULT OFF). Enforced at proposal REVIEW for
+   * OPENING orders only — exits are never blocked. When set (> 0), an opening proposal whose backing
+   * market data is older than the threshold is BLOCKED. Fail-safe direction only: stale → block; a
+   * missing timestamp is treated as stale (block) ONLY when the gate is enabled. Undefined or <= 0
+   * disables (no behavior change). Read from the run's MarketScan timestamps; never fabricated.
+   */
+  /** Max age (seconds) of the per-symbol quote (MarketScan.quotesBySymbol[sym].asOf, fallback the
+   *  candidate's asOf). Undefined/<=0 disables. */
+  maxQuoteAgeSec?: number;
+  /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
+   *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
+  maxFundamentalsAgeSec?: number;
 }
 
 export interface TradeProposal {
@@ -346,6 +573,13 @@ export interface TradeProposal {
   tradeThesisTag: string;
   entryMarketRegime: string;
   confidenceScore?: number;
+  /**
+   * Decision-time market price captured when the proposal was generated. Serves as the entry anchor
+   * for the deterministic entry-drift guard (policy.maxEntryDriftPct) at approval time. Persisted with
+   * the proposal so the guard can compare it against the fresh price even when approval happens hours
+   * later or off the run cadence.
+   */
+  referencePrice?: number;
   /** Limit price for the take-profit leg of a bracket order. */
   bracketTakeProfit?: number;
   /** Stop price for the stop-loss leg of a bracket order. */
@@ -355,13 +589,21 @@ export interface TradeProposal {
    * When absent the stop-loss leg is a plain stop-market.
    */
   bracketStopLimit?: number;
+  /**
+   * Take-profit trim bookkeeping (set only on proactive take-profit trim proposals by
+   * planTakeProfitTrims). `takeProfitBand` = the take-profit band this trim corresponds to; its position
+   * cost basis is `takeProfitBasis`. The ratchet (take_profit_trims) is advanced ONLY when the trim
+   * actually fills (recordFillFromProposal), so a blocked/rejected/un-approved trim is re-offered next run.
+   */
+  takeProfitBand?: number;
+  takeProfitBasis?: number;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
     string
   >
 >;
@@ -412,6 +654,11 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED). */
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   /** Cross-sectional: this name's intraday % move minus the average move of its sector among
    *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
   sectorRelStrength?: number;
@@ -421,6 +668,16 @@ export interface MarketQuote {
   technicalDirection?: TechnicalDirection;
   /** Named technical conditions that fired, e.g. ["sma50_200_golden_cross","rsi_reclaim_oversold"]. */
   technicalSignals?: string[];
+  /** Composite Congress.Trade score 0-100, with direction separated so bearish evidence stays explicit. */
+  congressCompositeScore?: number;
+  congressCompositeSignedScore?: number;
+  congressCompositeDirection?: "BUY" | "SELL" | "NEUTRAL";
+  congressCompositeConfidence?: number;
+  congressCompositeComponents?: Record<string, number>;
+  congressCompositeProvenance?: Record<string, string[]>;
+  congressCompositeVersion?: string;
+  congressCompositeWeights?: Record<string, number>;
+  preCongressScore?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
 }
@@ -430,6 +687,12 @@ export interface MarketScan {
   generatedAt: string;
   scannedSymbols: number;
   returnedQuotes: number;
+  /** Configured cap for enriched/prompted candidates in this scan. */
+  candidateLimit?: number;
+  /** Configured reserve for below-cutoff notable outliers inside `candidateLimit`. */
+  outlierReserve?: number;
+  /** Number of notable below-cutoff candidates included in `topCandidates`. */
+  outlierCandidateCount?: number;
   /** Market breadth: % of the full screener advancing today (risk-on/off gauge). */
   breadthPct?: number;
   topCandidates: MarketQuote[];
@@ -477,6 +740,16 @@ export interface CandidateEvidence {
   technicalScore?: number; // bar-based technical strength 0–100 at decision time
   technicalDirection?: TechnicalDirection;
   technicalSignals?: string[]; // named technical conditions that fired
+  /** Composite Congress.Trade score at decision time. Positive strength is 0-100; direction carries BUY/SELL. */
+  congressCompositeScore?: number;
+  congressCompositeSignedScore?: number;
+  congressCompositeDirection?: "BUY" | "SELL" | "NEUTRAL";
+  congressCompositeConfidence?: number;
+  congressCompositeComponents?: Record<string, number>;
+  congressCompositeProvenance?: Record<string, string[]>;
+  congressCompositeVersion?: string;
+  congressCompositeWeights?: Record<string, number>;
+  preCongressScore?: number;
   asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
   provider?: string; // primary provider
   sources?: EnrichmentSources; // per-field provenance (source attribution)
@@ -515,6 +788,10 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  targetMean?: number;
+  targetHigh?: number;
+  targetLow?: number;
+  targetMedian?: number;
   evidenceBulletins?: string[];
   sources?: EnrichmentSources;
 }
@@ -523,6 +800,11 @@ export interface MarketDataProviderOptions {
   scoringWeights?: ScoringWeights;
   ttlMs?: number;
   userId?: string;
+  dynamicUniverses?: IndexUniverse[];
+  candidateLimit?: number;
+  outlierReserve?: number;
+  /** Penny/illiquid exclusion for index + dynamic-universe candidates (explicit symbols + positions exempt). */
+  universeFloor?: UniverseFloor;
 }
 
 export interface MarketDataProvider {
@@ -559,6 +841,8 @@ export interface EquityOrderInput {
   type: OrderType;
   quantity?: number;
   dollarAmount?: number;
+  /** Entry-price anchor captured when the proposal was generated/reviewed. */
+  referencePrice?: number;
   limitPrice?: number;
   stopPrice?: number;
   timeInForce: TimeInForce;
@@ -613,11 +897,40 @@ export interface PendingProposal {
   proposal: TradeProposal;
   decision: PolicyDecision;
   review?: ReviewedOrder;
+  estimatedNotional?: number;
   /** Last time a strategy run re-validated this still-pending proposal via the LLM. */
   lastRevalidatedAt?: string;
   /** The LLM's most recent re-validation note (why it still stands). */
   revalidationNote?: string;
   accountNumber?: string;
+  executionMode?: ExecutionMode;
+  /** Side-adjusted % move from the proposal's referencePrice to the current price (positive = the proposed direction worked). Undefined when no anchor/current price is available. */
+  performanceSinceProposalPct?: number;
+  /** The entry anchor the performance is measured from. */
+  proposalReferencePrice?: number;
+  /** The current price used for the performance figure. */
+  proposalCurrentPrice?: number;
+}
+
+export interface RecentProposal {
+  id: string;
+  runId: string;
+  accountNumber: string;
+  createdAt: string;
+  proposal: TradeProposal;
+  decision: PolicyDecision;
+  review?: ReviewedOrder;
+  estimatedNotional?: number;
+  status: string;
+  executionMode?: ExecutionMode;
+  /** Side-adjusted % move from the proposal's referencePrice to the current price. For a REJECTED proposal this is the realized counterfactual ("what it did since we passed"); for an accepted one it's how the entry has fared. Undefined when no anchor/current price is available. */
+  performanceSinceProposalPct?: number;
+  /** The entry anchor the performance is measured from. */
+  proposalReferencePrice?: number;
+  /** The current price used for the performance figure. */
+  proposalCurrentPrice?: number;
+  /** Broker or network error message when status is placing_failed. */
+  errorMessage?: string;
 }
 
 export interface StrategyOutcome {
@@ -669,7 +982,7 @@ export interface StrategyTuningPatch {
       | "maxSymbolExposurePct"
       | "maxDailyOrders"
       | "maxProposalsPerRun"
-      | "runCadenceMinutes" | "evaluatorCadenceHours"
+      | "runCadenceMinutes"
       | "strategyAuthority"
       | "runDuringExtendedHours"
     >
@@ -695,6 +1008,7 @@ export interface PortfolioSnapshot {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   equity: number;
   cash: number;
   buyingPower: number;
@@ -709,6 +1023,7 @@ export interface FillEvent {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   symbol: string;
   side: OrderSide;
   quantity: number;
@@ -717,6 +1032,10 @@ export interface FillEvent {
   status: string;
   brokerOrderId?: string;
   raw?: unknown;
+  /** Max Adverse Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mae?: number;
+  /** Max Favorable Excursion (%) persisted on this fill row by the post-mortem path; undefined until then. */
+  mfe?: number;
   filledAt: string;
 }
 
@@ -731,11 +1050,44 @@ export interface RunAttribution {
   fillCount: number;
   notional: number;
   realizedPnl: number;
+  /** P&L credited to this run as the ENTRY/decision run (sum over lots it opened that later closed). Additive; undefined until any dual-credit accrues. */
+  realizedPnlAsEntry?: number;
+  /** P&L credited to this run as the EXIT/closing run (mirror of the slice of realizedPnl from closing fills). Additive. */
+  realizedPnlAsExit?: number;
+}
+
+/** One point on a benchmark-normalized curve (base date = 100). */
+export interface BenchmarkSeriesPoint {
+  date: string;
+  index: number;
+}
+
+/**
+ * SPY-benchmark equity-curve comparison: the account's equity curve and a SPY buy-and-hold curve,
+ * both normalized to 100 at the first common date, plus the window's total returns. The honest
+ * "are we beating the market" readout. Computed on the fly from portfolio snapshots + SPY daily
+ * closes; null/absent when there isn't enough history or SPY data is unavailable (degrade to "—").
+ */
+export interface BenchmarkComparison {
+  equityIndex: BenchmarkSeriesPoint[];
+  benchmarkIndex: BenchmarkSeriesPoint[];
+  /** Account total return over the window (%, base→last). */
+  accountReturnPct: number;
+  /** Benchmark (SPY) total return over the same window (%). */
+  benchmarkReturnPct: number;
+  /** accountReturnPct − benchmarkReturnPct, in percentage points (positive = outperformance). */
+  excessReturnPct: number;
+  startDate: string;
+  endDate: string;
+  points: number;
+  benchmarkSymbol: string;
 }
 
 export interface PerformanceSummary {
   liveEquityCurve: EquityCurvePoint[];
   paperEquityCurve: EquityCurvePoint[];
+  /** SPY-benchmark comparison for the active execution mode's equity curve (absent when insufficient data). */
+  benchmark?: BenchmarkComparison;
   liveRealizedPnl: number;
   paperRealizedPnl: number;
   liveUnrealizedPnl: number;
@@ -812,6 +1164,8 @@ export interface ChatTurn {
   intent: string | null;
   /** True when redact-on-write stripped a secret/PII from `text` before persistence. */
   redacted: boolean;
+  /** Model that produced this turn (assistant turns only, e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). */
+  model?: string | null;
   createdAt: string;
 }
 
@@ -913,4 +1267,23 @@ export interface LearnedContextPendingRow {
   createdAt: string;
   status: LearnedContextPendingStatus;
   resolvedAt: string | null;
+}
+
+/**
+ * Advisory result from the per-run rationale-diversity check (improvement-program item #8).
+ *
+ * Populated after proposals are generated; never blocks, drops, or modifies any proposal.
+ * Persisted via `audit("rationale_diversity", ...)` and optionally attached to `StrategyResult`.
+ */
+export interface RationaleDiversity {
+  /** Number of rationale strings evaluated. */
+  count: number;
+  /** Mean pairwise character-trigram Jaccard similarity across all N*(N-1)/2 pairs, in [0, 1]. */
+  meanPairwiseSimilarity: number;
+  /** Maximum pairwise similarity observed across any single pair, in [0, 1]. */
+  maxPairwiseSimilarity: number;
+  /** True when meanPairwiseSimilarity exceeds `threshold` — indicates likely template collapse. */
+  collapsed: boolean;
+  /** Similarity threshold used to set `collapsed` (default 0.85). */
+  threshold: number;
 }

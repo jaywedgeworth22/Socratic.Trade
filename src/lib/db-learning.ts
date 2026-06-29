@@ -5,28 +5,38 @@ import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPending
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
 
-export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string }> {
   const rows = getDb()
-    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
-    .all(userId, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+    .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit) as Array<{ id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string }>;
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.created_at,
     kind: row.kind,
-    payload: JSON.parse(row.payload)
+    payload: JSON.parse(row.payload),
+    connectedAccountId: row.connected_account_id ?? undefined
   }));
 }
 
-export function latestAuditByKind(kind: string, userId: string = "local"): { id: string; createdAt: string; kind: string; payload: unknown } | undefined {
-  const row = getDb()
-    .prepare("SELECT id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
-    .get(kind, userId) as { id: string; created_at: string; kind: string; payload: string } | undefined;
+export function latestAuditByKind(
+  kind: string,
+  userId: string = "local",
+  connectedAccountId?: string
+): { id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string } | undefined {
+  const row = (connectedAccountId
+    ? getDb()
+      .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? AND connected_account_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId, connectedAccountId)
+    : getDb()
+      .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE kind = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(kind, userId)) as { id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string } | undefined;
   if (!row) return undefined;
   return {
     id: row.id,
     createdAt: row.created_at,
     kind: row.kind,
-    payload: JSON.parse(row.payload)
+    payload: JSON.parse(row.payload),
+    connectedAccountId: row.connected_account_id ?? undefined
   };
 }
 
@@ -40,9 +50,14 @@ export interface SignalSnapshotAuditRow {
 export function listSignalSnapshotAuditAfter(
   userId: string = "local",
   watermark?: { lastAuditRowid?: number },
-  limit = 100
+  limit = 100,
+  connectedAccountId?: string
 ): SignalSnapshotAuditRow[] {
   const hasWatermark = typeof watermark?.lastAuditRowid === "number";
+  // Per-account scoping: when an account id is given, only that account's snapshots count toward
+  // its learning. rowid is globally monotonic, so `rowid > lastAuditRowid AND account = ?` advances
+  // each account's watermark over its own rows independently.
+  const accountClause = connectedAccountId ? " AND connected_account_id = ?" : "";
   const rows = hasWatermark
     ? (getDb()
         .prepare(
@@ -50,20 +65,22 @@ export function listSignalSnapshotAuditAfter(
            FROM audit_events
            WHERE user_id = ?
             AND kind = 'signal_snapshot'
-            AND rowid > ?
+            AND rowid > ?${accountClause}
            ORDER BY rowid ASC
            LIMIT ?`
         )
-        .all(userId, watermark!.lastAuditRowid, limit) as Array<{ rowid: number; id: string; created_at: string; payload: string }>)
+        .all(...(connectedAccountId
+          ? [userId, watermark!.lastAuditRowid, connectedAccountId, limit]
+          : [userId, watermark!.lastAuditRowid, limit])) as Array<{ rowid: number; id: string; created_at: string; payload: string }>)
     : (getDb()
         .prepare(
           `SELECT rowid, id, created_at, payload
            FROM audit_events
-           WHERE user_id = ? AND kind = 'signal_snapshot'
+           WHERE user_id = ? AND kind = 'signal_snapshot'${accountClause}
            ORDER BY rowid ASC
            LIMIT ?`
         )
-        .all(userId, limit) as Array<{ rowid: number; id: string; created_at: string; payload: string }>);
+        .all(...(connectedAccountId ? [userId, connectedAccountId, limit] : [userId, limit])) as Array<{ rowid: number; id: string; created_at: string; payload: string }>);
 
   return rows.map((row) => ({ rowid: row.rowid, id: row.id, createdAt: row.created_at, payload: JSON.parse(row.payload) }));
 }
@@ -78,10 +95,16 @@ export interface CounterfactualLearningWatermark {
   updatedAt: string;
 }
 
-export function getCounterfactualLearningWatermark(userId: string = "local"): CounterfactualLearningWatermark | undefined {
+// Per-account watermarks: the table's PK is (user_id, connected_account_id). The account-agnostic
+// (user-wide) watermark is stored with connected_account_id = '' (empty string, never NULL) so the
+// composite PK stays well-defined — SQLite would treat multiple NULLs as distinct, breaking upserts.
+export function getCounterfactualLearningWatermark(
+  userId: string = "local",
+  connectedAccountId?: string
+): CounterfactualLearningWatermark | undefined {
   const row = getDb()
-    .prepare("SELECT user_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at FROM counterfactual_learning_watermarks WHERE user_id = ?")
-    .get(userId) as { user_id: string; last_audit_rowid: number | null; last_audit_created_at: string | null; last_audit_id: string | null; updated_at: string } | undefined;
+    .prepare("SELECT user_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at FROM counterfactual_learning_watermarks WHERE user_id = ? AND connected_account_id = ?")
+    .get(userId, connectedAccountId ?? "") as { user_id: string; last_audit_rowid: number | null; last_audit_created_at: string | null; last_audit_id: string | null; updated_at: string } | undefined;
   if (!row) return undefined;
   return {
     userId: row.user_id,
@@ -94,30 +117,33 @@ export function getCounterfactualLearningWatermark(userId: string = "local"): Co
 
 export function setCounterfactualLearningWatermark(input: {
   userId?: string;
+  connectedAccountId?: string;
   lastAuditRowid?: number;
   lastAuditCreatedAt?: string;
   lastAuditId?: string;
   updatedAt?: string;
 }): void {
   const userId = input.userId ?? "local";
+  const connectedAccountId = input.connectedAccountId ?? "";
   const updatedAt = input.updatedAt ?? new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO counterfactual_learning_watermarks (user_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
+      `INSERT INTO counterfactual_learning_watermarks (user_id, connected_account_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, connected_account_id) DO UPDATE SET
         last_audit_rowid = excluded.last_audit_rowid,
         last_audit_created_at = excluded.last_audit_created_at,
         last_audit_id = excluded.last_audit_id,
         updated_at = excluded.updated_at`
     )
-    .run(userId, input.lastAuditRowid ?? null, input.lastAuditCreatedAt ?? null, input.lastAuditId ?? null, updatedAt);
+    .run(userId, connectedAccountId, input.lastAuditRowid ?? null, input.lastAuditCreatedAt ?? null, input.lastAuditId ?? null, updatedAt);
 }
 
 // ── Skipped-candidate counterfactuals ─────────────────────────────────────────
 
 export interface SkippedCounterfactualCandidateInput {
   userId?: string;
+  connectedAccountId?: string;
   runId: string;
   symbol: string;
   snapshotAt: string;
@@ -210,14 +236,15 @@ export function insertSkippedCounterfactualCandidate(input: SkippedCounterfactua
   const result = getDb()
     .prepare(
       `INSERT OR IGNORE INTO skipped_candidate_counterfactuals (
-        id, user_id, run_id, symbol, snapshot_at, ref_price, horizon_days,
+        id, user_id, connected_account_id, run_id, symbol, snapshot_at, ref_price, horizon_days,
         target_date, status, score, sector, regime, dominant_factor, bulletins,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
       userId,
+      input.connectedAccountId ?? null,
       input.runId,
       input.symbol,
       input.snapshotAt,
@@ -289,16 +316,30 @@ export function markSkippedCounterfactualMatured(input: {
   return result.changes > 0;
 }
 
-export function listMaturedSkippedCounterfactuals(userId: string = "local", limit = 50): SkippedCounterfactualRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT *
-       FROM skipped_candidate_counterfactuals
-       WHERE user_id = ? AND status = 'matured'
-       ORDER BY return_pct DESC, updated_at DESC
-       LIMIT ?`
-    )
-    .all(userId, limit) as RawSkippedCounterfactualRow[];
+export function listMaturedSkippedCounterfactuals(
+  userId: string = "local",
+  limit = 50,
+  connectedAccountId?: string
+): SkippedCounterfactualRow[] {
+  const rows = (connectedAccountId
+    ? getDb()
+        .prepare(
+          `SELECT *
+           FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = 'matured' AND connected_account_id = ?
+           ORDER BY return_pct DESC, updated_at DESC
+           LIMIT ?`
+        )
+        .all(userId, connectedAccountId, limit)
+    : getDb()
+        .prepare(
+          `SELECT *
+           FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = 'matured'
+           ORDER BY return_pct DESC, updated_at DESC
+           LIMIT ?`
+        )
+        .all(userId, limit)) as RawSkippedCounterfactualRow[];
   return rows.map(toSkippedCounterfactualRow);
 }
 

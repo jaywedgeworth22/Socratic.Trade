@@ -14,6 +14,24 @@
 > `docs/rollouts/2026-06-16-ui-redesign-tailwind.md` and
 > `docs/rollouts/2026-06-18-glassmorphism-ui.md`. The sections below describe
 > the prior panel-based cockpit and current semantics that still matter.
+>
+> 2026-06-28: The SSR first-paint dashboard shell now uses a thin boot strip
+> instead of repeated visible loading labels or quiet skeleton tiles. The loader
+> keeps one screen-reader status and still renders an explicit alert card when
+> `/api/dashboard` fails.
+>
+> 2026-06-28: Proposal cards show relative age while a decision is under 24
+> hours old and switch to date/time for older decisions. Settings risk controls
+> that present dollar vs percent modes must write the selected mode and clear the
+> other mode in the same policy update so hidden stale caps cannot bind.
+>
+> 2026-06-28: Fresh proposal performance chips are suppressed until the proposal
+> is at least 15 minutes old, approval failures with broker error status refresh
+> the queue with explicit placement-failed copy, Market Scan column settings can
+> reorder visible columns and default to Sector before Sec RS, Symbol drilldowns
+> use the fixed slide-over header for logo/ticker/company/sector/price, close-only
+> history renders as a line chart, and Macro header helper copy lives inside the
+> same padded header block as the title.
 
 
 This phase restructures the dashboard from a long vertical page into a
@@ -54,6 +72,7 @@ It includes:
 
 - editable strategy prompt with autosave
 - reset-to-default prompt action
+- Green Team proposal model, Red Team review model, and reasoning-effort controls
 - slider/field controls for high-impact strategy and risk options
 - scoring weight controls
 - LLM strategy review button
@@ -90,6 +109,14 @@ Result/success toasts auto-dismiss after a few seconds; error toasts persist
 until dismissed. Each toast carries an icon and an accessible dismiss button.
 Setup-blocked actions route to the next setup surface instead of failing
 silently: account blockers open Accounts, universe blockers open Settings.
+Route/global error screens show the actual error message when available, and an
+app-level browser listener surfaces uncaught runtime errors and unhandled promise
+rejections as bottom-right error toasts.
+
+As of 2026-06-27, recoverable broker/data fallbacks that would otherwise only
+hit `console.warn` write throttled `recoverable_issue` audit rows and render in
+Activity. This keeps resilience for transient broker/provider misses while
+leaving a visible trail for later correction.
 
 ## Accessibility
 
@@ -127,13 +154,66 @@ across panels, feeds, popovers, or status chips.
 - Settings → Operate groups the tradable universe controls together: Base
   indexes are large multi-select toggle buttons, S&P 500 is selected by
   default, Additional Watchlist adds explicit tickers, and Ignore List subtracts
-  symbols from the final universe. The backend runs a one-time migration for
+  symbols from the final universe. S&P 100 and S&P 500 are mutually exclusive;
+  Nasdaq 100 and Nasdaq Composite are mutually exclusive. The backend normalizes
+  those same families so API writes cannot persist both at once. Dynamic broad
+  indexes show approximate counts because their constituents come from live
+  holdings/screener feeds rather than embedded arrays. The backend runs a one-time migration for
   untouched empty default policies so existing local installs get the same S&P
-  500 start state without repeatedly overriding later user edits.
-- Settings → Display includes a local ticker-logo preference: Normal tile,
-  Transparent, or Off. Logos are loaded through the app's cached proxy for
+  500 start state without repeatedly overriding later user edits. Additional
+  Watchlist accepts quote-resolvable non-index U.S. equity/ETF tickers such as
+  `SPCX`; newly added custom tickers are quote-checked before save and rejected
+  with a ticker-specific explanation when no quote is available.
+- Settings → Display includes a local ticker-logo preference: `Option 1` (tile),
+  `Option 2` (transparent), or `Off`. The field hint explains the visual styles.
+  Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Accounts distinguishes a stored Robinhood account row from an
+  authenticated Robinhood MCP session. If `/api/broker/mcp/health` reports
+  configured-but-unauthenticated, the Robinhood row shows `OAuth Needed` plus a
+  Reconnect action instead of a plain `Connected` badge. As of 2026-06-27, the
+  row warning copy is intentionally concise: `Robinhood needs to be reconnected.`
+- The top readiness strip must use the server-provided selected-account
+  readiness result, not only `policy.accountNumber`. A stored/backfilled account
+  row may stay visible for management, but Account is not ready if broker
+  OAuth is needed, selected-account enumeration fails, the selected
+  account is absent from live broker results, the broker marks it non-agentic,
+  or portfolio/balance data cannot be read.
+- Standalone ticker text should use the shared clickable ticker treatment so
+  hover/click styling and symbol drilldown are consistent in Market Scan,
+  Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.
+- Ticker drilldowns must prefer a full scan quote from `topCandidates` or
+  `quotesBySymbol` and must preserve quote metadata when the symbol is not in
+  the visible top-candidate table. Sparse/event-only symbols may open with a
+  partial record, but the price header should never display `$0.00` for a
+  missing quote.
+- Settings → Data includes Market Scan candidate controls. `Candidate cap`
+  controls how many ranked/enriched rows reach `marketScan.topCandidates` and
+  the LLM prompt; `Outlier reserve` controls how many below-cutoff names with
+  notable web/technical signals may replace lower-ranked plain candidates inside
+  that cap. The Market Scan tab header includes a gauge button that opens
+  Settings directly to this Data section, and the scan subtitle shows returned
+  candidates against the active cap.
+- Settings → Connections owns provider/API keys and connection status context.
+  Editable Green/Red Team model behavior belongs in Strategy Studio; Connections
+  may show a read-only model summary and a link to Studio.
+- The command-bar `Mode:` selector is approval mode, not run state. `Propose
+  Mode` stages orders for approval; `Autonomous Mode` may execute while the
+  system is running. Start/Stop controls whether scheduled/autonomous runs can
+  place orders.
+- `Run once` is a manual proposal check. It must work while the system is
+  stopped and must force proposal-only behavior, so it never bypasses the
+  Start/Stop gate for scheduled/autonomous execution.
+- If pending proposals are visible while the mode selector says Autonomous Mode,
+  the Decision tab must explain that they came from the manual/proposal-only Run
+  once path; scheduled autonomous placement still requires Start and passing
+  account/risk checks.
+- Workspace and feed tabs persist in local storage so a browser refresh returns
+  to the same tab/area instead of resetting the user to Decision/Activity.
+- Headings and card titles use Title Case. Abbreviated data labels can stay
+  compact, but every interactive control, column, and important data point
+  should carry a tooltip or adjacent hint with a plain-English meaning.
 - `Run during extended hours` means scheduled/event-triggered strategy runs may
   start during pre/post-market windows; it does not by itself permit
   extended-hours order placement, and dollar/fractional orders remain
@@ -141,11 +221,40 @@ across panels, feeds, popovers, or status chips.
 - The dashboard must never show `Autonomy On` when required setup is missing.
   Render `Setup Needed`, block Run/Resume, and route the user to Accounts or
   Settings.
+- The Test/Paper/Brokerage execution banner is a safety control, not decoration.
+  It may be compacted for density but must remain visible, with `role="status"`
+  and reduced-motion-safe animation for Brokerage/live.
+- Accounts rows should distinguish the user label from the execution environment:
+  show the saved account label as the row title and Paper/Brokerage in supporting
+  broker metadata.
+- The cockpit should expose a compact readiness checklist for account, universe,
+  risk caps, and selected broker/account readiness so setup blockers are
+  actionable before the user clicks Run once or Start.
 - Switching from Mock/Local to Live requires explicit confirmation and a visible
   warning that live mode can submit real broker orders.
+- Approving a Brokerage/live proposal requires a typed server-validated
+  confirmation payload tied to proposal id, account number, execution mode, and
+  estimated notional. The current implementation uses a browser prompt; the next
+  UI iteration should replace it with an in-app modal that shows the same fields.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
-  incomplete account list does not strand the user away from Settings.
+  incomplete account list does not strand the user away from Settings. The
+  Settings modal also keeps a `Manage Accounts` header action beside the close
+  button, and command-bar Mode/Account selectors should use matching typography
+  without truncating `Autonomous Mode`.
+- The Hide Test account preference filters inactive Test rows from both
+  Settings -> Accounts and the command-bar selector; if Test is still active, it
+  stays visible until the user switches away so the current execution mode is not
+  hidden.
+- Account rows should remain readable on narrow screens: stack account details
+  above actions, make inactive `Use` the primary action, keep Edit/Remove as
+  secondary actions, and visually anchor the active account with a subtle left
+  accent rather than all-caps badges alone.
+- Settings -> Data owns privacy, sharing, and destructive app-account actions.
+  The app-account deletion procedure must be multi-step, must explain what the
+  app can and cannot delete from Google/Apple/brokers, and must keep the final
+  destructive button disabled until every acknowledgement and typed phrase is
+  satisfied.
 - Symbol drilldown factor values are normalized 0-100 **factor scores**, not
   signed contribution deltas. Avoid labeling that panel as a waterfall unless
   the UI is changed to show actual weighted contributions around a baseline.

@@ -58,6 +58,133 @@ const MIGRATIONS: Migration[] = [
       }
       database.exec("CREATE INDEX IF NOT EXISTS idx_llm_usage_key ON llm_usage (key_ref, created_at)");
     }
+  },
+  {
+    version: 3,
+    name: "execution_mode_columns",
+    up: (database) => {
+      const addColumnIfMissing = (table: string) => {
+        const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "execution_mode")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN execution_mode TEXT`);
+        }
+      };
+
+      addColumnIfMissing("trade_proposals");
+      addColumnIfMissing("portfolio_snapshots");
+      addColumnIfMissing("fill_events");
+
+      database.exec(`
+        UPDATE trade_proposals
+        SET execution_mode = COALESCE(
+          execution_mode,
+          (
+            SELECT CASE connected_accounts.environment
+              WHEN 'paper' THEN 'broker/paper'
+              WHEN 'live' THEN 'broker/live'
+              ELSE NULL
+            END
+            FROM connected_accounts
+            WHERE connected_accounts.user_id = trade_proposals.user_id
+              AND connected_accounts.account_number = trade_proposals.account_number
+            LIMIT 1
+          ),
+          CASE
+            WHEN status = 'paper' THEN 'test/local'
+            WHEN status IN ('placed', 'placing', 'placing_failed') THEN 'broker/live'
+            ELSE NULL
+          END
+        )
+        WHERE execution_mode IS NULL;
+
+        UPDATE portfolio_snapshots
+        SET execution_mode = COALESCE(
+          execution_mode,
+          (
+            SELECT CASE connected_accounts.environment
+              WHEN 'paper' THEN 'broker/paper'
+              WHEN 'live' THEN 'broker/live'
+              ELSE NULL
+            END
+            FROM connected_accounts
+            WHERE connected_accounts.user_id = portfolio_snapshots.user_id
+              AND connected_accounts.account_number = portfolio_snapshots.account_number
+            LIMIT 1
+          ),
+          CASE
+            WHEN source = 'paper' THEN 'test/local'
+            WHEN source = 'live' THEN 'broker/live'
+            ELSE NULL
+          END
+        )
+        WHERE execution_mode IS NULL;
+
+        UPDATE fill_events
+        SET execution_mode = COALESCE(
+          execution_mode,
+          (
+            SELECT CASE connected_accounts.environment
+              WHEN 'paper' THEN 'broker/paper'
+              WHEN 'live' THEN 'broker/live'
+              ELSE NULL
+            END
+            FROM connected_accounts
+            WHERE connected_accounts.user_id = fill_events.user_id
+              AND connected_accounts.account_number = fill_events.account_number
+            LIMIT 1
+          ),
+          CASE
+            WHEN source = 'paper' THEN 'test/local'
+            WHEN source = 'live' THEN 'broker/live'
+            ELSE NULL
+          END
+        )
+        WHERE execution_mode IS NULL;
+      `);
+
+      database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_execution_mode ON trade_proposals (user_id, account_number, execution_mode, created_at)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_execution_mode ON portfolio_snapshots (user_id, account_number, execution_mode, created_at)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_execution_mode ON fill_events (user_id, account_number, execution_mode, filled_at)");
+    }
+  },
+  {
+    version: 4,
+    name: "account_deletion_lifecycle",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS account_deletion_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          email TEXT,
+          requested_at TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('prepared','completed','cancelled')),
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_deletion_requests_user_status ON account_deletion_requests (user_id, status, requested_at);
+
+        CREATE TABLE IF NOT EXISTS account_deletion_audit (
+          id TEXT PRIMARY KEY,
+          subject_hash TEXT NOT NULL,
+          requested_at TEXT NOT NULL,
+          completed_at TEXT NOT NULL,
+          counts_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_deletion_audit_subject ON account_deletion_audit (subject_hash, completed_at);
+      `);
+    }
+  },
+  {
+    // Record which model produced each assistant chat turn, so the transcript / admin view / hover can
+    // show "via <model>". Idempotent — skips the column when already present.
+    version: 5,
+    name: "chat_turns_model",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(chat_turns)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "model")) {
+        database.exec("ALTER TABLE chat_turns ADD COLUMN model TEXT");
+      }
+    }
   }
 ];
 
@@ -128,10 +255,10 @@ export function assertEncryptionKeyAvailable(
   }
 }
 
-export function audit(kind: string, payload: unknown, userId: string = "local"): void {
+export function audit(kind: string, payload: unknown, userId: string = "local", connectedAccountId?: string): void {
   getDb()
-    .prepare("INSERT INTO audit_events (id, user_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?)")
-    .run(crypto.randomUUID(), userId, new Date().toISOString(), kind, JSON.stringify(payload));
+    .prepare("INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(crypto.randomUUID(), userId, connectedAccountId ?? null, new Date().toISOString(), kind, JSON.stringify(payload));
 }
 
 function migrate(database: Database.Database): void {
@@ -169,7 +296,9 @@ function migrate(database: Database.Database): void {
       order_id TEXT,
       status TEXT NOT NULL,
       trade_thesis_tag TEXT,
-      entry_market_regime TEXT
+      entry_market_regime TEXT,
+      execution_mode TEXT,
+      error_message TEXT
     );
 
     CREATE TABLE IF NOT EXISTS strategy_profiles (
@@ -183,6 +312,25 @@ function migrate(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    -- Per-account LIVE strategy state (policy + system_state), keyed by the stable
+    -- connected_accounts.id. strategy_profiles is the user-level copyable LIBRARY;
+    -- this is what an account is actually running. Seeded lazily on first read
+    -- (migration-on-read in db-profiles.getPolicy) so existing single-account users
+    -- are byte-identical day one. No hard FK — deletion is handled in code
+    -- (deleteConnectedAccount / account-deletion purge), matching the per-account
+    -- execution tables above.
+    CREATE TABLE IF NOT EXISTS account_strategy_state (
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL,
+      policy TEXT NOT NULL,
+      prompt TEXT,
+      scoring_weights TEXT,
+      system_state TEXT NOT NULL DEFAULT 'halted',
+      derived_from_profile_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, connected_account_id)
+    );
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       id TEXT PRIMARY KEY,
       run_id TEXT,
@@ -193,7 +341,8 @@ function migrate(database: Database.Database): void {
       buying_power REAL NOT NULL,
       positions_value REAL NOT NULL,
       positions TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      execution_mode TEXT
     );
 
     CREATE TABLE IF NOT EXISTS fill_events (
@@ -210,7 +359,8 @@ function migrate(database: Database.Database): void {
       status TEXT NOT NULL,
       broker_order_id TEXT,
       raw TEXT,
-      filled_at TEXT NOT NULL
+      filled_at TEXT NOT NULL,
+      execution_mode TEXT
     );
 
     CREATE TABLE IF NOT EXISTS notification_events (
@@ -282,6 +432,40 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
 
+    -- Broker-held protective stops (Robinhood): the resting stop-market order id placed at the broker
+    -- for an open position, so it can be cancelled when the position closes (no orphaned stops). One
+    -- per (user, account, symbol). Distinct from synthetic_trailing_stops, which is the app-side monitor.
+    CREATE TABLE IF NOT EXISTS broker_protective_stops (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      broker_order_id TEXT NOT NULL,
+      quantity REAL NOT NULL,
+      stop_price REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'resting',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, account_number, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_broker_protective_stops_account ON broker_protective_stops (user_id, account_number);
+
+    -- Take-profit trim ratchet: the highest take-profit "band" (floor(returnPct / takeProfitPct)) at
+    -- which a partial trim has already been emitted for an open position. Monotonic per (user, account,
+    -- symbol) so a partial take-profit trims once per band instead of laddering out every run; cleared
+    -- when the position closes. One row per open profitable position.
+    CREATE TABLE IF NOT EXISTS take_profit_trims (
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      band INTEGER NOT NULL,
+      -- Position cost basis at the time the band was recorded. The ratchet is keyed to this lot: if the
+      -- current position's average cost no longer matches, it's a new lot (close+rebuy) and the band resets.
+      avg_cost REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, account_number, symbol)
+    );
+
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
       id TEXT PRIMARY KEY,
@@ -319,11 +503,13 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_skipped_counterfactuals_user_return ON skipped_candidate_counterfactuals (user_id, return_pct);
 
     CREATE TABLE IF NOT EXISTS counterfactual_learning_watermarks (
-      user_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL DEFAULT '',
       last_audit_rowid INTEGER,
       last_audit_created_at TEXT,
       last_audit_id TEXT,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, connected_account_id)
     );
 
     CREATE TABLE IF NOT EXISTS market_data_demands (
@@ -381,6 +567,7 @@ function migrate(database: Database.Database): void {
       citations TEXT NOT NULL DEFAULT '[]',
       intent TEXT,
       redacted INTEGER NOT NULL DEFAULT 0,
+      model TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
@@ -459,6 +646,68 @@ function migrate(database: Database.Database): void {
       resolved_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
+
+    CREATE TABLE IF NOT EXISTS api_health_log (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      ts TEXT NOT NULL,
+      ok INTEGER NOT NULL CHECK(ok IN (0,1)),
+      latency_ms INTEGER,
+      error_text TEXT,
+      key_source TEXT,
+      user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_health_log_service_ts ON api_health_log (service, ts DESC);
+
+    CREATE TABLE IF NOT EXISTS api_health_error_patterns (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      error_text TEXT NOT NULL,
+      first_seen TEXT NOT NULL,
+      last_seen TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      key_source TEXT NOT NULL DEFAULT '',
+      UNIQUE(service, fingerprint, key_source)
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
+
+    -- congress.trade (App A) return-path receiver: a local, writable EOD cache that App A's
+    -- gap-fill push lands in (POST /api/admin/securities/import). App B's own price history is the
+    -- live fetchDailyOHLC cascade, NOT a writable store — these three tables ARE that writable store
+    -- so imported closes can warm a cache-aside tier and displace a re-fetch. Keyed ticker+date,
+    -- idempotent upsert. 'origin' records who supplied the row (default 'app-a') so a round-trip of
+    -- App B's own outbound push is never re-stored. See src/lib/db-securities-import.ts.
+    CREATE TABLE IF NOT EXISTS imported_securities_ref (
+      ticker TEXT PRIMARY KEY,
+      company_name TEXT,
+      sector TEXT,
+      industry TEXT,
+      asset_class TEXT,
+      exchange TEXT,
+      currency TEXT,
+      market_cap REAL,
+      cik TEXT,
+      origin TEXT NOT NULL DEFAULT 'app-a',
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS imported_price_eod (
+      ticker TEXT NOT NULL,
+      date TEXT NOT NULL,
+      close REAL NOT NULL,
+      volume REAL,
+      origin TEXT NOT NULL DEFAULT 'app-a',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (ticker, date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_imported_price_eod_ticker ON imported_price_eod (ticker, date);
+    CREATE TABLE IF NOT EXISTS imported_spx_eod (
+      date TEXT PRIMARY KEY,
+      close REAL NOT NULL,
+      volume REAL,
+      origin TEXT NOT NULL DEFAULT 'app-a',
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Migrate tables to include user_id
@@ -505,6 +754,9 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN last_revalidated_at TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN revalidation_note TEXT");
   }
+  if (!columns.some((column) => column.name === "error_message")) {
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN error_message TEXT");
+  }
   // MAE/MFE persistence: add excursion columns to fill_events (additive, guarded).
   const fillEventColumns = database.prepare("PRAGMA table_info(fill_events)").all() as Array<{ name: string }>;
   if (!fillEventColumns.some((c) => c.name === "mae")) {
@@ -526,8 +778,112 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN capabilities TEXT");
   }
 
+  // Per-account state isolation: tag user-level state tables with the connected
+  // account they belong to (nullable — account-agnostic rows keep NULL). New per-account
+  // state (policy/system_state) lives in account_strategy_state above; these columns let
+  // run-state, performance-derived learning, audit and notifications be filtered per account.
+  const addAccountColumn = (table: string) => {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "connected_account_id")) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN connected_account_id TEXT`);
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_account ON ${table} (user_id, connected_account_id)`);
+    }
+  };
+  for (const table of [
+    "strategy_runs",
+    "skipped_candidate_counterfactuals",
+    "counterfactual_learning_watermarks",
+    "audit_events",
+    "notification_events"
+  ]) {
+    addAccountColumn(table);
+  }
+
+  // Per-account watermarks need (user_id, connected_account_id) as the PK, but the original table
+  // was created with user_id as the SOLE primary key — a nullable column alone can't express
+  // per-account rows. Rebuild it once: the account-agnostic watermark becomes connected_account_id=''
+  // (empty string, never NULL, so the composite PK upsert is well-defined). Idempotent — guarded on
+  // whether connected_account_id is already part of the PK (pk flag > 0).
+  {
+    const wmCols = database
+      .prepare("PRAGMA table_info(counterfactual_learning_watermarks)")
+      .all() as Array<{ name: string; pk: number }>;
+    const accountInPk = wmCols.some((c) => c.name === "connected_account_id" && c.pk > 0);
+    if (!accountInPk) {
+      database.exec(`
+        CREATE TABLE counterfactual_learning_watermarks_new (
+          user_id TEXT NOT NULL,
+          connected_account_id TEXT NOT NULL DEFAULT '',
+          last_audit_rowid INTEGER,
+          last_audit_created_at TEXT,
+          last_audit_id TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, connected_account_id)
+        );
+        INSERT OR IGNORE INTO counterfactual_learning_watermarks_new
+          (user_id, connected_account_id, last_audit_rowid, last_audit_created_at, last_audit_id, updated_at)
+          SELECT user_id, COALESCE(connected_account_id, ''), last_audit_rowid, last_audit_created_at, last_audit_id, updated_at
+          FROM counterfactual_learning_watermarks;
+        DROP TABLE counterfactual_learning_watermarks;
+        ALTER TABLE counterfactual_learning_watermarks_new RENAME TO counterfactual_learning_watermarks;
+      `);
+    }
+  }
+
   // Rename: legacy "dry_run" proposal status is now "paper".
   database.exec("UPDATE trade_proposals SET status = 'paper' WHERE status = 'dry_run'");
+
+  // Credential-scoped health rows: add key_source + user_id to existing api_health_log tables.
+  const healthLogCols = database.prepare("PRAGMA table_info(api_health_log)").all() as Array<{ name: string }>;
+  if (healthLogCols.length > 0) {
+    if (!healthLogCols.some((c) => c.name === "key_source")) {
+      database.exec("ALTER TABLE api_health_log ADD COLUMN key_source TEXT");
+    }
+    if (!healthLogCols.some((c) => c.name === "user_id")) {
+      database.exec("ALTER TABLE api_health_log ADD COLUMN user_id TEXT");
+    }
+  }
+  // Create the composite index unconditionally here — after the column is guaranteed to exist
+  // (either from CREATE TABLE on fresh DBs, or from ALTER TABLE above on upgrades).
+  // Removed from the main exec block because CREATE TABLE is a no-op on existing tables,
+  // so the index ran before ALTER TABLE added the column, causing "no such column: key_source".
+  database.exec("CREATE INDEX IF NOT EXISTS idx_api_health_log_service_key ON api_health_log (service, key_source, ts DESC)");
+  // api_health_error_patterns: recreate with correct schema when the table predates credential
+  // scoping. Two things can be wrong on an existing DB:
+  //   (a) key_source column missing entirely, or is TEXT (nullable) instead of TEXT NOT NULL DEFAULT ''
+  //   (b) UNIQUE constraint is still (service, fingerprint) — the new ON CONFLICT target
+  //       (service, fingerprint, key_source) won't match, so every error-pattern upsert silently
+  //       no-ops and failures disappear from the panel.
+  // Fix: recreate the table with the correct schema in both cases.
+  const healthPatternCols = database.prepare("PRAGMA table_info(api_health_error_patterns)").all() as Array<{ name: string; notnull: number; dflt_value: string | null }>;
+  if (healthPatternCols.length > 0) {
+    const ksCol = healthPatternCols.find((c) => c.name === "key_source");
+    const needsRebuild = !ksCol || ksCol.notnull === 0; // missing or nullable
+    if (needsRebuild) {
+      // When key_source column is absent, SELECT '''' literal; when nullable column exists use COALESCE.
+      // Using COALESCE(key_source, '') on a table without that column raises "no such column".
+      const ksExpr = ksCol ? "COALESCE(key_source, '')" : "''";
+      database.exec(`
+        CREATE TABLE api_health_error_patterns_v2 (
+          id TEXT PRIMARY KEY,
+          service TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          error_text TEXT NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 1,
+          key_source TEXT NOT NULL DEFAULT '',
+          UNIQUE(service, fingerprint, key_source)
+        );
+        INSERT OR IGNORE INTO api_health_error_patterns_v2
+          SELECT id, service, fingerprint, error_text, first_seen, last_seen, count, ${ksExpr}
+          FROM api_health_error_patterns;
+        DROP TABLE api_health_error_patterns;
+        ALTER TABLE api_health_error_patterns_v2 RENAME TO api_health_error_patterns;
+        CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
+      `);
+    }
+  }
 
   const now = new Date().toISOString();
   // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
@@ -713,3 +1069,5 @@ export * from "./db-proposals";
 export * from "./db-fills";
 export * from "./db-notifications";
 export * from "./db-api-keys";
+export * from "./db-health";
+export * from "./db-securities-import";

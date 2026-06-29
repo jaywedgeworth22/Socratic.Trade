@@ -44,9 +44,38 @@ export interface CongressSignal {
   bulletin: string;
 }
 
+/**
+ * App A (congress.trade) aggregate analytics for a ticker — the public "Trends" composite App B can't
+ * derive from raw trades alone (dollar-weighted net flow, distinct-member counts, cluster buys, member
+ * track-record). Populated only when CONGRESS_ANALYTICS_ENABLED is on; additive to the scraped signal.
+ */
+export interface CongressAnalytics {
+  netFlowUsd?: number; // estimated net $ flow (buys − sells) over the analytics window
+  estVolumeUsd?: number;
+  tradeCount?: number;
+  buyCount?: number;
+  sellCount?: number;
+  memberCount?: number; // distinct members trading the ticker
+  netSentiment?: number; // -1..1
+  cluster?: boolean; // appears in App A's cluster-buys (many members → same ticker)
+  clusterMemberCount?: number;
+  topMemberScore?: number; // 0–100 best member-quality among the ticker's cluster members
+  topMemberScoreSource?: "realized_skill" | "activity_prominence";
+  /** App A composite conviction score 0–100; null = too thin (< 3 resolved-side trades). */
+  convictionScore?: number | null;
+  /** Direction the conviction score points: "BUY" or "SELL". null = no directional signal. */
+  convictionDirection?: "BUY" | "SELL" | null;
+  /** True when App A's conviction score used proxy/fallback inputs due sparse realized-skill coverage. */
+  convictionFallback?: boolean;
+  /** Committee-sector overlap flags in the analytics window. Context only; not a legal conclusion. */
+  conflictCount?: number;
+}
+
 /** The per-symbol overlay produced by all web sources, merged onto quotes in the scan. */
 export interface SymbolWebSignal {
   congress?: CongressSignal;
+  /** App A aggregate analytics overlay (dollar net flow, cluster buys, member quality). */
+  congressAnalytics?: CongressAnalytics;
   /** Recent insider (Form 4) net buy sentiment 0–100 (50 = balanced), from SEC EDGAR. */
   insiderSentiment?: number;
   /** Latest daily short volume as % of total volume (FINRA). */

@@ -2,6 +2,7 @@ import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-da
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
 import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { fuseHybrid } from "./rag/hybrid";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -62,6 +63,12 @@ function numericEnv(name: string, fallback: number, min = 0, max = Number.POSITI
   return Math.min(max, Math.max(min, parsed));
 }
 
+/** Cosine-similarity floor applied at every retrieval call site unless the caller overrides it.
+ *  Set VECTOR_MIN_SCORE=0 to disable the floor (restores the previous no-floor behavior). Default 0.30. */
+export function defaultMinScore(): number {
+  return numericEnv("VECTOR_MIN_SCORE", 0.3, 0, 1);
+}
+
 function embedBatchSize(): number {
   return Math.floor(numericEnv("VECTOR_EMBED_BATCH_SIZE", DEFAULT_EMBED_BATCH_SIZE, 1, 128));
 }
@@ -82,6 +89,29 @@ function embedRetryDelayMs(): number {
   return numericEnv("VECTOR_EMBED_RETRY_DELAY_MS", DEFAULT_EMBED_RETRY_DELAY_MS, 0);
 }
 
+// Voyage reranking: the single biggest retrieval-quality lever. We over-fetch from Pinecone (cheap
+// cosine recall) then have Voyage's cross-encoder reranker reorder by true query relevance. ON by
+// default; set VECTOR_ENABLE_RERANK=off to disable. Fails safe to cosine order on any error.
+const DEFAULT_RERANK_MODEL = "rerank-2.5";
+function rerankEnabled(): boolean {
+  const v = String(process.env.VECTOR_ENABLE_RERANK ?? "true").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(v);
+}
+function rerankModel(): string {
+  return process.env.VOYAGE_RERANK_MODEL || DEFAULT_RERANK_MODEL;
+}
+/** How many candidates to pull from Pinecone before reranking/as-of filtering down to `limit`. */
+function overFetchK(limit: number): number {
+  return Math.min(Math.max(limit * 5, limit), 50);
+}
+
+/** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
+ *  When OFF, the retrieval path is byte-for-byte the current dense-only flow. */
+function hybridRetrievalEnabled(): boolean {
+  const v = String(process.env.HYBRID_RETRIEVAL ?? "false").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
+}
+
 function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
@@ -98,21 +128,29 @@ export function sanitizeUserId(userId?: string): string {
 }
 
 /**
- * Ensures we have valid clients for Pinecone and Voyage.
+ * Ensures we have valid clients for Pinecone and Voyage. Clients are memoized per resolved
+ * key-pair (not per userId, so a key rotation naturally yields a fresh client) to avoid
+ * constructing a new SDK client on every embed/query/rerank call.
  */
+const clientCache = new Map<string, { pc: Pinecone; voyage: VoyageAIClient }>();
+
 function getClients(userId: string = "local") {
-  const sanitizedUserId = sanitizeUserId(userId);
-  const pineconeKey = resolveApiKey("pinecone", sanitizedUserId);
-  const voyageKey = resolveApiKey("voyage", sanitizedUserId);
+  const lookupUserId = userId || "local";
+  const pineconeKey = resolveApiKey("pinecone", lookupUserId);
+  const voyageKey = resolveApiKey("voyage", lookupUserId);
 
   if (!pineconeKey || !voyageKey) {
     return { pc: null, voyage: null, initCacheKey: "" };
   }
 
-  const pc = new Pinecone({ apiKey: pineconeKey });
-  const voyage = new VoyageAIClient({ apiKey: voyageKey });
+  const cacheKey = `${pineconeKey}|${voyageKey}`;
+  let clients = clientCache.get(cacheKey);
+  if (!clients) {
+    clients = { pc: new Pinecone({ apiKey: pineconeKey }), voyage: new VoyageAIClient({ apiKey: voyageKey }) };
+    clientCache.set(cacheKey, clients);
+  }
 
-  return { pc, voyage, initCacheKey: `${pineconeKey}:${indexName()}` };
+  return { pc: clients.pc, voyage: clients.voyage, initCacheKey: `${pineconeKey}:${indexName()}` };
 }
 
 async function ensureIndex(pc: Pinecone, initCacheKey: string): Promise<void> {
@@ -164,6 +202,10 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
   return out as RecordMetadata;
+}
+
+function vectorUserIdFor(userId: string | undefined): string {
+  return sanitizeUserId(userId);
 }
 
 function contextId(document: ContextDocument, fallbackIndex: number): string {
@@ -241,6 +283,40 @@ async function embedDocumentsWithRetry(
 }
 
 /**
+ * Reorder Pinecone matches by Voyage cross-encoder relevance and keep the top `topK`. Pure
+ * best-effort: on any error (rate limit, unsupported model, empty docs) returns the input order
+ * unchanged so retrieval never breaks — reranking is a quality boost, not a dependency.
+ */
+export async function rerankMatches(voyage: VoyageAIClient, query: string, matches: any[], topK: number): Promise<any[]> {
+  if (matches.length <= 1) return matches;
+  const documents = matches.map((m) => {
+    const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
+    return typeof t === "string" ? t : "";
+  });
+  if (documents.every((d) => !d)) return matches;
+  try {
+    const resp = await voyage.rerank({
+      query,
+      documents,
+      model: rerankModel(),
+      topK: Math.min(topK, matches.length),
+      truncation: true
+    });
+    const data = resp.data ?? [];
+    if (data.length === 0) return matches;
+    const reordered: any[] = [];
+    for (const item of data) {
+      const idx = item.index;
+      if (typeof idx === "number" && matches[idx]) reordered.push(matches[idx]);
+    }
+    return reordered.length > 0 ? reordered : matches;
+  } catch (err) {
+    console.warn("[vector-db] rerank failed; falling back to cosine order:", err instanceof Error ? err.message : String(err));
+    return matches;
+  }
+}
+
+/**
  * Store a document context into Pinecone.
  */
 export async function storeContext(
@@ -256,7 +332,7 @@ export async function storeContext(
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
 export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<StoreContextsResult> {
-  const sanitizedUserId = sanitizeUserId(userId);
+  const vectorUserId = vectorUserIdFor(userId);
   const validDocuments = documents
     .map((doc) => {
       let text = doc.text;
@@ -291,10 +367,10 @@ export async function storeContexts(documents: ContextDocument[], userId: string
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
 
-  const { pc, voyage, initCacheKey } = getClients(sanitizedUserId);
+  const { pc, voyage, initCacheKey } = getClients(userId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, sanitizedUserId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true };
   }
 
@@ -318,7 +394,7 @@ export async function storeContexts(documents: ContextDocument[], userId: string
         records.push({
           id: contextId(document, indexInBatch),
           values: embedding,
-          metadata: cleanMetadata(document.metadata, document.text, sanitizedUserId)
+          metadata: cleanMetadata(document.metadata, document.text, vectorUserId)
         });
       });
 
@@ -333,13 +409,13 @@ export async function storeContexts(documents: ContextDocument[], userId: string
     // Persist the outcome so RAG ingestion health is visible in the audit log / dashboard
     // instead of being swallowed to console (the original cause of the silent empty index).
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed });
-    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, sanitizedUserId);
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, userId);
     return { attempted: validDocuments.length, indexed };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, sanitizedUserId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, userId);
     return { attempted: validDocuments.length, indexed, error };
   }
 }
@@ -367,7 +443,8 @@ export async function storeDocument(
       section: c.section,
       doc_type: c.doc_type,
       is_table: c.is_table,
-      ticker: c.ticker
+      ticker: c.ticker,
+      ...(doc.url ? { url: doc.url } : {})
     }
   }));
   return storeContexts(documents, userId);
@@ -445,7 +522,7 @@ export function matchToChunk(match: any): RetrievedChunk {
     as_of: asOf != null ? String(asOf) : undefined,
     doc_type: typeof md.doc_type === "string" ? md.doc_type : undefined,
     section: typeof md.section === "string" ? md.section : undefined,
-    url: typeof md.url === "string" ? md.url : undefined,
+    url: typeof md.url === "string" ? md.url : typeof md.filingUrl === "string" ? md.filingUrl : undefined,
     scope
   };
 }
@@ -454,19 +531,51 @@ export function matchToChunk(match: any): RetrievedChunk {
  * Retrieve relevant chunks from Pinecone with REAL provenance (id/score/as_of/url) so answers can
  * be grounded and honestly cited.
  */
+export interface RetrieveOptions {
+  /** Point-in-time guard: drop chunks whose acceptance_datetime is after this ISO date. */
+  asOf?: string;
+  /** Restrict to these document types (metadata.doc_type), e.g. ["10-k","10-q"]. */
+  docType?: string[];
+  /** Restrict to a specific filing section (metadata.section). */
+  section?: string;
+  /** Restrict to a specific source (metadata.source), e.g. "sec-8k". */
+  source?: string;
+  /** Drop matches whose cosine score is below this (0–1). Applied before reranking. */
+  minScore?: number;
+}
+
+/** Build the optional metadata-filter clauses (doc_type/section/source) shared by both tiers. */
+export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (options?.docType && options.docType.length > 0) {
+    // doc_type casing is INCONSISTENT across ingesters — sec-filings.ts writes "10-K"/"10-Q" (upper) while
+    // sec8k.ts writes "8-k" (lower) — and Pinecone `$in` is exact-match. Match every casing variant so a
+    // filter never silently excludes a legitimately-stored doc type (which would be worse than no filter).
+    const variants = Array.from(new Set(options.docType.flatMap((d) => [d, d.toLowerCase(), d.toUpperCase()])));
+    extra.doc_type = { $in: variants };
+  }
+  if (options?.section) extra.section = { $eq: options.section };
+  if (options?.source) extra.source = { $eq: options.source };
+  return extra;
+}
+
 export async function retrieveContextDetailed(
   query: string,
   symbol: string,
   limit: number = 3,
   userId: string = "local",
-  options?: { asOf?: string }
+  options?: RetrieveOptions
 ): Promise<RetrievedChunk[]> {
-  const sanitizedUserId = sanitizeUserId(userId);
-  const { pc, voyage } = getClients(sanitizedUserId);
+  const vectorUserId = vectorUserIdFor(userId);
+  const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
-  // When an as-of date is set, over-fetch then drop look-ahead chunks (post-query filter, since
-  // Pinecone can't range-filter ISO datetime strings reliably).
-  const fetchK = options?.asOf ? Math.min(Math.max(limit * 5, limit), 50) : limit;
+  const wantRerank = rerankEnabled();
+  // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
+  // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
+  // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
+  // limit+1 is never in the pool and the recall gap the flag targets can't be recovered.
+  const fetchK = options?.asOf || wantRerank || hybridRetrievalEnabled() ? overFetchK(limit) : limit;
+  const extraFilter = buildExtraFilters(options);
 
   try {
     const response = await embedWithRetry(voyage, [query], "query");
@@ -485,13 +594,14 @@ export async function retrieveContextDetailed(
     // scope is authoritative for new vectors; userId is the fallback for old ones.
     const sharedTierFilter = {
       symbol: { $eq: symbol },
+      ...extraFilter,
       $or: [
         { scope: { $eq: SHARED_SCOPE } },
         { userId: { $eq: "local" } }
       ]
     };
 
-    if (sanitizedUserId === "local") {
+    if (vectorUserId === "local") {
       const results = await index.query({
         vector: embedding,
         topK: fetchK,
@@ -506,7 +616,8 @@ export async function retrieveContextDetailed(
           topK: fetchK,
           filter: {
             symbol: { $eq: symbol },
-            userId: { $eq: sanitizedUserId }
+            userId: { $eq: vectorUserId },
+            ...extraFilter
           },
           includeMetadata: true,
         }),
@@ -536,10 +647,24 @@ export async function retrieveContextDetailed(
       matches = unique.slice(0, fetchK);
     }
 
-    const withinAsOf = options?.asOf
-      ? matches.filter((match) => isWithinAsOf(match.metadata as Record<string, unknown> | undefined, options.asOf))
-      : matches;
-    return withinAsOf
+    // Pipeline: cosine recall → score floor → point-in-time guard → cross-encoder rerank → top-limit.
+    let pool = matches;
+    if (options?.minScore != null) {
+      pool = pool.filter((match) => (typeof match?.score === "number" ? match.score : 0) >= options.minScore!);
+    }
+    if (options?.asOf) {
+      pool = pool.filter((match) => isWithinAsOf(match.metadata as Record<string, unknown> | undefined, options.asOf));
+    }
+    // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
+    // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
+    // overFetchK or the Pinecone query — purely a post-retrieval reranking step.
+    const fusedPool = hybridRetrievalEnabled() && pool.length > 1
+      ? fuseHybrid(query, pool)
+      : pool;
+    const ordered = wantRerank && fusedPool.length > limit
+      ? await rerankMatches(voyage, query, fusedPool, limit)
+      : fusedPool;
+    return ordered
       .slice(0, limit)
       .map(matchToChunk)
       .filter((c) => c.text);
@@ -555,7 +680,7 @@ export async function retrieveContext(
   symbol: string,
   limit: number = 3,
   userId: string = "local",
-  options?: { asOf?: string }
+  options?: RetrieveOptions
 ): Promise<string[]> {
   const chunks = await retrieveContextDetailed(query, symbol, limit, userId, options);
   return chunks.map((c) => c.text).filter(Boolean);

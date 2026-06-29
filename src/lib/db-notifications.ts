@@ -20,6 +20,7 @@ type RawNotificationEvent = {
 
 export function insertNotificationEvent(input: {
   userId?: string;
+  connectedAccountId?: string;
   type: NotificationEventType;
   title: string;
   status: NotificationStatus;
@@ -38,8 +39,8 @@ export function insertNotificationEvent(input: {
     error: input.error
   };
   getDb()
-    .prepare("INSERT INTO notification_events (id, user_id, created_at, type, title, status, webhook_url, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(event.id, input.userId ?? "local", event.createdAt, event.type, event.title, event.status, event.webhookUrl ?? null, JSON.stringify(event.payload), event.error ?? null);
+    .prepare("INSERT INTO notification_events (id, user_id, connected_account_id, created_at, type, title, status, webhook_url, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(event.id, input.userId ?? "local", input.connectedAccountId ?? null, event.createdAt, event.type, event.title, event.status, event.webhookUrl ?? null, JSON.stringify(event.payload), event.error ?? null);
   return event;
 }
 

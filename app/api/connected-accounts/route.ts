@@ -6,6 +6,28 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
+function isAlpacaPaperCredential(input: { accountNumber?: unknown; apiKey?: unknown }): boolean {
+  const accountNumber = typeof input.accountNumber === "string" ? input.accountNumber.trim().toUpperCase() : "";
+  const apiKey = typeof input.apiKey === "string" ? input.apiKey.trim().toUpperCase() : "";
+  return accountNumber.startsWith("PA") || apiKey.startsWith("PK");
+}
+
+// List the user's connected accounts for the UI (e.g. the copy-strategy-to-account picker).
+// listConnectedAccounts never includes secrets; we still project an explicit safe subset.
+export async function GET(req: Request) {
+  const userId = resolveRequestUserId(req);
+  const accounts = listConnectedAccounts(userId).map((a) => ({
+    id: a.id,
+    broker: a.broker,
+    environment: a.environment,
+    accountNumber: a.accountNumber,
+    label: a.label,
+    taxationType: a.taxationType,
+    isActive: a.isActive
+  }));
+  return NextResponse.json({ accounts });
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -25,12 +47,19 @@ export async function POST(req: Request) {
     // Robinhood MCP to already be connected (OAuth complete).
     if (broker === "robinhood") {
       const accounts = await getRobinhoodGateway(userId).getAccounts();
-      const agentic = accounts.find((a) => a.agenticAllowed);
+      // Prefer the account labeled "agentic". With only one eligible account the choice is
+      // unambiguous. With multiple, fall back is unsafe: every non-IRA brokerage is now
+      // agenticAllowed by default (Robinhood MCP omits the flag), so picking the wrong
+      // account could attach live trading to a read-only Investing account — fail closed.
+      const agenticAccounts = accounts.filter((a) => a.agenticAllowed);
+      const labelMatch = agenticAccounts.find((a) => a.label.toLowerCase().includes("agentic"));
+      const agentic = labelMatch ?? (agenticAccounts.length === 1 ? agenticAccounts[0] : undefined);
       if (!agentic) {
-        return new NextResponse(
-          "No agentic-enabled Robinhood account found. Connect your Robinhood agentic account first.",
-          { status: 400 }
-        );
+        const msg =
+          agenticAccounts.length > 1
+            ? 'Multiple Robinhood accounts are eligible but none is labeled "Agentic". Nickname the correct account "Agentic" in the Robinhood app and try again.'
+            : "No agentic-enabled Robinhood account found. Connect your Robinhood agentic account first.";
+        return new NextResponse(msg, { status: 400 });
       }
       // Idempotent: reuse the existing row for this account if already synced (no duplicate
       // rows on re-sync), and activate it on first connect (when nothing else is active yet).
@@ -53,9 +82,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, accountNumber: agentic.accountNumber, label: agentic.label });
     }
 
-    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, the environment
-    // is differentiated strictly by the first 2 letters of the account number:
-    // "PA..." (case-insensitive) represents Paper, otherwise it is Brokerage (live).
+    // Alpaca (paper-api vs api) and the local Test broker. For Alpaca, Paper is
+    // inferred from either the account number ("PA...") or API key ("PK...").
     if ((broker === "alpaca" || broker === "alpaca-mcp") && (!body.accountNumber || !body.accountNumber.trim())) {
       return new NextResponse("Account number is required for Alpaca", { status: 400 });
     }
@@ -63,8 +91,7 @@ export async function POST(req: Request) {
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
     let environment: "paper" | "live" = "paper";
     if (broker === "alpaca" || broker === "alpaca-mcp") {
-      const accNum = body.accountNumber.trim();
-      environment = accNum.toUpperCase().startsWith("PA") ? "paper" : "live";
+      environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
     } else if (broker === "test") {
       environment = "paper";
     } else {
@@ -92,7 +119,7 @@ export async function POST(req: Request) {
         : (broker === "alpaca" || broker === "alpaca-mcp")
           ? environment === "paper"
             ? "https://paper-api.alpaca.markets/v2"
-            : "https://api.alpaca.markets/v2"
+            : "https://api.alpaca.markets"
           : undefined,
       taxationType,
       isActive: body.isActive ?? false

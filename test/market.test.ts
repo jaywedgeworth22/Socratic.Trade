@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, outlierInterestScore, rankMarketQuotes, scoreFactors } from "../src/lib/market";
 import type { SymbolEnrichment } from "../src/lib/data-providers";
 import type { MarketQuote, MarketScan } from "../src/lib/types";
 
@@ -32,6 +32,16 @@ describe("rankMarketQuotes", () => {
     const strong = scoreFactors(quote({ symbol: "S", ...common, fcfYield: 8, debtToEquity: 30, epsGrowth: 0.25 }));
     expect(strong.value).toBeGreaterThan(weak.value); // FCF yield lifts value
     expect(strong.quality).toBeGreaterThan(weak.quality); // low leverage + EPS growth lift quality
+  });
+
+  it("treats a sec-xbrl D/E above 10 as a true ratio (penalized), not a percentage", () => {
+    const common = { marketCap: 2_000_000_000, volume: 2_000_000 };
+    // sec-xbrl always emits a true ratio: 12 = 12x leverage → penalized. The `>10 → ÷100` percentage
+    // heuristic is source-aware, so it is NOT applied here (otherwise 12 would read as 0.12 and the
+    // over-levered name would be wrongly REWARDED as near-debt-free).
+    const levered = scoreFactors(quote({ symbol: "L", ...common, debtToEquity: 12, sources: { debtToEquity: "sec-xbrl" } }));
+    const safe = scoreFactors(quote({ symbol: "S", ...common, debtToEquity: 0.3, sources: { debtToEquity: "sec-xbrl" } }));
+    expect(levered.quality).toBeLessThan(safe.quality);
   });
 
   it("blends 52-week position into momentum and beta into volatility", () => {
@@ -75,6 +85,29 @@ describe("hasNotableWebSignal (event candidate union)", () => {
   it("does not flag neutral insider, ordinary short volume, or undefined", () => {
     expect(hasNotableWebSignal({ insiderSentiment: 40, shortVolumeRatio: 45, bulletins: [] })).toBe(false);
     expect(hasNotableWebSignal(undefined)).toBe(false);
+  });
+
+  it("requires strong supported BUY analytics before promoting a Congress.Trade outlier", () => {
+    expect(hasNotableWebSignal({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 100, convictionDirection: "BUY", convictionFallback: true }
+    })).toBe(false);
+    expect(hasNotableWebSignal({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 90, convictionDirection: "SELL", netFlowUsd: -1_000_000, memberCount: 3 }
+    })).toBe(false);
+    expect(hasNotableWebSignal({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 85, convictionDirection: "BUY", netFlowUsd: 1_000_000, memberCount: 3, tradeCount: 4, cluster: true, topMemberScore: 90 }
+    })).toBe(true);
+  });
+
+  it("scores stronger below-cutoff outlier signals ahead of weaker ones", () => {
+    const thinInsider = outlierInterestScore({ insiderSentiment: 61, bulletins: [] });
+    const broadCongressBuying = outlierInterestScore({ congress: { netSignal: 3, buyCount: 4 } as never, bulletins: [] });
+
+    expect(thinInsider).toBeGreaterThan(0);
+    expect(broadCongressBuying).toBeGreaterThan(thinInsider);
   });
 });
 

@@ -18,9 +18,16 @@ const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-[13px]",
-  md: "h-10 px-4 text-sm"
+  sm: "h-8 max-sm:min-h-11 px-3 text-[13px]",
+  md: "h-10 max-sm:min-h-11 px-4 text-sm"
 };
+
+/** Button styling as a class string, for when you need button looks on a non-button
+ *  element (e.g. an `<a>` link) without nesting a `<button>` inside an `<a>`. */
+export function buttonClass(opts: { variant?: ButtonVariant; size?: ButtonSize; className?: string } = {}) {
+  const { variant = "primary", size = "md", className } = opts;
+  return cn(buttonBase, buttonVariants[variant], buttonSizes[size], className);
+}
 
 export function Button({
   variant = "primary",
@@ -28,7 +35,7 @@ export function Button({
   className,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return <button className={cn(buttonBase, buttonVariants[variant], buttonSizes[size], className)} {...props} />;
+  return <button className={buttonClass({ variant, size, className })} {...props} />;
 }
 
 export function IconButton({

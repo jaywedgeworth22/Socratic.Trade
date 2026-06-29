@@ -56,12 +56,25 @@ compatible with the hybrid model and is the safe way to maximize shared learning
 
 The chat must let the user **choose between multiple frontier LLMs**; whether keys are
 **user-provided or app-provided is deferred** (decide later, proceed now). The provider-agnostic
-`ChatLLM` interface (`src/lib/chat/llm.ts`) already supports this — needs (a) a model/provider
-**selector** surfaced in the UI/policy, (b) additional adapters alongside `AnthropicLLM` (e.g.
-OpenAI/Gemini) behind the same `run()` contract, and (c) per-provider key resolution via
-`resolveApiKey(provider, userId)`. **Critical:** the §4 safety fixes (refusal/disclaimer, no
-fabrication) must hold on **every** provider path, not just MockLLM — they cannot live in one
-provider's narration.
+`ChatLLM` interface (`src/lib/chat/llm.ts`) already supports this.
+
+**Status — DONE (2026-06-25, `feat/chat-multi-provider`).** The Assistant now spans all **five**
+providers: OpenAI, Anthropic, xAI (Grok), Google Gemini, Mistral.
+- (a) **Selector** — the Assistant header dropdown (`app/ui/assistant-console.tsx`) offers a few
+  recommended models per provider (cost ↔ capability), sent as a per-request `model` hint and made
+  sticky via `localStorage` (no DB migration). `Settings → Connections` gained Anthropic / Gemini /
+  Mistral key rows.
+- (b) **Adapters** — no new classes needed: Anthropic keeps its Messages tool loop (`AnthropicLLM`);
+  Grok/Gemini/Mistral are **OpenAI-compatible**, so they reuse `OpenAILLM`'s chat/completions tool
+  loop with only a per-provider base URL + key. Routing is by model name
+  (`chatProviderForModel` → `llmForModel`).
+- (c) **Per-provider key resolution** — `resolveLlmCredential("openai"|"anthropic"|"xai"|"gemini"|
+  "mistral", userId)` (per-user-first, operator-funded failover). No cross-provider key borrowing:
+  a model whose provider has no key degrades to `MockLLM`.
+
+**Critical (still holds):** the §4 safety fixes (refusal/disclaimer, no fabrication) live in
+`SYSTEM_PROMPT` + the orchestrator post-check, NOT in any one provider's narration — so they apply
+uniformly across every provider path, including the four that share `OpenAILLM`.
 
 ---
 

@@ -1,7 +1,13 @@
-import { deleteInternalSetting, findInternalSettingByKeyLike, getInternalSetting, setInternalSetting } from "./db";
+import { deleteInternalSetting, findInternalSettingByKeyLike, getDb, getInternalSetting, setInternalSetting } from "./db";
+import { isLoopbackUrl, resolvePublicAppOrigin } from "./public-origin";
+export { resolvePublicAppOrigin } from "./public-origin";
 
 // CLIENT registration is global (one OAuth app client shared across users).
 const CLIENT_SETTING = "robinhood_mcp_oauth_client";
+export const ROBINHOOD_MCP_CALLBACK_PATH = "/api/auth/robinhood/callback";
+const LOCAL_DEFAULT_REDIRECT_URI = `http://localhost:3000${ROBINHOOD_MCP_CALLBACK_PATH}`;
+const DEFAULT_ROBINHOOD_MCP_RESOURCE = "https://agent.robinhood.com/mcp/trading";
+const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
 
 // Per-user key builders.  The state key embeds the random part last so LIKE
 // queries can scan by prefix without exposing userId in the OAuth redirect URL.
@@ -18,6 +24,7 @@ export interface McpOAuthClient {
   clientId: string;
   clientSecret?: string;
   tokenEndpointAuthMethod?: "none" | "client_secret_post";
+  redirectUri?: string;
 }
 
 export interface McpOAuthState {
@@ -41,11 +48,33 @@ export interface McpOAuthConfig {
   tokenUrl: string;
   registrationUrl?: string;
   redirectUri: string;
+  resource?: string;
   scope: string;
   clientName: string;
 }
 
-export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
+export interface McpOAuthConfigOptions {
+  redirectUri?: string;
+}
+
+export interface BuildMcpAuthorizationUrlOptions {
+  redirectUri?: string;
+}
+
+interface OAuthProtectedResourceMetadata {
+  resource?: string;
+  authorization_servers?: unknown;
+  scopes_supported?: unknown;
+}
+
+interface OAuthAuthorizationServerMetadata {
+  authorization_endpoint?: unknown;
+  token_endpoint?: unknown;
+  registration_endpoint?: unknown;
+  scopes_supported?: unknown;
+}
+
+export function getMcpOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuthConfig | undefined {
   const authorizationUrl = process.env.ROBINHOOD_MCP_AUTHORIZATION_URL;
   const tokenUrl = process.env.ROBINHOOD_MCP_TOKEN_URL;
   if (!authorizationUrl || !tokenUrl) return undefined;
@@ -53,14 +82,23 @@ export function getMcpOAuthConfig(): McpOAuthConfig | undefined {
     authorizationUrl,
     tokenUrl,
     registrationUrl: process.env.ROBINHOOD_MCP_CLIENT_REGISTRATION_URL || undefined,
-    redirectUri: process.env.ROBINHOOD_MCP_REDIRECT_URI || "http://localhost:3000/api/auth/robinhood/callback",
+    redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
+    resource: process.env.ROBINHOOD_MCP_RESOURCE || process.env.ROBINHOOD_MCP_URL || DEFAULT_ROBINHOOD_MCP_RESOURCE,
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
-    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Agentic Trading"
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Trading Dashboard"
   };
 }
 
-export async function buildMcpAuthorizationUrl(userId: string): Promise<string> {
-  const config = requireOAuthConfig();
+export function resolveMcpOAuthRedirectUri(request: Request): string {
+  const configured = process.env.ROBINHOOD_MCP_REDIRECT_URI?.trim();
+  const requestRedirectUri = new URL(ROBINHOOD_MCP_CALLBACK_PATH, resolvePublicAppOrigin(request)).toString();
+  if (!configured) return requestRedirectUri;
+  if (isLoopbackUrl(configured) && !isLoopbackUrl(requestRedirectUri)) return requestRedirectUri;
+  return configured;
+}
+
+export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcpAuthorizationUrlOptions = {}): Promise<string> {
+  const config = await requireOAuthConfig(options);
   const client = await getOrRegisterClient(config);
   const randomPart = randomBase64Url(32);
   const codeVerifier = randomBase64Url(64);
@@ -82,6 +120,7 @@ export async function buildMcpAuthorizationUrl(userId: string): Promise<string> 
   url.searchParams.set("state", randomPart);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
+  if (config.resource) url.searchParams.set("resource", config.resource);
   return url.toString();
 }
 
@@ -102,14 +141,12 @@ export async function completeMcpOAuthCallback(input: {
    * The userId resolved from the browser session that hit the callback. When provided, it
    * must match the userId the flow was initiated under (`stateBlob.userId`). This stops an
    * attacker-initiated flow (state bound to the attacker) from being completed in a victim's
-   * session — i.e. binding a freshly-minted broker token under the wrong userId. In
-   * production the callback request always carries a verified identity (middleware enforces
-   * it); in single-operator/dev both sides are 'local', so the check is a no-op there.
+   * session — i.e. binding a freshly-minted broker token under the wrong userId. OAuth
+   * provider callbacks may arrive without app-session identity, so callers can omit this
+   * and bind by the one-time server-side state row alone.
    */
   expectedUserId?: string;
 }): Promise<McpOAuthTokens> {
-  const config = requireOAuthConfig();
-
   // Recover the state blob by scanning on the random suffix — the redirect carries only the
   // random `state`, not the userId (the userId is never placed in the OAuth redirect URL).
   const found = findMcpOAuthStateByRandom(input.state);
@@ -123,6 +160,7 @@ export async function completeMcpOAuthCallback(input: {
     throw new Error("Robinhood MCP OAuth state does not belong to the current session.");
   }
 
+  const config = await requireOAuthConfig({ redirectUri: stateBlob.redirectUri });
   const client = await getOrRegisterClient(config);
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -131,6 +169,7 @@ export async function completeMcpOAuthCallback(input: {
     client_id: client.clientId,
     code_verifier: stateBlob.codeVerifier
   });
+  if (config.resource) body.set("resource", config.resource);
   if (client.clientSecret) body.set("client_secret", client.clientSecret);
 
   const tokens = await exchangeToken(config.tokenUrl, body);
@@ -174,6 +213,19 @@ export function clearMcpOAuthTokens(userId: string): void {
   deleteInternalSetting(tokenSettingKey(userId));
 }
 
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+export function clearMcpOAuthForUser(userId: string): { tokenDeleted: number; stateDeleted: number } {
+  const db = getDb();
+  const tokenDeleted = db.prepare("DELETE FROM settings WHERE key = ?").run(tokenSettingKey(userId)).changes;
+  const stateDeleted = db
+    .prepare("DELETE FROM settings WHERE key LIKE ? ESCAPE '\\'")
+    .run(`robinhood_mcp_oauth_state:${escapeLike(userId)}:%`).changes;
+  return { tokenDeleted, stateDeleted };
+}
+
 export function setMcpOAuthTokens(userId: string, tokens: McpOAuthTokens): void {
   setInternalSetting(tokenSettingKey(userId), tokens);
 }
@@ -192,13 +244,14 @@ export function tokenResponseToTokens(raw: Record<string, unknown>, existing?: M
 }
 
 async function refreshMcpAccessToken(userId: string, existing: McpOAuthTokens): Promise<string> {
-  const config = requireOAuthConfig();
+  const config = await requireOAuthConfig();
   const client = await getOrRegisterClient(config);
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: existing.refreshToken ?? "",
     client_id: client.clientId
   });
+  if (config.resource) body.set("resource", config.resource);
   if (client.clientSecret) body.set("client_secret", client.clientSecret);
   const tokens = await exchangeToken(config.tokenUrl, body, existing);
   setMcpOAuthTokens(userId, tokens);
@@ -206,18 +259,19 @@ async function refreshMcpAccessToken(userId: string, existing: McpOAuthTokens): 
 }
 
 async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClient> {
-  const configuredClientId = process.env.ROBINHOOD_MCP_CLIENT_ID;
-  if (configuredClientId) {
-    return {
-      clientId: configuredClientId,
-      clientSecret: process.env.ROBINHOOD_MCP_CLIENT_SECRET || undefined,
-      tokenEndpointAuthMethod: process.env.ROBINHOOD_MCP_CLIENT_SECRET ? "client_secret_post" : "none"
-    };
-  }
-
   const existing = getInternalSetting<McpOAuthClient>(CLIENT_SETTING);
-  if (existing) return existing;
-  if (!config.registrationUrl) {
+  if (config.registrationUrl) {
+    if (existing && existing.redirectUri === config.redirectUri) return existing;
+  } else {
+    if (existing) return existing;
+    const configuredClientId = process.env.ROBINHOOD_MCP_CLIENT_ID;
+    if (configuredClientId) {
+      return {
+        clientId: configuredClientId,
+        clientSecret: process.env.ROBINHOOD_MCP_CLIENT_SECRET || undefined,
+        tokenEndpointAuthMethod: process.env.ROBINHOOD_MCP_CLIENT_SECRET ? "client_secret_post" : "none"
+      };
+    }
     throw new Error("ROBINHOOD_MCP_CLIENT_ID or ROBINHOOD_MCP_CLIENT_REGISTRATION_URL is required for MCP OAuth.");
   }
 
@@ -237,7 +291,8 @@ async function getOrRegisterClient(config: McpOAuthConfig): Promise<McpOAuthClie
   const client: McpOAuthClient = {
     clientId: String(raw.client_id ?? ""),
     clientSecret: raw.client_secret ? String(raw.client_secret) : undefined,
-    tokenEndpointAuthMethod: raw.token_endpoint_auth_method === "client_secret_post" ? "client_secret_post" : "none"
+    tokenEndpointAuthMethod: raw.token_endpoint_auth_method === "client_secret_post" ? "client_secret_post" : "none",
+    redirectUri: config.redirectUri
   };
   if (!client.clientId) throw new Error("Robinhood MCP OAuth registration did not return a client_id.");
   setInternalSetting(CLIENT_SETTING, client);
@@ -259,10 +314,129 @@ function isExpiring(tokens: McpOAuthTokens): boolean {
   return new Date(tokens.expiresAt).getTime() - Date.now() < 60_000;
 }
 
-function requireOAuthConfig(): McpOAuthConfig {
-  const config = getMcpOAuthConfig();
-  if (!config) throw new Error("ROBINHOOD_MCP_AUTHORIZATION_URL and ROBINHOOD_MCP_TOKEN_URL are required for MCP OAuth.");
+async function requireOAuthConfig(options: McpOAuthConfigOptions = {}): Promise<McpOAuthConfig> {
+  const configured = getMcpOAuthConfig(options);
+  if (shouldDiscoverOAuthConfig()) {
+    try {
+      return await discoverMcpOAuthConfig(options);
+    } catch (error) {
+      if (isOAuthDiscoveryRequired()) throw error;
+    }
+  }
+  const config = configured;
+  if (!config) {
+    throw new Error(
+      "Robinhood MCP OAuth discovery failed and ROBINHOOD_MCP_AUTHORIZATION_URL / ROBINHOOD_MCP_TOKEN_URL are not configured."
+    );
+  }
   return config;
+}
+
+function shouldDiscoverOAuthConfig(): boolean {
+  const mode = normalizedDiscoveryMode();
+  if (mode === "off" || mode === "false" || mode === "0") return false;
+  if (mode === "on" || mode === "true" || mode === "1" || mode === "required") return true;
+
+  const hasManualEndpoints = Boolean(process.env.ROBINHOOD_MCP_AUTHORIZATION_URL && process.env.ROBINHOOD_MCP_TOKEN_URL);
+  const configuredMcpUrl = process.env.ROBINHOOD_MCP_URL?.trim();
+  return !hasManualEndpoints || Boolean(configuredMcpUrl && isOfficialRobinhoodMcpUrl(configuredMcpUrl));
+}
+
+function isOAuthDiscoveryRequired(): boolean {
+  return normalizedDiscoveryMode() === "required";
+}
+
+function normalizedDiscoveryMode(): string | undefined {
+  return process.env.ROBINHOOD_MCP_OAUTH_DISCOVERY?.trim().toLowerCase();
+}
+
+function isOfficialRobinhoodMcpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.origin === "https://agent.robinhood.com" && url.pathname === "/mcp/trading";
+  } catch {
+    return false;
+  }
+}
+
+async function discoverMcpOAuthConfig(options: McpOAuthConfigOptions = {}): Promise<McpOAuthConfig> {
+  const mcpUrl = process.env.ROBINHOOD_MCP_URL || DEFAULT_ROBINHOOD_MCP_RESOURCE;
+  const metadataUrl = await discoverProtectedResourceMetadataUrl(mcpUrl);
+  const protectedResource = await fetchJson<OAuthProtectedResourceMetadata>(metadataUrl, "Robinhood MCP protected-resource metadata");
+  const resource = typeof protectedResource.resource === "string" && protectedResource.resource ? protectedResource.resource : mcpUrl;
+  const authorizationServer = firstString(protectedResource.authorization_servers);
+  if (!authorizationServer) throw new Error("Robinhood MCP protected-resource metadata did not include an authorization server.");
+
+  const authServerMetadataUrl = oauthAuthorizationServerMetadataUrl(authorizationServer);
+  const authorizationServerMetadata = await fetchJson<OAuthAuthorizationServerMetadata>(
+    authServerMetadataUrl,
+    "Robinhood MCP authorization-server metadata"
+  );
+  const authorizationUrl = firstString(authorizationServerMetadata.authorization_endpoint);
+  const tokenUrl = firstString(authorizationServerMetadata.token_endpoint);
+  if (!authorizationUrl || !tokenUrl) {
+    throw new Error("Robinhood MCP authorization-server metadata did not include OAuth authorization and token endpoints.");
+  }
+
+  return {
+    authorizationUrl,
+    tokenUrl,
+    registrationUrl: firstString(authorizationServerMetadata.registration_endpoint),
+    redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
+    resource: process.env.ROBINHOOD_MCP_RESOURCE || resource,
+    scope: process.env.ROBINHOOD_MCP_SCOPES || firstString(authorizationServerMetadata.scopes_supported) || "tools:call",
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Trading Dashboard"
+  };
+}
+
+async function discoverProtectedResourceMetadataUrl(mcpUrl: string): Promise<string> {
+  const response = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      "MCP-Protocol-Version": process.env.ROBINHOOD_MCP_PROTOCOL_VERSION || DEFAULT_MCP_PROTOCOL_VERSION
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: process.env.ROBINHOOD_MCP_PROTOCOL_VERSION || DEFAULT_MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "agentic-trading", version: "0.0.0" }
+      }
+    })
+  });
+  const authenticate = response.headers.get("www-authenticate");
+  const metadataUrl = parseResourceMetadataUrl(authenticate);
+  if (!metadataUrl) throw new Error("Robinhood MCP did not advertise OAuth resource metadata.");
+  return metadataUrl;
+}
+
+function parseResourceMetadataUrl(header: string | null): string | undefined {
+  if (!header) return undefined;
+  const quoted = header.match(/resource_metadata="([^"]+)"/i);
+  if (quoted?.[1]) return quoted[1];
+  const bare = header.match(/resource_metadata=([^,\s]+)/i);
+  return bare?.[1];
+}
+
+function oauthAuthorizationServerMetadataUrl(issuer: string): string {
+  const url = new URL(issuer);
+  return new URL(`/.well-known/oauth-authorization-server${url.pathname}`, url.origin).toString();
+}
+
+async function fetchJson<T>(url: string, label: string): Promise<T> {
+  const response = await fetch(url, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}.`);
+  return (await response.json()) as T;
+}
+
+function firstString(value: unknown): string | undefined {
+  if (typeof value === "string" && value) return value;
+  if (!Array.isArray(value)) return undefined;
+  return value.find((item): item is string => typeof item === "string" && item.length > 0);
 }
 
 function randomBase64Url(length: number): string {

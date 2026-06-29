@@ -43,14 +43,28 @@ market. It can:
 It is built so that **doing nothing dangerous is the default.** There are three
 modes, and you have to deliberately move up each step:
 
-1. **Test mode (default):** A pretend account on your own computer. Fake cash,
-   fake fills. Real market data, but no real money can move. This is where it
-   lives unless you change it.
-2. **Paper mode:** A practice account hosted by a real broker (e.g. Alpaca's
-   "paper" sandbox). Still fake money, but the order actually travels to a
-   broker's system, so it is a more realistic rehearsal.
+1. **Test mode (default) — "Test — Local Sim":** A funded local simulator on your
+   own computer. Simulated cash (a configurable starting balance, default
+   $100,000), simulated fills, real market data — no real money can move and no
+   broker connection is required. This is where it lives unless you change it.
+   **Caveat:** it is a *simplified* simulation — market impact, partial fills, and
+   realistic slippage are not modeled, so a third-party paper account (Paper mode,
+   below) is **likely more realistic** than this local simulation. Do not treat
+   local-sim results as predictive of real performance.
+2. **Paper mode (recommended for realistic practice):** A practice account hosted
+   by a real broker (e.g. Alpaca's "paper" sandbox). Still fake money, but the
+   order actually travels to a broker's system — realistic fills, latency, and
+   market hours — so it is a **more realistic rehearsal than the local simulator**.
 3. **Brokerage mode:** A real account with real money. Orders here can actually
-   buy and sell, and only when *every* safety rule allows it.
+   buy and sell, and only when *every* safety rule allows it. Approving a live
+   proposal now also requires a typed confirmation tied to the proposal, account,
+   execution mode, and estimated order size, so a stale tab or script cannot
+   approve a real-money order with an empty POST.
+
+The app records the exact execution mode (`test/local`, `broker/paper`, or
+`broker/live`) next to proposals, fills, and portfolio snapshots. This matters
+because both local Test and broker Paper are "not real money," but they are not
+the same thing; the learning and accounting layers now keep that distinction.
 
 > **Honesty note:** Most of the value and most of the testing happens in Test
 > and Paper mode. Real-money mode is intentionally hard to reach and wrapped in
@@ -299,6 +313,10 @@ This section is the point of the document. Read it.
 - **Short selling is high-risk and not fully proven.** Guardrails exist, but the
   accounting and broker behavior for short/cover trades are flagged in the code
   as needing more verification before being trusted with real money.
+- **Candidate weight changes are still not fully proven out-of-sample.** The app
+  has an IC/OOS harness, but proposed scoring-weight patches still need a true
+  candidate-vs-current-policy validation path before they should be treated as
+  proven improvements.
 
 ### About the plumbing
 - **It runs as a single local process.** The scheduler isn't distributed or
@@ -352,6 +370,15 @@ This section is the point of the document. Read it.
 
 ## Changelog
 
+- **2026-06-23** — Expert safety/UI pass: persisted execution mode separately
+  from paper/live source buckets; hardened Alpaca bracket-dollar orders; kept
+  close-only protective stop/reconciliation maintenance alive; added server-side
+  typed confirmation for live approvals; made the mode banner compact-only
+  instead of hideable; added a readiness strip; tightened consent failure
+  behavior; repaired Litestream command/env drift; and fixed vector credential
+  lookup so raw app user IDs are used for key resolution while sanitized IDs
+  remain in vector metadata/filters. Remaining weaknesses now explicitly include
+  candidate-vs-baseline OOS validation and richer RAG/provider diagnostics.
 - **2026-06-21** — Initial plain-English framework written, summarizing the
   design across `PLAN.md`, `PROJECT.md`, `README.md`, and the phase docs
   (especially `docs/phase-7-strategy.md` for the learning loop, `docs/phase-4-…`

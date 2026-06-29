@@ -9,7 +9,8 @@
 #   2. Fetches origin
 #   3. Merges origin/main (fast-forward or real merge; aborts on conflict)
 #   4. Runs tsc, npm test, npm run build — all must pass
-#   5. Refuses if any .github/workflows/ files are in the diff (no workflow scope)
+#   5. Allows .github/workflows/ changes when the gh token has the 'workflow' scope; only
+#      blocks them when the scope is missing (then: gh auth refresh -s workflow, or ci-pending/)
 #   6. Pushes the agent branch and opens a PR via gh
 #
 # Safe to re-run: idempotent.  Re-running after fixing a conflict or test
@@ -18,6 +19,9 @@
 # Emergency escape hatch (HUMANS ONLY):
 #   LAND_SKIP_VERIFY=1 bash scripts/land.sh   # skips tsc/test/build
 #   LAND_FORCE_PUSH=1  bash scripts/land.sh   # skips worktree guard (rare)
+#   LAND_ALLOW_DIRTY=1 bash scripts/land.sh    # bypasses dirty-tree guard after review
+#   LAND_ALLOW_STALE_OVERLAP=1 bash scripts/land.sh
+#                                             # bypasses stale-overlap guard after review
 
 set -euo pipefail
 
@@ -62,6 +66,14 @@ fi
 
 info "Landing branch '${CURRENT_BRANCH}' from worktree '${CURRENT_WORKTREE}'"
 
+if [[ -z "${LAND_ALLOW_DIRTY:-}" ]]; then
+  if [[ -n "$(git status --porcelain)" ]]; then
+    die "Working tree has uncommitted changes. Commit, stash, or clean them before landing.
+  This script only pushes committed branch history, so dirty files would otherwise be easy to miss.
+  To override in a genuine emergency: LAND_ALLOW_DIRTY=1 bash scripts/land.sh"
+  fi
+fi
+
 # ── 1b. self-heal the pre-push hook ────────────────────────────────────────
 # core.hooksPath is per-worktree and NOT inherited, so a worktree created outside
 # setup-agent-previews.sh would silently have NO hooks — the direct-push-to-main
@@ -82,6 +94,27 @@ fi
 # ── 2. fetch origin ────────────────────────────────────────────────────────
 info "Fetching origin..."
 git fetch origin
+
+# ── 2b. stale-overlap guard ────────────────────────────────────────────────
+# A branch can auto-merge cleanly while still reintroducing stale UI text or
+# behavior if both it and main edited the same files since the branch forked.
+# Stop before the automatic merge and require a deliberate review of overlaps.
+if [[ -z "${LAND_ALLOW_STALE_OVERLAP:-}" ]]; then
+  MERGE_BASE="$(git merge-base HEAD origin/main)"
+  BRANCH_FILES="$(git diff --name-only "${MERGE_BASE}..HEAD" | sort -u)"
+  MAIN_FILES="$(git diff --name-only "${MERGE_BASE}..origin/main" | sort -u)"
+  OVERLAP_FILES="$(comm -12 <(printf '%s\n' "$BRANCH_FILES") <(printf '%s\n' "$MAIN_FILES") | sed '/^$/d')"
+
+  if [[ -n "$OVERLAP_FILES" ]]; then
+    die "Your branch and origin/main both changed these files since the branch forked:
+$(echo "$OVERLAP_FILES" | sed 's/^/  /')
+
+Auto-merging this can silently land stale text or behavior even without a Git conflict.
+Manually merge/rebase origin/main, review each overlapping file, commit the result, then re-run.
+After that deliberate review, bypass only if needed:
+  LAND_ALLOW_STALE_OVERLAP=1 bash scripts/land.sh"
+  fi
+fi
 
 # ── 3. merge origin/main into current branch ──────────────────────────────
 info "Merging origin/main..."
@@ -124,16 +157,23 @@ else
   ok "  build clean."
 fi
 
-# ── 5. workflow-scope guard ────────────────────────────────────────────────
+# ── 5. workflow-scope guard (scope-aware) ──────────────────────────────────
+# Pushing .github/workflows/ requires the 'workflow' OAuth scope on the token git pushes with.
+# `git push` here goes through `gh auth git-credential`, so the gh token's scopes are what matter.
+# Only block when that scope is genuinely MISSING — when it's present (the common case now), allow
+# the push instead of forcing a needless ci-pending/ detour.
 WORKFLOW_FILES="$(git diff --name-only "origin/main...HEAD" -- '.github/workflows/' 2>/dev/null || true)"
 if [[ -n "$WORKFLOW_FILES" ]]; then
-  die "Your branch modifies .github/workflows/ files:
+  if gh auth status 2>&1 | grep -q "Token scopes:.*'workflow'"; then
+    info "Diff includes .github/workflows/ — gh token has the 'workflow' scope, so the push is allowed:"
+    echo "$WORKFLOW_FILES" | sed 's/^/  /'
+  else
+    die "Your branch modifies .github/workflows/ files:
 $(echo "$WORKFLOW_FILES" | sed 's/^/  /')
-Pushing these requires 'workflow' scope, which the current gh token lacks.
-Instead, place the file(s) in ci-pending/ and note them in your rollout doc.
-The human reviewer can copy them to .github/workflows/ and push with their token,
-or run:  gh auth refresh -s workflow
-Then re-run land.sh.  If you intended ci-pending/ staging, move them there first."
+Pushing these requires the 'workflow' OAuth scope, which the current gh token lacks.
+Add it once with:  gh auth refresh -h github.com -s workflow
+(or stage the file(s) under ci-pending/ for a human to move). Then re-run land.sh."
+  fi
 fi
 
 # ── 6. push branch + open PR ──────────────────────────────────────────────

@@ -115,7 +115,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
         placeholder: isPushover ? "u1a2b3c4d5..." : "alerts-yourname-7c3f",
         hint: isPushover
           ? "Install Pushover, then paste your user key. Notices arrive on your phone."
-          : `Pick a hard-to-guess topic, then subscribe to it in the ntfy app (server: ${cfg.push.ntfyServer}).`
+          : `Free — no key needed. Install the ntfy app, subscribe to a hard-to-guess topic, then paste that exact topic here (server: ${cfg.push.ntfyServer}).`
       };
     },
     async send(target, msg, { cfg, fetchImpl, timeoutMs }) {
@@ -171,7 +171,7 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
     target: (p) => p.phone || "",
     describe: (cfg) => ({
       id: "sms",
-      label: "SMS (Twilio)",
+      label: "SMS",
       available: CHANNELS.sms.available(cfg),
       targetField: "phone",
       targetLabel: "Mobile number",

@@ -137,4 +137,49 @@ describe("robinhood mcp transport", () => {
 
     await expect(callRobinhoodMcpTool("user-a", "get_accounts", {})).rejects.toThrow("not authorized");
   });
+
+  it("parses cash-only Robinhood portfolio shapes without zeroing balances", async () => {
+    const { portfolioFromRobinhoodRaw } = await import("../src/lib/robinhood");
+
+    const portfolio = portfolioFromRobinhoodRaw("713670347", {
+      buying_power: { buying_power: "100.00", display_currency: "USD" },
+      cash_balances: { cash_available_for_withdrawal: "$100.00" },
+      equity_market_value: "0"
+    });
+
+    expect(portfolio).toMatchObject({
+      accountNumber: "713670347",
+      totalMarketValue: 100,
+      buyingPower: 100,
+      equityMarketValue: 0,
+      cash: 100
+    });
+  });
+
+  it("infers a cash-only total from buying power when Robinhood omits cash fields", async () => {
+    const { portfolioFromRobinhoodRaw } = await import("../src/lib/robinhood");
+
+    const portfolio = portfolioFromRobinhoodRaw("713670347", {
+      buyingPower: { amount: "100.00" },
+      stock_value: "0.00",
+      options_value: "0.00"
+    });
+
+    expect(portfolio.totalMarketValue).toBe(100);
+    expect(portfolio.cash).toBe(100);
+    expect(portfolio.buyingPower).toBe(100);
+  });
+
+  it("does not let an explicit zero total override positive cash", async () => {
+    const { portfolioFromRobinhoodRaw } = await import("../src/lib/robinhood");
+
+    const portfolio = portfolioFromRobinhoodRaw("713670347", {
+      total_value: "0.00",
+      buying_power: { amount: "100.00" },
+      cash: "100.00"
+    });
+
+    expect(portfolio.totalMarketValue).toBe(100);
+    expect(portfolio.cash).toBe(100);
+  });
 });

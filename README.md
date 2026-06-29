@@ -68,15 +68,29 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`.
+For one-off local development, open `http://127.0.0.1:3000`.
 
-For Codex sessions, use the pinned launcher instead:
+On the host machine, prefer the PM2-managed previews:
+
+- Production deployed app: `https://trading.jays.services` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
+- Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Agentic Trading`, pm2 `trading-main`)
+- Codex live preview: `https://codex.jays.services` -> `http://localhost:4101` (`~/apps/trading-codex`, pm2 `trading-codex`)
+
+Do not create a second dev/beta hostname for this lane; use `trading-beta.jays.services`.
+
+Bootstrap or repair those PM2 previews with:
+
+```bash
+bash scripts/setup-agent-previews.sh
+```
+
+For older disposable Codex sessions, the legacy pinned launcher is still available:
 
 ```bash
 npm run dev:codex
 ```
 
-Open `http://127.0.0.1:3001`. The Codex launcher frees only port `3001` and
+Open `http://127.0.0.1:3001`. The legacy Codex launcher frees only port `3001` and
 retries there if Next initially falls back to another port.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
@@ -189,23 +203,35 @@ ROBINHOOD_MCP_AUTH_TOKEN=...
 The adapter calls MCP `tools/call` using JSON-RPC.
 
 For hosted MCP servers that require OAuth instead of a static bearer token, leave
-`ROBINHOOD_MCP_AUTH_TOKEN` empty and configure:
+`ROBINHOOD_MCP_AUTH_TOKEN` empty. For Robinhood's official Trading MCP, the app
+uses the documented MCP link (`ROBINHOOD_MCP_URL`) as the source of truth and
+discovers OAuth endpoints from the MCP auth challenge:
 
 ```bash
-ROBINHOOD_MCP_AUTHORIZATION_URL=https://...
-ROBINHOOD_MCP_TOKEN_URL=https://...
-ROBINHOOD_MCP_CLIENT_ID=...
-ROBINHOOD_MCP_CLIENT_SECRET=... # only when required by the provider
-ROBINHOOD_MCP_REDIRECT_URI=http://localhost:3000/api/auth/robinhood/callback
-ROBINHOOD_MCP_SCOPES=tools:call
+ROBINHOOD_MCP_URL=https://agent.robinhood.com/mcp/trading
+ROBINHOOD_MCP_RESOURCE=https://agent.robinhood.com/mcp/trading
+# Optional. Leave blank in hosted environments; the app derives the public callback URL.
+ROBINHOOD_MCP_REDIRECT_URI=
+ROBINHOOD_MCP_SCOPES=internal
 ```
 
-If the provider supports dynamic client registration, use
-`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` instead of `ROBINHOOD_MCP_CLIENT_ID`.
+For custom or non-discoverable MCP providers, set
+`ROBINHOOD_MCP_OAUTH_DISCOVERY=off` and configure
+`ROBINHOOD_MCP_AUTHORIZATION_URL`, `ROBINHOOD_MCP_TOKEN_URL`, and optionally
+`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` / `ROBINHOOD_MCP_CLIENT_ID`.
+When discovery is enabled for the official Robinhood MCP URL, discovered OAuth
+endpoints take precedence over manual endpoint env values. `ROBINHOOD_MCP_RESOURCE`
+defaults to `ROBINHOOD_MCP_URL` and is sent as the OAuth resource indicator on
+authorization and token requests.
 Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
 or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
 settings table.
+
+For production behind the Cloudflare tunnel, do not set a localhost
+`ROBINHOOD_MCP_REDIRECT_URI`; the app will use `x-forwarded-host`,
+`NEXT_PUBLIC_SITE_URL`, or `https://trading.jays.services` for
+`/api/auth/robinhood/callback`.
 
 ## Tests
 

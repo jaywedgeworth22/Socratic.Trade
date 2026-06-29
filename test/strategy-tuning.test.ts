@@ -5,6 +5,16 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
 
+// Hoist OOS mock so we can control runWalkForwardOOS per-test.
+// Default: return null (insufficient snapshot history) so existing tests are unaffected.
+const mockRunWalkForwardOOS = vi.fn<() => Promise<import("../src/lib/backtest").OOSResult | null>>();
+mockRunWalkForwardOOS.mockResolvedValue(null);
+
+vi.mock("../src/lib/backtest", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/backtest")>();
+  return { ...actual, runWalkForwardOOS: mockRunWalkForwardOOS };
+});
+
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-tuning-${randomUUID()}.db`)}`;
 });
@@ -13,6 +23,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_URL;
+  // Reset OOS mock to "no data" after each test.
+  mockRunWalkForwardOOS.mockResolvedValue(null);
 });
 
 describe("proposeStrategyTuning", () => {
@@ -82,7 +94,11 @@ describe("proposeStrategyTuning", () => {
       ...DEFAULT_POLICY,
       accountNumber: "TUNE-LLM",
       paperMode: true,
-      scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
+      // Classic model: this asserts temperature + exact caps (reasoning bounds → test/llm-request.test.ts).
+      llmModel: "gpt-4.1-mini",
+      scoringWeights: { ...DEFAULT_POLICY.scoringWeights },
+      // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
+      tuning: { oosWithholdUnvalidated: false }
     });
     // Seed 20 closed lots so the §3.E weight-shift gate passes and the LLM's
     // sanitized scoringWeights survive (the gate is exercised separately below).
@@ -201,7 +217,8 @@ describe("proposeStrategyTuning", () => {
     insertFillEvent({
       userId,
       accountNumber,
-      source: "live",
+      source: "paper",
+      executionMode: "broker/paper",
       symbol: "AAPL",
       side: "buy",
       quantity: 1,
@@ -305,7 +322,8 @@ describe("proposeStrategyTuning", () => {
     setStrategyPrompt("CLAMP TEST PROMPT");
     // Use custom weights so we can assert the clamp precisely.
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     // Seed 20 closed lots so the §3.E gate passes.
     let n = 0;
     for (let i = 0; i < 20; i++) {
@@ -351,7 +369,8 @@ describe("localRulesProposal factor scorecard integration", () => {
     delete process.env.OPENAI_API_KEY;
     setStrategyPrompt("FACTOR SCORECARD TEST");
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-FSCORE", paperMode: true, scoringWeights: customWeights });
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert the weight nudge
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-FSCORE", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     // Seed 20 losing closed lots. All fills have weak/negative outcomes to trigger
     // weakPerformance=true and ensure enoughLotsForWeights=true.
     let t = 0;
@@ -373,5 +392,218 @@ describe("localRulesProposal factor scorecard integration", () => {
     expect(w.quality).toBeCloseTo(customWeights.quality + 0.1, 5);
     expect(w.momentum).toBeCloseTo(Math.max(0, customWeights.momentum - 0.1), 5);
     expect(proposal.cautions.join(" ")).toMatch(/Manual approval/i);
+  });
+});
+
+describe("OOS walk-forward gate (Task 1)", () => {
+  it("strips scoringWeights and emits a caution when OOS IC does NOT improve over default", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("OOS GATE TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-NOIMPROVE", paperMode: true, scoringWeights: customWeights });
+    // Seed 20 losing lots so the §3.E gate passes and local-rules proposes weight changes.
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `O${i}`;
+      insertFillEvent({ accountNumber: "OOS-NOIMPROVE", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "OOS-NOIMPROVE", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+
+    // OOS result where the CANDIDATE (proposed) weights IC (0.05) does NOT beat the current/baseline
+    // weights IC (0.10). The gate now reads oosICCandidate vs oosICBaseline (not oosIC vs default).
+    mockRunWalkForwardOOS.mockResolvedValueOnce({
+      trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
+      trainICs: [], icWeights: customWeights as any,
+      oosIC: 0.99, oosICDefault: 0.01,        // data-derived vs default — must be IGNORED by the gate now
+      oosICCandidate: 0.05,                    // proposed weights: worse than current
+      oosICBaseline: 0.10,                     // current weights: better — so OOS gate fires
+      oosICIR: 0.3,
+      equityCurve: [], annualizedReturn: null, benchmarkAnnualizedReturn: null,
+      activeReturn: null, sharpeRatio: null, maxDrawdownPct: 5,
+      note: "test"
+    });
+
+    const proposal = await proposeStrategyTuning();
+
+    // The gate must validate the PROPOSED weights, not the data-derived IC weights: it should be
+    // called with candidateWeights (proposed merged over current) and baselineWeights (= current).
+    const oosArgs = mockRunWalkForwardOOS.mock.calls.at(-1) as unknown as [string, { candidateWeights?: Record<string, number>; baselineWeights?: unknown }];
+    expect(oosArgs?.[1]?.baselineWeights).toEqual(customWeights);
+    // The candidate must be the proposed delta merged over the baseline — NOT a copy of the baseline
+    // (guards against a regression where baseline is accidentally passed as the candidate).
+    expect(oosArgs?.[1]?.candidateWeights).toBeDefined();
+    expect(oosArgs?.[1]?.candidateWeights).not.toEqual(customWeights);
+
+    // Weights should be stripped by the OOS gate (candidate 0.05 < current 0.10), DESPITE oosIC>default.
+    expect(proposal.proposedPatch.scoringWeights).toBeUndefined();
+    // A caution explaining the OOS strip must be present.
+    const cautions = proposal.cautions.join(" ");
+    expect(cautions).toMatch(/did not improve OOS IC over the current weights/i);
+    expect(cautions).toMatch(/IC=/i);
+  });
+
+  it("keeps scoringWeights and attaches an OOS info-caution when OOS IC DOES improve", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("OOS IMPROVE TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-IMPROVE", paperMode: true, scoringWeights: customWeights });
+    // 20 losing lots to trigger weight nudges via local-rules.
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `P${i}`;
+      insertFillEvent({ accountNumber: "OOS-IMPROVE", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "OOS-IMPROVE", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+
+    // OOS result where the CANDIDATE (proposed) weights IC (0.15) beats the current/baseline IC (0.10).
+    mockRunWalkForwardOOS.mockResolvedValueOnce({
+      trainObservations: 100, testObservations: 40, trainDates: 10, testDates: 4,
+      trainICs: [], icWeights: customWeights as any,
+      oosIC: 0.01, oosICDefault: 0.99,        // data-derived vs default — must be IGNORED by the gate now
+      oosICCandidate: 0.15,                    // proposed weights: better than current
+      oosICBaseline: 0.10,                     // current weights: worse — OOS gate passes
+      oosICIR: 0.8,
+      equityCurve: [], annualizedReturn: null, benchmarkAnnualizedReturn: null,
+      activeReturn: null, sharpeRatio: null, maxDrawdownPct: 3,
+      note: "test"
+    });
+
+    const proposal = await proposeStrategyTuning();
+
+    // The new path is taken: candidate (proposed merged over current) + baseline (= current) passed in.
+    const oosArgs = mockRunWalkForwardOOS.mock.calls.at(-1) as unknown as [string, { candidateWeights?: Record<string, number>; baselineWeights?: unknown }];
+    expect(oosArgs?.[1]?.baselineWeights).toEqual(customWeights);
+    expect(oosArgs?.[1]?.candidateWeights).not.toEqual(customWeights);
+
+    // Weights should be kept (candidate 0.15 > current 0.10), DESPITE oosIC<default.
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined();
+    // An OOS info-caution must be present.
+    const cautions = proposal.cautions.join(" ");
+    expect(cautions).toMatch(/OOS-validated|improved OOS IC over the current/i);
+  });
+
+  it("keeps proposed weights but flags them NOT out-of-sample validated when OOS has insufficient snapshots", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("OOS NULL TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    // oosWithholdUnvalidated: false → legacy keep-behavior (this test documents that opt-out path)
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-NULL", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `N${i}`;
+      insertFillEvent({ accountNumber: "OOS-NULL", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "OOS-NULL", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+    mockRunWalkForwardOOS.mockResolvedValueOnce(null); // insufficient snapshot history
+
+    const proposal = await proposeStrategyTuning();
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined(); // weights kept (gate could not run)
+    const cautions = proposal.cautions.join(" ");
+    expect(cautions).toMatch(/NOT out-of-sample validated/i);
+    expect(cautions).toMatch(/insufficient snapshot history/i);
+  });
+
+  it("flags NOT out-of-sample validated when the OOS run throws", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("OOS THROW TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    // oosWithholdUnvalidated: false → legacy keep-behavior (this test documents that opt-out path)
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "OOS-THROW", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
+    let t = 0;
+    for (let i = 0; i < 20; i++) {
+      const sym = `E${i}`;
+      insertFillEvent({ accountNumber: "OOS-THROW", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+      insertFillEvent({ accountNumber: "OOS-THROW", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+    mockRunWalkForwardOOS.mockRejectedValueOnce(new Error("network down"));
+
+    const proposal = await proposeStrategyTuning();
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined();
+    expect(proposal.cautions.join(" ")).toMatch(/NOT out-of-sample validated.*data fetch failed/i);
+  });
+});
+
+describe("regime-segmented tuning evidence (Task 2)", () => {
+  it("uses same-regime evidence when the regime bucket has enough lots", async () => {
+    const { insertFillEvent, audit, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("REGIME SEG TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert weights are defined
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "REGIME-SEG", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
+
+    // Seed 20+ closed lots with a known regime ("Tech-Bull") so the regime bucket is large enough.
+    // Most-recent lot has regime "Tech-Bull" → currentRegime = "Tech-Bull".
+    let t = 0;
+    for (let i = 0; i < 22; i++) {
+      const sym = `R${i}`;
+      const regime = "Tech-Bull";
+      insertFillEvent({ accountNumber: "REGIME-SEG", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z`, raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: regime } } });
+      insertFillEvent({ accountNumber: "REGIME-SEG", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+    // Seed signal_snapshot so factorScorecard can be populated.
+    const runId = `run-regime-${randomUUID()}`;
+    audit("signal_snapshot", {
+      runId,
+      signals: Array.from({ length: 22 }, (_, i) => ({
+        symbol: `R${i}`,
+        chosen: true,
+        factorBreakdown: { liquidity: 10, momentum: 90, value: 30, quality: 20, volatility: 15, sentiment: 25, positioning: 40, diversification: 5, weightedTotal: 70 }
+      }))
+    });
+
+    const proposal = await proposeStrategyTuning();
+
+    // With 22 lots in the "Tech-Bull" regime bucket (>= minLotsForWeights=20), the regime
+    // scorecard path should be taken. The function should still return a valid proposal.
+    expect(proposal.generatedBy).toBe("local_rules");
+    // Weights should be defined (gate satisfied — 22 lots total).
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined();
+  });
+
+  it("falls back to all-regime evidence when same-regime bucket is too thin", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    delete process.env.OPENAI_API_KEY;
+    setStrategyPrompt("REGIME FALLBACK TEST");
+    const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
+    // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert weights are defined
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "REGIME-FB", paperMode: true, scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
+
+    // 20 total lots in mixed regimes (5 "Tech-Bull" + 15 "Choppy"), so Tech-Bull bucket has only 5.
+    // Most-recent lot has regime "Tech-Bull" → currentRegime = "Tech-Bull" → bucket = 5 < 20 → fallback.
+    let t = 0;
+    for (let i = 0; i < 15; i++) {
+      const sym = `RB${i}`;
+      insertFillEvent({ accountNumber: "REGIME-FB", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z`, raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: "Choppy" } } });
+      insertFillEvent({ accountNumber: "REGIME-FB", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+    for (let i = 0; i < 5; i++) {
+      const sym = `RBT${i}`;
+      insertFillEvent({ accountNumber: "REGIME-FB", source: "paper", symbol: sym, side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z`, raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: "Tech-Bull" } } });
+      insertFillEvent({ accountNumber: "REGIME-FB", source: "paper", symbol: sym, side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: `2026-06-15T00:0${Math.floor(t / 60)}:${String(t++ % 60).padStart(2, "0")}.000Z` });
+    }
+
+    const proposal = await proposeStrategyTuning();
+
+    // 20 total lots → gate passes. Current regime "Tech-Bull" bucket has 5 → fallback to all-regime.
+    expect(proposal.generatedBy).toBe("local_rules");
+    // Weights defined (overall gate satisfied by 20 total lots).
+    expect(proposal.proposedPatch.scoringWeights).toBeDefined();
   });
 });

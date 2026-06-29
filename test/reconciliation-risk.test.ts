@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { reconcilePendingFills, generateProactiveRiskProposals, redTeamConvictionThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
+import { reconcilePendingFills, generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity, redTeamConvictionThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
 import { insertFillEvent, listFillEvents } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
@@ -151,10 +151,69 @@ describe("reconcilePendingFills", () => {
     expect(matched!.quantity).toBe(2);
     expect(matched!.notional).toBeCloseTo(802); // 2 * 401
   });
+
+  it("reconciles broker-paper pending fills even after many older paper fills", async () => {
+    const accountNumber = `APCA-PAPER-${randomUUID()}`;
+    for (let i = 0; i < 510; i++) {
+      insertFillEvent({
+        accountNumber,
+        source: "paper",
+        executionMode: "test/local",
+        symbol: "AAPL",
+        side: "buy",
+        quantity: 1,
+        price: 100,
+        notional: 100,
+        status: "filled",
+        filledAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString()
+      });
+    }
+    const fillId = randomUUID();
+    const brokerOrderId = "paper-broker-order-1";
+    insertFillEvent({
+      id: fillId,
+      accountNumber,
+      source: "paper",
+      executionMode: "broker/paper",
+      symbol: "TSLA",
+      side: "buy",
+      quantity: 2,
+      price: 200,
+      notional: 400,
+      status: "pending_reconciliation",
+      brokerOrderId,
+      filledAt: "2026-06-15T12:00:00.000Z"
+    });
+
+    const mockGateway = createMockGateway({
+      getEquityOrders: async () => [
+        {
+          id: brokerOrderId,
+          symbol: "TSLA",
+          side: "buy",
+          type: "market",
+          state: "filled",
+          filledQuantity: 2,
+          averagePrice: 201,
+          createdAt: new Date().toISOString(),
+          updatedAt: "2026-06-15T12:05:00.000Z"
+        } as EquityOrder
+      ]
+    });
+
+    await reconcilePendingFills(mockGateway, accountNumber);
+
+    const matched = listFillEvents(accountNumber, "paper", 600).find((f) => f.id === fillId);
+    expect(matched).toBeDefined();
+    expect(matched!.status).toBe("filled");
+    expect(matched!.price).toBe(201);
+    expect(matched!.notional).toBe(402);
+    expect(matched!.executionMode).toBe("broker/paper");
+  });
 });
 
 describe("generateProactiveRiskProposals", () => {
-  it("proposes sells when stop-loss or take-profit triggers are hit", () => {
+  it("proposes full-position sells when stop-loss triggers (take-profit is handled by planTakeProfitTrims)", () => {
     const policy: TradingPolicy = {
       ...DEFAULT_POLICY,
       riskRules: {
@@ -166,7 +225,7 @@ describe("generateProactiveRiskProposals", () => {
     const positions = [
       { symbol: "AAPL", quantity: 10, averageCost: 200, marketValue: 2000 }, // No breach
       { symbol: "MSFT", quantity: 5, averageCost: 400, marketValue: 1800 }, // Down 10% (breaches 8% stop-loss)
-      { symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1000 }  // Up 25% (breaches 20% take-profit)
+      { symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1000 }  // Up 25% (take-profit → NOT here anymore)
     ];
 
     const currentPrices = {
@@ -177,19 +236,93 @@ describe("generateProactiveRiskProposals", () => {
 
     const proposals = generateProactiveRiskProposals(positions, currentPrices, policy);
 
-    expect(proposals).toHaveLength(2);
-    
+    // Only the stop-loss exit; the take-profit name is no longer emitted by this generator.
+    expect(proposals).toHaveLength(1);
     const msft = proposals.find((p) => p.symbol === "MSFT");
     expect(msft).toBeDefined();
     expect(msft!.side).toBe("sell");
     expect(msft!.quantity).toBe(5);
     expect(msft!.rationale).toContain("stop-loss");
+    expect(proposals.find((p) => p.symbol === "NVDA")).toBeUndefined();
+  });
 
-    const nvda = proposals.find((p) => p.symbol === "NVDA");
-    expect(nvda).toBeDefined();
-    expect(nvda!.side).toBe("sell");
-    expect(nvda!.quantity).toBe(8);
-    expect(nvda!.rationale).toContain("take-profit");
+  describe("planTakeProfitTrims", () => {
+    const positions = [{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1000 }]; // +25% @ 125
+    const prices = { NVDA: 125 };
+
+    it("trims a configurable fraction at the target and lets the rest ride", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      const plan = planTakeProfitTrims(positions, prices, policy);
+      expect(plan.proposals).toHaveLength(1);
+      expect(plan.proposals[0]).toMatchObject({ symbol: "NVDA", side: "sell", quantity: 4 }); // 50% of 8
+      expect(plan.proposals[0].rationale).toContain("take-profit");
+      expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 1 }]); // floor(25/20) = 1
+    });
+
+    it("full-exits when trim pct is undefined (back-compat) or >=100", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20 } }; // undefined trim → 100
+      expect(planTakeProfitTrims(positions, prices, policy).proposals[0].quantity).toBe(8);
+    });
+
+    it("carries the band + cost basis on the proposal (committed on fill, not at plan time)", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      const plan = planTakeProfitTrims(positions, prices, policy);
+      expect(plan.proposals[0]).toMatchObject({ takeProfitBand: 1, takeProfitBasis: 100 });
+    });
+
+    it("does NOT re-trim the same band for the same lot (monotonic ratchet, cost-basis matched)", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Already trimmed band 1 at basis 100; at +25% (still band 1, same basis) → no new trim.
+      const plan = planTakeProfitTrims(positions, prices, policy, { NVDA: { band: 1, avgCost: 100 } });
+      expect(plan.proposals).toHaveLength(0);
+      expect(plan.advancedBands).toHaveLength(0);
+    });
+
+    it("trims again only when a higher band is reached", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // +45% = band 2 (floor(45/20)), prior band 1 same basis → trims.
+      const plan = planTakeProfitTrims([{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 1160 }], { NVDA: 145 }, policy, { NVDA: { band: 1, avgCost: 100 } });
+      expect(plan.proposals).toHaveLength(1);
+      expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 2 }]);
+    });
+
+    it("resets the ratchet when the cost basis differs (close + rebuy starts fresh)", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Stored band 1 belongs to an OLD lot (basis 90); the current lot's basis is 100 → treat as band 0 → trims band 1.
+      const plan = planTakeProfitTrims(positions, prices, policy, { NVDA: { band: 1, avgCost: 90 } });
+      expect(plan.proposals).toHaveLength(1);
+      expect(plan.advancedBands).toEqual([{ symbol: "NVDA", band: 1 }]);
+    });
+
+    it("emits a COVER trim for a profitable short when shorting is enabled", () => {
+      const policy: TradingPolicy = { ...DEFAULT_POLICY, shortSellingEnabled: true, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      // Short @100, price 75 → +25% profit.
+      const plan = planTakeProfitTrims([{ symbol: "TSLA", quantity: -8, averageCost: 100, marketValue: -600 }], { TSLA: 75 }, policy);
+      expect(plan.proposals[0]).toMatchObject({ symbol: "TSLA", side: "cover", quantity: 4 });
+    });
+
+    it("emits nothing below the target or when takeProfitPct is 0", () => {
+      const below: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 20, takeProfitTrimPct: 50 } };
+      expect(planTakeProfitTrims([{ symbol: "NVDA", quantity: 8, averageCost: 100, marketValue: 900 }], { NVDA: 112 }, below).proposals).toHaveLength(0);
+      const off: TradingPolicy = { ...DEFAULT_POLICY, riskRules: { takeProfitPct: 0, takeProfitTrimPct: 50 } };
+      expect(planTakeProfitTrims(positions, prices, off).proposals).toHaveLength(0);
+    });
+  });
+
+  describe("takeProfitTrimQuantity", () => {
+    it("floors WHOLE-share positions to whole shares (no forced fractional order)", () => {
+      expect(takeProfitTrimQuantity(8, 50)).toBe(4);
+      expect(takeProfitTrimQuantity(8, 100)).toBe(8);
+      expect(takeProfitTrimQuantity(10, 25)).toBe(2); // floor(2.5) → 2 whole shares
+      expect(takeProfitTrimQuantity(3, 50)).toBe(1); // floor(1.5) → 1, remainder 2
+    });
+    it("full-exits a whole-share position when no clean whole-share slice exists", () => {
+      expect(takeProfitTrimQuantity(1, 50)).toBe(1); // floor(0.5)=0 → full exit
+      expect(takeProfitTrimQuantity(2, 25)).toBe(2); // floor(0.5)=0 → full exit
+    });
+    it("keeps a fractional trim for an already-fractional position", () => {
+      expect(takeProfitTrimQuantity(2.5, 50)).toBe(1.25); // fractional position → fractional trim is fine
+    });
   });
 
   it("returns nothing if no positions breach any thresholds", () => {

@@ -2,8 +2,10 @@
 import { getDb } from "./db";
 import { scopeAccount } from "./db-execution";
 import type {
+  ExecutionMode,
   PendingProposal,
   PolicyDecision,
+  RecentProposal,
   ReviewedOrder,
   TradeProposal
 } from "./types";
@@ -15,13 +17,15 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     proposal: string;
     decision: string;
     review: string | null;
+    estimated_notional: number | null;
     last_revalidated_at: string | null;
     revalidation_note: string | null;
     account_number: string;
+    execution_mode: string | null;
   };
   const rows = getDb()
     .prepare(
-      "SELECT id, created_at, proposal, decision, review, last_revalidated_at, revalidation_note, account_number FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
+      "SELECT id, created_at, proposal, decision, review, estimated_notional, last_revalidated_at, revalidation_note, account_number, execution_mode FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC"
     )
     .all(scopeAccount(accountNumber), userId) as RawRow[];
 
@@ -31,9 +35,47 @@ export function listPendingProposals(accountNumber: string, userId: string = "lo
     proposal: JSON.parse(r.proposal) as TradeProposal,
     decision: JSON.parse(r.decision) as PolicyDecision,
     review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined,
+    estimatedNotional: r.estimated_notional ?? undefined,
     lastRevalidatedAt: r.last_revalidated_at ?? undefined,
     revalidationNote: r.revalidation_note ?? undefined,
-    accountNumber: r.account_number
+    accountNumber: r.account_number,
+    executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined
+  }));
+}
+
+export function listRecentProposals(accountNumber: string, limit: number = 100, userId: string = "local"): RecentProposal[] {
+  type RawRow = {
+    id: string;
+    run_id: string;
+    account_number: string;
+    created_at: string;
+    proposal: string;
+    decision: string;
+    review: string | null;
+    estimated_notional: number | null;
+    status: string;
+    execution_mode: string | null;
+    error_message: string | null;
+  };
+  const cappedLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+  const rows = getDb()
+    .prepare(
+      "SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, execution_mode, error_message FROM trade_proposals WHERE account_number = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?"
+    )
+    .all(scopeAccount(accountNumber), userId, cappedLimit) as RawRow[];
+
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    accountNumber: r.account_number,
+    createdAt: r.created_at,
+    proposal: JSON.parse(r.proposal) as TradeProposal,
+    decision: JSON.parse(r.decision) as PolicyDecision,
+    review: r.review ? (JSON.parse(r.review) as ReviewedOrder) : undefined,
+    estimatedNotional: r.estimated_notional ?? undefined,
+    status: r.status,
+    executionMode: r.execution_mode ? (r.execution_mode as ExecutionMode) : undefined,
+    errorMessage: r.error_message ?? undefined
   }));
 }
 
@@ -66,6 +108,7 @@ export function getProposal(id: string, userId: string = "local"):
       status: string;
       tradeThesisTag?: string;
       entryMarketRegime?: string;
+      executionMode?: ExecutionMode;
     }
   | undefined {
   type RawRow = {
@@ -80,9 +123,10 @@ export function getProposal(id: string, userId: string = "local"):
     status: string;
     trade_thesis_tag: string | null;
     entry_market_regime: string | null;
+    execution_mode: string | null;
   };
   const row = getDb()
-    .prepare("SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, trade_thesis_tag, entry_market_regime FROM trade_proposals WHERE id = ? AND user_id = ?")
+    .prepare("SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, trade_thesis_tag, entry_market_regime, execution_mode FROM trade_proposals WHERE id = ? AND user_id = ?")
     .get(id, userId) as RawRow | undefined;
   if (!row) return undefined;
   return {
@@ -96,16 +140,17 @@ export function getProposal(id: string, userId: string = "local"):
     estimatedNotional: row.estimated_notional ?? undefined,
     status: row.status,
     tradeThesisTag: row.trade_thesis_tag ?? undefined,
-    entryMarketRegime: row.entry_market_regime ?? undefined
+    entryMarketRegime: row.entry_market_regime ?? undefined,
+    executionMode: row.execution_mode ? (row.execution_mode as ExecutionMode) : undefined
   };
 }
 
-export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local", refId?: string): void {
+export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local", refId?: string, errorMessage?: string): void {
   getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id) WHERE id = ? AND user_id = ?"
+      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message) WHERE id = ? AND user_id = ?"
     )
-    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, refId ?? null, id, userId);
+    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, refId ?? null, errorMessage ?? null, id, userId);
 }
 
 /**
@@ -121,17 +166,18 @@ export function claimProposalForExecution(
   id: string,
   toStatus: string,
   userId: string = "local",
-  opts: { review?: ReviewedOrder; estimatedNotional?: number; refId?: string } = {}
+  opts: { review?: ReviewedOrder; estimatedNotional?: number; refId?: string; executionMode?: ExecutionMode } = {}
 ): boolean {
   const info = getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode) WHERE id = ? AND user_id = ? AND status = 'proposed'"
     )
     .run(
       toStatus,
       opts.review ? JSON.stringify(opts.review) : null,
       opts.estimatedNotional ?? null,
       opts.refId ?? null,
+      opts.executionMode ?? null,
       id,
       userId
     );
@@ -148,13 +194,19 @@ export function listStalePlacingProposals(
   accountNumber: string,
   olderThanIso: string,
   userId: string = "local"
-): Array<{ id: string; refId: string | null; proposal: unknown; createdAt: string }> {
+): Array<{ id: string; refId: string | null; proposal: unknown; createdAt: string; executionMode?: ExecutionMode }> {
   const rows = getDb()
     .prepare(
-      "SELECT id, ref_id as refId, proposal, created_at as createdAt FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'placing' AND created_at < ?"
+      "SELECT id, ref_id as refId, proposal, created_at as createdAt, execution_mode as executionMode FROM trade_proposals WHERE account_number = ? AND user_id = ? AND status = 'placing' AND created_at < ?"
     )
-    .all(scopeAccount(accountNumber), userId, olderThanIso) as Array<{ id: string; refId: string | null; proposal: string; createdAt: string }>;
-  return rows.map((r) => ({ id: r.id, refId: r.refId, proposal: JSON.parse(r.proposal), createdAt: r.createdAt }));
+    .all(scopeAccount(accountNumber), userId, olderThanIso) as Array<{ id: string; refId: string | null; proposal: string; createdAt: string; executionMode: string | null }>;
+  return rows.map((r) => ({
+    id: r.id,
+    refId: r.refId,
+    proposal: JSON.parse(r.proposal),
+    createdAt: r.createdAt,
+    executionMode: r.executionMode ? (r.executionMode as ExecutionMode) : undefined
+  }));
 }
 
 /** Idempotency for chat-drafted proposals: the id of an existing still-`proposed` row for a runId. */
@@ -163,6 +215,22 @@ export function findProposedIdByRunId(runId: string, userId: string = "local"): 
     .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC LIMIT 1")
     .get(runId, userId) as { id: string } | undefined;
   return row?.id ?? null;
+}
+
+/**
+ * Guarantee a positive `referencePrice` entry-anchor on the stored proposal so the entry-drift guard,
+ * counterfactual learning, and the "performance since proposal" readout always have something to
+ * measure from. enrichOpeningProposal already sets it from the live market price on the main path;
+ * this is a defensive fallback (limit → stop) for any path that didn't.
+ */
+function ensureReferencePrice(proposal: unknown): unknown {
+  if (!proposal || typeof proposal !== "object") return proposal;
+  const p = proposal as Record<string, unknown>;
+  const ref = Number(p.referencePrice);
+  if (Number.isFinite(ref) && ref > 0) return proposal;
+  const fallback = Number(p.limitPrice) || Number(p.stopPrice);
+  if (Number.isFinite(fallback) && fallback > 0) return { ...p, referencePrice: fallback };
+  return proposal;
 }
 
 export function insertProposal(input: {
@@ -179,10 +247,11 @@ export function insertProposal(input: {
   status: string;
   tradeThesisTag?: string;
   entryMarketRegime?: string;
+  executionMode?: ExecutionMode;
 }): void {
   getDb()
     .prepare(
-      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime, execution_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       input.id,
@@ -190,7 +259,7 @@ export function insertProposal(input: {
       input.runId,
       scopeAccount(input.accountNumber),
       new Date().toISOString(),
-      JSON.stringify(input.proposal),
+      JSON.stringify(ensureReferencePrice(input.proposal)),
       JSON.stringify(input.decision),
       input.review ? JSON.stringify(input.review) : null,
       input.estimatedNotional ?? null,
@@ -198,6 +267,7 @@ export function insertProposal(input: {
       input.orderId ?? null,
       input.status,
       input.tradeThesisTag ?? null,
-      input.entryMarketRegime ?? null
+      input.entryMarketRegime ?? null,
+      input.executionMode ?? null
     );
 }

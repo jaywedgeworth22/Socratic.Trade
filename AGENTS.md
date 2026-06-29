@@ -43,13 +43,25 @@ Before every commit/push to the GitHub repo, you MUST update the following:
 
 ## Verify before claiming done
 
-Run all three, in this order, before saying a change is complete:
+Run all four, in this order, before saying a change is complete:
 
 ```bash
+npm run lint       # eslint (flat config); REQUIRED `verify` CI step — fails on errors only
 npx tsc --noEmit   # type errors — fast, do this first
 npm test           # vitest, ~723 tests across 81 files as of 2026-06-21
 npm run build      # full Next.js build; also re-checks types
 ```
+
+`npm run lint` runs `eslint .` against `eslint.config.mjs` (flat config). It is
+pinned to **ESLint 9**, not 10: `eslint-config-next@16` bundles
+`eslint-plugin-react@7.x`, which calls `context.getFilename()` — an API ESLint 10
+removed, so ESLint 10 throws `getFilename is not a function` at load. Keep
+`eslint` on `^9` until a Next/react-plugin release supports ESLint 10. ESLint
+exits non-zero only on **errors**, not warnings; a large grandfathered backlog
+(`@typescript-eslint/no-explicit-any`, `react-hooks/set-state-in-effect`, etc.)
+is intentionally pinned to "warn" in `eslint.config.mjs` so the gate is green
+today while still surfacing the debt — promote those to "error" as you burn them
+down.
 
 `npm run build` deletes and regenerates `.next/`. If a dev server is running
 (via Claude Code's preview tool or otherwise), it will start erroring with
@@ -73,15 +85,40 @@ live `next dev` preview on its OWN port.** Every worktree has its own `node_modu
 `.next`, `data/app.db`, and `.env.local` — never assume any are shared, and never point
 one worktree's process at another's files.
 
-| Worktree | Branch | Port | Process | Owner |
-|----------|--------|------|---------|-------|
-| `~/Code/Agentic Trading` | `main` | — (no dev server) | — | **integration / review / merges / hand-edits** (human via **Cursor**) |
-| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | Claude Code |
-| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | Codex |
-| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | Antigravity/Gemini |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | **production** (`trading.jays.services`) |
+| Worktree | Branch | Port | Process | Public route | Owner |
+|----------|--------|------|---------|--------------|-------|
+| `~/Code/Agentic Trading` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
+| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
+| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
+| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `trading.jays.services` | **production** |
 
-Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-previews.sh`.
+Bootstrap / repair the integration preview and agent previews idempotently with
+`scripts/setup-agent-previews.sh`.
+
+`trading-beta.jays.services` is the only public beta/integration hostname for
+the 4001 main preview. Do not add or document duplicate beta hostnames.
+
+### Preview freshness policy
+
+`trading-beta.jays.services` is the integration source of truth. Agent preview
+sites (`codex.jays.services`, `claude.jays.services`, and
+`antigravity.jays.services`) are useful for in-progress branch review, but they
+must not silently drift behind beta after work lands.
+
+- After a branch lands or beta is updated, the owning agent should pull/sync its
+  own worktree from `origin/main` and restart only its own PM2 preview when the
+  worktree is clean.
+- If the worktree is dirty, has unmerged local work, or cannot safely sync, leave
+  the preview as-is and record the stale state plus the reason in `STATUS.md` or
+  the relevant rollout note. Do not overwrite another agent's local changes to
+  make a preview look current.
+- When demonstrating app behavior to the user, say which hostname/worktree is
+  being edited or viewed. Use beta for integrated behavior, and an agent preview
+  only for that agent's active branch.
+- A stale agent preview is a coordination issue, not a deployment target. Fix it
+  by landing/syncing/restarting the correct worktree, not by hand-copying build
+  output between worktrees.
 
 ### How each agent works
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
@@ -94,10 +131,15 @@ Bootstrap / repair the agent previews idempotently with `scripts/setup-agent-pre
   bash scripts/land.sh
   ```
   This script: (1) refuses to run from the main integration worktree or on branch `main`;
-  (2) fetches origin; (3) merges `origin/main` — aborts on conflict so you can resolve;
-  (4) runs `npx tsc --noEmit` → `npm test` → `npm run build` — aborts on any failure;
-  (5) refuses if your diff includes `.github/workflows/` (token lacks workflow scope — use
-  `ci-pending/` staging instead); (6) pushes your agent branch and opens a PR via `gh`.
+  (2) refuses dirty/uncommitted files; (3) fetches origin; (4) refuses to auto-merge when
+  your branch and `origin/main` both touched the same files since the branch forked (manual
+  review required to avoid stale UI/text/behavior landing without a Git conflict); (5) merges
+  `origin/main` — aborts on conflict so you can resolve; (6) runs `npx tsc --noEmit` →
+  `npm test` → `npm run build` — aborts on any failure; (7) allows `.github/workflows/` changes
+  when the gh token has the `workflow` scope (it does now — `git push` goes through
+  `gh auth git-credential`, so agents can push CI changes directly; the old `ci-pending/` staging
+  is only the fallback if the scope is ever missing — `gh auth refresh -h github.com -s workflow`);
+  (8) pushes your agent branch and opens a PR via `gh`.
   After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
 - **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
   by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
@@ -136,7 +178,7 @@ PM2 preview.
 
 ### A running port is NOT a work lock
 A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
-infer "someone is working" from an open 4100/4101/4102/4000 (or a stray 3000/3001/3002).
+infer "someone is working" from an open 4001/4100/4101/4102/4000 (or a stray 3000/3001/3002).
 Coordinate ONLY via `git status` / `git log` / the branch list and `STATUS.md` — never by
 inspecting ports. The legacy per-agent ephemeral dev lanes (Claude 3000 / Codex 3001 via
 `npm run dev:codex` / Antigravity 3002) are superseded by the PM2 worktree previews above;
@@ -179,6 +221,16 @@ deployment machine.
   removed because showing fabricated numbers next to real ones is misleading.
   Yahoo Finance (no API key required) is the floor now — every symbol gets real
   data or the cell shows `-`/`n/a`, never a fake number.
+- **Operator/deploy shell scripts must stay ASCII-only.** The production box is a
+  Mac, so `bash scripts/foo.sh` runs Apple's `/bin/bash` 3.2.57, which mis-parses a
+  non-ASCII byte placed **directly adjacent to a `$VAR`** (e.g. `"...$SHARED_PROJECT_ID…"`):
+  it swallows a byte into the identifier and dies under `set -u` with a cryptic
+  `SHARED_PROJECT_ID?: unbound variable` (the `?` is the stray byte). Non-adjacent
+  decoration prints fine, so the failure looks impossible until you spot the one
+  `$VAR`-adjacent glyph. Keep `scripts/*.sh` pure ASCII — use `...`/`-`/`->`, never
+  `…`/`—`/`→`; check with `grep -nP '[^\x00-\x7F]' scripts/*.sh` and the
+  `\$\{?\w+\}?[^\x00-\x7F]` adjacency pattern. Cost this the hard way once:
+  `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
 
 ## Conventions
 
@@ -270,16 +322,25 @@ local multi-worktree/PM2 setup and does NOT apply here.
 - The Cloud VM is a single `/workspace` checkout. There are no per-agent
  worktrees, no PM2 processes, and no ports 4100/4101/4102/4000 — ignore that
  entire worktree/PM2 table for cloud work.
-- Run the dev server with `npm run dev` (Next.js on `http://127.0.0.1:3000`).
- Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
- port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
- dev` after a build.
+- Run the dev server with `npm run dev` (Next.js on port `3000`).
+  Do not use `npm run dev:codex` (port 3001) or `npm run dev:clean` (it kills
+  port 3000). `npm run build` deletes/regenerates `.next/`, so restart `npm run
+  dev` after a build.
+- When opening the dev server in a browser, use `http://localhost:3000`, NOT
+  `http://127.0.0.1:3000`. Next 16 blocks cross-origin dev resources (the
+  `/_next/webpack-hmr` socket) from the `127.0.0.1` origin by default, so HMR /
+  live-reload breaks and the console logs a "Blocked cross-origin request"
+  warning. The page still server-renders either way; `localhost` just avoids the
+  block without needing an `allowedDevOrigins` code change. `curl`/API checks
+  against `127.0.0.1:3000` are unaffected.
 - Standard verification commands live in `README.md`/the "Verify before claiming
- done" section: `npx tsc --noEmit`, `npm test` (vitest), `npm run build`. All
- pass clean in this environment.
-- `next lint` is NOT configured (no eslint config is committed); it drops into
- an interactive setup prompt, so it is not part of verification. Use the
- tsc/test/build trio instead.
+ done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
+ build`. All pass clean in this environment.
+- `npm run lint` is now configured (`eslint.config.mjs`, flat config extending
+ `eslint-config-next`) and is a REQUIRED step in the `verify` CI gate. It is
+ pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s
+ bundled react plugin — see the "Verify before claiming done" section). It fails
+ only on errors; an existing backlog is grandfathered to "warn".
 - No secrets or API keys are required to run the app. It defaults to **Test
  mode** (a local SQLite simulator at `data/app.db`) and the Market Scan pulls
  live Yahoo Finance quotes with no key. `DATABASE_URL` defaults to

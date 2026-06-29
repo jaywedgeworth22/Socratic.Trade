@@ -48,7 +48,7 @@ export function dailyExecutionStats(
   now = new Date(),
   userId: string = "local",
   timeZone: string = DAILY_RESET_TIME_ZONE
-): { orderCount: number; notional: number } {
+): { orderCount: number; openingOrderCount: number; notional: number } {
   const dayStart = startOfDayInTimeZone(now, timeZone);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
@@ -69,9 +69,13 @@ export function dailyExecutionStats(
             ? row.estimated_notional
             : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
-      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isBuy ? 1 : 0),
+        notional: acc.notional + notional
+      };
     },
-    { orderCount: 0, notional: 0 }
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
   );
 }
 
@@ -79,7 +83,7 @@ export function dailyExecutionStats(
  * Order notional executed within a rolling window of `minutes` (R1 hourly cap). Mirrors
  * dailyExecutionStats but on an arbitrary lookback rather than the calendar day.
  */
-export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
+export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; openingOrderCount: number; notional: number } {
   const cutoff = new Date(now.getTime() - minutes * 60_000);
   const rows = getDb()
     .prepare(
@@ -95,9 +99,13 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
       const notional = isBuy
         ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
-      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isBuy ? 1 : 0),
+        notional: acc.notional + notional
+      };
     },
-    { orderCount: 0, notional: 0 }
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
   );
 }
 
@@ -169,9 +177,14 @@ export function countDayTradesInLastBusinessDays(
 // Uses a direct prepared statement (not setSetting) to avoid noisy policy_change
 // audit events.
 
-export function acquireStrategyLock(userId: string = "local", staleMs = 5 * 60_000, now = new Date()): boolean {
+/** Lock key — per-account when an account id is given, else the legacy user-wide key. */
+function strategyLockKey(userId: string, connectedAccountId?: string): string {
+  return connectedAccountId ? `strategy_run_lock:${userId}:${connectedAccountId}` : `strategy_run_lock:${userId}`;
+}
+
+export function acquireStrategyLock(userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
   const database = getDb();
-  const key = `strategy_run_lock:${userId}`;
+  const key = strategyLockKey(userId, connectedAccountId);
   const acquire = database.transaction(() => {
     const row = database
       .prepare("SELECT value FROM settings WHERE key = ?")
@@ -199,14 +212,21 @@ export function acquireStrategyLock(userId: string = "local", staleMs = 5 * 60_0
   return acquire() as boolean;
 }
 
-export function releaseStrategyLock(userId: string = "local"): void {
-  getDb().prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${userId}`);
+export function releaseStrategyLock(userId: string = "local", connectedAccountId?: string): void {
+  if (connectedAccountId) {
+    getDb().prepare("DELETE FROM settings WHERE key = ?").run(strategyLockKey(userId, connectedAccountId));
+    return;
+  }
+  // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
+  getDb()
+    .prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?")
+    .run(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`);
 }
 
-export function insertStrategyRun(id: string, userId: string = "local"): void {
+export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string): void {
   getDb()
-    .prepare("INSERT INTO strategy_runs (id, user_id, started_at, status) VALUES (?, ?, ?, 'running')")
-    .run(id, userId, new Date().toISOString());
+    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, started_at, status) VALUES (?, ?, ?, ?, 'running')")
+    .run(id, userId, connectedAccountId ?? null, new Date().toISOString());
 }
 
 export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
@@ -220,10 +240,14 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
  * rehydrates its in-memory cadence clock from this on boot so a restart/HMR/deploy doesn't fire an
  * immediate run regardless of the configured cadence (userSchedules starts empty each process).
  */
-export function getLastStrategyRunStartedAt(userId: string = "local"): string | null {
-  const row = getDb()
-    .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ?")
-    .get(userId) as { last: string | null } | undefined;
+export function getLastStrategyRunStartedAt(userId: string = "local", connectedAccountId?: string): string | null {
+  const row = (connectedAccountId
+    ? getDb()
+        .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ? AND connected_account_id = ?")
+        .get(userId, connectedAccountId)
+    : getDb()
+        .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ?")
+        .get(userId)) as { last: string | null } | undefined;
   return row?.last ?? null;
 }
 

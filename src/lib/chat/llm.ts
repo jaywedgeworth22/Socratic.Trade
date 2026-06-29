@@ -9,7 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { llmFetch } from "../llm-request";
+import { llmFetch, isReasoningModel } from "../llm-request";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -22,8 +22,11 @@ export interface LlmUsageOpts {
   context?: string;
 }
 
+/** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
-function recordChatUsage(opts: LlmUsageOpts, provider: "openai" | "anthropic", model: string, prompt: number, completion: number, saw: boolean): void {
+function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean): void {
   if (!opts.userId) return;
   recordLlmUsage({
     userId: opts.userId,
@@ -40,7 +43,7 @@ function recordChatUsage(opts: LlmUsageOpts, provider: "openai" | "anthropic", m
 const MAX_STEPS = 5;
 
 export interface Intent {
-  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "chat";
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "fundamentals" | "market_signals" | "chat";
   symbol?: string;
   alert?: { symbol: string; op: "<" | ">"; price: number };
   order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
@@ -51,7 +54,18 @@ export interface Intent {
 export function classifyIntent(message: string): Intent {
   const lc = String(message).toLowerCase();
   const EXCLUDE = ["THE", "BUY", "SELL", "USD", "PE", "AND", "FOR", "YOU"];
-  const sym = (String(message).match(/\b([A-Z]{2,5})\b/g) || []).map(canonicalTicker).find((s) => !EXCLUDE.includes(s));
+  // First pass: standard all-uppercase tickers (e.g. "AAPL price").
+  // Second pass: phrase-pattern fallback for all-lowercase input (e.g. "how much is aapl",
+  // "aapl price") — avoids false matches on ordinary English words.
+  const sym = (() => {
+    const upper = (String(message).match(/\b([A-Z]{2,5})\b/g) ?? []).map(canonicalTicker).find((s) => !EXCLUDE.includes(s));
+    if (upper) return upper;
+    const m =
+      String(message).match(/\b(?:price\s+of|how\s+much\s+(?:is|for)|quote\s+for)\s+\$?([A-Za-z.]{1,10})\b/i) ??
+      String(message).match(/\b\$?([A-Za-z.]{2,10})\s+(?:price|quote|stock)\b/i);
+    const ticker = m ? canonicalTicker(m[1]!) : undefined;
+    return ticker && !EXCLUDE.includes(ticker) ? ticker : undefined;
+  })();
 
   if (
     /\b(alert|notify|tell me|let me know|remind me)\b/.test(lc) &&
@@ -89,6 +103,12 @@ export function classifyIntent(message: string): Intent {
       symbol: sym,
       doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
     };
+  if (/\b(pe ratio|pe|market cap|earnings|analyst|rating|score|consensus|target|price target|beta|dividend|float|week high|week low|debt to equity|fundamentals)\b/.test(lc) && sym) {
+    return { intent: "fundamentals", symbol: sym };
+  }
+  if (/\b(best today|market signals?|breadth|top gainers?|top losers?|market breadth|gainer|loser|movers|volatility indices|vvix|skew)\b/.test(lc)) {
+    return { intent: "market_signals" };
+  }
   if (
     /\b(my (positions?|portfolio|holdings)|how (?:am i|is my account|are my (?:positions|holdings)) doing|how (?:'?s|is) my [a-z. ]*position|my (?:p&l|pnl|p ?and ?l|gains?|losses?))\b/.test(lc)
   )
@@ -161,11 +181,48 @@ function bestSentence(text: string, query: string): string {
   return best.trim();
 }
 
+/** Prefix marking every Mock reply so the user can never mistake it for a real model's answer. */
+const MOCK_PREFIX = "Mock Response: ";
+function labelMock(text: string): string {
+  return text.startsWith(MOCK_PREFIX) ? text : `${MOCK_PREFIX}${text}`;
+}
+
 /** Deterministic offline stand-in, shaped exactly like a real tool-use loop. */
 export class MockLLM implements ChatLLM {
-  async run({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
+  readonly modelName = "mock";
+  /** Public entry: produce the deterministic answer, then label it so it's clearly a mock response. */
+  async run(args: LlmRunArgs): Promise<LlmResult> {
+    const result = await this.answer(args);
+    return { ...result, text: labelMock(result.text) };
+  }
+
+  private async answer({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
     const cls = classifyIntent(message);
     const toolCalls: ToolCall[] = [];
+
+    if (cls.intent === "fundamentals" && cls.symbol) {
+      const input = { symbol: cls.symbol };
+      const result = await executeTool("get_fundamentals", input);
+      toolCalls.push({ name: "get_fundamentals", input, result });
+      if (result?.error) return { text: `I don't have fundamentals data on that.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      return {
+        text: `Company: ${result.companyName ?? cls.symbol}. PE: ${result.peRatio ?? "n/a"}. Analyst rating: ${result.analystRating ?? "n/a"}.\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: []
+      };
+    }
+
+    if (cls.intent === "market_signals") {
+      const result = await executeTool("get_market_signals", {});
+      toolCalls.push({ name: "get_market_signals", input: {}, result });
+      if (result?.error) return { text: `I couldn't retrieve market signals.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      const gainers = result.marketTopGainers?.map((g: any) => `${g.sym} (+${g.pct}%)`).join(", ") ?? "none";
+      return {
+        text: `Breadth: ${result.marketBreadthPct ?? "n/a"}%. Top Gainers: ${gainers}.\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: []
+      };
+    }
 
     if (cls.intent === "quote" || cls.intent === "advice") {
       const input = { symbol: cls.symbol };
@@ -285,6 +342,10 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 export class AnthropicLLM implements ChatLLM {
   constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
 
+  get modelName(): string {
+    return this.model;
+  }
+
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     const messages: any[] = [];
     let promptTokens = 0;
@@ -388,8 +449,15 @@ export class OpenAILLM implements ChatLLM {
     private apiKey: string,
     private model: string,
     private transport: OpenAITransport = defaultOpenAITransport,
-    private usage: LlmUsageOpts = {}
+    private usage: LlmUsageOpts = {},
+    // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral/DeepSeek all share this tool loop),
+    // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
+    private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai"
   ) {}
+
+  get modelName(): string {
+    return this.model;
+  }
 
   async run({ system, message, tools, executeTool, history }: LlmRunArgs): Promise<LlmResult> {
     // Build OpenAI messages array. Prior user/assistant turns first, then the current message.
@@ -405,8 +473,10 @@ export class OpenAILLM implements ChatLLM {
     messages.push({ role: "user", content: message });
 
     // Convert ChatLLM ToolSchema → OpenAI function-calling format.
+    // deepseek-reasoner does not support function calling per DeepSeek docs.
+    const supportsTools = !/^deepseek-reasoner/i.test(this.model);
     const oaiTools =
-      tools && tools.length
+      supportsTools && tools && tools.length
         ? tools.map((t) => ({
             type: "function",
             function: {
@@ -420,11 +490,21 @@ export class OpenAILLM implements ChatLLM {
     const toolCalls: ToolCall[] = [];
     let text = "";
 
+    // OpenAI's reasoning models (gpt-5 / o-series) REJECT `max_tokens` ("use max_completion_tokens
+    // instead") and spend part of the budget on hidden reasoning, so they need both the renamed
+    // param and a higher cap to leave room for a visible answer. Other providers (and OpenAI's
+    // classic models) keep `max_tokens`. Gated on provider too so we never send the OpenAI-only param
+    // to an OpenAI-compatible endpoint (xAI/Gemini/Mistral).
+    const tokenCap =
+      this.provider === "openai" && isReasoningModel(this.model)
+        ? { max_completion_tokens: 4096 }
+        : { max_tokens: 1024 };
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const resp = await this.transport(
         {
           model: this.model,
-          max_tokens: 1024,
+          ...tokenCap,
           messages,
           ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
         },
@@ -474,9 +554,77 @@ export class OpenAILLM implements ChatLLM {
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
       for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, as_of: chunk.as_of, url: chunk.url });
     }
-    recordChatUsage(this.usage, "openai", this.model, promptTokens, completionTokens, sawUsage);
+    recordChatUsage(this.usage, this.provider, this.model, promptTokens, completionTokens, sawUsage);
     return { text: text || DISCLAIMER, toolCalls, citations };
   }
+}
+
+/**
+ * Provider is derived from the model name (no separate provider flag): claude-* → Anthropic
+ * (its own Messages tool loop); grok-* → xAI; gemini-* → Gemini; mistral/ministral/codestral/…
+ * → Mistral; everything else (gpt-*, o-series) → OpenAI. The latter four are all OpenAI-compatible
+ * and share the OpenAILLM chat/completions tool loop, differing only by base URL + key.
+ */
+export function chatProviderForModel(model: string): ChatProvider {
+  if (/^claude/i.test(model)) return "anthropic";
+  if (/^grok/i.test(model)) return "xai";
+  if (/^gemini/i.test(model)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
+  if (/^deepseek/i.test(model)) return "deepseek";
+  return "openai";
+}
+
+/** OpenAI-compatible providers (everyone except Anthropic, which has its own Messages loop). */
+type OpenAiCompatProvider = Exclude<ChatProvider, "anthropic">;
+
+/** Base chat/completions URL for an OpenAI-compatible provider (env override per provider). */
+function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (provider === "xai") return process.env.XAI_API_URL?.trim() || "https://api.x.ai/v1/chat/completions";
+  if (provider === "gemini")
+    return process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+  if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
+  if (provider === "deepseek") return process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions";
+  return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
+}
+
+/** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
+ *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
+function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
+    const res = await llmFetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`${provider} ${res.status}: ${detail.slice(0, 300)}`);
+    }
+    return res.json();
+  };
+}
+
+/**
+ * Build the chat LLM for an explicitly-chosen model, routed to its provider across all five
+ * supported providers. The provider's key resolves per-user-first with the operator env key as a
+ * flag-gated failover (resolveLlmCredential); usage is attributed to `userId` and the resolved
+ * provider. Returns MockLLM for an empty/`"mock"` model or when the model's provider has no usable
+ * key — so the assistant degrades to the deterministic offline path rather than erroring.
+ */
+export function llmForModel(
+  model: string,
+  userId?: string,
+  opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}
+): ChatLLM {
+  const trimmed = model?.trim();
+  if (!trimmed || trimmed.toLowerCase() === "mock") return new MockLLM();
+  const provider = chatProviderForModel(trimmed);
+  const { key, source, keyRef } = resolveLlmCredential(provider, userId);
+  if (!key) return new MockLLM();
+  const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+  if (provider === "anthropic") {
+    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage);
+  }
+  const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
+  return new OpenAILLM(key, trimmed, transport, usage, provider);
 }
 
 /**

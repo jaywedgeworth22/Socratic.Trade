@@ -1,4 +1,5 @@
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
+import type { AccountReadiness } from "@/lib/dashboard";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
@@ -15,6 +16,7 @@ import type {
     PendingProposal,
     PerformanceSummary,
     Portfolio,
+    RecentProposal,
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
@@ -30,6 +32,7 @@ export interface AuditEvent {
 
 export interface StrategyDecision {
   runId: string;
+  createdAt?: string;
   status: "completed" | "failed";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
@@ -38,9 +41,18 @@ export interface StrategyDecision {
 }
 
 export interface DashboardSnapshot {
+  currentUser?: {
+    userId: string;
+    email?: string;
+    isAdmin: boolean;
+  };
+  /** At least one LLM provider has a resolvable credential for this user (own key OR operator failover).
+   *  Gates the two LLM-driven actions (Run once / chat); optional so older payloads default to allowed. */
+  llmConfigured?: boolean;
   policy: TradingPolicy;
   strategyPrompt: string;
   accounts: BrokerageAccount[];
+  accountReadiness?: AccountReadiness;
   connectedAccounts: ConnectedAccount[];
   portfolio?: Portfolio;
   positions: EquityPosition[];
@@ -54,9 +66,10 @@ export interface DashboardSnapshot {
   auditFeed: DashboardAuditFeedItem[];
   unifiedFeed: UnifiedActivityGroup[];
   latestStrategyRun?: StrategyDecision;
-  dailyStats: { orderCount: number; notional: number };
+  dailyStats: { orderCount: number; openingOrderCount: number; notional: number };
   strategyRuns: StrategyRunRow[];
   pendingProposals: PendingProposal[];
+  recentProposals?: RecentProposal[];
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null; runsToday?: number };
   webSources?: {
     congress: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };

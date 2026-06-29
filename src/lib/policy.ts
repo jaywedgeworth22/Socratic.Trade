@@ -1,6 +1,6 @@
 import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { normalizeSymbol } from "./money";
-import { symbolsForPolicyUniverse } from "./index-universes";
+import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./index-universes";
 import { getUserWashSaleLockedSymbols } from "./tax";
 
 export interface PolicyContext {
@@ -10,6 +10,7 @@ export interface PolicyContext {
   dailyNotionalUsed: number;
   /** Order notional already executed within the trailing 60 minutes (R1 hourly cap). */
   hourlyNotionalUsed?: number;
+  /** Opening orders already placed today. Risk-reducing exits must not consume this cap. */
   dailyOrderCount: number;
   estimatedNotional?: number;
   marketScan?: MarketScan;
@@ -38,11 +39,11 @@ export interface PolicyContext {
 }
 
 /**
- * Minimum equity a LIVE MARGIN account must hold to trade on margin. SEC/FINRA RETIRED the
- * Pattern-Day-Trader rule (FINRA Notice 26-10, 2026): the old $25,000 minimum and the
- * 4-day-trades-in-5-business-days limit no longer exist. The replacement framework is broker-side
- * real-time intraday-margin monitoring plus this $2,000 minimum for margin accounts. We enforce only
- * the static minimum here and defer intraday margin to the broker — we no longer count day-trades.
+ * Minimum equity a LIVE MARGIN account must hold before this app will submit opening margin trades.
+ * FINRA Notice 26-10 replaces the old PDT count/$25k framework with intraday margin standards
+ * effective 2026-06-04, but member firms may phase in implementation through 2027-10-20. This app
+ * enforces the static margin minimum and defers broker-specific intraday margin restrictions to the
+ * broker.
  */
 export const MARGIN_MINIMUM_EQUITY = 2_000;
 
@@ -61,8 +62,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   const isOpening = proposal.side === "buy" || proposal.side === "short";
   if (isOpening) {
     const allowedSymbols = allowedSymbolsForPolicy(context.policy);
-    if (allowedSymbols.length === 0) reasons.push("Allowed universe is required.");
-    if (!allowedSymbols.includes(symbol)) reasons.push(`${symbol} is not in the allowed universe.`);
+    const hasDynamicUniverse = dynamicIndexUniversesForPolicy(context.policy).length > 0;
+    if (allowedSymbols.length === 0 && !hasDynamicUniverse) reasons.push("Allowed universe is required.");
+    if (!allowedSymbols.includes(symbol) && !isDynamicScanSymbol(symbol, context)) reasons.push(`${symbol} is not in the allowed universe.`);
   }
   if (!context.policy.permittedOrderTypes.includes(proposal.type)) reasons.push(`${proposal.type} orders are not permitted.`);
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
@@ -82,13 +84,76 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
-  // SHORT_SELLING: Two-layer gate.
-  // Layer 1 — policy flag: shortSellingEnabled must be true.
-  // Layer 2 — account capability: the connected broker/account must report shortSelling=true.
-  //   Robinhood MCP always reports false (MCP docs: "no short sells").
-  //   Alpaca: parsed from account.shorting_enabled.
-  //   When accountCapabilities is absent (legacy row), we treat shortSelling as false.
-  if (proposal.side !== "buy" && proposal.side !== "sell") {
+  // Entry-drift guard: reject a stale OPENING market/dollar order whose price has moved away from
+  // the proposed entry anchor (referencePrice) by more than maxEntryDriftPct. Limit orders are
+  // excluded — the broker's limit already caps the fill. Fires only when both an entry anchor and a
+  // fresh current price are known, so it can never false-reject on missing data. This closes the gap
+  // where an hours-old market order approved off the run cadence (or with no LLM revalidation) still
+  // executes at a materially worse price than the technical trigger that justified it.
+  if (
+    isOpening &&
+    context.policy.maxEntryDriftPct != null &&
+    context.policy.maxEntryDriftPct > 0 &&
+    proposal.referencePrice != null &&
+    proposal.referencePrice > 0 &&
+    (proposal.type === "market" || proposal.dollarAmount != null || proposal.limitPrice == null)
+  ) {
+    const currentPrice = context.marketScan?.quotesBySymbol[symbol]?.price;
+    if (currentPrice != null && currentPrice > 0) {
+      const driftPct = (Math.abs(currentPrice - proposal.referencePrice) / proposal.referencePrice) * 100;
+      if (driftPct > context.policy.maxEntryDriftPct) {
+        reasons.push(
+          `entry_drift: ${symbol} moved ${driftPct.toFixed(1)}% from the proposed entry $${proposal.referencePrice.toFixed(2)} ` +
+            `(now $${currentPrice.toFixed(2)}), exceeding the ${context.policy.maxEntryDriftPct}% max entry drift.`
+        );
+      }
+    }
+  }
+  // STALENESS GATE: block an OPENING proposal built on stale market data (fail-safe, DEFAULT OFF).
+  // Enabled per-class only when the threshold is set (> 0). Fail-safe direction only: data older than
+  // the threshold → block; a MISSING timestamp is treated as stale (block) ONLY because the gate is on.
+  // Exits (sell/cover) are never gated. Timestamps are read from the run's MarketScan — never fabricated.
+  if (isOpening) {
+    const now = (context.now ?? new Date()).getTime();
+    const maxQuoteAgeSec = context.policy.maxQuoteAgeSec;
+    if (maxQuoteAgeSec != null && maxQuoteAgeSec > 0) {
+      const quoteAsOf =
+        context.marketScan?.quotesBySymbol[symbol]?.asOf ??
+        context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.asOf;
+      const asOfMs = quoteAsOf ? new Date(quoteAsOf).getTime() : NaN;
+      if (!quoteAsOf || Number.isNaN(asOfMs)) {
+        reasons.push(
+          `staleness_gate: ${symbol} quote timestamp is missing/unparseable; treating as stale ` +
+            `(maxQuoteAgeSec=${maxQuoteAgeSec}).`
+        );
+      } else {
+        const ageSec = Math.round((now - asOfMs) / 1000);
+        if (ageSec > maxQuoteAgeSec) {
+          reasons.push(`staleness_gate: ${symbol} quote is ${ageSec}s old (max ${maxQuoteAgeSec}s).`);
+        }
+      }
+    }
+    const maxFundamentalsAgeSec = context.policy.maxFundamentalsAgeSec;
+    if (maxFundamentalsAgeSec != null && maxFundamentalsAgeSec > 0) {
+      const scanGeneratedAt = context.marketScan?.generatedAt;
+      const genMs = scanGeneratedAt ? new Date(scanGeneratedAt).getTime() : NaN;
+      if (!scanGeneratedAt || Number.isNaN(genMs)) {
+        reasons.push(
+          `staleness_gate: market-scan timestamp is missing/unparseable; treating fundamentals as stale ` +
+            `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}).`
+        );
+      } else {
+        const ageSec = Math.round((now - genMs) / 1000);
+        if (ageSec > maxFundamentalsAgeSec) {
+          reasons.push(`staleness_gate: market scan is ${ageSec}s old (max ${maxFundamentalsAgeSec}s).`);
+        }
+      }
+    }
+  }
+  // SHORT_SELLING: opening shorts require both the policy flag and account capability.
+  // Risk-reducing covers are allowed based on the existing short position even if shorting is now
+  // disabled or capabilities are unavailable; blocking a cover would trap exposure.
+  if (proposal.side === "short") {
     const brokerSupportsShort = context.accountCapabilities?.shortSelling === true;
     if (!context.policy.shortSellingEnabled || !brokerSupportsShort) {
       const why = !context.policy.shortSellingEnabled
@@ -96,25 +161,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      if (proposal.side === "short") {
-        if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
-          reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
-        }
-        if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
-          reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
-        }
+      if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
       }
-      if (proposal.side === "cover" && coverQuantityExceedsShorts(proposal, context.positions)) {
-        reasons.push(`Cover quantity exceeds current ${symbol} short holdings.`);
+      if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
+        reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
       }
     }
   }
+  if (proposal.side === "cover" && coverQuantityExceedsShorts(proposal, context.positions)) {
+    reasons.push(`Cover quantity exceeds current ${symbol} short holdings.`);
+  }
   
-  // MARGIN-ACCOUNT MINIMUM (replaces the retired Pattern-Day-Trader gate). SEC/FINRA RETIRED the PDT
-  // rule (FINRA Notice 26-10, 2026): there is no longer a $25,000 minimum or a 4-day-trades-in-5-days
-  // limit. The new framework is broker-side real-time intraday-margin monitoring plus a $2,000 minimum
-  // equity for MARGIN accounts. So we no longer count day-trades; we enforce ONLY the static $2,000
-  // margin minimum on a LIVE/real-capital MARGIN account and defer intraday margin to the broker.
+  // MARGIN-ACCOUNT MINIMUM. FINRA Notice 26-10 replaces the old PDT count/$25k framework with
+  // intraday margin standards effective 2026-06-04, with broker phase-in permitted through
+  // 2027-10-20. We do not try to model broker-specific intraday margin; we enforce the static
+  // $2,000 margin minimum on a LIVE/real-capital MARGIN account and defer the rest to the broker.
   // Scope: LIVE execution only (Test/local sim and broker-Paper are never gated); opening legs only;
   // cash (non-margin) accounts are never gated here (they aren't subject to the margin minimum).
   if (
@@ -125,7 +187,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   ) {
     reasons.push(
       `margin_minimum: this LIVE margin account's equity $${context.portfolio.totalMarketValue.toFixed(2)} is below the ` +
-        `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} minimum required to trade on margin (the PDT rule was retired — FINRA Notice 26-10).`
+        `$${MARGIN_MINIMUM_EQUITY.toLocaleString("en-US")} margin minimum. FINRA Notice 26-10 replaces the old PDT count/$25k framework, but broker phase-in and broker-specific intraday margin restrictions can still apply.`
     );
   }
 
@@ -135,6 +197,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   );
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
+  }
+  // Market-impact (ADV) ceiling: reject an opening order whose notional exceeds maxOrderPctOfAdv % of
+  // the name's recent daily $-volume (price × volume from the scan; the app ingests no historical
+  // bars). Defense-in-depth alongside deterministic sizing — also catches manual/non-sized proposals.
+  // Skipped when the gauge is unavailable so it can never false-reject.
+  if (isOpening && context.policy.maxOrderPctOfAdv != null && context.policy.maxOrderPctOfAdv > 0) {
+    const full = context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    if (dollarVol != null) {
+      const advCap = (context.policy.maxOrderPctOfAdv / 100) * dollarVol;
+      if (estimatedNotional > advCap) {
+        reasons.push(
+          `Order of $${estimatedNotional.toFixed(2)} exceeds ${context.policy.maxOrderPctOfAdv}% of ${symbol}'s ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume (ADV cap $${advCap.toFixed(2)}) — would risk outsized market impact.`
+        );
+      }
+    }
   }
   const effectiveMaxDailyNotional = Math.min(
     context.policy.maxDailyNotional ?? Infinity,
@@ -150,8 +228,8 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   ) {
     reasons.push("Hourly notional limit would be exceeded.");
   }
-  if (context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
-    reasons.push("Daily order count limit would be exceeded.");
+  if (isOpening && context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
+    reasons.push("Daily opening-order count limit would be exceeded.");
   }
   // Affordability: block an opening order the account can't fund rather than outsourcing the
   // check to the broker's margin rejection. buyingPower is broker-accurate for live/paper
@@ -217,8 +295,13 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
 
+  // Per-symbol exposure % cap — OPENING orders only. A close (sell/cover) can only reduce a symbol's
+  // exposure, so it must never be blocked here (otherwise the very risk-exit triggered by an over-cap
+  // position — see strategy.ts "SELL/TRIM any position exceeding maxSymbolExposurePct%" — would be
+  // blocked by the same cap that demanded it). Mirrors the isOpening gate on maxSymbolExposureNotional
+  // below. This cap is ON by default (unlike the 100% gross/net defaults).
   const projectedSymbolExposurePct = projectedExposurePct(proposal, context.positions, context.portfolio, estimatedNotional);
-  if (context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
+  if (isOpening && context.policy.maxSymbolExposurePct && projectedSymbolExposurePct > context.policy.maxSymbolExposurePct) {
     reasons.push(`Projected ${symbol} exposure ${projectedSymbolExposurePct.toFixed(2)}% exceeds ${context.policy.maxSymbolExposurePct}%.`);
   }
   if (context.policy.maxSymbolExposureNotional && isOpening) {
@@ -233,16 +316,19 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   }
 
   // Whole-portfolio gross/net exposure caps. Gross = Σ|marketValue| (total market
-  // involvement / leverage); net = Σ marketValue (directional bias). Each blocks only an
-  // order that pushes the metric FURTHER past its cap — a risk-reducing close is always
-  // allowed. These mainly bite once short selling is enabled. Defaults are 100% (non-binding).
-  if (context.policy.maxGrossExposurePct || context.policy.maxNetExposurePct) {
+  // involvement / leverage); net = Σ marketValue (directional bias). These apply to OPENING
+  // orders only — a risk-reducing close (sell/cover) is ALWAYS allowed, since it can only move
+  // gross/net toward zero. We gate on `isOpening` rather than relying solely on the
+  // "further-from-cap" guards because a corrupt/oversized notional on a close (e.g. an exit with
+  // no live quote) can overshoot through zero and look like a huge opposite-side position, which
+  // previously blocked the exit. These mainly bite once short selling is enabled (default 100%).
+  if ((context.policy.maxGrossExposurePct || context.policy.maxNetExposurePct) && isOpening) {
     const totalValue = context.portfolio.totalMarketValue;
     if (totalValue > 0) {
       const grossNow = context.positions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
       const netNow = context.positions.reduce((sum, p) => sum + p.marketValue, 0);
-      const grossProjected = isOpening ? grossNow + estimatedNotional : Math.max(0, grossNow - estimatedNotional);
-      const netDelta = proposal.side === "buy" || proposal.side === "cover" ? estimatedNotional : -estimatedNotional;
+      const grossProjected = grossNow + estimatedNotional;
+      const netDelta = proposal.side === "buy" ? estimatedNotional : -estimatedNotional; // opening: buy=long, short=short
       const netProjected = netNow + netDelta;
       if (context.policy.maxGrossExposurePct) {
         const grossCap = (context.policy.maxGrossExposurePct / 100) * totalValue;
@@ -259,9 +345,43 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     }
   }
 
-  const sectorDecision = projectedSectorExposurePct(proposal, context, estimatedNotional);
+  // Sector exposure % cap — OPENING orders only, same reasoning as the per-symbol cap: a close can only
+  // reduce sector exposure, so it must never be blocked (a stale/zero notional on an exit would otherwise
+  // make projected == current and re-block a name in an already-over-cap sector).
+  const sectorDecision = isOpening ? projectedSectorExposurePct(proposal, context, estimatedNotional) : null;
   if (sectorDecision && sectorDecision.cap > 0 && sectorDecision.projectedPct > sectorDecision.cap) {
     reasons.push(`Projected ${sectorDecision.sector} sector exposure ${sectorDecision.projectedPct.toFixed(2)}% exceeds sector cap ${sectorDecision.cap}%.`);
+  }
+
+  // Portfolio beta cap. Bounds aggregate market-directional exposure: Σ(signedMarketValue·beta) ÷
+  // totalEquity, including the candidate. The per-symbol/sector caps don't see correlation, so a
+  // cluster of individually-approved high-beta names can still build a large correlated drawdown;
+  // this catches that. A long buy adds +beta exposure, a short adds -beta. Per-name beta comes from
+  // the scan (names without a beta count as 1.0). Only an OPENING order that pushes |projected beta|
+  // BOTH past the cap AND further from the current level is blocked — a beta-reducing trade always
+  // passes. Defaults off (undefined); especially relevant once shorting is enabled.
+  if (isOpening && context.policy.maxPortfolioBeta != null && context.policy.maxPortfolioBeta > 0) {
+    const totalEquity = context.portfolio.totalMarketValue;
+    if (totalEquity > 0) {
+      const betaFor = (sym: string): number => {
+        const b = context.marketScan?.quotesBySymbol[normalizeSymbol(sym)]?.beta;
+        return b != null && Number.isFinite(b) ? b : 1;
+      };
+      const netBetaNow = context.positions.reduce((sum, p) => sum + p.marketValue * betaFor(p.symbol), 0);
+      const signedDelta = proposal.side === "short" ? -estimatedNotional : estimatedNotional;
+      const netBetaProjected = netBetaNow + signedDelta * betaFor(proposal.symbol);
+      const projectedPortfolioBeta = netBetaProjected / totalEquity;
+      const currentPortfolioBeta = netBetaNow / totalEquity;
+      if (
+        Math.abs(projectedPortfolioBeta) > context.policy.maxPortfolioBeta &&
+        Math.abs(projectedPortfolioBeta) > Math.abs(currentPortfolioBeta)
+      ) {
+        reasons.push(
+          `Projected portfolio beta ${projectedPortfolioBeta.toFixed(2)} exceeds the maxPortfolioBeta cap ` +
+            `of ${context.policy.maxPortfolioBeta} (current ${currentPortfolioBeta.toFixed(2)}).`
+        );
+      }
+    }
   }
 
   const riskReason = riskRuleReason(proposal, context);
@@ -279,6 +399,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
 
 export function allowedSymbolsForPolicy(policy: TradingPolicy): string[] {
   return symbolsForPolicyUniverse(policy);
+}
+
+function isDynamicScanSymbol(symbol: string, context: PolicyContext): boolean {
+  if (dynamicIndexUniversesForPolicy(context.policy).length === 0) return false;
+  const quote = context.marketScan?.quotesBySymbol[symbol];
+  return typeof quote?.score === "number" && quote.score > 0;
 }
 
 export function estimateNotional(proposal: TradeProposal): number {
@@ -372,14 +498,19 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
   const position = context.positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
   if (!position || position.averageCost <= 0) return undefined;
 
+  // Optional volatility-aware stop scaling: widen the stop for high-beta names, tighten for low-beta.
+  const beta = context.marketScan?.quotesBySymbol[normalizeSymbol(proposal.symbol)]?.beta;
+  const betaStops = context.policy.betaScaledStops === true;
+
   if (proposal.side === "buy") {
     if (position.quantity > 0) {
       const avgCost = position.averageCost;
       const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
       const drawdownPct = ((avgCost - currentPrice) / avgCost) * 100;
       const returnPct = ((currentPrice - avgCost) / avgCost) * 100;
-      
-      if (context.policy.riskRules?.stopLossPct && drawdownPct > context.policy.riskRules.stopLossPct) {
+
+      const effStopLossPct = betaScaledStopPct(context.policy.riskRules?.stopLossPct ?? 0, beta, betaStops);
+      if (effStopLossPct > 0 && drawdownPct > effStopLossPct) {
         return `Stop-loss rule blocks adding to ${normalizeSymbol(proposal.symbol)} while it is down ${drawdownPct.toFixed(2)}%.`;
       }
       if (context.policy.riskRules?.stopLossNotional) {
@@ -403,8 +534,9 @@ function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string
       const avgCost = position.averageCost;
       const currentPrice = proposal.limitPrice ?? proposal.stopPrice ?? avgCost;
       const drawdownPct = ((currentPrice - avgCost) / avgCost) * 100; // Inverse math for short: price up means loss
-      
-      if (context.policy.riskRules?.shortStopLossPct && drawdownPct > context.policy.riskRules.shortStopLossPct) {
+
+      const effShortStopPct = betaScaledStopPct(context.policy.riskRules?.shortStopLossPct ?? 0, beta, betaStops);
+      if (effShortStopPct > 0 && drawdownPct > effShortStopPct) {
         return `Cannot average up on short: Position is down ${drawdownPct.toFixed(2)}%, exceeding short stop-loss limit of ${context.policy.riskRules.shortStopLossPct}%.`;
       }
     }
@@ -427,3 +559,16 @@ function sectorCapFor(policy: TradingPolicy, sector: string): number | undefined
   return match?.[1];
 }
 
+/**
+ * Volatility-aware stop scaling. Widens the stop distance for high-beta names (fewer noise
+ * stop-outs) and tightens it for low-beta names (cut losers sooner), instead of one flat % for
+ * every ticker. Beta is clamped to [0.5×, 2.0×] so a missing/extreme value can't produce an absurd
+ * stop. Returns the base unchanged when scaling is disabled or beta is unavailable/invalid — so this
+ * is always safe to call. Shared by the gate (riskRuleReason), the proactive risk-exit generator,
+ * and the synthetic trailing stop so all three stay consistent.
+ */
+export function betaScaledStopPct(baseStopPct: number, beta: number | undefined, enabled: boolean): number {
+  if (!enabled || baseStopPct <= 0 || beta == null || !Number.isFinite(beta) || beta <= 0) return baseStopPct;
+  const clamped = Math.max(0.5, Math.min(2.0, beta));
+  return baseStopPct * clamped;
+}

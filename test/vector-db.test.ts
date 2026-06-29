@@ -178,7 +178,9 @@ describe("vector-db", () => {
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
     expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
-      topK: 2,
+      // Reranking is on by default, so Pinecone over-fetches (overFetchK(2)=10) and Voyage reranks
+      // back down to the requested limit. The filter is the tenant-isolation contract under test.
+      topK: 10,
       filter: {
         symbol: { $eq: "AAPL" },
         userId: { $eq: "user-1" }
@@ -207,7 +209,7 @@ describe("vector-db", () => {
     expect(sanitizeUserId("!!!")).toBe("local");
   });
 
-  it("uses sanitized user IDs for key lookup and Pinecone filters", async () => {
+  it("uses raw user IDs for key lookup and sanitized user IDs for Pinecone filters", async () => {
     mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     mocks.query.mockResolvedValue({ matches: [] });
@@ -215,8 +217,8 @@ describe("vector-db", () => {
 
     await retrieveContext("query", "AAPL", 2, "auth0|user 1");
 
-    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0user1");
-    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0user1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0|user 1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0|user 1");
     expect(mocks.query.mock.calls[0][0].filter.userId).toEqual({ $eq: "auth0user1" });
   });
 

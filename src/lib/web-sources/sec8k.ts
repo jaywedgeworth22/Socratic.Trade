@@ -85,6 +85,23 @@ export function parseCikTickerMap(json: unknown): Record<string, string> {
   return map;
 }
 
+/**
+ * Parse SEC company_tickers.json into a ticker -> numeric-CIK-string map. Unlike parseCikTickerMap
+ * (which collapses each CIK to ONE ticker), this keeps EVERY ticker, so dual-class names that share a
+ * CIK (e.g. GOOGL & GOOG) both resolve to their CIK.
+ */
+export function parseTickerCikMap(json: unknown): Record<string, string> {
+  const map: Record<string, string> = {};
+  const rows = json && typeof json === "object" ? Object.values(json as Record<string, unknown>) : [];
+  for (const row of rows) {
+    const r = row as { cik_str?: number | string; ticker?: string };
+    if (r?.cik_str == null || !r.ticker) continue;
+    const ticker = normalizeSymbol(r.ticker);
+    if (ticker) map[ticker] = String(Number(r.cik_str));
+  }
+  return map;
+}
+
 // ── Read API ─────────────────────────────────────────────────────────────────
 
 export interface EightKSignal {
@@ -130,14 +147,49 @@ export function isEightKRefreshDue(now: number = Date.now()): boolean {
   return now - Date.parse(ds.fetchedAt) >= eightKTtlMs();
 }
 
+// Shared in-flight promises for the cold company_tickers.json fetch. Both maps derive from the SAME
+// SEC file; without these guards, concurrent scans (or repeated dashboard refreshes) that all miss the
+// weekly cache would each fire a duplicate request and defeat SEC fair-access throttling. A pending load
+// is shared across callers and cleared once settled, so a later cache expiry re-fetches.
+let cikMapInFlight: Promise<Record<string, string>> | null = null;
+let tickerCikMapInFlight: Promise<Record<string, string>> | null = null;
+
 /** Load the CIK→ticker map, cached weekly in the settings KV. */
 export async function loadCikMap(now: number): Promise<Record<string, string>> {
   const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(CIK_KEY);
   if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
-  const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
-  const map = parseCikTickerMap(json);
-  if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
-  return map;
+  if (cikMapInFlight) return cikMapInFlight;
+  cikMapInFlight = (async () => {
+    const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+    const map = parseCikTickerMap(json);
+    if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+    return map;
+  })();
+  try {
+    return await cikMapInFlight;
+  } finally {
+    cikMapInFlight = null;
+  }
+}
+
+const TICKER_CIK_KEY = "webSource:sec:tickerCikMap";
+
+/** Load the ticker→CIK map (preserves dual-class tickers), cached weekly in the settings KV. */
+export async function loadTickerCikMap(now: number): Promise<Record<string, string>> {
+  const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(TICKER_CIK_KEY);
+  if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
+  if (tickerCikMapInFlight) return tickerCikMapInFlight;
+  tickerCikMapInFlight = (async () => {
+    const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+    const map = parseTickerCikMap(json);
+    if (Object.keys(map).length > 0) setInternalSetting(TICKER_CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+    return map;
+  })();
+  try {
+    return await tickerCikMapInFlight;
+  } finally {
+    tickerCikMapInFlight = null;
+  }
 }
 
 export function mergeEightK(existing: EightKEvent[], fresh: EightKEvent[], now: number, window = windowDays()): EightKEvent[] {
@@ -248,6 +300,9 @@ export async function reindexEightKDataset(
         symbol: event.symbol,
         source: "sec-8k",
         timestamp: event.filedAt,
+        // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+        acceptance_datetime: event.filedAt,
+        doc_type: "8-k",
         accession: event.accession,
         filingUrl: event.filingUrl,
         items: event.items ?? []
@@ -323,6 +378,9 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
             symbol: event.symbol,
             source: "sec-8k",
             timestamp: event.filedAt,
+            // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+            acceptance_datetime: event.filedAt,
+            doc_type: "8-k",
             accession: event.accession,
             filingUrl: event.filingUrl,
             items: event.items ?? []

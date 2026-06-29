@@ -7,26 +7,65 @@ export const dynamic = "force-dynamic";
 /**
  * Multi-user API Key Management
  *
- * Scaffolding for per-user API key storage. Currently uses a simple
- * request user hint (x-user-id header, userId query/body, then local fallback).
- * This is not authentication; production identity should be gated separately.
+ * Per-user API key storage. Identity comes from middleware's verified
+ * `x-authenticated-user-email` header; request body/query user hints are ignored.
  *
  * Supported services are defined in API_KEY_CATALOG below.
  *
- * GET  /api/keys?userId=<id>              → list all keys for user
- * GET  /api/keys?userId=<id>&service=<s>  → resolve key (user → env fallback)
- * POST /api/keys  { userId?, service, apiKey, label? }  → upsert key
- * DELETE /api/keys?userId=<id>&service=<s>  → delete key
+ * GET  /api/keys             → list all keys for the current user
+ * GET  /api/keys?service=<s> → resolve key (user → env fallback)
+ * POST /api/keys  { service, apiKey, label? }  → upsert key
+ * DELETE /api/keys?service=<s>  → delete key
  */
 
 const API_KEY_CATALOG = [
   {
     service: "openai",
     label: "OpenAI",
-    category: "Required",
-    required: true,
-    unlocks: "LLM trade proposals, strategy reviews, red-team debate, and post-mortems.",
+    category: "LLM",
+    required: false,
+    unlocks: "OpenAI models for trade proposals, strategy reviews, red-team debate, and post-mortems.",
     docsUrl: "https://platform.openai.com/api-keys"
+  },
+  {
+    service: "anthropic",
+    label: "Anthropic (Claude)",
+    category: "LLM",
+    required: false,
+    unlocks: "Claude models for the Assistant chat. Select a claude-* model in the Assistant to use.",
+    docsUrl: "https://console.anthropic.com/settings/keys"
+  },
+  {
+    service: "xai",
+    label: "xAI (Grok)",
+    category: "LLM",
+    required: false,
+    unlocks: "Grok models for trade proposals, strategy analysis, and the Assistant. Select a grok-* model to use.",
+    docsUrl: "https://console.x.ai/"
+  },
+  {
+    service: "gemini",
+    label: "Google Gemini",
+    category: "LLM",
+    required: false,
+    unlocks: "Gemini models for the Assistant chat. Select a gemini-* model in the Assistant to use.",
+    docsUrl: "https://aistudio.google.com/app/apikey"
+  },
+  {
+    service: "mistral",
+    label: "Mistral AI",
+    category: "LLM",
+    required: false,
+    unlocks: "Mistral models for the Assistant chat. Select a mistral-* model in the Assistant to use.",
+    docsUrl: "https://console.mistral.ai/api-keys/"
+  },
+  {
+    service: "deepseek",
+    label: "DeepSeek",
+    category: "LLM",
+    required: false,
+    unlocks: "DeepSeek models (deepseek-chat / deepseek-reasoner) for the Assistant and strategy. Note: requests are processed on DeepSeek's servers (China).",
+    docsUrl: "https://platform.deepseek.com/api_keys"
   },
   {
     service: "finnhub",

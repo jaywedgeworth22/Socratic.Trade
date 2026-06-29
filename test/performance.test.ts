@@ -122,8 +122,10 @@ describe("calculatePnl", () => {
       status: "filled"
     });
 
-    expect(fill.price).toBeCloseTo(420);
-    expect(fill.quantity).toBeCloseTo(10 / 420);
+    // With default-ON execution cost (1 bps base, no spread/volume data here):
+    // price = 420 * (1 + 0.0001) = 420.042; quantity = 10 / 420.042.
+    expect(fill.price).toBeCloseTo(420.042, 1); // 1 bps cost applied to buy
+    expect(fill.quantity).toBeCloseTo(10 / 420.042, 4);
 
     const projection = getPaperPortfolioProjection({ accountNumber: "APPROVAL1", startingCash: 100, currentPrices: { MSFT: 420 } });
     expect(projection.portfolio.cash).toBeCloseTo(90);
@@ -508,6 +510,151 @@ describe("calculatePnl — short/cover", () => {
     expect(pnl.openLots).toHaveLength(1);
     expect(pnl.openLots[0].side).toBe("long");
   });
+
+  it("a short round-trip realizes a profit AND a +returnPct when cover price < short price", () => {
+    // short 1@100, cover 1@90 → realized 1*(100-90)=+10; returnPct (100-90)/100*100=+10%.
+    const fills: FillEvent[] = [
+      fill({ id: "a-sh", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "a-cv", side: "cover", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(10);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(10);
+    expect(pnl.openLots).toHaveLength(0);
+  });
+
+  it("a short round-trip realizes a loss AND a -returnPct when cover price > short price", () => {
+    // short 1@100, cover 1@130 → realized 1*(100-130)=-30; returnPct (100-130)/100*100=-30%.
+    const fills: FillEvent[] = [
+      fill({ id: "a-sh2", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "a-cv2", side: "cover", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(-30);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(-30);
+  });
+
+  it("a cover that partially closes a short realizes on the matched chunk; the residual short marks to market", () => {
+    // short 3@100, cover 1@90 → matched 1: realized 1*(100-90)=+10; returnPct (100-90)/100*100=+10%.
+    // residual short = 3-1 = 2 @ 100; at current 120 unrealized = 2*(100-120) = -40 (short loses as price rises).
+    const fills: FillEvent[] = [
+      fill({ id: "b-sh", side: "short", quantity: 3, price: 100, notional: 300, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "b-cv", side: "cover", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 120 });
+    expect(pnl.realized).toBeCloseTo(10);
+    expect(pnl.closedLots).toHaveLength(1);
+    expect(pnl.closedLots[0].side).toBe("short");
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(10);
+    expect(pnl.unrealized).toBeCloseTo(-40);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("short");
+    expect(pnl.openLots[0].quantity).toBeCloseTo(-2); // signed: residual short is negative
+  });
+
+  it("a long closed by a partial-then-full sell sequence realizes each chunk with the right returnPct", () => {
+    // buy 3@100.
+    // sell 1@130 → matched 1: realized 1*(130-100)=+30; returnPct (130-100)/100*100=+30%.
+    // sell 2@90  → matched 2: realized 2*(90-100)=-20; returnPct (90-100)/100*100=-10%.
+    // total realized = +30 + (-20) = +10; both closed lots are LONG; nothing left open.
+    const fills: FillEvent[] = [
+      fill({ id: "c-b", side: "buy", quantity: 3, price: 100, notional: 300, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "c-s1", side: "sell", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:02.000Z" }),
+      fill({ id: "c-s2", side: "sell", quantity: 2, price: 90, notional: 180, filledAt: "2026-06-15T00:00:03.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(10);
+    expect(pnl.closedLots).toHaveLength(2);
+    expect(pnl.closedLots.map((l) => l.side)).toEqual(["long", "long"]);
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(30);
+    expect(pnl.closedLots[1].returnPct).toBeCloseTo(-10);
+    expect(pnl.openLots).toHaveLength(0);
+  });
+
+  it("an interleaved buy/short/sell/cover on the SAME symbol never cross-consumes lots (the critical FIFO/sign case)", () => {
+    // Time order, all AAPL:
+    //   buy   1@100  → long lot {q1, p100}
+    //   short 1@120  → short lot {q1, p120}
+    //   sell  1@130  → closes ONLY the long lot: realized 1*(130-100)=+30; returnPct +30%; side "long".
+    //   cover 1@110  → closes ONLY the short lot: realized 1*(120-110)=+10; returnPct (120-110)/120*100=+8.333%; side "short".
+    // total realized = +30 + +10 = +40. If sell had consumed the short (or cover the long) at $0,
+    // realized would be wrong AND a real open lot would be silently erased — this asserts neither happens.
+    const fills: FillEvent[] = [
+      fill({ id: "d-b", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "d-sh", side: "short", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T00:00:02.000Z" }),
+      fill({ id: "d-s", side: "sell", quantity: 1, price: 130, notional: 130, filledAt: "2026-06-15T00:00:03.000Z" }),
+      fill({ id: "d-cv", side: "cover", quantity: 1, price: 110, notional: 110, filledAt: "2026-06-15T00:00:04.000Z" })
+    ];
+    const pnl = calculatePnl(fills);
+    expect(pnl.realized).toBeCloseTo(40);
+    expect(pnl.closedLots).toHaveLength(2);
+    // The sell closed the long (FIFO chronological), the cover closed the short — never the reverse.
+    expect(pnl.closedLots[0].side).toBe("long");
+    expect(pnl.closedLots[0].pnl).toBeCloseTo(30);
+    expect(pnl.closedLots[0].returnPct).toBeCloseTo(30);
+    expect(pnl.closedLots[1].side).toBe("short");
+    expect(pnl.closedLots[1].pnl).toBeCloseTo(10);
+    expect(pnl.closedLots[1].returnPct).toBeCloseTo(8.3333, 3);
+    expect(pnl.openLots).toHaveLength(0); // both real lots accounted for, none erased or stranded
+  });
+
+  it("a cover with no open short contributes 0 realized and leaves the open long untouched (wrong-side/flat close)", () => {
+    // buy 1@100 (open long), then cover 1@90 with NO open short → matches nothing → 0 realized, no closed lot.
+    // The long lot is unchanged and still marks to market: at current 110 unrealized = 1*(110-100)=+10.
+    const fills: FillEvent[] = [
+      fill({ id: "e-b", side: "buy", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "e-cv", side: "cover", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 110 });
+    expect(pnl.realized).toBeCloseTo(0);
+    expect(pnl.closedLots).toHaveLength(0);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("long");
+    expect(pnl.openLots[0].quantity).toBeCloseTo(1); // long lot untouched, not consumed at $0
+    expect(pnl.openLots[0].entryPrice).toBeCloseTo(100);
+    expect(pnl.unrealized).toBeCloseTo(10);
+  });
+
+  it("a sell with no open long contributes 0 realized and leaves the open short untouched (mirror of the cover case)", () => {
+    // Symmetric counterpart to the cover-with-no-short case: short 1@100 (open short), then sell 1@90 with
+    // NO open long → wantSide "long" matches nothing → 0 realized, no closed lot, short lot intact.
+    // At current 80 the short marks to market with the short sign: unrealized = 1*(100-80)=+20 (short profits as price falls).
+    const fills: FillEvent[] = [
+      fill({ id: "f-sh", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "f-s", side: "sell", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 80 });
+    expect(pnl.realized).toBeCloseTo(0);
+    expect(pnl.closedLots).toHaveLength(0);
+    expect(pnl.openLots).toHaveLength(1);
+    expect(pnl.openLots[0].side).toBe("short");
+    expect(pnl.openLots[0].quantity).toBeCloseTo(-1); // short lot untouched, signed qty negative, not consumed at $0
+    expect(pnl.openLots[0].entryPrice).toBeCloseTo(100);
+    expect(pnl.unrealized).toBeCloseTo(20);
+  });
+
+  it("aggregates unrealized across a residual long AND short on the SAME symbol with correct signs", () => {
+    // Both sides left open on AAPL (calculatePnl keeps them as independent same-symbol lots; it does not net):
+    //   buy   2@100 → long  {q2, p100}
+    //   short 1@200 → short {q1, p200}
+    // At current 150: long unrealized = 2*(150-100)=+100; short unrealized = 1*(200-150)=+50; total +150. realized 0.
+    const fills: FillEvent[] = [
+      fill({ id: "g-b", side: "buy", quantity: 2, price: 100, notional: 200, filledAt: "2026-06-15T00:00:01.000Z" }),
+      fill({ id: "g-sh", side: "short", quantity: 1, price: 200, notional: 200, filledAt: "2026-06-15T00:00:02.000Z" })
+    ];
+    const pnl = calculatePnl(fills, { AAPL: 150 });
+    expect(pnl.realized).toBeCloseTo(0);
+    expect(pnl.openLots).toHaveLength(2);
+    const long = pnl.openLots.find((l) => l.side === "long");
+    const short = pnl.openLots.find((l) => l.side === "short");
+    expect(long?.quantity).toBeCloseTo(2); // signed positive for the long
+    expect(short?.quantity).toBeCloseTo(-1); // signed negative for the short
+    expect(pnl.unrealized).toBeCloseTo(150); // +100 long + +50 short, mixed signs aggregated correctly
+  });
 });
 
 describe("recordFillFromProposal — T9 short/cover boundaries", () => {
@@ -531,8 +678,10 @@ describe("recordFillFromProposal — T9 short/cover boundaries", () => {
     });
     expect(f.side).toBe("short");
     expect(f.quantity).toBeCloseTo(2);
-    expect(f.price).toBeCloseTo(100);
-    expect(f.notional).toBeCloseTo(200); // notional is always recorded as a positive magnitude
+    // With default-ON execution cost (1 bps base, no spread/volume): short receives DOWN.
+    // price = 100 * (1 - 0.0001) = 99.99; notional = 2 * 99.99 = 199.98.
+    expect(f.price).toBeCloseTo(99.99, 1);
+    expect(f.notional).toBeCloseTo(199.98, 1); // notional is always recorded as a positive magnitude
   });
 
   it("books a cover fill as a partial short close in the projection", () => {
@@ -553,6 +702,58 @@ describe("recordFillFromProposal — T9 short/cover boundaries", () => {
 
     const projection = getPaperPortfolioProjection({ accountNumber: "T9_COVER", startingCash: 1000, currentPrices: { TSLA: 95 } });
     expect(projection.positions.find((p) => p.symbol === "TSLA")?.quantity).toBeCloseTo(-2); // short 3, covered 1
+  });
+});
+
+describe("holding-period fields (Task 3 — avgDaysHeld / shortTermPct)", () => {
+  it("computes avgDaysHeld and shortTermPct from entryAt/exitAt on closed lots", async () => {
+    const { insertFillEvent, audit } = await import("../src/lib/db");
+    const account = "HOLDPERIOD1";
+    const userId = `hp-${randomUUID()}`;
+    const runId = "run-hp-1";
+
+    // Lot A: held 10 days (short-term < 365). runId must match the snapshot audit entry.
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "AAA", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", runId, filledAt: "2026-01-01T00:00:00.000Z", raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: "R" } } });
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "AAA", side: "sell", quantity: 1, price: 110, notional: 110, status: "filled", filledAt: "2026-01-11T00:00:00.000Z" });
+    // Lot B: held ~400 days (long-term >= 365). runId must match the snapshot audit entry.
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "BBB", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", runId, filledAt: "2025-01-01T00:00:00.000Z", raw: { proposal: { tradeThesisTag: "T", entryMarketRegime: "R" } } });
+    insertFillEvent({ userId, accountNumber: account, source: "paper", symbol: "BBB", side: "sell", quantity: 1, price: 90, notional: 90, status: "filled", filledAt: "2026-02-05T00:00:00.000Z" });
+    audit("signal_snapshot", {
+      runId,
+      signals: [
+        { symbol: "AAA", chosen: true, factorBreakdown: { liquidity: 5, momentum: 90, value: 20, quality: 10, volatility: 10, sentiment: 15, positioning: 30, diversification: 5, weightedTotal: 60 } },
+        { symbol: "BBB", chosen: true, factorBreakdown: { liquidity: 5, momentum: 90, value: 20, quality: 10, volatility: 10, sentiment: 15, positioning: 30, diversification: 5, weightedTotal: 60 } }
+      ]
+    }, userId);
+
+    const scorecard = getFactorScorecard(account, "paper", {}, userId);
+    // Both lots have momentum as dominant factor → one bucket.
+    expect(scorecard).toHaveLength(1);
+    expect(scorecard[0].factor).toBe("momentum");
+    expect(scorecard[0].trades).toBe(2);
+    // AAA: 10 days, BBB: ~400 days → avg ≈ 205 days (check within 5 days tolerance).
+    expect(scorecard[0].avgDaysHeld).toBeDefined();
+    expect(scorecard[0].avgDaysHeld!).toBeGreaterThan(200);
+    expect(scorecard[0].avgDaysHeld!).toBeLessThan(215);
+    // shortTermPct: 1 out of 2 lots < 365 days = 50%.
+    expect(scorecard[0].shortTermPct).toBeCloseTo(50, 0);
+  });
+
+  it("returns avgDaysHeld=0 and shortTermPct=100 when lots are closed very quickly", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const account = "QUICKCLOSE1";
+    // Buy then sell within the same second — avgDaysHeld ≈ 0, still short-term.
+    insertFillEvent({ accountNumber: account, source: "paper", symbol: "FAST", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled", filledAt: "2026-06-15T10:00:00.000Z" });
+    insertFillEvent({ accountNumber: account, source: "paper", symbol: "FAST", side: "sell", quantity: 1, price: 105, notional: 105, status: "filled", filledAt: "2026-06-15T10:00:01.000Z" });
+
+    const sc = getThesisScorecard(account, "paper");
+    expect(sc).toHaveLength(1);
+    // avgDaysHeld should be defined and very close to 0 (1 second / 86400 seconds per day).
+    expect(sc[0].avgDaysHeld).toBeDefined();
+    expect(sc[0].avgDaysHeld!).toBeGreaterThanOrEqual(0);
+    expect(sc[0].avgDaysHeld!).toBeLessThan(0.1);
+    // shortTermPct: held < 365 days → 100%.
+    expect(sc[0].shortTermPct).toBe(100);
   });
 });
 

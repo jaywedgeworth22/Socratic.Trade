@@ -5,16 +5,19 @@ import {
   latestAuditByKind,
   listFillEvents,
   listStrategyRuns,
-  resolveLlmCredential
+  normalizeScoringWeights
 } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { deriveExecutionState, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
-import { symbolsForPolicyUniverse } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
+import { policyUniverseSymbolCount } from "./index-universes";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
-import { getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
+import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
+import { runWalkForwardOOS } from "./backtest";
 import type {
   FillEvent,
   MarketFactor,
@@ -131,16 +134,32 @@ export function summarizeMissedOpportunities(rows: MissedOpportunityInput[], lim
   };
 }
 
+/**
+ * Derive the current market regime from the most-recent closed lot that has a regime stamp.
+ * Returns undefined when no closed lots have a regime field.
+ */
+function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", userId: string): string | undefined {
+  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId));
+  // Lots are returned oldest-first; iterate in reverse for the most-recent stamped regime.
+  for (let i = closedLots.length - 1; i >= 0; i--) {
+    const r = closedLots[i].regime?.trim();
+    if (r) return r;
+  }
+  return undefined;
+}
+
 export async function proposeStrategyTuning(userId: string = "local"): Promise<StrategyTuningProposal> {
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
   const prompt = getStrategyPrompt(userId);
-  const latestDecision = latestAuditByKind("strategy_run", userId)?.payload as LatestDecisionPayload | undefined;
+  const latestDecision = (policy.connectedAccountId
+    ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
+    : latestAuditByKind("strategy_run", userId))?.payload as LatestDecisionPayload | undefined;
   const macro = await fetchMacroData(userId);
   const accountNumber = policy.accountNumber;
   const performance = accountNumber ? getPerformanceSummary(accountNumber, {}, userId) : undefined;
-  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const fills = accountNumber ? listFillEvents(accountNumber, source, 30, userId) : [];
   const closedLotCount = accountNumber ? getClosedLotCount(accountNumber, source, userId) : 0;
   const minLotsForWeights = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
@@ -148,13 +167,26 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
   // Matured skipped-candidate counterfactuals (empty price map => realized rows only,
   // no live quotes needed). Lets the tuner learn from high-scoring names it passed on.
   const missedOpportunities = summarizeMissedOpportunities(
-    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30 })
+    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId })
   );
   // Factor-outcome history: realized win-rate and avg-return grouped by dominant entry factor.
   // Gated by the same closed-lot minimum — below the gate the sample is too thin to trust
   // per-factor attribution.
+  // Task 2: prefer same-regime evidence when the current regime bucket meets the closed-lot
+  // threshold; fall back to all-regime aggregate when the regime bucket is too thin.
+  const currentRegime = accountNumber ? currentRegimeFromLots(accountNumber, source, userId) : undefined;
   const factorScorecard: FactorScorecardStat[] = accountNumber && closedLotCount >= minLotsForWeights
-    ? getFactorScorecard(accountNumber, source, {}, userId)
+    ? (() => {
+        if (currentRegime) {
+          const regime = currentRegime;
+          // Attempt regime-filtered scorecard; fall back to all-regime when regime bucket is too thin.
+          const regimeScorecard = getFactorScorecard(accountNumber, source, {}, userId, { regime });
+          const regimeLots = regimeScorecard.reduce((s, r) => s + r.trades, 0);
+          if (regimeLots >= minLotsForWeights) return regimeScorecard;
+          // Regime bucket too thin — use all-regime aggregate.
+        }
+        return getFactorScorecard(accountNumber, source, {}, userId);
+      })()
     : [];
 
   const executionMode = llmExecutionMode(executionState);
@@ -165,7 +197,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     accountConfigured: Boolean(accountNumber),
     policy: compactPolicy(policy, executionState),
     strategyPrompt: prompt,
-    performance: compactPerformance(performance, executionState.usesLocalSimulation),
+    performance: compactPerformance(performance, executionState.usesLocalSimulation, getPolicy(userId).tuning?.useEntryRunAttribution ?? false),
     closedLotCount,
     minClosedLotsForWeightShift: minLotsForWeights,
     recentFills: fills.slice(0, 20).map((fill) => compactFill(fill, executionState)),
@@ -197,13 +229,13 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     macro
   };
 
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
-  if (!openaiKey) {
-    return localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard });
+  const { key: llmKey } = resolveLlmEndpoint(policy, userId);
+  if (!llmKey) {
+    const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard });
+    return applyOosGate(localProposal, userId);
   }
 
-  const payload = await requestLlmTuning(context, openaiKey, userId, cred.source === "operator" ? "operator" : "user", cred.keyRef);
+  const payload = await requestLlmTuning(context, userId);
   const proposedPatch = toPatch(payload, prompt, policy.scoringWeights);
   const cautions = [...payload.cautions];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
@@ -213,7 +245,7 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     delete proposedPatch.scoringWeights;
     cautions.push(`Withheld model-proposed factor-weight changes: only ${closedLotCount}/${minLotsForWeights} closed lots (insufficient evidence).`);
   }
-  return {
+  const llmProposal: StrategyTuningProposal = {
     summary: payload.summary,
     rationale: payload.rationale,
     marketContext: payload.marketContext,
@@ -223,6 +255,89 @@ export async function proposeStrategyTuning(userId: string = "local"): Promise<S
     confidenceScore: clamp(payload.confidenceScore, 0, 100),
     generatedBy: "llm"
   };
+  return applyOosGate(llmProposal, userId);
+}
+
+/**
+ * OOS walk-forward gate for proposed `scoringWeights`. Called after both the LLM and local-rules
+ * paths complete. If the proposal includes `scoringWeights`:
+ *  - Runs `runWalkForwardOOS` with the ACTUAL proposed weights (merged over the current policy as
+ *    the full candidate vector) and the current weights as the baseline.
+ *  - If the candidate's OOS composite IC does NOT beat the current weights' OOS IC, strips the
+ *    weights and emits a caution.
+ *  - Otherwise, attaches an OOS readout to the cautions array (informational).
+ * Returns the proposal unchanged when no scoring-weight changes are proposed, or when OOS
+ * data is insufficient (< 4 snapshot dates → runWalkForwardOOS returns null).
+ */
+/**
+ * Handles unvalidated OOS weight changes. When withhold=true (the default), STRIPS proposed
+ * scoringWeights from the patch — strictly more conservative than keeping them. When withhold=false,
+ * restores the prior behavior: keeps weights but appends a caution (opt-out via oosWithholdUnvalidated=false).
+ */
+function withOosUnvalidatedCaution(proposal: StrategyTuningProposal, reason: string, withhold = true): StrategyTuningProposal {
+  if (!proposal.proposedPatch.scoringWeights || Object.keys(proposal.proposedPatch.scoringWeights).length === 0) return proposal;
+  const patch = { ...proposal.proposedPatch };
+  if (withhold) delete patch.scoringWeights;
+  const caution = withhold
+    ? `Withheld factor-weight changes: NOT out-of-sample validated (${reason}) — too risky to apply unvalidated weight changes; stripped from the patch.`
+    : `Proposed factor-weight changes were NOT out-of-sample validated (${reason}) — they are kept as proposed, so apply with extra care.`;
+  return { ...proposal, proposedPatch: patch, cautions: [...proposal.cautions, caution] };
+}
+
+async function applyOosGate(proposal: StrategyTuningProposal, userId: string): Promise<StrategyTuningProposal> {
+  const proposedWeights = proposal.proposedPatch.scoringWeights;
+  if (!proposedWeights || Object.keys(proposedWeights).length === 0) return proposal;
+
+  // Change C: read the withhold flag (default true = strip unvalidated weight changes).
+  const withhold = getPolicy(userId).tuning?.oosWithholdUnvalidated ?? true;
+
+  // The status-quo weights this proposal would replace, and the full candidate vector that WOULD be
+  // applied. A proposed patch only names the factors it changes, so merge it over the baseline and
+  // normalize — exactly mirroring how db-profiles persists a weight patch.
+  const baselineWeights = getPolicy(userId).scoringWeights;
+  const candidateWeights = normalizeScoringWeights({ ...baselineWeights, ...proposedWeights });
+
+  let oosResult;
+  try {
+    // Validate the ACTUAL proposed weights (and the current baseline) on held-out data — not the
+    // data-derived IC weights, which answer a different question.
+    oosResult = await runWalkForwardOOS(userId, { candidateWeights, baselineWeights });
+  } catch {
+    // OOS fetch failed (e.g. network error in test); skip the gate gracefully — but flag non-validation.
+    return withOosUnvalidatedCaution(proposal, "the OOS data fetch failed", withhold);
+  }
+
+  if (!oosResult) {
+    // Insufficient snapshot history (< 4 dates) to run OOS — skip the gate, but flag non-validation.
+    return withOosUnvalidatedCaution(proposal, "insufficient snapshot history — need ≥4 distinct snapshot dates", withhold);
+  }
+
+  // Gate on the CANDIDATE weights vs the CURRENT weights — "does what's proposed beat what's
+  // running today on held-out data?". We always pass both weight vectors into runWalkForwardOOS, so
+  // these are present on the real path; if they're somehow absent, skip the gate (keep weights, no
+  // misleading "validated" caution) rather than falling back to a comparison that ignores the
+  // proposed weights — the exact bug this fix removes.
+  const candidateIC = oosResult.oosICCandidate;
+  const baselineIC = oosResult.oosICBaseline;
+  if (candidateIC == null || baselineIC == null) return withOosUnvalidatedCaution(proposal, "the OOS run returned no composite IC", withhold);
+  const improves = candidateIC > baselineIC;
+  const oosReadout = `OOS walk-forward: proposed-weights composite IC=${candidateIC.toFixed(3)} vs current IC=${baselineIC.toFixed(3)}, ICIR=${oosResult.oosICIR.toFixed(2)}.`;
+
+  const cautions = [...proposal.cautions];
+  const patch = { ...proposal.proposedPatch };
+
+  if (!improves) {
+    // Proposed weights did not beat the current weights OOS → strip them, keep prompt/risk nudges.
+    delete patch.scoringWeights;
+    cautions.push(
+      `Withheld model-proposed factor-weight changes: ${oosReadout} Proposed weights did not improve OOS IC over the current weights — withheld to avoid overfitting.`
+    );
+  } else {
+    // Proposed weights improved OOS IC over the current weights → attach informational readout.
+    cautions.push(`OOS-validated weight changes: ${oosReadout} Proposed weights improved OOS IC over the current weights. Apply with care.`);
+  }
+
+  return { ...proposal, proposedPatch: patch, cautions };
 }
 
 function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
@@ -233,7 +348,9 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
     includedIndices: policy.includedIndices,
     additionalWatchlistCount: policy.additionalSymbols.length,
     ignoredSymbolCount: policy.blocklist?.length ?? 0,
-    allowedCount: symbolsForPolicyUniverse(policy).length,
+    allowedCount: policyUniverseSymbolCount(policy).count,
+    marketScanCandidateLimit: policy.marketScanCandidateLimit,
+    marketScanOutlierReserve: policy.marketScanOutlierReserve,
     strategyAuthority: policy.strategyAuthority,
     maxOrderNotional: policy.maxOrderNotional,
     maxDailyNotional: policy.maxDailyNotional,
@@ -248,15 +365,21 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
   };
 }
 
-function compactPerformance(performance: PerformanceSummary | undefined, paperMode: boolean) {
+export function compactPerformance(performance: PerformanceSummary | undefined, paperMode: boolean, useEntryAttribution = false) {
   if (!performance) return undefined;
+  const recentAttribution = performance.attribution.slice(-8);
   return {
     realizedPnl: paperMode ? performance.paperRealizedPnl : performance.liveRealizedPnl,
     unrealizedPnl: paperMode ? performance.paperUnrealizedPnl : performance.liveUnrealizedPnl,
     winRate: paperMode ? performance.paperWinRate : performance.liveWinRate,
     averageReturnPct: paperMode ? performance.paperAverageReturnPct : performance.liveAverageReturnPct,
     fillCount: performance.fills.length,
-    recentAttribution: performance.attribution.slice(-8)
+    // Change A (consumer, flag OFF by default): when useEntryAttribution=false (default), strip the new
+    // entry/exit credit fields from the context object so the tuner's serialized input is byte-for-byte
+    // identical to today. When opted in, the extra keys appear for advisory LLM context only (no math change).
+    recentAttribution: useEntryAttribution
+      ? recentAttribution
+      : recentAttribution.map(({ realizedPnlAsEntry: _e, realizedPnlAsExit: _x, ...rest }) => rest)
   };
 }
 
@@ -298,11 +421,10 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown, openaiKey: string, userId: string, keySource: "user" | "operator", keyRef?: string): Promise<LlmTuningPayload> {
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+async function requestLlmTuning(context: unknown, userId: string): Promise<LlmTuningPayload> {
+  const policy = getPolicy(userId);
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
+  const isChatCompletions = transport === "chat-completions";
   const schema = tuningSchema();
   const systemPrompt = [
     "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
@@ -323,14 +445,9 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
           { role: "system", content: systemPrompt },
           { role: "user", content: JSON.stringify(context) }
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "strategy_tuning",
-            strict: true,
-            schema
-          }
-        }
+        response_format: provider === "deepseek"
+          ? { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "strategy_tuning", strict: true, schema } }
       }
       : {
         model,
@@ -347,7 +464,7 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
         }
       },
     transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning }
+    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning, model, reasoningEffort: policy.llmReasoningEffort }
   );
 
   const traced = await withLlmGeneration(
@@ -381,11 +498,11 @@ async function requestLlmTuning(context: unknown, openaiKey: string, userId: str
 
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(`Strategy tuning request failed with ${response.status}: ${detail.slice(0, 500)}`);
+        throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
       }
 
       const payload = await response.json();
-      recordLlmUsage({ userId, provider: "openai", model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
       const text = extractResponseText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       return { text, payload: JSON.parse(text) as LlmTuningPayload };
