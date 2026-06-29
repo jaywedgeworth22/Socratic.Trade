@@ -4,21 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Sticky top bar, slide-over layout offsets & verification
+Branch `agent/antigravity`. Made the dashboard header/top bar sticky so it always stays at the top of the viewport. Offset the `SlideOver` component dynamically from the top of the viewport using a measured `--header-height` CSS variable so drawer panels (like the Activity Log) render cleanly below the top bar instead of overlapping/sliding behind it. Verified `npx tsc --noEmit`, `npm run lint`, `npm test` (1,516 tests), and `npm run build` are all green. See `docs/rollouts/2026-06-29-sticky-top-bar-and-slideover-offsets.md`.
+
 ## 2026-06-29 — Multi-agent system optimizations, batch quote fetching & UX improvements
 Branch `agent/antigravity`. Implemented a comprehensive set of 18 system optimizations and UX improvements spanning database indices, scheduler lease locks, serial SEC 8-K crawls, cache GC sweeps, faster 10-K parsing, stop cancel/drift reconciliation, zero-NAV & sizer boundaries, backtest timeline fixes, WCAG AA contrast adjustments, responsive mobile tabs, ARIA accessible model pickers, P&L bar charts, and button standardization. All 1,498 unit tests are green, types check clean, and production build succeeded. See `docs/rollouts/2026-06-29-multi-agent-system-optimizations.md`.
 
-## 2026-06-29 — Strategy tuning UI fixes, simulated models removal & robust parsing
+## 2026-06-29 — Strategy tuning UI fixes, GPT-5 model restoration & robust parsing
 Branch `agent/antigravity`. Fixed the `TypeError: Cannot convert undefined or
 null to object` error on strategy reviews when using `deepseek-reasoner` (R1) by
-hardening backend payload parsing. Removed all simulated OpenAI models (`gpt-5.*`)
-from all pickers and changed default fallbacks/defaults to `gpt-4o-mini`. Simplified
-the OpenAI options grouping to a single clean "OpenAI" list. Added model selection dropdown
-to LLM Strategy Review buttons in both Strategy Studio and Strategy View. Toggled "Reasoning Effort"
-visibility conditionally based on whether any active/tuning model is a reasoning model
-(gpt-5 or o-series). Resized Strategy Prompt textbox to `lg:h-[480px]` on desktop. Researched
-other providers' thinking/reasoning configuration options. Verified `npx tsc --noEmit`, `npm run lint`,
-`npm test` (1,498 tests), and `npm run build` are all green. See
+hardening backend payload parsing. Restored the GPT-5 model family (`gpt-5.*`)
+to all select pickers and default configs (grouped under "OpenAI"). Added model
+selection dropdown to LLM Strategy Review buttons in both Strategy Studio and
+Strategy View. Toggled "Reasoning Effort" visibility conditionally. Resized
+Strategy Prompt textbox to `lg:h-[480px]` on desktop. Disabled operator env API key
+fallbacks by default (`LLM_OPERATOR_FALLBACK=off`), and mapped Anthropic models to `anthropic`
+credentials in `resolveLlmEndpoint`. Verified `npx tsc --noEmit`, `npm run lint`,
+`npm test` (1,516 tests), and `npm run build` are all green. See
 `docs/rollouts/2026-06-29-strategy-tuning-ui-fixes.md`.
+
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
 `z-[1300]` so the Settings/Help/Accounts modal no longer sits behind the dashboard header

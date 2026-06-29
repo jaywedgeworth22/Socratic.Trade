@@ -840,6 +840,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [compactExecutionBanner, setCompactExecutionBanner] = useState(false);
   const [executionBannerHidden, setExecutionBannerHidden] = useState(false);
   const [hideTestAccount, setHideTestAccount] = useState(false);
+
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const updateHeight = () => {
+      if (headerRef.current) {
+        const rect = headerRef.current.getBoundingClientRect();
+        document.documentElement.style.setProperty("--header-height", `${rect.height}px`);
+      }
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(headerRef.current);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/scan")
@@ -1426,22 +1441,27 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       {consentGate === "needed" && (
         <ConsentGate onResolved={() => setConsentGate("done")} />
       )}
-      {!executionBannerHidden && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={cn(
-            "shrink-0 border-b text-center font-semibold tracking-wide",
-            compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
-            safetyBanner.className
-          )}
-          title={safetyBanner.title}
-        >
-          {safetyBanner.content}
-        </div>
-      )}
-      {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="relative z-[1100] flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 lg:flex-row lg:items-center lg:justify-between lg:h-16 lg:gap-3 lg:py-0 lg:px-4">
+      {/* Sticky top container for Safety Banner and Header/Command Bar */}
+      <div
+        ref={headerRef}
+        className="sticky top-0 z-[1100] flex shrink-0 flex-col"
+      >
+        {!executionBannerHidden && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={cn(
+              "shrink-0 border-b text-center font-semibold tracking-wide",
+              compactExecutionBanner ? "px-3 py-1 text-[10px]" : "px-4 py-1.5 text-[11px]",
+              safetyBanner.className
+            )}
+            title={safetyBanner.title}
+          >
+            {safetyBanner.content}
+          </div>
+        )}
+        {/* ── Command bar ─────────────────────────────────────────── */}
+        <header className="relative z-10 flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 lg:flex-row lg:items-center lg:justify-between lg:h-16 lg:gap-3 lg:py-0 lg:px-4">
         {/* Left Side: Logo, Title, Status, and Pills */}
         <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 w-full lg:w-auto lg:justify-start lg:gap-4">
           <div className="flex items-start gap-2.5">
@@ -1578,6 +1598,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
         </div>
       </header>
+      </div>
 
       {/* ── Body grid ───────────────────────────────────────────── */}
       <div className="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -3315,7 +3336,7 @@ function StrategyView({
 }) {
   // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
   const [copyTarget, setCopyTarget] = useState("");
-  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-4o-mini");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -3869,7 +3890,7 @@ function StrategyStudio({
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
 }) {
-  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-4o-mini");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -3902,14 +3923,18 @@ function StrategyStudio({
           <div className="grid gap-3">
             <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
               <div className="space-y-2">
-                <select className={inputClass} value={["grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-4o-mini") ? (policy.llmModel ?? "gpt-4o-mini") : "custom"} onChange={(e) => {
+                <select className={inputClass} value={["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
-                    updatePolicy({ llmModel: "gpt-4o-mini" });
+                    updatePolicy({ llmModel: "gpt-5.4-mini" });
                   } else {
                     updatePolicy({ llmModel: e.target.value });
                   }
                 }}>
                   <optgroup label="OpenAI">
+                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
+                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
                     <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
                     <option value="gpt-4o">gpt-4o — standard large</option>
                     <option value="o1-mini">o1-mini — fast reasoning</option>
@@ -3936,7 +3961,7 @@ function StrategyStudio({
                   </optgroup>
                   <option value="custom">Custom Model ID...</option>
                 </select>
-                {!["grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-4o-mini") && (
+                {!["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") && (
                   <input
                     type="text"
                     className={inputClass}
@@ -3949,15 +3974,19 @@ function StrategyStudio({
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
               <div className="space-y-2">
-                <select className={inputClass} value={!policy.redTeamLlmModel ? "" : ["grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
+                <select className={inputClass} value={!policy.redTeamLlmModel ? "" : ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
-                    updatePolicy({ redTeamLlmModel: "gpt-4o-mini" });
+                    updatePolicy({ redTeamLlmModel: "gpt-5.4-mini" });
                   } else {
                     updatePolicy({ redTeamLlmModel: e.target.value || undefined });
                   }
                 }}>
                   <option value="">Same as Green Team model</option>
                   <optgroup label="OpenAI">
+                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
+                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
                     <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
                     <option value="gpt-4o">gpt-4o — standard large</option>
                     <option value="o1-mini">o1-mini — fast reasoning</option>
@@ -3984,7 +4013,7 @@ function StrategyStudio({
                   </optgroup>
                   <option value="custom">Custom Model ID...</option>
                 </select>
-                {policy.redTeamLlmModel !== undefined && !["grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) && (
+                {policy.redTeamLlmModel !== undefined && !["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) && (
                   <input
                     type="text"
                     className={inputClass}
@@ -4025,7 +4054,11 @@ function StrategyStudio({
               onChange={(e) => setTuningModel(e.target.value)}
             >
               <optgroup label="OpenAI">
-                <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
+                <option value="gpt-5.4-nano">gpt-5.4-nano</option>
+                <option value="gpt-5.4-mini">gpt-5.4-mini (default)</option>
+                <option value="gpt-5.4">gpt-5.4</option>
+                <option value="gpt-5.5">gpt-5.5</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
                 <option value="gpt-4o">gpt-4o</option>
                 <option value="o1-mini">o1-mini</option>
                 <option value="o3-mini">o3-mini</option>
@@ -4635,7 +4668,7 @@ function SettingsContent({
                 <div>
                   <div className="text-sm font-semibold text-fg">Strategy Models</div>
                   <p className="mt-1 text-[13px] text-muted">
-                    Green: <span className="font-medium text-fg">{policy.llmModel ?? "gpt-4o-mini"}</span>
+                    Green: <span className="font-medium text-fg">{policy.llmModel ?? "gpt-5.4-mini"}</span>
                     {" · "}
                     Red: <span className="font-medium text-fg">{policy.redTeamLlmModel || "Same as Green Team"}</span>
                     {" · "}
@@ -5684,7 +5717,7 @@ const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
 };
 
 function strategyLlmServiceForModel(model?: string | null): LlmApiService {
-  const value = (model || "gpt-4o-mini").trim();
+  const value = (model || "gpt-5.4-mini").trim();
   if (/^grok/i.test(value)) return "xai";
   if (/^gemini/i.test(value)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(value)) return "mistral";
@@ -5752,7 +5785,7 @@ function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
   }
 
   const requiredUnsetLabels = keys.filter((row) => row.required && row.source === "none").map((row) => row.label);
-  const strategyModel = policy.llmModel || "gpt-4o-mini";
+  const strategyModel = policy.llmModel || "gpt-5.4-mini";
   const strategyService = strategyLlmServiceForModel(strategyModel);
   const strategyServiceLabel = LLM_SERVICE_LABELS[strategyService];
   const selectedStrategyRow = keys.find((row) => row.service === strategyService);

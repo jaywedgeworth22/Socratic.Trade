@@ -5,6 +5,11 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`agent/antigravity`): sticky top bar & slide-over offsets —
+> made the dashboard top bar sticky and offset the SlideOver components (Activity Log, etc.)
+> so they slide in below the top bar instead of overlapping or rendering behind it.
+> See `docs/rollouts/2026-06-29-sticky-top-bar-and-slideover-offsets.md`.
+
 > 2026-06-29 (`antigravity/multi-agent-optimizations`): multi-agent optimizations —
 > implemented a set of 18 system optimizations and UX improvements spanning DB indexing,
 > scheduler lease locks, serial SEC 8-K crawls, cache GC sweeps, faster 10-K parsing, stop

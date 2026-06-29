@@ -182,7 +182,13 @@ export function SlideOver({
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-[900]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div
+          className="fixed left-0 right-0 bottom-0 z-[900]"
+          style={{ top: "var(--header-height, 64px)" }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
           <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
           <motion.aside
             ref={ref}

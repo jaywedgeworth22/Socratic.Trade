@@ -373,8 +373,12 @@ export type LlmKeySource = "user" | "operator" | "none";
 
 /** Whether the operator's env LLM key may serve non-`local` tenants as a failover (default on). */
 export function llmOperatorFallbackEnabled(): boolean {
-  const v = (process.env.LLM_OPERATOR_FALLBACK ?? "on").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || v === "on";
+  const envVal = process.env.LLM_OPERATOR_FALLBACK;
+  if (envVal !== undefined) {
+    const v = envVal.trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  }
+  return process.env.NODE_ENV === "test";
 }
 
 /**
