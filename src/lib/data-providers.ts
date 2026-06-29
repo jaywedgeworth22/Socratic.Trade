@@ -1764,10 +1764,10 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             skipConsensus
               ? Promise.resolve(undefined)
               : this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`),
+            this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
+            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
             wantTargets
-              ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`)
+              ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
               : Promise.resolve(undefined)
           ]);
 
@@ -1890,11 +1890,15 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     return result;
   }
 
-  private async getJson(url: string): Promise<unknown> {
+  private async getJson(url: string, logHealth = true): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
+      const response = await fetchWithRetry(
+        url,
+        { cache: "no-store", signal: controller.signal },
+        logHealth ? { service: this.name, keySource: this.keySource, userId: this.userId } : undefined
+      );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
