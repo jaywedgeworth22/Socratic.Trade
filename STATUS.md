@@ -22,6 +22,22 @@ fallbacks by default (`LLM_OPERATOR_FALLBACK=off`), and mapped Anthropic models 
 credentials in `resolveLlmEndpoint`. Verified `npx tsc --noEmit`, `npm run lint`,
 `npm test` (1,516 tests), and `npm run build` are all green. See
 `docs/rollouts/2026-06-29-strategy-tuning-ui-fixes.md`.
+## 2026-06-29 — Sentry browser SDK + build wrapper (Cursor / cursor/complete-sentry-setup-8bed)
+Completed the Sentry Next.js integration that was server/edge-only: added the browser
+runtime init in `instrumentation-client.ts` (was an empty `export {}`), wired
+`app/global-error.tsx` to `Sentry.captureException`, and enabled the `withSentryConfig`
+build wrapper in `next.config.mjs` (org `jays-services` / project `agentic-trading`;
+source-map upload gated on `SENTRY_AUTH_TOKEN`). All env-gated and run through
+`redactForTelemetry` with `sendDefaultPii: false`; Session Replay is opt-in (masks all
+text/media). The old "wrapper makes builds unstable" blocker no longer reproduces on
+`@sentry/nextjs@10` + Next 16. `.env.example` un-reserved the `NEXT_PUBLIC_SENTRY_*` +
+`SENTRY_AUTH_TOKEN`/`SENTRY_ORG`/`SENTRY_PROJECT` vars. Verification: `npx tsc --noEmit`
+clean, `npm run lint` 0 errors, `npm test` 159 files / 1536 tests, `npm run build` clean,
+plus an end-to-end mock-ingest test proving browser + server capture with redaction (temp
+scaffolding removed). To activate in prod: set `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`
+(and optionally `SENTRY_AUTH_TOKEN` for source maps). See
+`docs/rollouts/2026-06-29-sentry-browser-and-build-wrapper.md`.
+
 ## 2026-06-29 — CI trusted-bot allowlist (Cursor / cursor/ops-diagnostic-snapshot-487f)
 PR #249 `verify` / `smoke` / `gitleaks` failed because `cursor[bot]` pushes hit the
 self-hosted runner guard ("Bot PRs cannot run package installs"). Allowlisted trusted

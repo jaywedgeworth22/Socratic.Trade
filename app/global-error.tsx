@@ -1,6 +1,14 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { useEffect } from "react";
+
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  useEffect(() => {
+    // No-op when Sentry was not initialized (NEXT_PUBLIC_SENTRY_DSN unset).
+    Sentry.captureException(error);
+  }, [error]);
+
   const message = error.message?.trim() || "The workspace failed to render.";
   return (
     <html lang="en">
