@@ -21,6 +21,8 @@ export default [
     // Generated / vendored / data output that should not be linted.
     ignores: [
       ".next/**",
+      "**/.next/**",
+      "**/worktrees/**",
       "out/**",
       "build/**",
       "coverage/**",

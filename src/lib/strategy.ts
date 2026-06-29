@@ -71,7 +71,7 @@ import { withLlmGeneration } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -1390,7 +1390,8 @@ export async function executeProposal(
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
       const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
-      updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId);
+      const tradabilityDecision: PolicyDecision = { approved: false, reasons: [reason] };
+      updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId, undefined, undefined, tradabilityDecision);
       audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
       await sendNotification(
         {
@@ -1426,7 +1427,7 @@ export async function executeProposal(
     });
 
     if (!decision.approved) {
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId);
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, decision);
       audit("proposal_approved", {
         proposalId,
         symbol: proposal.symbol,
