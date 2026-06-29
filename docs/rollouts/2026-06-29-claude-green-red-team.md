@@ -73,6 +73,17 @@ No change to the env-gated cross-provider override (`RED_TEAM_LLM_PROVIDER=anthr
 - Manual UI smoke against `npm run dev` — see PR walkthrough (Strategy Studio shows the
   Anthropic optgroup; selecting `claude-opus-4-8` persists for Green and Red).
 
+## Follow-up (same PR) — OpenAI option cleanup
+
+- Removed the "OpenAI (Real)" optgroup (`gpt-4o-mini`, `gpt-4o`, `o1-mini`, `o3-mini`,
+  `o1`) from both the Green and Red Team selects, and relabeled "OpenAI (Simulated)" →
+  "OpenAI" (the `gpt-5.4-*`/`gpt-5.5` models aren't simulated). Dropped those five ids from
+  `STRATEGY_MODEL_IDS`. The "Custom Model ID..." free-text entry still accepts any model id
+  (its seed value `gpt-4o-mini` is just an out-of-list trigger for the text field), so no
+  model is actually unreachable — only the curated dropdown was trimmed. Verified in-UI that
+  both selects now show a single "OpenAI" group with `gpt-5.4-nano`/`gpt-5.4-mini`/`gpt-5.4`/
+  `gpt-5.5` and the other provider groups intact.
+
 ## Follow-ups
 
 - OpenAI strict `json_schema` enforces the output shape server-side; Anthropic forced

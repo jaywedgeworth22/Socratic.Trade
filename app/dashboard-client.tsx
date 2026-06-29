@@ -147,8 +147,7 @@ const STRATEGY_MODEL_IDS = [
   "grok-build-0.1", "grok-4.3",
   "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash",
   "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest",
-  "deepseek-chat", "deepseek-reasoner",
-  "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"
+  "deepseek-chat", "deepseek-reasoner"
 ];
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
 type SettingsSection = "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
@@ -3949,11 +3948,6 @@ function StrategyStudio({
                     <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
                     <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
                     <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
-                    <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
-                    <option value="gpt-4o">gpt-4o — standard large</option>
-                    <option value="o1-mini">o1-mini — fast reasoning</option>
-                    <option value="o3-mini">o3-mini — balanced reasoning</option>
-                    <option value="o1">o1 — deepest reasoning</option>
                   </optgroup>
                   <optgroup label="Anthropic (Claude)">
                     <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast review</option>
@@ -4006,11 +4000,6 @@ function StrategyStudio({
                     <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
                     <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
                     <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
-                    <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
-                    <option value="gpt-4o">gpt-4o — standard large</option>
-                    <option value="o1-mini">o1-mini — fast reasoning</option>
-                    <option value="o3-mini">o3-mini — balanced reasoning</option>
-                    <option value="o1">o1 — deepest reasoning</option>
                   </optgroup>
                   <optgroup label="Anthropic (Claude)">
                     <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast critique</option>
