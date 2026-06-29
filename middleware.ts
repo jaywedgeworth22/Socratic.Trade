@@ -1,14 +1,12 @@
 // Edge auth gate (Phase-11 M6). Runs before every non-static request.
 //
 // Identity sources (first match wins):
-//   1. Cloudflare Access header `cf-access-authenticated-user-email`
-//      — trusted ONLY when CF_ACCESS_TRUST_EMAIL_HEADER==="1".
-//   2. Auth.js v5 session JWT cookie — verified with the same edge-safe HS256
+//   1. Auth.js v5 session JWT cookie — verified with the same edge-safe HS256
 //      helper configured in src/lib/auth/auth.ts.
-//   3. Dev/local fallback to PRIMARY_USER_EMAIL — ONLY when auth is NOT configured.
+//   2. Dev/local fallback to PRIMARY_USER_EMAIL — ONLY when auth is NOT configured.
 //
 // Fail-closed signal ("authConfigured"):
-//   authConfigured = (CF_ACCESS_TRUST_EMAIL_HEADER === "1") || !!AUTH_SECRET
+//   authConfigured = !!AUTH_SECRET
 //
 // This deliberately does NOT use `process.env.NODE_ENV === "production"` because
 // Next.js inlines NODE_ENV at BUILD time in the edge runtime — so at runtime in the
@@ -18,6 +16,8 @@
 // When authConfigured=true and no verified identity is found → FAIL CLOSED (401 for
 // /api/*, redirect to /login for pages). When authConfigured=false (local dev
 // / tests with no auth env) → fall back to PRIMARY_EMAIL, preserving existing behavior.
+// Cloudflare Tunnel may still front the app, but Cloudflare Access email headers are
+// not trusted as an app login source.
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
@@ -44,6 +44,7 @@ const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
   "/api/auth/error",
   "/api/auth/providers",
+  "/api/auth/robinhood/callback",
   "/api/auth/session",
   "/api/auth/signin",
   "/api/auth/signout"
@@ -58,21 +59,13 @@ function isPublicPath(pathname: string): boolean {
 // Auth is "configured" (armed) when at least one real identity source is active.
 // This is the reliable fail-closed signal — it does not depend on NODE_ENV.
 function isAuthConfigured(): boolean {
-  return process.env.CF_ACCESS_TRUST_EMAIL_HEADER === "1" || !!process.env.AUTH_SECRET;
+  return !!process.env.AUTH_SECRET;
 }
 
 function isEmailAllowed(email: string): boolean {
   if (PRIMARY_SET.has(email)) return true; // primary operator + aliases
-  if (ALLOWED.length === 0) return true; // defer to the upstream gateway (Cloudflare Access)
+  if (ALLOWED.length === 0) return false; // Auth.js is the app gate; fail closed for non-primary users.
   return ALLOWED.includes(email);
-}
-
-/** Source 1: Cloudflare Access trusted email header. */
-function getCfEmail(req: NextRequest): string | null {
-  if (process.env.CF_ACCESS_TRUST_EMAIL_HEADER !== "1") return null;
-  const email = req.headers.get("cf-access-authenticated-user-email");
-  if (email && email.includes("@")) return email.trim().toLowerCase();
-  return null;
 }
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
@@ -107,16 +100,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // --- Identity resolution ---
 
-  // Source 1: Cloudflare Access header.
-  let trustedEmail: string | null = getCfEmail(req);
-
-  // Source 2: Auth.js v5 session JWT (verified with the shared edge-safe helper).
-  if (!trustedEmail && process.env.AUTH_SECRET) {
+  // Source 1: Auth.js v5 session JWT (verified with the shared edge-safe helper).
+  let trustedEmail: string | null = null;
+  if (process.env.AUTH_SECRET) {
     const cookieHeader = req.headers.get("cookie");
     trustedEmail = await getSessionEmail(cookieHeader, process.env.AUTH_SECRET);
   }
 
-  // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
+  // Source 2: Dev/local fallback — ONLY when auth is NOT configured.
   if (!trustedEmail && !isAuthConfigured()) {
     trustedEmail = PRIMARY_EMAIL;
   }

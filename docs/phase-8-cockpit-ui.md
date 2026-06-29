@@ -14,6 +14,24 @@
 > `docs/rollouts/2026-06-16-ui-redesign-tailwind.md` and
 > `docs/rollouts/2026-06-18-glassmorphism-ui.md`. The sections below describe
 > the prior panel-based cockpit and current semantics that still matter.
+>
+> 2026-06-28: The SSR first-paint dashboard shell now uses a thin boot strip
+> instead of repeated visible loading labels or quiet skeleton tiles. The loader
+> keeps one screen-reader status and still renders an explicit alert card when
+> `/api/dashboard` fails.
+>
+> 2026-06-28: Proposal cards show relative age while a decision is under 24
+> hours old and switch to date/time for older decisions. Settings risk controls
+> that present dollar vs percent modes must write the selected mode and clear the
+> other mode in the same policy update so hidden stale caps cannot bind.
+>
+> 2026-06-28: Fresh proposal performance chips are suppressed until the proposal
+> is at least 15 minutes old, approval failures with broker error status refresh
+> the queue with explicit placement-failed copy, Market Scan column settings can
+> reorder visible columns and default to Sector before Sec RS, Symbol drilldowns
+> use the fixed slide-over header for logo/ticker/company/sector/price, close-only
+> history renders as a line chart, and Macro header helper copy lives inside the
+> same padded header block as the title.
 
 
 This phase restructures the dashboard from a long vertical page into a
@@ -95,6 +113,11 @@ Route/global error screens show the actual error message when available, and an
 app-level browser listener surfaces uncaught runtime errors and unhandled promise
 rejections as bottom-right error toasts.
 
+As of 2026-06-27, recoverable broker/data fallbacks that would otherwise only
+hit `console.warn` write throttled `recoverable_issue` audit rows and render in
+Activity. This keeps resilience for transient broker/provider misses while
+leaving a visible trail for later correction.
+
 ## Accessibility
 
 - All dialogs render through a single reusable `Modal` component. It provides
@@ -146,9 +169,25 @@ across panels, feeds, popovers, or status chips.
   Logos are loaded through the app's cached proxy for
   `davidepalazzo/ticker-logos`, and missing logos must fall back to text rather
   than blocking symbol navigation.
+- Settings → Accounts distinguishes a stored Robinhood account row from an
+  authenticated Robinhood MCP session. If `/api/broker/mcp/health` reports
+  configured-but-unauthenticated, the Robinhood row shows `OAuth Needed` plus a
+  Reconnect action instead of a plain `Connected` badge. As of 2026-06-27, the
+  row warning copy is intentionally concise: `Robinhood needs to be reconnected.`
+- The top readiness strip must use the server-provided selected-account
+  readiness result, not only `policy.accountNumber`. A stored/backfilled account
+  row may stay visible for management, but Account is not ready if broker
+  OAuth is needed, selected-account enumeration fails, the selected
+  account is absent from live broker results, the broker marks it non-agentic,
+  or portfolio/balance data cannot be read.
 - Standalone ticker text should use the shared clickable ticker treatment so
   hover/click styling and symbol drilldown are consistent in Market Scan,
   Macro movers/news, Smart Money, portfolio, tax, and proposal surfaces.
+- Ticker drilldowns must prefer a full scan quote from `topCandidates` or
+  `quotesBySymbol` and must preserve quote metadata when the symbol is not in
+  the visible top-candidate table. Sparse/event-only symbols may open with a
+  partial record, but the price header should never display `$0.00` for a
+  missing quote.
 - Settings → Data includes Market Scan candidate controls. `Candidate cap`
   controls how many ranked/enriched rows reach `marketScan.topCandidates` and
   the LLM prompt; `Outlier reserve` controls how many below-cutoff names with
@@ -166,6 +205,10 @@ across panels, feeds, popovers, or status chips.
 - `Run once` is a manual proposal check. It must work while the system is
   stopped and must force proposal-only behavior, so it never bypasses the
   Start/Stop gate for scheduled/autonomous execution.
+- If pending proposals are visible while the mode selector says Autonomous Mode,
+  the Decision tab must explain that they came from the manual/proposal-only Run
+  once path; scheduled autonomous placement still requires Start and passing
+  account/risk checks.
 - Workspace and feed tabs persist in local storage so a browser refresh returns
   to the same tab/area instead of resetting the user to Decision/Activity.
 - Headings and card titles use Title Case. Abbreviated data labels can stay
@@ -195,7 +238,14 @@ across panels, feeds, popovers, or status chips.
   UI iteration should replace it with an in-app modal that shows the same fields.
 - Account switching should always preserve a nearby management path. The
   command-bar account selector includes `Manage Accounts...` so an empty or
-  incomplete account list does not strand the user away from Settings.
+  incomplete account list does not strand the user away from Settings. The
+  Settings modal also keeps a `Manage Accounts` header action beside the close
+  button, and command-bar Mode/Account selectors should use matching typography
+  without truncating `Autonomous Mode`.
+- The Hide Test account preference filters inactive Test rows from both
+  Settings -> Accounts and the command-bar selector; if Test is still active, it
+  stays visible until the user switches away so the current execution mode is not
+  hidden.
 - Account rows should remain readable on narrow screens: stack account details
   above actions, make inactive `Use` the primary action, keep Edit/Remove as
   secondary actions, and visually anchor the active account with a subtle left

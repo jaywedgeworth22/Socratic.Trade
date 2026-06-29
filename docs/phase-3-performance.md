@@ -19,6 +19,10 @@
 
 - FIFO realized P&L per source.
 - Unrealized P&L from current positions and latest prices where available.
+- Dashboard top-line Unrealized should use the currently displayed open
+  positions' mark-to-cost P&L so it matches the Portfolio rail even when a
+  broker-held position predates app-recorded fill lots; learning scorecards and
+  realized stats still use app-recorded closed FIFO lots.
 - Equity curve from snapshots, separated into live and paper series.
 - Run attribution from fill events grouped by run id.
 - Win rate and average return from closed FIFO lots.

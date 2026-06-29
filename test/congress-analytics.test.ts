@@ -8,6 +8,7 @@ import {
   getCongressAnalyticsOverlay,
   refreshCongressAnalytics
 } from "../src/lib/web-sources/congress-analytics";
+import { getSymbolWebSignals } from "../src/lib/web-sources";
 import { congressAnalyticsScore, outlierInterestScore } from "../src/lib/market";
 
 beforeAll(() => {
@@ -26,6 +27,8 @@ function stubAnalyticsFetch(p: {
   tickers?: unknown[];
   clusters?: unknown[];
   members?: unknown[];
+  convictions?: unknown[];
+  conflicts?: unknown[];
   perf?: Record<string, unknown>; // per-member performance keyed by filerId (for /member/:id/performance)
 }): void {
   vi.stubGlobal(
@@ -35,6 +38,8 @@ function stubAnalyticsFetch(p: {
       if (u.includes("ticker-leaderboard")) return new Response(JSON.stringify({ tickers: p.tickers ?? [] }), { status: 200 });
       if (u.includes("cluster-buys")) return new Response(JSON.stringify({ clusters: p.clusters ?? [] }), { status: 200 });
       if (u.includes("member-leaderboard")) return new Response(JSON.stringify({ members: p.members ?? [] }), { status: 200 });
+      if (u.includes("analytics/conviction")) return new Response(JSON.stringify({ tickers: p.convictions ?? [] }), { status: 200 });
+      if (u.includes("analytics/conflicts")) return new Response(JSON.stringify({ conflicts: p.conflicts ?? [] }), { status: 200 });
       const perfMatch = u.match(/\/member\/([^/]+)\/performance/);
       if (perfMatch) {
         const id = decodeURIComponent(perfMatch[1]);
@@ -72,6 +77,7 @@ describe("congress analytics overlay", () => {
     const overlay = getCongressAnalyticsOverlay(["AAPL"]);
     expect(overlay.AAPL).toMatchObject({ netFlowUsd: 250000, memberCount: 3, cluster: true, clusterMemberCount: 3 });
     expect(overlay.AAPL.topMemberScore).toBe(100); // Jane Doe is the top-ranked member
+    expect(overlay.AAPL.topMemberScoreSource).toBe("activity_prominence");
   });
 
   it("keeps the prior dataset on an empty pull (App A cold)", async () => {
@@ -110,6 +116,23 @@ describe("congress analytics overlay", () => {
     expect(res.ok).toBe(true);
     // topMemberScore is the max skill score across the cluster's members — the high-alpha filer at 100.
     expect(getCongressAnalyticsOverlay(["NVDA"]).NVDA.topMemberScore).toBe(100);
+    expect(getCongressAnalyticsOverlay(["NVDA"]).NVDA.topMemberScoreSource).toBe("realized_skill");
+  });
+
+  it("labels raw conviction as an input instead of an uncapped standalone score", async () => {
+    process.env.CONGRESS_ANALYTICS_ENABLED = "on";
+    stubAnalyticsFetch({
+      tickers: [{ ticker: "MSFT", tradeCount: 3, memberCount: 1 }],
+      clusters: [],
+      members: [],
+      convictions: [{ ticker: "MSFT", convictionScore: 100, direction: "BUY", fallback: true, tradeCount: 3, memberCount: 1 }]
+    });
+    await refreshCongressAnalytics(Date.now(), true);
+
+    const bulletins = getSymbolWebSignals(["MSFT"]).MSFT?.bulletins ?? [];
+    expect(bulletins.some((b) => b.startsWith("Congress.Trade advisory composite: BUY "))).toBe(true);
+    expect(bulletins).toContain("Congress.Trade conviction input/pre-cap: BUY 100/100 (proxy inputs)");
+    expect(bulletins).not.toContain("Congress.Trade directional score: BUY 100/100");
   });
 });
 
@@ -194,8 +217,19 @@ describe("congressAnalyticsScore + outlierInterestScore boost", () => {
   it("lifts outlierInterestScore via the analytics overlay alone (no scraped signal needed)", () => {
     const score = outlierInterestScore({
       bulletins: [],
-      congressAnalytics: { netFlowUsd: 5_000_000, cluster: true, memberCount: 5, topMemberScore: 90 }
+      congressAnalytics: { netFlowUsd: 5_000_000, cluster: true, memberCount: 5, tradeCount: 5, convictionScore: 85, convictionDirection: "BUY", topMemberScore: 90 }
     });
     expect(score).toBeGreaterThan(60);
+  });
+
+  it("does not promote weak or bearish analytics as below-cutoff outliers", () => {
+    expect(outlierInterestScore({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 100, convictionDirection: "BUY", convictionFallback: true }
+    })).toBe(0);
+    expect(outlierInterestScore({
+      bulletins: [],
+      congressAnalytics: { netFlowUsd: -500_000, convictionScore: 90, convictionDirection: "SELL", memberCount: 3 }
+    })).toBe(0);
   });
 });

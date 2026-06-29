@@ -123,16 +123,29 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : undefined;
     this.isMcp = activeAccount?.broker === "alpaca-mcp";
     this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
-    // A connected-account key (per-user account data) wins; otherwise the per-user key store.
+    // A connected-account key (per-user account data) wins. If an Alpaca account is explicitly
+    // selected, never fall back to generic/operator Alpaca keys: those can belong to a different
+    // account and surface as a misleading "Account Mismatch" instead of the real credential problem.
     // SECURITY: route through resolveApiKey so the env fallback is operator-only (alpaca keys are
     // a per-user-only tier). A non-`local` user with no stored key gets "" → broker construction
     // fails loudly instead of silently trading on the operator's Alpaca account via process.env.
-    const keyId = accountKeys?.apiKey || resolveApiKey("alpaca_paper_api_key", userId) || "";
-    const secretKey = accountKeys?.apiSecret || resolveApiKey("alpaca_paper_secret_key", userId) || "";
-    
+    const keyId = accountKeys?.apiKey?.trim() || (!accountKeys ? resolveApiKey("alpaca_paper_api_key", userId) || "" : "");
+    const secretKey = accountKeys?.apiSecret?.trim() || (!accountKeys ? resolveApiKey("alpaca_paper_secret_key", userId) || "" : "");
+
     let baseUrl = accountKeys?.baseUrl?.trim();
     if (this.isMcp) {
       this.mcpUrl = baseUrl || undefined;
+    }
+
+    if (accountKeys && !this.isMcp && !keyId) {
+      throw new Error(
+        `Alpaca credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the API key.`
+      );
+    }
+    if (accountKeys && this.isMcp && !this.mcpUrl && !keyId) {
+      throw new Error(
+        `Alpaca MCP credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the MCP endpoint or API key.`
+      );
     }
 
     if (baseUrl && !this.isMcp) {
@@ -445,7 +458,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
           raw
         };
       } catch (error: unknown) {
-        throw new Error(`Alpaca order failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`Alpaca order failed: ${formatAlpacaOrderError(error)}`);
       }
     };
 
@@ -579,4 +592,24 @@ function optionalIso(value: unknown): string | undefined {
   if (value === null || value === undefined || value === "") return undefined;
   const time = Date.parse(String(value));
   return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+}
+
+function formatAlpacaOrderError(error: unknown): string {
+  const err = error as {
+    message?: string;
+    response?: { status?: number; data?: unknown };
+  };
+  const status = err.response?.status;
+  const data = err.response?.data;
+  const body = typeof data === "string"
+    ? data
+    : data && typeof data === "object"
+      ? JSON.stringify(data)
+      : "";
+  const message = err.message ?? String(error);
+  const detail = [status ? `HTTP ${status}` : "", message, body].filter(Boolean).join(" — ");
+  if (status === 403 && !/position|short|permission|forbidden|insufficient/i.test(body)) {
+    return `${detail} — broker forbade the order; verify the account has permission and a matching open position if this was a sell/cover.`;
+  }
+  return detail;
 }

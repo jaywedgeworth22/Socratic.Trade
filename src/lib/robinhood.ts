@@ -20,6 +20,7 @@ import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
 import { fetchYahooFinanceQuote } from "./yahoo-finance";
+import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
 const TEST_SIM_STARTING_CASH = (() => {
   const n = Number(process.env.TEST_SIM_STARTING_CASH);
@@ -53,6 +54,79 @@ export function getRobinhoodGateway(userId: string): BrokerGateway {
 // Honestly labeled "Test — Local Sim" — it never impersonates Robinhood or any real account.
 export function getTestGateway(userId: string = "local"): BrokerGateway {
   return new TestBrokerGateway(userId);
+}
+
+export function portfolioFromRobinhoodRaw(accountNumber: string, raw: Record<string, unknown>): Portfolio {
+  const buyingPower = firstMoney(raw, [
+    "buying_power",
+    "buyingPower",
+    "buying_power.buying_power",
+    "buying_power.amount",
+    "buyingPower.amount",
+    "account_balances.buying_power",
+    "accountBalances.buyingPower"
+  ]) ?? 0;
+  const equityMarketValue = firstMoney(raw, [
+    "equity_value",
+    "equity_market_value",
+    "equityMarketValue",
+    "stock_value",
+    "stockMarketValue",
+    "securities_value",
+    "market_value"
+  ]) ?? 0;
+  const optionMarketValue = firstMoney(raw, [
+    "options_value",
+    "option_market_value",
+    "optionMarketValue",
+    "optionsMarketValue"
+  ]) ?? 0;
+  const cash = firstMoney(raw, [
+    "cash",
+    "cash_balance",
+    "cashBalance",
+    "cash_available_for_withdrawal",
+    "cashAvailableForWithdrawal",
+    "withdrawable_cash",
+    "withdrawableCash",
+    "settled_cash",
+    "settledCash",
+    "cash_balances.cash",
+    "cash_balances.cash_balance",
+    "cash_balances.cash_available_for_withdrawal",
+    "cash_balances.withdrawable_cash",
+    "cashBalances.cash",
+    "cashBalances.cashBalance",
+    "cashBalances.cashAvailableForWithdrawal",
+    "account_balances.cash",
+    "accountBalances.cash"
+  ]);
+  const explicitTotal = firstMoney(raw, [
+    "total_value",
+    "total_market_value",
+    "totalMarketValue",
+    "total_equity",
+    "totalEquity",
+    "equity",
+    "portfolio_value",
+    "portfolioValue",
+    "account_value",
+    "accountValue"
+  ]);
+  const inferredCash = cash ?? (equityMarketValue <= 0 && optionMarketValue <= 0 ? buyingPower : 0);
+  const inferredTotal = Math.max(0, equityMarketValue) + Math.max(0, optionMarketValue) + Math.max(0, inferredCash);
+  const totalMarketValue = explicitTotal !== undefined && (explicitTotal > 0 || inferredTotal <= 0)
+    ? explicitTotal
+    : inferredTotal;
+
+  return {
+    accountNumber,
+    totalMarketValue,
+    buyingPower,
+    equityMarketValue,
+    optionMarketValue,
+    cash: inferredCash
+  };
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
@@ -111,20 +185,7 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     const raw = await this.callTool("get_portfolio", { account_number: accountNumber }) as Record<string, unknown>;
-    // Robinhood returns buying_power as a nested object: { buying_power, display_currency, ... }.
-    const buyingPowerRaw = raw.buying_power ?? raw.buyingPower;
-    const buyingPower =
-      buyingPowerRaw && typeof buyingPowerRaw === "object"
-        ? number((buyingPowerRaw as Record<string, unknown>).buying_power ?? (buyingPowerRaw as Record<string, unknown>).amount)
-        : number(buyingPowerRaw);
-    return {
-      accountNumber,
-      totalMarketValue: number(raw.total_value ?? raw.total_market_value ?? raw.totalMarketValue),
-      buyingPower,
-      equityMarketValue: number(raw.equity_value ?? raw.equity_market_value ?? raw.equityMarketValue),
-      optionMarketValue: number(raw.options_value ?? raw.option_market_value ?? raw.optionMarketValue ?? 0),
-      cash: number(raw.cash ?? 0)
-    };
+    return portfolioFromRobinhoodRaw(accountNumber, raw);
   }
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {
@@ -144,12 +205,39 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
     if (positions.length > 0) {
       try {
         const quotes = await this.getEquityQuotes(accountNumber, positions.map((position) => position.symbol));
+        const missingQuoteSymbols: string[] = [];
         for (const position of positions) {
           if (position.marketValue > 0) continue;
           const price = quotes[position.symbol]?.price;
-          position.marketValue = price && price > 0 ? position.quantity * price : position.quantity * position.averageCost;
+          if (price && price > 0) {
+            position.marketValue = position.quantity * price;
+          } else {
+            missingQuoteSymbols.push(position.symbol);
+            position.marketValue = position.quantity * position.averageCost;
+          }
         }
-      } catch {
+        if (missingQuoteSymbols.length > 0) {
+          recordRecoverableIssue({
+            source: "broker",
+            operation: "robinhood.getEquityPositions.averageCostFallback",
+            message: "Robinhood returned positions without usable live quotes for one or more symbols.",
+            fallback: "Using Robinhood position average cost to value positions.",
+            userId: this.userId,
+            broker: "robinhood",
+            accountNumber,
+            details: { symbols: missingQuoteSymbols }
+          });
+        }
+      } catch (error) {
+        recordRecoverableIssue({
+          source: "broker",
+          operation: "robinhood.getEquityPositions.quoteFallback",
+          message: messageFromUnknownError(error),
+          fallback: "Using Robinhood position average cost to value positions.",
+          userId: this.userId,
+          broker: "robinhood",
+          accountNumber
+        });
         for (const position of positions) {
           if (position.marketValue <= 0) position.marketValue = position.quantity * position.averageCost;
         }
@@ -203,7 +291,17 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
           ];
         })
       );
-    } catch {
+    } catch (error) {
+      recordRecoverableIssue({
+        source: "broker",
+        operation: "robinhood.getEquityQuotes",
+        message: messageFromUnknownError(error),
+        fallback: "Returning no Robinhood quotes; downstream logic may use another quote source or omit prices.",
+        userId: this.userId,
+        broker: "robinhood",
+        accountNumber,
+        details: { symbols: symbols.map(normalizeSymbol) }
+      });
       return {};
     }
   }
@@ -308,7 +406,7 @@ export async function getRobinhoodMcpHealth(userId: string): Promise<RobinhoodMc
     await callRobinhoodMcpMethod(userId, "initialize", {
       protocolVersion,
       capabilities: {},
-      clientInfo: { name: "Agentic Trading", version: "0.1.0" }
+      clientInfo: { name: "Trading Dashboard", version: "0.1.0" }
     });
   } catch (error) {
     // Some HTTP MCP proxies accept direct tools/list calls. Keep this diagnostic
@@ -776,6 +874,40 @@ function firstNum(row: Record<string, unknown>, keys: string[]): number | undefi
     if (value === null || value === undefined || value === "") continue;
     const parsed = typeof value === "number" ? value : Number(String(value).replace(/[$,%\s]/g, ""));
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function firstMoney(row: Record<string, unknown>, paths: string[]): number | undefined {
+  for (const path of paths) {
+    const parsed = moneyValue(valueAtPath(row, path));
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
+function valueAtPath(row: Record<string, unknown>, path: string): unknown {
+  let current: unknown = row;
+  for (const part of path.split(".")) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function moneyValue(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[$,%\s,]/g, ""));
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const row = value as Record<string, unknown>;
+    for (const key of ["amount", "value", "cash", "cash_balance", "buying_power", "buyingPower"]) {
+      const parsed = moneyValue(row[key]);
+      if (parsed !== undefined) return parsed;
+    }
   }
   return undefined;
 }

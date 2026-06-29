@@ -2,6 +2,7 @@ import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
+import { normalizeExclusivePolicyCaps } from "@/lib/policy-normalization";
 import { resolveRequestUserId } from "@/lib/request-user";
 import {
   invalidSymbolMessage,
@@ -91,6 +92,7 @@ export async function PUT(request: Request) {
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
   stripNullsDeep(policy as unknown as Record<string, unknown>);
+  normalizeExclusivePolicyCaps(policy);
   const validationError = await validatePolicy(policy, userId);
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);

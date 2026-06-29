@@ -170,6 +170,25 @@ body::after {
     transform: translateX(100%);
   }
 }
+
+@keyframes boot-strip {
+  0% {
+    opacity: 0.2;
+    transform: translateX(-140%);
+  }
+  35% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0.2;
+    transform: translateX(280%);
+  }
+}
+
+.boot-strip-glow {
+  animation: boot-strip 1.15s ease-in-out infinite;
+}
+
 .skeleton {
   position: relative;
   overflow: hidden;
@@ -203,8 +222,13 @@ body::after {
   body::before,
   body::after,
   .skeleton::after,
+  .boot-strip-glow,
   .animate-pulse-fast {
     animation: none !important;
+  }
+  .boot-strip-glow {
+    opacity: 0.8;
+    transform: none !important;
   }
 }
 

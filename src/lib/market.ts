@@ -1,56 +1,10 @@
 import { shareScanRefs } from "./congress-share";
+import { congressLongScore, scoreCongressSignal } from "./congress-score";
 import { getEnrichmentProvider, type SymbolEnrichment } from "./data-providers";
 import type { GroupedDailyBar } from "./market-signals/massive";
 import { getSymbolWebSignals, setTechnicalWatchlist } from "./web-sources";
 import type { SymbolWebSignal } from "./web-sources";
 import { clearFundHoldingsCache, fetchBlackRockHoldingSymbols, isBlackRockHoldingUniverse } from "./fund-holdings";
-
-/** A web signal worth pulling a below-cutoff name into the candidate set for. */
-export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
-  return outlierInterestScore(sig) > 0;
-}
-
-export function outlierInterestScore(sig?: SymbolWebSignal): number {
-  if (!sig) return 0;
-  // Congress: require at least 2 distinct members buying AND net >= 2 (more buys than sells).
-  // Single-member disclosures are too thin to justify overriding the scan score cutoff.
-  const congressNotable =
-    (sig.congress?.buyCount ?? 0) >= 2 &&
-    (sig.congress?.netSignal ?? 0) >= 2;
-  const congressScore = congressNotable
-    ? 70 + Math.min(25, (sig.congress?.netSignal ?? 0) * 5 + (sig.congress?.buyCount ?? 0) * 2)
-    : 0;
-  // App A analytics boost (the "Trends" composite): a strong dollar-weighted net buy flow, a cluster
-  // buy (many members → same ticker), or multiple distinct members + high-track-record members can
-  // surface a name even when the scraped per-member netSignal is thin. Only present when
-  // CONGRESS_ANALYTICS_ENABLED is on; absent → 0 → no behavior change (back-compatible).
-  const analyticsScore = congressAnalyticsScore(sig.congressAnalytics);
-  const insiderScore = typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60
-    ? sig.insiderSentiment
-    : 0;
-  const shortScore = typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55
-    ? Math.min(90, sig.shortVolumeRatio)
-    : 0;
-  const technicalScore = sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70
-    ? sig.technical.score
-    : 0;
-  return Math.max(congressScore, analyticsScore, insiderScore, shortScore, technicalScore);
-}
-
-/** 0–100 outlier weight from App A's aggregate congressional analytics; 0 unless there is net buying. */
-export function congressAnalyticsScore(a?: SymbolWebSignal["congressAnalytics"]): number {
-  if (!a) return 0;
-  const netBuying = (a.netSentiment ?? 0) > 0 || (a.netFlowUsd ?? 0) > 0 ||
-    (a.convictionDirection === "BUY" && (a.convictionScore ?? 0) >= 60);
-  if (!netBuying) return 0; // net selling / neutral is not a long-side outlier
-  const flowBoost = (a.netFlowUsd ?? 0) > 0 ? Math.min(20, Math.log10(Math.max(1, a.netFlowUsd ?? 0)) * 3) : 0;
-  const clusterBoost = a.cluster ? 15 : 0;
-  const memberBoost = (a.memberCount ?? 0) >= 2 ? Math.min(10, (a.memberCount ?? 0) * 2) : 0;
-  const qualityBoost = a.topMemberScore ? Math.min(15, a.topMemberScore * 0.15) : 0;
-  // Conviction-only tickers (not in leaderboard) would otherwise score 0 on flow/sentiment alone.
-  const convictionBoost = a.convictionScore != null ? Math.min(20, a.convictionScore * 0.2) : 0;
-  return Math.min(95, 50 + flowBoost + clusterBoost + memberBoost + qualityBoost + convictionBoost);
-}
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import { INDEX_UNIVERSES, isIndexMemberSymbol } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -74,6 +28,57 @@ import type {
   ScoringWeights,
   UniverseFloor
 } from "./types";
+
+/** A web signal worth pulling a below-cutoff name into the candidate set for. */
+export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
+  return outlierInterestScore(sig) > 0;
+}
+
+export function outlierInterestScore(sig?: SymbolWebSignal): number {
+  if (!sig) return 0;
+  // Congress: require at least 2 distinct members buying AND net >= 2 (more buys than sells).
+  // Single-member disclosures are too thin to justify overriding the scan score cutoff.
+  const congressNotable =
+    (sig.congress?.buyCount ?? 0) >= 2 &&
+    (sig.congress?.netSignal ?? 0) >= 2;
+  const congressScore = congressNotable
+    ? 70 + Math.min(25, (sig.congress?.netSignal ?? 0) * 5 + (sig.congress?.buyCount ?? 0) * 2)
+    : 0;
+  // App A analytics boost (the "Trends" composite): a strong dollar-weighted net buy flow, a cluster
+  // buy (many members → same ticker), or multiple distinct members + high-track-record members can
+  // surface a name even when the scraped per-member netSignal is thin. Only present when
+  // CONGRESS_ANALYTICS_ENABLED is on; absent → 0 → no behavior change (back-compatible).
+  const analyticsScore = notableCongressAnalyticsScore(sig);
+  const insiderScore = typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60
+    ? sig.insiderSentiment
+    : 0;
+  const shortScore = typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55
+    ? Math.min(90, sig.shortVolumeRatio)
+    : 0;
+  const technicalScore = sig.technical?.direction === "bullish" && (sig.technical?.score ?? 0) >= 70
+    ? sig.technical.score
+    : 0;
+  return Math.max(congressScore, analyticsScore, insiderScore, shortScore, technicalScore);
+}
+
+/** 0–100 outlier weight from App A's aggregate congressional analytics; 0 unless there is net buying. */
+export function congressAnalyticsScore(a?: SymbolWebSignal["congressAnalytics"]): number {
+  return congressLongScore({ congressAnalytics: a });
+}
+
+function notableCongressAnalyticsScore(sig?: SymbolWebSignal): number {
+  const analytics = sig?.congressAnalytics;
+  if (!analytics) return 0;
+  const composite = scoreCongressSignal({ congress: sig?.congress, congressAnalytics: analytics });
+  if (composite.direction !== "BUY" || composite.score < 60 || composite.confidence < 0.6) return 0;
+  const hasSupport =
+    analytics.cluster === true ||
+    (analytics.memberCount ?? analytics.clusterMemberCount ?? 0) >= 2 ||
+    (analytics.tradeCount ?? 0) >= 3 ||
+    (analytics.netFlowUsd ?? 0) >= 100_000 ||
+    (analytics.topMemberScoreSource === "realized_skill" && (analytics.topMemberScore ?? 0) >= 60);
+  return hasSupport ? composite.score : 0;
+}
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0";
@@ -304,6 +309,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     // (so source attribution stays honest). senateTrades/insiderSentiment are filled only
     // when a keyed provider didn't already supply them. No network here.
     const overlaySources = new Set<string>();
+    const signalNow = Date.now();
     topCandidates = topCandidates.map((quote) => {
       const sig = allWebSignals[quote.symbol];
       if (!sig) return quote;
@@ -323,13 +329,31 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       if (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) overlaySources.add("finra");
       // Bar-based technical read (TradingView push or in-house computed). Feeds momentumScore.
       if (sig.technical) overlaySources.add(sig.technical.source);
+      const congressComposite = scoreCongressSignal(
+        { congress: sig.congress, congressAnalytics: sig.congressAnalytics },
+        signalNow
+      );
+      if (congressComposite.score > 0) overlaySources.add("congress.trade");
       const overlaid: MarketQuote = {
         ...quote,
+        preCongressScore: quote.preCongressScore ?? quote.score,
         senateTrades,
         insiderSentiment,
         technicalScore: sig.technical?.score ?? quote.technicalScore,
         technicalDirection: sig.technical?.direction ?? quote.technicalDirection,
         technicalSignals: sig.technical?.signals ?? quote.technicalSignals,
+        ...(congressComposite.score > 0
+          ? {
+              congressCompositeScore: congressComposite.score,
+              congressCompositeSignedScore: congressComposite.signedScore,
+              congressCompositeDirection: congressComposite.direction,
+              congressCompositeConfidence: congressComposite.confidence,
+              congressCompositeComponents: { ...congressComposite.components },
+              congressCompositeProvenance: { ...congressComposite.provenance },
+              congressCompositeVersion: congressComposite.version,
+              congressCompositeWeights: { ...congressComposite.weights }
+            }
+          : {}),
         evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins,
         sources
       };

@@ -16,7 +16,7 @@ import "@xyflow/react/dist/style.css";
 import { Database, Activity, ShieldAlert, Cpu, Network, Landmark, Newspaper, LineChart, Gauge, Rocket } from "lucide-react";
 import type { ReactNode } from "react";
 
-// Track the app's class-based dark mode so React Flow's chrome themes with the cockpit.
+// Track the app's class-based dark mode so React Flow's chrome themes with the dashboard.
 function useColorMode(): "dark" | "light" {
   const [mode, setMode] = useState<"dark" | "light">("dark");
   useEffect(() => {

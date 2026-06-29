@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { X } from "lucide-react";
+import type React from "react";
 import { useEffect, useRef } from "react";
 import { cn } from "./cn";
 
@@ -64,6 +65,7 @@ export function Modal({
   title,
   subtitle,
   icon,
+  headerAction,
   size = "md",
   footer,
   children
@@ -73,6 +75,7 @@ export function Modal({
   title: string;
   subtitle?: string;
   icon?: React.ReactNode;
+  headerAction?: React.ReactNode;
   size?: keyof typeof sizeClass;
   footer?: React.ReactNode;
   children: React.ReactNode;
@@ -126,18 +129,24 @@ export function Modal({
               <div className="flex items-center gap-2.5 min-w-0">
                 {icon && <span className="text-accent">{icon}</span>}
                 <div className="min-w-0">
-                  <h3 className="text-base font-semibold text-fg">{title}</h3>
+                  {typeof title === "string" ? (
+                    <h3 className="text-base font-semibold text-fg">{title}</h3>
+                  ) : (
+                    <div className="min-w-0">{title}</div>
+                  )}
                   {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                aria-label="Close dialog"
-                className="cursor-pointer inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <X size={18} />
-              </button>
+              <div className="flex shrink-0 items-center gap-2" onPointerDown={(e) => e.stopPropagation()}>
+                {headerAction}
+                <button
+                  onClick={onClose}
+                  aria-label="Close dialog"
+                  className="cursor-pointer inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-5">{children}</div>
             {footer && <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
@@ -153,6 +162,7 @@ export function SlideOver({
   onClose,
   title,
   subtitle,
+  ariaLabel,
   icon,
   actions,
   width = "max-w-xl",
@@ -160,8 +170,9 @@ export function SlideOver({
 }: {
   open: boolean;
   onClose: () => void;
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
+  ariaLabel?: string;
   icon?: React.ReactNode;
   actions?: React.ReactNode;
   width?: string;
@@ -177,7 +188,7 @@ export function SlideOver({
             ref={ref}
             role="dialog"
             aria-modal="true"
-            aria-label={title}
+            aria-label={ariaLabel ?? (typeof title === "string" ? title : "Panel")}
             tabIndex={-1}
             initial={{ x: "100%" }}
             animate={{ x: 0 }}

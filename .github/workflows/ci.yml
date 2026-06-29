@@ -12,16 +12,33 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # GitHub-hosted runners can fail before job startup when account billing or
+    # spending limits block usage. Use the existing self-hosted runner for
+    # trusted same-repo human branches/PRs. Start the required check even for
+    # untrusted PRs so branch protection cannot be satisfied by a skipped job.
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
     steps:
+      - name: Refuse untrusted PR source
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::error::Fork PRs cannot run on the self-hosted production runner."
+            exit 1
+          fi
+          actor="${{ github.actor }}"
+          if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
+            echo "::error::Bot PRs cannot run package installs on the self-hosted production runner."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
       - run: npm run build

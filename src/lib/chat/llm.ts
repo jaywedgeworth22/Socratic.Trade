@@ -43,7 +43,7 @@ function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: stri
 const MAX_STEPS = 5;
 
 export interface Intent {
-  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "chat";
+  intent: "alert" | "order" | "watchlist_add" | "kb" | "positions" | "watchlist_view" | "alerts_view" | "advice" | "quote" | "fundamentals" | "market_signals" | "chat";
   symbol?: string;
   alert?: { symbol: string; op: "<" | ">"; price: number };
   order?: { side: string; qty: number; symbol: string; order_type: string; limit_usd: number | null };
@@ -103,6 +103,12 @@ export function classifyIntent(message: string): Intent {
       symbol: sym,
       doc_type: docType && !["FILING", "DOCUMENT", "REPORT"].includes(docType) ? docType : undefined
     };
+  if (/\b(pe ratio|pe|market cap|earnings|analyst|rating|score|consensus|target|price target|beta|dividend|float|week high|week low|debt to equity|fundamentals)\b/.test(lc) && sym) {
+    return { intent: "fundamentals", symbol: sym };
+  }
+  if (/\b(best today|market signals?|breadth|top gainers?|top losers?|market breadth|gainer|loser|movers|volatility indices|vvix|skew)\b/.test(lc)) {
+    return { intent: "market_signals" };
+  }
   if (
     /\b(my (positions?|portfolio|holdings)|how (?:am i|is my account|are my (?:positions|holdings)) doing|how (?:'?s|is) my [a-z. ]*position|my (?:p&l|pnl|p ?and ?l|gains?|losses?))\b/.test(lc)
   )
@@ -193,6 +199,30 @@ export class MockLLM implements ChatLLM {
   private async answer({ message, executeTool, context = {} }: LlmRunArgs): Promise<LlmResult> {
     const cls = classifyIntent(message);
     const toolCalls: ToolCall[] = [];
+
+    if (cls.intent === "fundamentals" && cls.symbol) {
+      const input = { symbol: cls.symbol };
+      const result = await executeTool("get_fundamentals", input);
+      toolCalls.push({ name: "get_fundamentals", input, result });
+      if (result?.error) return { text: `I don't have fundamentals data on that.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      return {
+        text: `Company: ${result.companyName ?? cls.symbol}. PE: ${result.peRatio ?? "n/a"}. Analyst rating: ${result.analystRating ?? "n/a"}.\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: []
+      };
+    }
+
+    if (cls.intent === "market_signals") {
+      const result = await executeTool("get_market_signals", {});
+      toolCalls.push({ name: "get_market_signals", input: {}, result });
+      if (result?.error) return { text: `I couldn't retrieve market signals.\n\n${DISCLAIMER}`, toolCalls, citations: [] };
+      const gainers = result.marketTopGainers?.map((g: any) => `${g.sym} (+${g.pct}%)`).join(", ") ?? "none";
+      return {
+        text: `Breadth: ${result.marketBreadthPct ?? "n/a"}%. Top Gainers: ${gainers}.\n\n${DISCLAIMER}`,
+        toolCalls,
+        citations: []
+      };
+    }
 
     if (cls.intent === "quote" || cls.intent === "advice") {
       const input = { symbol: cls.symbol };

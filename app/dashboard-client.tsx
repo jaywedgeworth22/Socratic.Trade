@@ -3,6 +3,8 @@
 import {
   Activity as ActivityIcon,
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BrainCircuit,
   Check,
   CheckCircle,
@@ -106,12 +108,13 @@ import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
-import { SymbolDrilldown } from "./ui/symbol-drilldown";
+import { SymbolDrilldown, SymbolDrilldownTitle } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
 import {
   Button,
+  buttonClass,
   Card,
   Chip,
   Dot,
@@ -283,6 +286,19 @@ function executionStateFor(snapshot: DashboardSnapshot): ExecutionState {
   return deriveExecutionState(snapshot.policy, activeConnectedAccountFor(snapshot));
 }
 
+function visibleConnectedAccounts(
+  accounts: ConnectedAccount[] | undefined,
+  hideTestAccount: boolean,
+  activeAccountId?: string
+): ConnectedAccount[] {
+  return (accounts ?? []).filter((account) => {
+    if (!hideTestAccount || account.broker !== "test") return true;
+    // Keep the active Test row visible until the user switches away; hiding the active
+    // selection would make the account state look blank while Test is still in force.
+    return Boolean(activeAccountId && account.id === activeAccountId);
+  });
+}
+
 // Persistent tri-state safety banner (blueprint R1 §1.3): the active-account-driven mode
 // decides the color + message so a live (Brokerage) session can never be mistaken for a
 // Test sandbox. Display-only — it does not place or gate orders.
@@ -412,34 +428,66 @@ function DashboardBootstrap() {
   }, []);
 
   if (snapshot) return <DashboardApp initialSnapshot={snapshot} />;
-  return <DashboardSsrShell message={loadError ?? "Loading cockpit..."} detail={loadError ? "Refresh the page after checking the preview server." : undefined} />;
+  return <DashboardSsrShell message={loadError ?? undefined} detail={loadError ? "Refresh the page after checking the preview server." : undefined} />;
 }
 
-function DashboardSsrShell({ snapshot, message = "Loading cockpit...", detail = "Preparing the local dashboard view." }: { snapshot?: DashboardSnapshot | null; message?: string; detail?: string }) {
+function DashboardSsrShell({ snapshot, message, detail }: { snapshot?: DashboardSnapshot | null; message?: string; detail?: string }) {
   const executionState = snapshot ? executionStateFor(snapshot) : undefined;
-  const mode = executionState ? `${executionState.label} Mode` : "Loading";
+  const mode = executionState ? `${executionState.label} Mode` : undefined;
   const state = snapshot ? (snapshot.policy.accountNumber ? snapshot.policy.systemState : "setup needed") : "starting";
+  const hasError = Boolean(message);
   return (
-    <div className="flex min-h-dvh flex-col bg-bg text-fg">
-      <header className="flex min-h-14 items-center justify-between border-b border-line bg-surface/70 px-4">
+    <div className="flex min-h-dvh flex-col overflow-hidden bg-bg text-fg">
+      <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
             <Zap size={17} className="fill-current" />
           </span>
           <div>
-            <div className="text-sm font-semibold">Agentic Trading</div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-              <span>{mode}</span>
-              <span>{labelize(state)}</span>
-            </div>
+            <div className="text-sm font-semibold">Trading Dashboard</div>
+            {(mode || snapshot) && (
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+                {mode && <span>{mode}</span>}
+                {snapshot && <span>{labelize(state)}</span>}
+              </div>
+            )}
           </div>
         </div>
-        <span className="text-xs text-faint">{message}</span>
       </header>
-      <main className="flex flex-1 items-center justify-center p-6">
-        <div className="rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted">
-          {detail}
-        </div>
+      <main
+        className={cn("flex flex-1 p-4 sm:p-6", hasError ? "items-center justify-center" : "items-start")}
+        role={hasError ? "alert" : "status"}
+        aria-live={hasError ? "assertive" : "polite"}
+        aria-busy={!hasError}
+        aria-atomic="true"
+      >
+        {hasError ? (
+          <div className="w-full max-w-md rounded-lg border border-line bg-surface/80 px-4 py-3 text-sm text-muted shadow-[var(--shadow)] backdrop-blur-md">
+            <p className="font-medium text-fg">{message}</p>
+            {detail && <p className="mt-1 text-xs text-faint">{detail}</p>}
+          </div>
+        ) : (
+          <div className="w-full pt-[18dvh] sm:pt-[22dvh]">
+            <span className="sr-only">Preparing dashboard.</span>
+            <div aria-hidden="true" className="mx-auto w-full max-w-3xl">
+              <div className="relative h-1 overflow-hidden rounded-full bg-line shadow-[0_0_0_1px_var(--line)]">
+                <span className="boot-strip-glow absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-transparent via-accent to-transparent" />
+              </div>
+              <div className="mt-2 grid grid-cols-6 gap-1.5 sm:grid-cols-12">
+                {Array.from({ length: 12 }).map((_, index) => (
+                  <span
+                    key={index}
+                    className={cn(
+                      "h-px rounded-full bg-line-strong",
+                      index % 3 === 0 && "bg-accent/45",
+                      index > 5 && "hidden sm:block"
+                    )}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
@@ -879,6 +927,9 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       if (body.status === "blocked") {
         const reasonsMsg = body.reasons?.map((r) => `• ${r}`).join("\n") ?? "No reasons provided.";
         toast.warning("Proposal blocked by policy", { description: reasonsMsg });
+      } else if (body.status === "error" || body.status === "placing_failed") {
+        const reasonsMsg = body.reasons?.filter(Boolean).join("\n") || "The broker did not confirm the order.";
+        toast.error("Order placement failed", { description: reasonsMsg });
       } else {
         if (body.status === "placed" && body.fillStatus === "pending_reconciliation") {
           toast.info("Order accepted by broker and pending execution.", {
@@ -898,7 +949,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           );
         }
       }
-      if (body.status === "placed" || body.status === "paper") await load({ quiet: true });
+      await load({ quiet: true });
     } catch (approvalError) {
       const errMsg = approvalError instanceof Error ? approvalError.message : "Proposal approval failed.";
       toast.error("Execution error", { description: errMsg });
@@ -1010,11 +1061,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const dailyStats = snapshot.dailyStats ?? { orderCount: 0, openingOrderCount: 0, notional: 0 };
   const remainingNotional = Math.max(0, (policy.maxDailyNotional ?? 0) - dailyStats.notional);
   const remainingOrders = Math.max(0, policy.maxDailyOrders - (dailyStats.openingOrderCount ?? dailyStats.orderCount));
-  const enableBlockedReason = !policy.accountNumber
-    ? "Select an account before enabling autonomy."
-    : policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
+  const accountReadiness = snapshot.accountReadiness;
+  const accountBlockedReason = accountReadiness
+    ? (accountReadiness.ok ? undefined : accountReadiness.reason ?? accountReadiness.detail)
+    : (!policy.accountNumber ? "Select an account before enabling autonomy." : undefined);
+  const enableBlockedReason = accountBlockedReason ?? (
+    policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0
       ? "Select at least one base index or additional watchlist symbol before enabling autonomy."
-      : undefined;
+      : undefined
+  );
   // A strategy session is LLM-driven. When NO LLM provider has a resolvable credential for this user
   // (own key OR operator failover; see userHasAnyLlmCredential), "Run once" is gated with an actionable
   // message — matching the /api/strategy/run 412 — rather than firing a run that only errors deep inside.
@@ -1035,6 +1090,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const universeLabelText = isDefault ? "TBD" : isOnlyOneIndex ? selectedIndexLabels[0] ?? "Custom" : "Custom";
   const executionState = executionStateFor(snapshot);
   const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
+  const selectorAccounts = visibleConnectedAccounts(snapshot.connectedAccounts, hideTestAccount, activeAccountId);
   const mode = executionState.usesLocalSimulation ? "paper" : "live";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
@@ -1061,12 +1117,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const marketStatus = marketStatusFor(snapshot.marketSession);
 
   function routeSetupBlocker(reason: string) {
+    const accountIsBlocked = accountReadiness ? !accountReadiness.ok : (!policy.accountNumber && !policy.connectedAccountId);
     toast.warning(reason, {
-      description: !policy.accountNumber && !policy.connectedAccountId
+      description: accountIsBlocked
         ? "Open Accounts to connect or select a supported account."
         : "Open Settings to choose a tradable universe."
     });
-    if (!policy.accountNumber && !policy.connectedAccountId) setAccountsOpen(true);
+    if (accountIsBlocked) setAccountsOpen(true);
     else openSettings("operate");
   }
 
@@ -1091,7 +1148,6 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     void updatePolicy({ systemState: nextActive ? "active" : "halted" });
   }
 
-  const selectedBrokerAccount = snapshot.accounts.find((account) => account.accountNumber === executionState.accountNumber);
   const riskCapsReady =
     (policy.maxDailyNotional ?? 0) > 0 &&
     (policy.maxOrderNotional ?? 0) > 0 &&
@@ -1099,8 +1155,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const readinessItems: ReadinessItem[] = [
     {
       label: "Account",
-      ok: Boolean(policy.accountNumber),
-      detail: policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected.",
+      ok: accountReadiness?.ok ?? Boolean(policy.accountNumber),
+      detail: accountReadiness?.detail ?? (policy.accountNumber ? `Selected account ${policy.accountNumber}.` : "No account is selected."),
       actionLabel: "Accounts",
       onAction: () => setAccountsOpen(true)
     },
@@ -1170,7 +1226,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <Zap size={17} className="fill-current" />
             </span>
             <div className="leading-tight">
-              <div className="whitespace-nowrap text-sm font-semibold text-fg">Agentic Trading</div>
+              <div className="whitespace-nowrap text-sm font-semibold text-fg">Trading Dashboard</div>
               <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
                 <div className="flex items-center gap-1.5 whitespace-nowrap">
                   <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
@@ -1195,13 +1251,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           {/* Sub-container 1: Selects and Utility tools */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
             <div
-              className="hidden items-center gap-1 rounded-lg border border-line bg-surface/50 backdrop-blur-xl px-2 py-0.5 md:flex lg:gap-1.5 lg:px-2.5 lg:py-1"
+              className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-2 py-0.5 backdrop-blur-xl md:flex lg:h-9 lg:px-2.5 lg:py-1"
               title="Approval mode — Propose: the agent proposes and you approve each order. Autonomous: while the system is running, the agent executes orders automatically. Either way, nothing trades until you press Start."
             >
-              <span className="text-[11px] font-medium text-muted lg:text-xs">Mode:</span>
+              <span className="text-xs font-medium text-muted lg:text-sm">Mode:</span>
               <select
                 aria-label="Approval mode"
-                className="bg-transparent text-[11px] font-medium text-fg outline-none lg:text-xs max-w-[6rem] lg:max-w-[8rem] truncate"
+                className="min-w-[9.5rem] bg-transparent text-xs font-medium text-fg outline-none lg:min-w-[11rem] lg:text-sm"
                 value={policy.strategyAuthority}
                 onChange={(e) => {
                   const next = e.target.value as TradingPolicy["strategyAuthority"];
@@ -1219,7 +1275,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             <div className="flex items-center gap-1.5 lg:gap-2">
               <select
                 aria-label="Active account"
-                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:max-w-[14rem] lg:h-9 lg:px-2.5 lg:text-sm"
+                className="h-8 max-w-[8rem] rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg outline-none backdrop-blur-xl focus:border-accent sm:max-w-[12rem] lg:h-9 lg:max-w-[14rem] lg:px-2.5 lg:text-sm"
                 value={activeAccountId}
                 onChange={async (e) => {
                   const id = e.target.value;
@@ -1232,7 +1288,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               >
                 <option value="" disabled>Select Account...</option>
                 {(() => {
-                  const accts = (snapshot.connectedAccounts ?? []).filter(acc => acc.id === activeAccountId || !hideTestAccount || acc.broker !== "test");
+                  const accts = selectorAccounts;
                   // Append the environment only when two accounts would otherwise render the same option
                   // text — disambiguating identical labels (e.g. two "Alpaca") so a live account is never
                   // mistaken for paper in this real-money switcher, while distinct labels stay uncluttered.
@@ -1244,15 +1300,24 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                     return <option key={acc.id} value={acc.id}>{ambiguous ? `${acc.label} (${acc.environment})` : acc.label}</option>;
                   });
                 })()}
-                <option value="manage">Manage Accounts...</option>
+                <option value="manage" className="italic">Manage Accounts...</option>
               </select>
             </div>
             <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
               <SettingsIcon size={15} />
             </IconButton>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Help" onClick={() => setHelpOpen(true)}>
+            <Button
+              aria-label="Help"
+              className="h-8 px-2.5 lg:h-9"
+              size="sm"
+              title="Help"
+              variant="accentSoft"
+              onClick={() => setHelpOpen(true)}
+            >
               <HelpCircle size={15} />
-            </IconButton>
+              <span className="hidden sm:inline">Help</span>
+              <span className="font-semibold sm:hidden">?</span>
+            </Button>
             <ThemeToggle />
             {signedInEmail && (
               <span className="hidden max-w-[12rem] truncate text-[11px] text-faint md:inline" title={`Signed in as ${signedInEmail}`}>
@@ -1439,8 +1504,22 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         </div>
       </SlideOver>
 
-      <SlideOver open={!!drilldownSymbol} onClose={() => setDrilldownSymbol(null)} title="Symbol Intelligence" width="max-w-xl">
-        {drilldownSymbol && <SymbolDrilldown quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} />}
+      <SlideOver
+        open={!!drilldownSymbol}
+        onClose={() => setDrilldownSymbol(null)}
+        title={drilldownSymbol ? <SymbolDrilldownTitle quote={drilldownSymbol} logoDisplay={tickerLogoDisplay} /> : "Symbol"}
+        ariaLabel={drilldownSymbol ? `${drilldownSymbol.symbol} details` : "Symbol details"}
+        width="max-w-xl"
+      >
+        {drilldownSymbol && (
+          <SymbolDrilldown
+            quote={drilldownSymbol}
+            logoDisplay={tickerLogoDisplay}
+            onQuoteUpdate={(patch) => {
+              setDrilldownSymbol((current) => current && current.symbol === drilldownSymbol.symbol ? { ...current, ...patch } : current);
+            }}
+          />
+        )}
       </SlideOver>
 
       <LearnedContextQueue
@@ -1473,7 +1552,37 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" icon={<SettingsIcon size={18} />} size="lg">
+      <Modal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        title="Settings"
+        icon={<SettingsIcon size={18} />}
+        size="lg"
+        headerAction={
+          <div className="flex items-center gap-2 max-sm:gap-1">
+            {snapshot.currentUser?.isAdmin && (
+              <a href="/admin/connections" className={buttonClass({ variant: "ghost", size: "sm", className: "max-sm:px-2" })}>
+                <Network size={14} />
+                <span className="hidden sm:inline">Connection Status</span>
+                <span className="sm:hidden">Status</span>
+              </a>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="max-sm:px-2"
+              onClick={() => {
+                setSettingsOpen(false);
+                setAccountsOpen(true);
+              }}
+            >
+              <Wallet size={14} />
+              <span className="hidden sm:inline">Manage Accounts</span>
+              <span className="sm:hidden">Accounts</span>
+            </Button>
+          </div>
+        }
+      >
         <SettingsContent
           snapshot={snapshot}
           policy={policy}
@@ -1751,6 +1860,11 @@ function DecisionView({
       {pending.length > 0 && (
         <Card className="overflow-hidden">
           <PanelHeader title="Pending Approval" subtitle="Review And Approve Or Reject" icon={<CheckCircle size={16} />} />
+          {snapshot.policy.strategyAuthority === "decide" && (
+            <div className="mx-4 mt-3 rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[12px] leading-snug text-muted">
+              Run once stages manual proposals for review. Start runs scheduled autonomous placement while the system is running and account/risk checks pass.
+            </div>
+          )}
           <div className="grid gap-2 p-4 pt-3 sm:grid-cols-2">
             {pending.map((p) => {
               const accountLabel = getProposalAccountLabel(p.accountNumber || snapshot.policy.accountNumber, snapshot.connectedAccounts);
@@ -2072,8 +2186,7 @@ function ProposalTimeMeta({ iso, label }: { iso?: string; label: string }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 normal-case tracking-normal" title={display.full}>
       <span className="font-semibold uppercase tracking-wider text-muted">{label}</span>
-      <span className="rounded-md bg-surface-3/55 px-1.5 py-0.5 text-[10px] font-semibold text-fg">{display.absolute}</span>
-      <span className="text-[10px] font-medium text-faint">{display.relative}</span>
+      <span className="rounded-md bg-surface-3/55 px-1.5 py-0.5 text-[10px] font-semibold text-fg">{display.display}</span>
     </span>
   );
 }
@@ -2259,7 +2372,7 @@ const SCAN_COLUMNS: ScanColumn[] = [
     render: (q) => (typeof q.sentiment === "number" ? <SentimentChip value={q.sentiment} /> : DASH), cellTitle: (q) => sentimentTitle(q) },
   { id: "analystScore", label: "Rating", title: "Analyst consensus 0–100, blended across providers (Strong Buy = 100 … Strong Sell = 0). Source: Yahoo / FMP / Finnhub.", sortKey: "analystScore",
     render: (q) => (q.analystRating ? <RatingChip score={q.analystScore} label={q.analystRating} /> : DASH), cellTitle: (q) => ratingTitle(q) },
-  { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: U.S. Senate eFD + Capitol Trades. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
+  { id: "senateTrades", label: "Congress", title: "Net recent congressional trades = distinct members buying minus selling over the last ~60 days; positive = net buying (a positioning tailwind). Source: configured congressional-trade feeds. Hover a cell for the disclosures.", align: "right", sortKey: "senateTrades",
     render: (q) => (typeof q.senateTrades === "number" ? <span className="tnum">{q.senateTrades > 0 ? `+${q.senateTrades}` : q.senateTrades}</span> : DASH), cellClass: (q) => (typeof q.senateTrades === "number" && q.senateTrades !== 0 ? (q.senateTrades > 0 ? "text-up" : "text-down") : ""), cellTitle: (q) => q.evidenceBulletins?.join("\n") || "No recent congressional disclosures for this symbol." },
   { id: "sector", label: "Sector", title: "Company sector classification. Source: Yahoo / Finnhub.", defaultHidden: true, sortKey: "sector",
     render: (q) => (q.sector ? <Chip tone="info">{q.sector}</Chip> : DASH),
@@ -2273,9 +2386,9 @@ const SCAN_COLUMNS: ScanColumn[] = [
 // Default-visible columns — chosen by UI + market specialists for fast triage:
 // identity → verdict → price action → relative strength/execution cost → sector/value/growth/news.
 // The order in this list is rendered directly; hidden columns stay available in Configure columns.
-const DEFAULT_SCAN_COLS = ["symbol", "score", "price", "intradayChangePct", "sectorRelStrength", "vsVwap", "dollarVolM", "spreadBps", "sector", "peRatio", "epsGrowth", "fcfYield", "sentiment", "senateTrades"];
-// v4: investment/market UX review moved Score near identity and replaced raw bid/ask with Spread.
-const SCAN_COLS_KEY = "scan-visible-cols-v4";
+const DEFAULT_SCAN_COLS = ["symbol", "score", "price", "intradayChangePct", "sector", "sectorRelStrength", "vsVwap", "dollarVolM", "spreadBps", "peRatio", "epsGrowth", "fcfYield", "sentiment", "senateTrades"];
+// v5: Sector is visible before Sec RS by default, and the chooser persists column order.
+const SCAN_COLS_KEY = "scan-visible-cols-v5";
 
 function MarketScanView({
   snapshot,
@@ -2297,6 +2410,7 @@ function MarketScanView({
   const [liveScan, setLiveScan] = useState<MarketScan | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState("");
+  const [scanCheckedAt, setScanCheckedAt] = useState(0);
 
   useEffect(() => {
     try {
@@ -2310,9 +2424,7 @@ function MarketScanView({
     }
   }, []);
 
-  function toggleCol(id: string) {
-    if (id === "symbol") return; // symbol is always shown
-    const next = visible.includes(id) ? visible.filter((c) => c !== id) : [...visible, id];
+  function saveVisibleColumns(next: string[]) {
     setVisible(next);
     try {
       localStorage.setItem(SCAN_COLS_KEY, JSON.stringify(next));
@@ -2321,9 +2433,32 @@ function MarketScanView({
     }
   }
 
+  function toggleCol(id: string) {
+    if (id === "symbol") return; // symbol is always shown, but can still be reordered.
+    const next = visible.includes(id) ? visible.filter((c) => c !== id) : [...visible, id];
+    saveVisibleColumns(next);
+  }
+
+  function moveCol(id: string, delta: -1 | 1) {
+    const from = visible.indexOf(id);
+    if (from === -1) return;
+    const to = Math.max(0, Math.min(visible.length - 1, from + delta));
+    if (from === to) return;
+    const next = visible.slice();
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    saveVisibleColumns(next);
+  }
+
+  function resetScanColumns() {
+    saveVisibleColumns(DEFAULT_SCAN_COLS);
+  }
+
   const refreshScan = useCallback(async () => {
+    const checkedAt = Date.now();
     setScanLoading(true);
     setScanError("");
+    setScanCheckedAt(checkedAt);
     try {
       const res = await fetch("/api/scan");
       if (!res.ok) throw await responseError(res, "Market scan failed");
@@ -2378,6 +2513,10 @@ function MarketScanView({
   const cols = visible
     .map((id) => SCAN_COLUMNS.find((c) => c.id === id))
     .filter((column): column is ScanColumn => Boolean(column));
+  const columnChooserRows = [
+    ...cols,
+    ...SCAN_COLUMNS.filter((column) => !visible.includes(column.id))
+  ];
   // The quote `asOf` is a display string, not a timestamp; the scan's ISO generatedAt
   // is the real "received" time for every value in this table.
   const dataReceived = receivedLabel(scan.generatedAt);
@@ -2397,6 +2536,13 @@ function MarketScanView({
     ? scan.warnings.length === 1
       ? scan.warnings[0]
       : `${scan.warnings[0]} (${scan.warnings.length - 1} more warning${scan.warnings.length === 2 ? "" : "s"})`
+    : "";
+  const scanAgeMs = scanCheckedAt > 0 ? scanCheckedAt - Date.parse(scan.generatedAt) : Number.NaN;
+  const scanTime = new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const scanFallbackText = scanError
+    ? Number.isFinite(scanAgeMs) && scanAgeMs >= 0 && scanAgeMs < 15 * 60_000
+      ? `Fresh scan refresh failed; still showing the recent scan from ${scanTime}.`
+      : `${scanError} Showing the last scan from ${scanTime}.`
     : "";
   const mobileSubtitle = scan.returnedQuotes === 0
     ? "No quotes returned"
@@ -2426,14 +2572,47 @@ function MarketScanView({
               {colsOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setColsOpen(false)} />
-                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-48 overflow-auto rounded-lg border border-line bg-surface/50 backdrop-blur-xl p-1.5 shadow-[var(--shadow-lg)]">
-                    <p className="px-2 py-1 text-[11px] font-semibold uppercase text-faint">Show columns</p>
-                    {SCAN_COLUMNS.map((c) => (
-                      <label key={c.id} className={cn("flex items-center gap-2 rounded px-2 py-1 text-[13px] text-muted", c.id === "symbol" ? "opacity-50" : "cursor-pointer hover:bg-surface-2/50 backdrop-blur-lg")} title={c.title}>
-                        <input type="checkbox" checked={visible.includes(c.id)} onChange={() => toggleCol(c.id)} disabled={c.id === "symbol"} className="accent-[var(--accent)]" />
-                        {c.label}
-                      </label>
-                    ))}
+                  <div className="absolute right-0 z-20 mt-1 max-h-[60vh] w-72 overflow-auto rounded-lg border border-line bg-surface/50 backdrop-blur-xl p-1.5 shadow-[var(--shadow-lg)]">
+                    <div className="flex items-center justify-between gap-2 px-2 py-1">
+                      <p className="text-[11px] font-semibold uppercase text-faint">Columns</p>
+                      <button type="button" onClick={resetScanColumns} className="text-[11px] font-medium text-muted hover:text-fg">Reset</button>
+                    </div>
+                    {columnChooserRows.map((c) => {
+                      const isVisible = visible.includes(c.id);
+                      const index = visible.indexOf(c.id);
+                      return (
+                        <div key={c.id} className={cn("grid grid-cols-[1fr_auto] items-center gap-2 rounded px-2 py-1 text-[13px] text-muted hover:bg-surface-2/50 backdrop-blur-lg", !isVisible && "opacity-70")} title={c.title}>
+                          <label className={cn("flex min-w-0 items-center gap-2", c.id === "symbol" ? "opacity-70" : "cursor-pointer")}>
+                            <input type="checkbox" checked={isVisible} onChange={() => toggleCol(c.id)} disabled={c.id === "symbol"} className="accent-[var(--accent)]" />
+                            <span className="truncate">{c.label}</span>
+                          </label>
+                          <div className="flex items-center gap-1">
+                            {isVisible && (
+                              <>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${c.label} earlier`}
+                                  onClick={() => moveCol(c.id, -1)}
+                                  disabled={index <= 0}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-3 hover:text-fg disabled:opacity-30"
+                                >
+                                  <ArrowUp size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Move ${c.label} later`}
+                                  onClick={() => moveCol(c.id, 1)}
+                                  disabled={index === visible.length - 1}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-3 hover:text-fg disabled:opacity-30"
+                                >
+                                  <ArrowDown size={12} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -2462,7 +2641,7 @@ function MarketScanView({
         // alarming red banner, so "Couldn't reach the scan service" never contradicts a populated
         // table (the previous behavior the user flagged).
         <p className="mx-4 mt-3 rounded-lg border border-line bg-surface-2/40 px-3 py-1.5 text-[12px] text-faint">
-          {scanError} Showing the last scan from {new Date(scan.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+          {scanFallbackText}
         </p>
       )}
       {scan.warnings && scan.warnings.length > 0 && (
@@ -2614,7 +2793,7 @@ function SmartMoneyView({ snapshot, scan, onDrilldown, tickerLogoDisplay }: { sn
       <Card className="overflow-hidden">
         <PanelHeader
           title="Congressional Trades"
-          subtitle={ws?.congress ? `${ws.congress.recordCount} on file${congress.length > 0 ? ` · ${formatDateRange(congress.map((t) => t.tradedAt))}` : ""} · ${ws.congress.sources.map(formatTradeSource).join(" + ") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Senate eFD + Capitol Trades"}
+          subtitle={ws?.congress ? `${ws.congress.recordCount} on file${congress.length > 0 ? ` · ${formatDateRange(congress.map((t) => t.tradedAt))}` : ""} · ${ws.congress.sources.map(formatTradeSource).join(" + ") || "—"} · ${freshness(ws.congress.fetchedAt)}` : "Congressional trade feeds"}
           icon={<Landmark size={16} />}
         />
         {congress.length === 0 ? (
@@ -2701,7 +2880,12 @@ function PerformanceView({
   const subtractTax = Boolean(snapshot.policy.taxSettings?.subtractFromResults && snapshot.tax);
   const taxBurden = subtractTax ? snapshot.tax!.estimatedTaxLiability : 0;
   const realized = realizedGross - taxBurden;
-  const unrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
+  const trackedUnrealized = mode === "paper" ? perf?.paperUnrealizedPnl ?? 0 : perf?.liveUnrealizedPnl ?? 0;
+  const currentPositionUnrealized = snapshot.positions.reduce((sum, position) => {
+    if (!(position.averageCost > 0) || !Number.isFinite(position.marketValue) || !Number.isFinite(position.quantity)) return sum;
+    return sum + (position.marketValue - position.averageCost * position.quantity);
+  }, 0);
+  const unrealized = snapshot.positions.length > 0 ? currentPositionUnrealized : trackedUnrealized;
   const winRate = mode === "paper" ? perf?.paperWinRate ?? 0 : perf?.liveWinRate ?? 0;
   const avgReturn = mode === "paper" ? perf?.paperAverageReturnPct ?? 0 : perf?.liveAverageReturnPct ?? 0;
   const benchmark = perf?.benchmark;
@@ -2714,7 +2898,7 @@ function PerformanceView({
         <PanelHeader title="Equity" subtitle={`${modeLabel} account`} icon={<TrendingUp size={16} />} />
         <div className="grid grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4">
           <StatTile label={subtractTax ? "Realized (after est. tax)" : "Realized"} value={signedMoney(realized)} tone={pnlTone(realized)} sub={subtractTax ? `−${money(taxBurden)} est. tax` : undefined} title="Profit/loss locked in by closing positions (FIFO matched). Toggle after-tax in Settings → Tax." />
-          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={pnlTone(unrealized)} title={`${modeLabel} gain/loss on positions still open, marked to current prices.`} />
+          <StatTile label="Unrealized" value={signedMoney(unrealized)} tone={pnlTone(unrealized)} title={`${modeLabel} gain/loss on current open positions, marked to current prices. Realized learning stats below still use closed app-recorded lots.`} />
           <StatTile label="Win rate" value={`${winRate.toFixed(0)}%`} title="Share of closed lots that were profitable." />
           <StatTile label="Avg return" value={`${avgReturn.toFixed(2)}%`} tone={pnlTone(avgReturn)} title="Average percentage return per closed lot." />
         </div>
@@ -3004,11 +3188,11 @@ function StrategyView({
       <Card>
         <PanelHeader title="Key Parameters" subtitle="Edit inline — applies immediately" icon={<Shield size={16} />} />
         <div className="grid grid-cols-2 gap-2 p-4 pt-3 text-sm">
-          <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v })} onCommitRel={(v) => updatePolicy({ maxOrderPctOfNav: v })} defaultMode="rel" />
-          <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v })} onCommitRel={(v) => updatePolicy({ maxDailyPctOfNav: v })} defaultMode="abs" />
+          <EditableParam label="Max order" absValue={policy.maxOrderNotional} relValue={policy.maxOrderPctOfNav} onCommitAbs={(v) => updatePolicy({ maxOrderNotional: v, maxOrderPctOfNav: undefined })} onCommitRel={(v) => updatePolicy({ maxOrderNotional: undefined, maxOrderPctOfNav: v })} defaultMode="rel" />
+          <EditableParam label="Daily cap" absValue={policy.maxDailyNotional} relValue={policy.maxDailyPctOfNav} onCommitAbs={(v) => updatePolicy({ maxDailyNotional: v, maxDailyPctOfNav: undefined })} onCommitRel={(v) => updatePolicy({ maxDailyNotional: undefined, maxDailyPctOfNav: v })} defaultMode="abs" />
           <EditableParam label="Symbol cap" relValue={policy.maxSymbolExposurePct} onCommitAbs={() => {}} onCommitRel={(v) => updatePolicy({ maxSymbolExposurePct: v })} defaultMode="rel" />
-          <EditableParam label="Stop loss" absValue={policy.riskRules.stopLossNotional} relValue={policy.riskRules.stopLossPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossPct: v } })} defaultMode="rel" />
-          <EditableParam label="Take profit" absValue={policy.riskRules.takeProfitNotional} relValue={policy.riskRules.takeProfitPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: v } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitPct: v } })} defaultMode="rel" />
+          <EditableParam label="Stop loss" absValue={policy.riskRules.stopLossNotional} relValue={policy.riskRules.stopLossPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: v, stopLossPct: undefined } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, stopLossNotional: undefined, stopLossPct: v } })} defaultMode="rel" />
+          <EditableParam label="Take profit" absValue={policy.riskRules.takeProfitNotional} relValue={policy.riskRules.takeProfitPct} onCommitAbs={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: v, takeProfitPct: undefined } })} onCommitRel={(v) => updatePolicy({ riskRules: { ...policy.riskRules, takeProfitNotional: undefined, takeProfitPct: v } })} defaultMode="rel" />
           <p className="col-span-2 -mt-0.5 text-xs text-faint">Tap <span className="tnum">$⇄%</span> to switch a cap between a dollar amount and a % of NAV — each control holds <strong>one or the other</strong> (setting one clears the other). More guards (drawdown &amp; daily-loss breakers, volatility brake, exposure caps, trailing/ATR stops, short limits, order types, universe floor) live under <strong>Risk &amp; Safety</strong>.</p>
 
           <div className="col-span-2 mt-2 space-y-3">
@@ -3108,8 +3292,11 @@ function EditableParam({
   onCommitRel: (v: number | undefined) => void;
   defaultMode: "abs" | "rel";
 }) {
+  const preferredMode = defaultMode === "rel"
+    ? (relValue !== undefined ? "rel" : absValue !== undefined ? "abs" : defaultMode)
+    : (absValue !== undefined ? "abs" : relValue !== undefined ? "rel" : defaultMode);
   const [mode, setMode] = useState<"abs" | "rel">(
-    absValue !== undefined ? "abs" : relValue !== undefined ? "rel" : defaultMode
+    preferredMode
   );
   
   const currentVal = mode === "abs" ? absValue : relValue;
@@ -3122,17 +3309,15 @@ function EditableParam({
 
   function commit() {
     if (draft.trim() === "") {
-      onCommitAbs(undefined);
-      onCommitRel(undefined);
+      if (mode === "abs") onCommitAbs(undefined);
+      else onCommitRel(undefined);
       return;
     }
     const n = Number(draft);
     if (Number.isFinite(n) && n >= 0) {
       if (mode === "abs") {
         onCommitAbs(n);
-        onCommitRel(undefined);
       } else {
-        onCommitAbs(undefined);
         onCommitRel(n);
       }
     } else {
@@ -3447,61 +3632,111 @@ function StrategyStudio({
           <h4 className="mb-2 text-sm font-semibold text-fg" title="Choose which LLM proposes trades and which LLM critiques them before approval. API keys still live in Settings -> Connections.">Green/Red Team Models</h4>
           <div className="grid gap-3">
             <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
-              <select className={inputClass} value={policy.llmModel ?? "gpt-5.4-mini"} onChange={(e) => updatePolicy({ llmModel: e.target.value })}>
-                <optgroup label="OpenAI">
-                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
-                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
-                </optgroup>
-                <optgroup label="xAI (Grok)">
-                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
-                  <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
-                </optgroup>
-                <optgroup label="Google Gemini">
-                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                  <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                  <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                  <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                </optgroup>
-                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                </optgroup>
-              </select>
+              <div className="space-y-2">
+                <select className={inputClass} value={["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
+                  if (e.target.value === "custom") {
+                    updatePolicy({ llmModel: "gpt-4o-mini" });
+                  } else {
+                    updatePolicy({ llmModel: e.target.value });
+                  }
+                }}>
+                  <optgroup label="OpenAI (Simulated)">
+                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
+                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
+                  </optgroup>
+                  <optgroup label="OpenAI (Real)">
+                    <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
+                    <option value="gpt-4o">gpt-4o — standard large</option>
+                    <option value="o1-mini">o1-mini — fast reasoning</option>
+                    <option value="o3-mini">o3-mini — balanced reasoning</option>
+                    <option value="o1">o1 — deepest reasoning</option>
+                  </optgroup>
+                  <optgroup label="xAI (Grok)">
+                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
+                    <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
+                  </optgroup>
+                  <optgroup label="Google Gemini">
+                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
+                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
+                  </optgroup>
+                  <optgroup label="Mistral">
+                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
+                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
+                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                  </optgroup>
+                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
+                  </optgroup>
+                  <option value="custom">Custom Model ID...</option>
+                </select>
+                {!["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.llmModel ?? "gpt-5.4-mini") && (
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={policy.llmModel ?? ""}
+                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    onChange={(e) => updatePolicy({ llmModel: e.target.value })}
+                  />
+                )}
+              </div>
             </Field>
             <Field label="Red Team Model" hint="Independent Bear reviewer. Leave as same as Green Team for lower friction, or choose a stronger/different model for adversarial critique.">
-              <select className={inputClass} value={policy.redTeamLlmModel ?? ""} onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}>
-                <option value="">Same as Green Team model</option>
-                <optgroup label="OpenAI">
-                  <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                  <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                  <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
-                  <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
-                </optgroup>
-                <optgroup label="xAI (Grok)">
-                  <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
-                  <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
-                </optgroup>
-                <optgroup label="Google Gemini">
-                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                  <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                  <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                  <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                </optgroup>
-                <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                  <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                </optgroup>
-              </select>
+              <div className="space-y-2">
+                <select className={inputClass} value={!policy.redTeamLlmModel ? "" : ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
+                  if (e.target.value === "custom") {
+                    updatePolicy({ redTeamLlmModel: "gpt-4o-mini" });
+                  } else {
+                    updatePolicy({ redTeamLlmModel: e.target.value || undefined });
+                  }
+                }}>
+                  <option value="">Same as Green Team model</option>
+                  <optgroup label="OpenAI (Simulated)">
+                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
+                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
+                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
+                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
+                  </optgroup>
+                  <optgroup label="OpenAI (Real)">
+                    <option value="gpt-4o-mini">gpt-4o-mini — standard mini (recommended)</option>
+                    <option value="gpt-4o">gpt-4o — standard large</option>
+                    <option value="o1-mini">o1-mini — fast reasoning</option>
+                    <option value="o3-mini">o3-mini — balanced reasoning</option>
+                    <option value="o1">o1 — deepest reasoning</option>
+                  </optgroup>
+                  <optgroup label="xAI (Grok)">
+                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
+                    <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
+                  </optgroup>
+                  <optgroup label="Google Gemini">
+                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
+                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
+                  </optgroup>
+                  <optgroup label="Mistral">
+                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
+                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
+                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
+                  </optgroup>
+                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
+                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
+                  </optgroup>
+                  <option value="custom">Custom Model ID...</option>
+                </select>
+                {policy.redTeamLlmModel !== undefined && !["gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "grok-build-0.1", "grok-4.3", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "o1"].includes(policy.redTeamLlmModel) && (
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={policy.redTeamLlmModel ?? ""}
+                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}
+                  />
+                )}
+              </div>
             </Field>
             <Field label="Reasoning Effort" hint="For gpt-5 / o-series reasoning models: higher effort = deeper analysis, more tokens, higher cost & latency. Other model families use their provider defaults.">
               <select className={inputClass} value={policy.llmReasoningEffort ?? "medium"} onChange={(e) => updatePolicy({ llmReasoningEffort: e.target.value as TradingPolicy["llmReasoningEffort"] })}>
@@ -3586,7 +3821,6 @@ function SettingsContent({
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
-  const isAdmin = snapshot.currentUser?.isAdmin ?? false;
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   useEffect(() => setSection(initialSection), [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
@@ -4120,21 +4354,7 @@ function SettingsContent({
                 </Button>
               </div>
             </div>
-            <ApiKeysSection />
-            {isAdmin && (
-              <div className="rounded-lg border border-line bg-surface-2/45 p-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-fg">Connection Health</div>
-                  <p className="mt-0.5 text-xs text-muted">Monitor API status, latency, error patterns, and stopped keys.</p>
-                </div>
-                <a
-                  href="/admin/connections"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-2 transition-colors"
-                >
-                  View Status →
-                </a>
-              </div>
-            )}
+            <ApiKeysSection policy={policy} />
           </div>
         )}
 
@@ -4514,7 +4734,7 @@ function AccountDeletionPanel({ signedInEmail, onOpen }: { signedInEmail?: strin
             <div className="text-sm font-semibold text-fg">Delete this app account</div>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
               Deletes app data and stored broker/API connections for {signedInEmail ?? "the signed-in user"}.
-              Broker positions, open broker orders, and your Google or Apple account are not deleted.
+              Broker positions, open broker orders, and external login accounts are not deleted.
             </p>
           </div>
         </div>
@@ -4715,7 +4935,7 @@ function AccountDeletionModal({
               <ul className="space-y-1.5 text-xs leading-relaxed">
                 <li><CheckCircle size={13} className="mr-1 inline text-up" />Stored API keys, broker links, and Robinhood MCP OAuth tokens for this user.</li>
                 <li><CheckCircle size={13} className="mr-1 inline text-up" />Settings, strategy profiles, watchlists, alerts, chat history, memories, proposals, fills, snapshots, notifications, and private learned context.</li>
-                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, Google accounts, and Apple IDs are not deleted by this app.</li>
+                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, and Google, GitHub, or Apple login accounts are not deleted by this app.</li>
               </ul>
               <div className="mt-3 rounded-lg border border-line bg-bg/55 px-3 py-2 text-xs text-faint">
                 {preview.connectedAccounts.length} connection{preview.connectedAccounts.length === 1 ? "" : "s"} and about {accountDeletionRecordTotal(preview)} private app row{accountDeletionRecordTotal(preview) === 1 ? "" : "s"} are in scope.
@@ -4724,7 +4944,7 @@ function AccountDeletionModal({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3">
               <div className="mb-2 text-sm font-semibold text-fg">Sign-in and provider access</div>
               <p className="text-xs leading-relaxed">
-                Signing in later with Google or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke Agentic Trading in your Google Account third-party access page or Apple ID Sign in with Apple settings.
+                Signing in later with Google, GitHub, or Apple can create a fresh empty app account after this deletion. To remove the OAuth grant too, revoke this app in your Google Account third-party access page, GitHub Authorized OAuth Apps, or Apple ID Sign in with Apple settings.
               </p>
               {preview.isLocalOperatorAccount && (
                 <p className="mt-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
@@ -4756,7 +4976,7 @@ function AccountDeletionModal({
             {check("deleteAppData", "Delete my app data for this signed-in user.")}
             {check("deleteBrokerConnections", "Delete stored broker/API connections from this app.")}
             {check("understandBrokerPositionsRemain", "I understand broker positions and open broker orders are not closed or cancelled.")}
-            {check("understandProviderRevocation", "I understand I may need to revoke Google, Apple, or broker access in those provider settings too.")}
+            {check("understandProviderRevocation", "I understand I may need to revoke Google, GitHub, Apple, or broker access in those provider settings too.")}
             {check("understandCanSignInAgain", "I understand signing in again later can create a fresh empty app account.")}
             {preview?.isLocalOperatorAccount && check("confirmLocalOperator", "I understand this deletes the local operator dataset shared by primary aliases.")}
           </div>
@@ -4983,12 +5203,12 @@ function relativeAge(iso?: string): string {
   if (!iso) return "";
   const ageMs = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ageMs)) return "";
-  const mins = Math.max(0, Math.round(ageMs / 60_000));
+  const mins = Math.max(0, Math.floor(ageMs / 60_000));
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min old`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours} hr old`;
-  const days = Math.round(hours / 24);
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr old`;
+  const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} old`;
 }
 
@@ -5006,14 +5226,36 @@ function proposalTimeLabel(iso?: string): string {
   return parts ? `${parts.full} · ${parts.relative}` : "";
 }
 
-function proposalTimeParts(iso?: string): { absolute: string; full: string; relative: string } | null {
+function proposalTimeParts(iso?: string): { display: string; full: string; relative: string } | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return null;
+  const now = new Date();
+  const ageMs = now.getTime() - date.getTime();
+  const relative = relativeAge(iso);
+  if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 86_400_000) {
+    return {
+      display: relative,
+      full: date.toLocaleString(),
+      relative
+    };
+  }
+  const today =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const dateLabel = today
+    ? "Today"
+    : date.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+        ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {})
+      });
+  const timeLabel = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   return {
-    absolute: date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    display: `${dateLabel}, ${timeLabel}`,
     full: date.toLocaleString(),
-    relative: relativeAge(iso)
+    relative
   };
 }
 
@@ -5127,7 +5369,26 @@ type ApiKeyStatus = {
   updatedAt?: string;
 };
 
-function ApiKeysSection() {
+type LlmApiService = "openai" | "xai" | "gemini" | "mistral" | "deepseek";
+
+const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
+  openai: "OpenAI",
+  xai: "xAI",
+  gemini: "Gemini",
+  mistral: "Mistral",
+  deepseek: "DeepSeek"
+};
+
+function strategyLlmServiceForModel(model?: string | null): LlmApiService {
+  const value = (model || "gpt-5.4-mini").trim();
+  if (/^grok/i.test(value)) return "xai";
+  if (/^gemini/i.test(value)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(value)) return "mistral";
+  if (/^deepseek/i.test(value)) return "deepseek";
+  return "openai";
+}
+
+function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
   const [keys, setKeys] = useState<ApiKeyStatus[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -5186,7 +5447,12 @@ function ApiKeysSection() {
     }
   }
 
-  const requiredUnset = keys.some((row) => row.required && row.source === "none");
+  const requiredUnsetLabels = keys.filter((row) => row.required && row.source === "none").map((row) => row.label);
+  const strategyModel = policy.llmModel || "gpt-5.4-mini";
+  const strategyService = strategyLlmServiceForModel(strategyModel);
+  const strategyServiceLabel = LLM_SERVICE_LABELS[strategyService];
+  const selectedStrategyRow = keys.find((row) => row.service === strategyService);
+  const selectedStrategyModelMissing = selectedStrategyRow?.source === "none";
 
   if (loading) {
     return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={18} className="animate-spin" />} />;
@@ -5194,9 +5460,14 @@ function ApiKeysSection() {
 
   return (
     <div className="space-y-3">
-      {requiredUnset && (
+      {requiredUnsetLabels.length > 0 && (
         <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
-          OpenAI is required for model-generated proposals. Without it, the app uses local fallback proposals.
+          Required connection missing: {requiredUnsetLabels.join(", ")}.
+        </p>
+      )}
+      {selectedStrategyModelMissing && (
+        <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+          Selected Green Team model <strong>{strategyModel}</strong> needs a {strategyServiceLabel} key before Run once can use it. Save a {strategyServiceLabel} key below or choose a different Green Team model in Strategy Studio.
         </p>
       )}
       <div className="grid gap-2">
@@ -5251,7 +5522,7 @@ function ApiKeysSection() {
         })}
       </div>
       <p className="text-xs text-faint">
-        Yahoo Finance, Senate eFD, Capitol Trades, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
+        Yahoo Finance, configured congressional-trade feeds, SEC EDGAR, and FINRA short-volume do not need API keys. Brokerage account credentials live in Accounts, not here.
       </p>
     </div>
   );
@@ -5276,6 +5547,9 @@ function IntegrationsSection({
   const [busy, setBusy] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<RobinhoodMcpHealth | null>(null);
 
+  const robinhoodAuthIssue = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) =>
+    acc.broker === "robinhood" && Boolean(mcpHealth && (!mcpHealth.configured || !mcpHealth.authenticated || !mcpHealth.ok));
+
   const formatAccountInfo = (acc: NonNullable<DashboardSnapshot["connectedAccounts"]>[0]) => {
     if (acc.broker === "test") {
       return {
@@ -5287,7 +5561,7 @@ function IntegrationsSection({
     if (acc.broker === "robinhood") {
       return {
         title: acc.label || "Agentic Robinhood",
-        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}`,
+        subtitle: `Robinhood · ${acc.accountNumber || "No account number"}${robinhoodAuthIssue(acc) ? " · OAuth not connected" : ""}`,
         showBadges: true
       };
     }
@@ -5571,6 +5845,7 @@ function IntegrationsSection({
   // The app's active account: prefer the explicitly-selected one, else the flagged-active row (mirrors
   // activeConnectedAccountFor). Used to mark which row is ACTIVE vs merely Connected.
   const activeId = policy.connectedAccountId ?? accounts?.find((a) => a.isActive)?.id;
+  const visibleAccounts = visibleConnectedAccounts(accounts, hideTestAccount, activeId);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5590,15 +5865,16 @@ function IntegrationsSection({
         </div>
       </div>
 
-      {!accounts?.length ? (
+      {!visibleAccounts.length ? (
         <div className="rounded-lg border border-line border-dashed p-6 text-center text-sm text-faint">
           No connected accounts yet. Use the buttons above to connect any supported account when you want broker-backed execution; Paper accounts are optional.
         </div>
       ) : (
         <div className="space-y-2">
-          {accounts.map(acc => {
+          {visibleAccounts.map(acc => {
             const info = formatAccountInfo(acc);
             const isActive = acc.id === activeId;
+            const needsRobinhoodReconnect = robinhoodAuthIssue(acc);
             return (
               <div
                 key={acc.id}
@@ -5610,7 +5886,12 @@ function IntegrationsSection({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-fg">{info.title}</span>
-                    {info.showBadges && (isActive ? (
+                    {info.showBadges && needsRobinhoodReconnect && (
+                      <span className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                        OAuth Needed
+                      </span>
+                    )}
+                    {info.showBadges && !needsRobinhoodReconnect && (isActive ? (
                       <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
                         Active
                       </span>
@@ -5619,6 +5900,11 @@ function IntegrationsSection({
                         Connected
                       </span>
                     ))}
+                    {info.showBadges && needsRobinhoodReconnect && isActive && (
+                      <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                        Active
+                      </span>
+                    )}
                     {info.showBadges && isActive && policy?.strategyAuthority === "decide" && (
                       <span className="rounded-full bg-red-500/10 border border-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
                         Autonomous
@@ -5627,6 +5913,11 @@ function IntegrationsSection({
                   </div>
                   <div className="mt-1 text-xs text-faint">
                     {info.subtitle}
+                    {needsRobinhoodReconnect && (
+                      <span className="block pt-1 text-amber-300">
+                        Robinhood needs to be reconnected.
+                      </span>
+                    )}
                     {acc.capabilities && (
                       <span className="ml-2">
                         {acc.capabilities.accountType !== "brokerage" && (
@@ -5656,7 +5947,11 @@ function IntegrationsSection({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1 sm:justify-end">
-                  {!isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>}
+                  {needsRobinhoodReconnect ? (
+                    <Button variant="primary" size="sm" onClick={() => { window.location.href = "/api/auth/robinhood/start"; }} disabled={busy}>Reconnect</Button>
+                  ) : (
+                    !isActive && <Button variant="primary" size="sm" onClick={() => activateAccount(acc.id)} disabled={busy}>Use</Button>
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => openAccountEditor(acc)} disabled={busy}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => deleteAccount(acc.id)} disabled={busy} className="text-danger hover:bg-danger/10 hover:text-danger">Remove</Button>
                 </div>
@@ -5667,7 +5962,7 @@ function IntegrationsSection({
       )}
       {accounts?.some((a) => a.broker === "test") && (
         <label className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-xs text-faint">
-          <span>Hide the Test account from the account selector</span>
+          <span>Hide the Test account from Accounts and the account selector</span>
           <Switch checked={hideTestAccount} onChange={setHideTestAccount} label="Hide Test account" />
         </label>
       )}
@@ -5675,11 +5970,58 @@ function IntegrationsSection({
   );
 }
 
+function HelpSourceLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      className="font-semibold text-info underline-offset-2 hover:text-fg hover:underline"
+      href={href}
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      {children}
+    </a>
+  );
+}
+
+function joinHelpSourceLinks(items: React.ReactNode[]): React.ReactNode {
+  if (items.length === 0) return null;
+  if (items.length === 1) return items[0];
+  return items.map((item, index) => (
+    <React.Fragment key={index}>
+      {index > 0 && (index === items.length - 1 ? " and " : ", ")}
+      {item}
+    </React.Fragment>
+  ));
+}
+
+function CongressionalTradesHelpLine({ sources }: { sources: string[] }) {
+  const sourceSet = new Set(sources);
+  const hasCongressTrade = sourceSet.has("congress.trade");
+  const hasSenate = sourceSet.has("senate-efd");
+  const hasCapitolTrades = sourceSet.has("capitol-trades");
+  const hasApify = sourceSet.has("apify-congress");
+  const sourceLinks: React.ReactNode[] = [];
+
+  if (hasCongressTrade) sourceLinks.push(<HelpSourceLink href="https://congress.trade/">Congress.Trade</HelpSourceLink>);
+  if (hasSenate) sourceLinks.push(<HelpSourceLink href="https://efdsearch.senate.gov/search/">U.S. Senate eFD</HelpSourceLink>);
+  if (hasCapitolTrades) sourceLinks.push(<HelpSourceLink href="https://www.capitoltrades.com/">Capitol Trades</HelpSourceLink>);
+  if (hasApify) sourceLinks.push(<HelpSourceLink href="https://apify.com/">Apify congressional feeds</HelpSourceLink>);
+
+  if (hasCongressTrade && sourceLinks.length === 1) {
+    return <>Politicians&apos; trades: aggregated House/Senate reporting via {sourceLinks[0]}.</>;
+  }
+  if (sourceLinks.length > 0) {
+    return <>Politicians&apos; trades: configured public disclosure feeds via {joinHelpSourceLinks(sourceLinks)}.</>;
+  }
+  return <>Politicians&apos; trades: configured congressional-trade feeds; source attribution appears after the next refresh.</>;
+}
+
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
-  type Section = "overview" | "guardrails" | "tax" | "fintech" | "mcp";
+  type Section = "overview" | "guardrails" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
+  const congressionalSources = snapshot.webSources?.congress?.sources ?? [];
 
   return (
     <div className="space-y-4">
@@ -5690,24 +6032,21 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           { id: "overview", label: "Overview" },
           { id: "guardrails", label: "Guardrails" },
           { id: "tax", label: "Tax" },
-          { id: "fintech", label: "Data Sources" },
+          { id: "data", label: "Data Sources" },
           { id: "mcp", label: "MCP Connection" }
         ]}
       />
 
       {section === "overview" && (
         <div className="space-y-3 text-[13px] text-muted">
-          <p>
-            Welcome to the <strong>Robinhood Agentic Trading</strong> dashboard. This platform leverages autonomous and semi-autonomous AI agents powered by LLMs to scan markets, enrich symbol datasets, formulate trading theses, and execute orders.
-          </p>
           <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
             <div className="font-semibold text-fg flex items-center gap-1.5">
               <Sparkles size={14} className="text-accent" /> How the System Works
             </div>
             <ol className="list-decimal pl-4 space-y-1">
               <li><strong>Market Scan:</strong> The system continuously scans index universes (e.g. S&amp;P 500) to find candidate symbols.</li>
-              <li><strong>Enrichment:</strong> Fetches company profiles, premium news from Fintech Studios, and analyst reviews.</li>
-              <li><strong>AI Analysis:</strong> Executes prompts through the configured model (e.g. Claude) to score symbols and formulate trade suggestions.</li>
+              <li><strong>Enrichment:</strong> Fetches company profiles, market data, news/sentiment, and analyst/fundamental context.</li>
+              <li><strong>AI Analysis:</strong> Executes prompts through the configured model to score symbols and formulate trade suggestions.</li>
               <li><strong>Execution:</strong> Approves or proposes orders based on your selected risk policies and guardrails.</li>
             </ol>
           </div>
@@ -5778,14 +6117,14 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
               </p>
               <ul className="list-disc pl-4 mt-1 space-y-0.5">
                 <li><strong>Taxable:</strong> Estimated tax liability is deducted from display returns (if configured) and subject to the 30-day lockout.</li>
-                <li><strong>IRA (Roth / Traditional):</strong> Tax-sheltered with 0% tax liability estimates and no in-account wash-sale blocks (though losses in taxable accounts still apply).</li>
+                <li><strong>IRA (Roth / Traditional):</strong> Tax-sheltered with 0% tax liability estimates and no in-account wash-sale blocks (losses in taxable accounts still apply).</li>
               </ul>
             </div>
           </div>
         </div>
       )}
 
-      {section === "fintech" && (
+      {section === "data" && (
         <div className="space-y-3 text-[13px] text-muted">
           <p>
             The app blends several data sources so every symbol gets real numbers. Keyless sources work out of the box; optional keyed providers add depth when you supply an API key. Where a value is unavailable, the cell shows <code className="text-fg font-mono">-</code> rather than a fabricated number.
@@ -5793,38 +6132,35 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
               <div className="font-semibold text-fg flex items-center gap-1.5">
-                <Server size={14} className="text-accent" /> Keyless &amp; Core
+                <Server size={14} className="text-accent" /> Keyless / Core
               </div>
               <ul className="list-disc pl-4 space-y-0.5">
-                <li><strong>Yahoo Finance:</strong> quotes and price history with no API key — the floor every symbol falls back to.</li>
-                <li><strong>Connected broker:</strong> Alpaca or Robinhood for live account quotes, positions, and execution.</li>
-                <li><strong>SEC EDGAR:</strong> insider activity from Form 4 filings.</li>
-                <li><strong>FINRA:</strong> daily short-volume data.</li>
+                <li><HelpSourceLink href="https://finance.yahoo.com/">Yahoo Finance</HelpSourceLink>: quotes and price history with no API key - the floor every symbol falls back to.</li>
+                <li><CongressionalTradesHelpLine sources={congressionalSources} /></li>
+                <li><HelpSourceLink href="https://www.sec.gov/os/accessing-edgar-data">SEC EDGAR</HelpSourceLink>: insider activity from Form 4 filings.</li>
+                <li><HelpSourceLink href="https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data">FINRA</HelpSourceLink>: daily short-volume data.</li>
+                <li>Connected broker: <HelpSourceLink href="https://alpaca.markets/">Alpaca</HelpSourceLink> or <HelpSourceLink href="https://robinhood.com/">Robinhood</HelpSourceLink> for account quotes, positions, and execution.</li>
               </ul>
             </div>
             <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
               <div className="font-semibold text-fg flex items-center gap-1.5">
-                <Landmark size={14} className="text-accent" /> Congressional Trades
+                <Zap size={14} className="text-accent" /> Optional Keyed Providers
               </div>
               <ul className="list-disc pl-4 space-y-0.5">
-                <li><strong>U.S. Senate eFD:</strong> senator financial-disclosure transactions.</li>
-                <li><strong>Capitol Trades</strong> and <strong>Congress.Trade:</strong> aggregated House/Senate trade reporting.</li>
+                <li><HelpSourceLink href="https://finnhub.io/dashboard">Finnhub</HelpSourceLink>: quotes, fundamentals, and sentiment/news enrichment.</li>
+                <li><HelpSourceLink href="https://www.alphavantage.co/support/#api-key">Alpha Vantage</HelpSourceLink>: fundamentals, technical indicators, and sentiment/news enrichment.</li>
+                <li><HelpSourceLink href="https://site.financialmodelingprep.com/developer/docs">FMP</HelpSourceLink>: fundamentals, ratios, and analyst context.</li>
+                <li><HelpSourceLink href="https://marketstack.com/signup/free">Marketstack</HelpSourceLink>: market-data API coverage.</li>
+                <li><HelpSourceLink href="https://developer.tradier.com/">Tradier</HelpSourceLink>: brokerage and market-data API coverage.</li>
+                <li><HelpSourceLink href="https://fred.stlouisfed.org/docs/api/api_key.html">FRED</HelpSourceLink>: macroeconomic indicators.</li>
+                <li><HelpSourceLink href="https://massive.com/">Massive</HelpSourceLink>: historical market-data files and provider feeds.</li>
               </ul>
             </div>
             <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2 sm:col-span-2">
-              <div className="font-semibold text-fg flex items-center gap-1.5">
-                <Zap size={14} className="text-accent" /> Optional Keyed Providers
-              </div>
               <p>
-                Supply an API key to enrich coverage: <strong>Finnhub</strong>, <strong>Alpha Vantage</strong>, and <strong>FMP</strong> for fundamentals and quotes, plus <strong>Fintech Studios</strong> for premium financial news, press releases, regulatory updates, and sentiment scores. None are required — the app runs fully on the keyless sources above.
+                None of the keyed providers are required. Add keys only when you want broader coverage, deeper fundamentals, or another provider to fill gaps left by the keyless/core sources.
               </p>
             </div>
-          </div>
-          <div className="rounded-lg border border-line bg-surface-2/30 p-3 space-y-2">
-            <div className="font-semibold text-fg">Fintech Studios pricing (one provider, informational)</div>
-            <p className="text-[12px]">
-              Reference only — this is Fintech Studios&apos; own credit-based pricing, not a per-user in-app setting. Symbol search costs ~6 credits per query (25 articles); an AI article summary costs ~5 credits. A 5-ticker portfolio scanned once daily (~22 trading days) runs roughly 660 credits/month, comfortably within their free tier; intra-day scanning scales up to their paid plans.
-            </p>
           </div>
         </div>
       )}

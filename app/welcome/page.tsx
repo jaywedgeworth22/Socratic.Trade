@@ -3,21 +3,21 @@ import { notFound } from "next/navigation";
 import { Card, buttonClass } from "../ui/primitives";
 
 export const metadata: Metadata = {
-  title: "AI market research & strategy cockpit",
+  title: "AI market research & strategy dashboard",
   description:
-    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+    "AI-assisted dashboard for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
   alternates: { canonical: "/welcome" },
   openGraph: {
     type: "website",
-    siteName: "Agentic Trading",
+    siteName: "Trading Dashboard",
     url: "/welcome",
-    title: "Agentic Trading — AI market research & strategy cockpit",
+    title: "AI market research & strategy dashboard",
     description:
-      "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
+      "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "Agentic Trading — AI market research & strategy cockpit",
+    title: "AI market research & strategy dashboard",
     description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
   },
   robots:
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
 };
 
 const ACCESS_HREF =
-  "mailto:mail@jays.services?subject=Agentic%20Trading%20access";
+  "mailto:mail@jays.services?subject=Trading%20dashboard%20access";
 
 const FEATURES: Array<{ title: string; body: string }> = [
   {
@@ -52,7 +52,7 @@ const FEATURES: Array<{ title: string; body: string }> = [
   },
   {
     title: "You stay in control",
-    body: "The cockpit surfaces research and proposals. You decide. No autonomous real-money trading without your say-so."
+    body: "The dashboard surfaces research and proposals. You decide. No autonomous real-money trading without your say-so."
   }
 ];
 
@@ -89,11 +89,11 @@ export default function WelcomePage() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            name: "Agentic Trading",
+            name: "Trading Dashboard",
             applicationCategory: "FinanceApplication",
             operatingSystem: "Web",
             description:
-              "AI-assisted cockpit for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow.",
+              "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow.",
             offers: { "@type": "Offer", price: "0", priceCurrency: "USD" }
           })
         }}
@@ -103,7 +103,7 @@ export default function WelcomePage() {
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <header className="border-b border-line bg-surface/80 backdrop-blur-sm">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-            <span className="text-base font-semibold text-fg">Agentic Trading</span>
+            <span className="text-base font-semibold text-fg">Trading Dashboard</span>
             <a href={ACCESS_HREF} className={buttonClass({ variant: "primary", size: "sm" })}>
               Request access
             </a>
@@ -114,7 +114,7 @@ export default function WelcomePage() {
           {/* ── Hero ───────────────────────────────────────────────────────── */}
           <section className="text-center space-y-6">
             <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
-              AI market research &amp; strategy cockpit
+              AI market research &amp; strategy dashboard
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
               Scan and enrich markets, evaluate ideas across multiple research lenses, test
@@ -186,7 +186,7 @@ export default function WelcomePage() {
             <Card className="p-6 space-y-4 border-line-strong">
               <h2 className="text-base font-semibold text-fg">Important disclosures</h2>
               <p className="text-sm text-muted leading-relaxed">
-                Agentic Trading is software for market research and strategy simulation. It is not
+                This dashboard is software for market research and strategy simulation. It is not
                 investment advice, and it is not a broker-dealer or a registered investment adviser.
               </p>
               <p className="text-sm text-muted leading-relaxed">
@@ -209,7 +209,7 @@ export default function WelcomePage() {
               Not investment advice. Trading involves risk of loss.
             </p>
             <p className="text-xs text-faint">
-              &copy; 2026 Agentic Trading &middot;{" "}
+              &copy; 2026 Trading Dashboard &middot;{" "}
               <a
                 href="mailto:mail@jays.services"
                 className="underline underline-offset-2 hover:text-muted"

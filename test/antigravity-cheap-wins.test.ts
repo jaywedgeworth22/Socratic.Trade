@@ -104,6 +104,26 @@ describe("ADV (market-impact) sizing cap", () => {
     const noScan = applyDeterministicSizing(buyProposal(), { ...base, maxOrderPctOfAdv: 5 }, PORTFOLIO, "paper", "local", []);
     expect(noScan.dollarAmount).toBe(1000);
   });
+
+  it("raises Alpaca bracket-sized dollar buys to at least one whole share when risk caps allow it", () => {
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      accountNumber: "BRACKET-MIN",
+      activeBroker: "alpaca",
+      maxOrderNotional: 10_000,
+      maxOrderPctOfNav: undefined,
+      maxOrderPctOfAdv: undefined,
+      riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 6, takeProfitPct: 18 }
+    };
+    const scan = scanWith(quote({ symbol: "V", price: 334.12, volume: 1_000_000 }));
+    const sized = applyDeterministicSizing(buyProposal({ symbol: "V", dollarAmount: 50 }), policy, PORTFOLIO, "paper", "local", [], scan);
+    const enriched = enrichOpeningProposal(sized, policy, scan);
+
+    expect(sized.dollarAmount).toBe(335);
+    expect(sized.rationale).toContain("whole-share bracket");
+    expect(enriched.bracketStopLoss).toBeCloseTo(314.07, 2);
+    expect(enriched.bracketTakeProfit).toBeCloseTo(394.26, 2);
+  });
 });
 
 describe("marketable-limit entry conversion", () => {
@@ -132,6 +152,8 @@ describe("marketable-limit entry conversion", () => {
     const out = enrichOpeningProposal(buyProposal({ dollarAmount: 50 }), policyOn, scan); // floor(50/100)=0
     expect(out.type).toBe("market");
     expect(out.dollarAmount).toBe(50);
+    expect(out.bracketStopLoss).toBeUndefined();
+    expect(out.rationale).toContain("Native Alpaca bracket skipped");
   });
 });
 

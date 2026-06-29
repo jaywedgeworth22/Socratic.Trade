@@ -14,15 +14,22 @@ describe("auth identity — multi-user keystone (Q3)", () => {
     expect(userIdForEmail("ALICE@example.com")).toBe(a); // deterministic + case-insensitive
   });
 
+  it("same verified email from different Auth.js providers maps to the same app account", () => {
+    const googleEmail = "Investor@Example.com";
+    const githubEmail = " investor@example.com ";
+
+    expect(userIdForEmail(googleEmail)).toBe(userIdForEmail(githubEmail));
+  });
+
   it("invalid emails fall back to the dev user rather than minting a junk tenant", () => {
     expect(userIdForEmail("")).toBe("local");
     expect(userIdForEmail("not-an-email")).toBe("local");
   });
 
-  it("allowlist: primary always allowed; with no ALLOWED_EMAILS set, defers to the gateway (open)", () => {
+  it("allowlist: primary always allowed; with no ALLOWED_EMAILS set, non-primary users fail closed", () => {
     expect(isPrimaryEmail("mail@jays.services")).toBe(true);
     expect(isEmailAllowed("mail@jays.services")).toBe(true);
-    expect(isEmailAllowed("anyone@example.com")).toBe(true); // no env allowlist in test → CF Access is the gate
+    expect(isEmailAllowed("anyone@example.com")).toBe(false);
     expect(isEmailAllowed("")).toBe(false);
   });
 });

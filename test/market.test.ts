@@ -87,6 +87,21 @@ describe("hasNotableWebSignal (event candidate union)", () => {
     expect(hasNotableWebSignal(undefined)).toBe(false);
   });
 
+  it("requires strong supported BUY analytics before promoting a Congress.Trade outlier", () => {
+    expect(hasNotableWebSignal({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 100, convictionDirection: "BUY", convictionFallback: true }
+    })).toBe(false);
+    expect(hasNotableWebSignal({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 90, convictionDirection: "SELL", netFlowUsd: -1_000_000, memberCount: 3 }
+    })).toBe(false);
+    expect(hasNotableWebSignal({
+      bulletins: [],
+      congressAnalytics: { convictionScore: 85, convictionDirection: "BUY", netFlowUsd: 1_000_000, memberCount: 3, tradeCount: 4, cluster: true, topMemberScore: 90 }
+    })).toBe(true);
+  });
+
   it("scores stronger below-cutoff outlier signals ahead of weaker ones", () => {
     const thinInsider = outlierInterestScore({ insiderSentiment: 61, bulletins: [] });
     const broadCongressBuying = outlierInterestScore({ congress: { netSignal: 3, buyCount: 4 } as never, bulletins: [] });

@@ -5,19 +5,19 @@ import { Card, buttonClass } from "../ui/primitives";
 export const metadata: Metadata = {
   title: "How the strategy works",
   description:
-    "An honest, plain-English explanation of how Agentic Trading's AI-assisted strategy evaluates stocks, makes decisions, and learns — including its real limitations and risks. Not investment advice.",
+    "An honest, plain-English explanation of how the AI-assisted strategy evaluates stocks, makes decisions, and learns — including its real limitations and risks. Not investment advice.",
   alternates: { canonical: "/strategy" },
   openGraph: {
     type: "website",
-    siteName: "Agentic Trading",
+    siteName: "Trading Dashboard",
     url: "/strategy",
-    title: "How the strategy works · Agentic Trading",
+    title: "How the strategy works",
     description:
       "How the AI-assisted strategy evaluates stocks, makes decisions, and learns — including its real limitations and risks. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "How the strategy works · Agentic Trading",
+    title: "How the strategy works",
     description:
       "Honest explanation of the AI-assisted strategy: six research lenses, deterministic safety rules, and real limitations. Not investment advice."
   },
@@ -161,7 +161,7 @@ export default function StrategyPage() {
       {/* ── Header ──────────────────────────────────────────────────── */}
       <header className="border-b border-line bg-surface/80 backdrop-blur-sm">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
-          <span className="text-base font-semibold text-fg">Agentic Trading</span>
+          <span className="text-base font-semibold text-fg">Trading Dashboard</span>
           <a href="/welcome" className={buttonClass({ variant: "primary", size: "sm" })}>
             Home
           </a>
@@ -337,7 +337,7 @@ export default function StrategyPage() {
           <Card className="p-6 space-y-4 border-line-strong">
             <h2 className="text-base font-semibold text-fg">Important disclosures</h2>
             <p className="text-sm text-muted leading-relaxed">
-              Agentic Trading is software for market research and strategy simulation. It is not
+              This dashboard is software for market research and strategy simulation. It is not
               investment advice, and it is not a broker-dealer or a registered investment adviser.
             </p>
             <p className="text-sm text-muted leading-relaxed">
@@ -363,7 +363,7 @@ export default function StrategyPage() {
             </a>
           </p>
           <p className="text-xs text-faint">
-            &copy; 2026 Agentic Trading &middot;{" "}
+            &copy; 2026 Trading Dashboard &middot;{" "}
             <a href="mailto:mail@jays.services" className="underline underline-offset-2 hover:text-muted">
               mail@jays.services
             </a>

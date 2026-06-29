@@ -2,12 +2,12 @@
 
 ## Summary
 
-- Aligned the overall dashboard and repository documentation titles to "Agentic Trading" or "Agentic Trading Dashboard".
-- Updated `PLAN.md` to reference the project as "Agentic Trading Dashboard" rather than "Robinhood Agentic Dashboard".
+- Aligned the overall dashboard and repository documentation titles to broker-neutral dashboard wording.
+- Updated `PLAN.md` to avoid the prior Robinhood-prefixed dashboard title.
 
 ## Why
 
-- As the application now supports multiple brokers (Alpaca and Robinhood) and broker-neutral setups, it should be called "Agentic Trading Dashboard" rather than "Robinhood Agentic Trading".
+- As the application now supports multiple brokers (Alpaca and Robinhood) and broker-neutral setups, it should avoid Robinhood-prefixed product naming.
 
 ## Files
 

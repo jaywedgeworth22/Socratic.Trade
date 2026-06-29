@@ -1,7 +1,7 @@
 // Resolve the authenticated app userId for a request.
 //
-// SECURITY: identity is established by `middleware.ts` (verified Cloudflare Access email today; Auth.js
-// next), which forwards a trusted `x-authenticated-user-email` header and strips client-supplied hints.
+// SECURITY: identity is established by `middleware.ts` (verified Auth.js session), which forwards
+// a trusted `x-authenticated-user-email` header and strips client-supplied hints.
 // We map that verified email → a stable userId here. We NEVER trust a client-supplied `x-user-id`,
 // `?userId`, or body `userId` — those were the old IDOR vectors. In production, middleware 401s any
 // request that lacks a verified identity, so the dev fallback below is only reachable in dev/test.

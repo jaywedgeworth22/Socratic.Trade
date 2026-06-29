@@ -3,8 +3,8 @@
 // Tests the four critical behaviors:
 //   1. authConfigured=true + no identity → FAIL CLOSED (401 for /api/*)
 //      (regression test for the NODE_ENV-edge-inlining IDOR bug)
-//   2. CF header present + flag on → trusted, forwarded
-//   3. Auth.js session JWT → trusted
+//   2. Cloudflare Access headers are ignored as app identity
+//   3. Auth.js session JWT → trusted and allowlisted
 //   4. authConfigured=false → PRIMARY fallback (dev/test behavior preserved)
 //   5. Forged x-user-id / x-authenticated-user-email are stripped
 //
@@ -46,18 +46,8 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
   });
 
   // ── Test 1: regression — the IDOR that existed before this fix ──────────────
-  it("FAIL CLOSED: authConfigured (CF flag=1) + no identity → 401 for /api/*", async () => {
-    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
-    vi.stubEnv("AUTH_SECRET", "");
-    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
-    const middleware = await loadMiddleware();
-    const req = makeRequest("/api/dashboard");
-    const res = await middleware(req);
-    expect(res.status).toBe(401);
-  });
-
   it("FAIL CLOSED: authConfigured (AUTH_SECRET set) + no identity → 401 for /api/*", async () => {
-    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
     const middleware = await loadMiddleware();
@@ -68,7 +58,7 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
 
   it("FAIL CLOSED: redirect to /login for non-api pages when armed with no identity", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
-    vi.stubEnv("AUTH_SECRET", "");
+    vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
     const middleware = await loadMiddleware();
     const req = makeRequest("/dashboard");
@@ -77,25 +67,22 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.headers.get("location")).toContain("/login");
   });
 
-  // ── Test 2: Cloudflare Access header trusted when flag is on ────────────────
-  it("CF header + flag=1 → trusted, forwarded as x-authenticated-user-email", async () => {
+  // ── Test 2: Cloudflare Access headers are no longer app identity ─────────────
+  it("CF header + legacy flag are ignored when Auth.js is armed", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
-    vi.stubEnv("AUTH_SECRET", "");
+    vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
-    vi.stubEnv("ALLOWED_EMAILS", "");
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/dashboard", {
       "cf-access-authenticated-user-email": "verified@example.com"
     });
     const res = await middleware(req);
-    expect(res.status).toBe(200);
-    const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
-    // Next.js edge runtime prefixes forwarded request headers with "x-middleware-request-".
-    expect(fwd).toBe("verified@example.com");
+    expect(res.status).toBe(401);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
   });
 
-  it("CF header NOT trusted when flag is off", async () => {
-    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+  it("legacy CF flag alone no longer arms auth; local fallback still uses PRIMARY_EMAIL", async () => {
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "");
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
     const middleware = await loadMiddleware();
@@ -116,7 +103,7 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
     vi.stubEnv("AUTH_SECRET", secret);
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
-    vi.stubEnv("ALLOWED_EMAILS", "");
+    vi.stubEnv("ALLOWED_EMAILS", "user@example.com");
     const jwt = await mintSessionJwt("user@example.com", secret);
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/dashboard", {
@@ -126,6 +113,36 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
     const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
     expect(fwd).toBe("user@example.com");
+  });
+
+  it("valid Auth.js session for non-primary email is denied when ALLOWED_EMAILS is empty", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("user@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(403);
+  });
+
+  it("primary Auth.js session is allowed even when ALLOWED_EMAILS is empty", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("owner@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
+    expect(fwd).toBe("owner@example.com");
   });
 
   it("expired or tampered Auth.js session JWT → fail closed (401)", async () => {
@@ -203,21 +220,38 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
   });
 
-  it("Auth.js callback path is public so Google sign-in can complete", async () => {
+  it("Auth.js callback paths are public so provider sign-in can complete", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "");
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/auth/callback/google");
     const res = await middleware(req);
     expect(res.status).toBe(200);
+
+    const githubReq = makeRequest("/api/auth/callback/github");
+    const githubRes = await middleware(githubReq);
+    expect(githubRes.status).toBe(200);
   });
 
   it("Robinhood OAuth start is not public; it still requires a verified app user", async () => {
-    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
-    vi.stubEnv("AUTH_SECRET", "");
+    vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/auth/robinhood/start");
     const res = await middleware(req);
     expect(res.status).toBe(401);
+  });
+
+  it("Robinhood OAuth callback is public but strips forged identity hints", async () => {
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/auth/robinhood/callback?code=abc&state=xyz", {
+      "x-authenticated-user-email": "attacker@evil.example",
+      "x-user-id": "attacker-id"
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
+    expect(res.headers.get("x-middleware-request-x-user-id")).toBeNull();
   });
 });

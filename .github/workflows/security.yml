@@ -11,14 +11,32 @@ on:
 
 jobs:
   gitleaks:
-    runs-on: ubuntu-latest
+    # Start the required check even for untrusted PRs so branch protection cannot
+    # be satisfied by a skipped job, then fail closed before checkout.
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: Refuse untrusted PR source
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::error::Fork PRs cannot run on the self-hosted production runner."
+            exit 1
+          fi
+          actor="${{ github.actor }}"
+          if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
+            echo "::error::Bot PRs cannot run package installs on the self-hosted production runner."
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v3
+      - name: Clear stale gitleaks download temp file
+        shell: bash
+        run: rm -f "${TMPDIR:-/tmp}/gitleaks.tmp"
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

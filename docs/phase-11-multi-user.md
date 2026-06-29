@@ -5,10 +5,12 @@ each getting analysis and trade proposals tailored to **their own preferences an
 their own API keys**. Test mode stays the default; no live-trading behavior change.
 
 **Current identity model:** middleware derives the request user from a verified
-Cloudflare Access email header or an Auth.js v5 session. The primary operator and
-configured aliases still map to the legacy `local` dataset; other allowed users
-map to isolated hashed user IDs. When auth is not configured locally, development
-falls back to `local`.
+Auth.js v5 session. The Cloudflare tunnel may still expose the app, but
+Cloudflare Access email headers are not trusted as app identity. The primary
+operator and configured aliases still map to the legacy `local` dataset; other
+allowed users map to isolated hashed user IDs only when present in
+`ALLOWED_EMAILS`. When auth is not configured locally, development falls back to
+`local`.
 
 ## What already exists (foundation)
 - `user_api_keys` table + `getUserApiKey`/`listUserApiKeys`/`upsertUserApiKey`/
@@ -20,7 +22,8 @@ falls back to `local`.
   Connected account credentials are encrypted at rest, omitted from dashboard
   snapshots, decrypted only for backend active-account use, and preserved when
   editing account metadata with blank key fields. Alpaca now resolves credentials
-  from the active connected account before falling back to legacy per-user/env keys.
+  from the active connected account and does not fall back to generic paper/env
+  keys for a selected connected account with missing or unreadable credentials.
   Robinhood is connected through the MCP OAuth/status flow rather than manual API
   key fields, and users may connect one or more supported account types from
   Accounts. Paper accounts are optional; users do not need to connect one unless
@@ -31,11 +34,28 @@ falls back to `local`.
   so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
   labels can distinguish Test from broker-hosted paper environments such as
   Alpaca Paper, and Brokerage from live broker production accounts.
+- Strategy-run audit lookups for Latest Decisions and Strategy Tuning are scoped
+  by `connectedAccountId`, matching the per-account run lock/state model so a
+  stale failure from one account does not appear under another selected account.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`
   responses, unwraps Robinhood's `data` envelope, and exposes
-  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics.
+  `/api/broker/mcp/health` for OAuth/token and `tools/list` diagnostics. As of
+  2026-06-27, Settings -> Accounts uses that health result to label stored
+  Robinhood rows without a usable token as `OAuth Needed` with Reconnect instead
+  of implying the account is fully connected. Robinhood OAuth start remains
+  authenticated, but the provider callback is public, strips forged identity
+  hints in middleware, and completes only against the one-time server-side OAuth
+  state row. Hosted callback URLs are derived from forwarded/public site origin
+  when the configured redirect is loopback, preventing production from sending
+  Robinhood back to `localhost`.
+- Dashboard snapshots now include `accountReadiness`, a server-derived status for
+  the selected execution account. It keeps stored/backfilled connected-account
+  rows visible for management while failing closed for actual execution readiness
+  when OAuth/auth, broker account enumeration, selected-account availability,
+  broker `agenticAllowed`, or portfolio/balance reads fail. This applies to
+  Robinhood and Alpaca paths.
 - Strategy profiles and prompts are now consistently scoped by `userId` for the
   default-user path; active-profile persistence writes to `user_settings`.
 - Request-level user resolution now has central helpers,
@@ -64,10 +84,11 @@ falls back to `local`.
 ## Milestones
 
 ### M1 `[done]` Connections Settings section (buildable now, single-user)
-A Settings -> **"Connections"** tab listing every required + optional/helpful key
-with a status badge (Set / Using env / Not set) and a masked input to save/clear
-it. Stored per-user via `upsertUserApiKey` under the default user.
-- **Required for full function:** `OPENAI_API_KEY` (LLM proposals).
+A Settings -> **"Connections"** tab listing provider keys with a status badge
+(Set / Using env / Not set) and a masked input to save/clear each key. Stored
+per-user via `upsertUserApiKey` under the default user.
+- **LLM providers:** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`,
+  `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`.
 - **Optional enrichment / signals:** `FINNHUB_API_KEY`, `FMP_API_KEY`,
   `ALPHAVANTAGE_API_KEY`, `MARKETSTACK_API_KEY`, `TRADIER_API_KEY`, `FRED_API_KEY`
   (macro), `SEC_EDGAR_USER_AGENT` (politeness).
@@ -78,13 +99,14 @@ it. Stored per-user via `upsertUserApiKey` under the default user.
 - Each row shows what it unlocks and links to where to get it. Never display stored
   secrets (mask), and never log them.
 
-Current implementation: Settings -> Connections lists OpenAI, xAI/Grok,
-Finnhub, FMP, Alpha Vantage, Marketstack, Tradier, FRED, SEC EDGAR User-Agent,
-and Massive with Set / Using env / Not set badges, docs links, masked write-only
-inputs, Save, and Clear. Backend `GET/POST/DELETE /api/keys` serves the same
-catalog and never returns secret values. Strategy Studio lets each user choose a
-Green Team model for proposal generation and an optional separate Red Team model
-for Bear review; if no Red Team override is set, Red reuses Green. Connections
+Current implementation: Settings -> Connections lists OpenAI, Anthropic,
+xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
+Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
+env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
+Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
+secret values. Strategy Studio lets each user choose a Green Team model for
+proposal generation and an optional separate Red Team model for Bear review; if
+no Red Team override is set, Red reuses Green. Connections
 shows a read-only model summary and a link back to Strategy Studio so provider
 keys and model behavior stay connected without making Connections the editing
 surface. The visible model list omits legacy `gpt-4.1-mini`, keeps
@@ -95,7 +117,9 @@ Accounts continues to own brokerage-account credentials. Settings -> Accounts
 presents Robinhood through the same supported-account button
 row as Alpaca. The client still checks `GET /api/broker/mcp/health` silently so
 the Robinhood button can sync an authenticated MCP session or start OAuth, but it
-does not render a separate disconnected MCP status panel. Mutable
+does not render a separate disconnected MCP status panel. Stored Robinhood rows
+now show `OAuth Needed` when the MCP token is absent/invalid, so stored metadata
+cannot masquerade as a live balance/order connection. Mutable
 account/key/order/policy route handlers touched by this flow are marked
 `dynamic = "force-dynamic"` so production builds do not attempt static page-data
 collection for request-bound operations.
@@ -184,32 +208,43 @@ The background scheduler `src/lib/scheduler.ts` iterates over all active users a
 
 ### M6 `[done]` Identity / auth (last)
 
-Real identity via Cloudflare Access + Auth.js v5 Google sign-in. Key changes:
+Real identity via Auth.js v5 sign-in. Key changes:
 
 - **Fail-closed arming signal fixed**: the previous `NODE_ENV === "production"` gate was
   unreliable in the edge runtime (Next.js inlines NODE_ENV at build time — at runtime in
   the live deployment `isProd` was always `false`, causing every request to fail open).
-  Replaced with: `authConfigured = (CF_ACCESS_TRUST_EMAIL_HEADER === "1") || !!AUTH_SECRET`.
-  This is evaluated at request time. The moment either is set, auth is armed.
+  Replaced with: `authConfigured = !!AUTH_SECRET`. This is evaluated at request
+  time. The moment `AUTH_SECRET` is set, auth is armed.
 
 - **Identity sources** (first match wins):
-  1. CF Access `cf-access-authenticated-user-email` header (when `CF_ACCESS_TRUST_EMAIL_HEADER=1`).
-  2. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
-  3. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
+  1. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
+  2. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
 
-- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, Google provider, JWT strategy),
+- **Auth providers**: `src/lib/auth/auth.ts` configures Auth.js v5 with Google and GitHub
+  providers when their credentials are present. GitHub requests `user:email` and accepts
+  only a verified GitHub email, so a Google and GitHub sign-in with the same verified email
+  lands on the same app user ID.
+
+- **New files**: `src/lib/auth/auth.ts` (Auth.js v5 config, provider wiring, JWT strategy),
   `src/lib/auth/session-token.ts` (shared HS256 session encode/decode helper),
   `src/lib/auth/session-edge.ts` (edge-safe session cookie verifier),
   `app/api/auth/[...nextauth]/route.ts` (route handlers), `app/login/page.tsx`
-  (Sign in with Google), and `app/logout/route.ts`.
+  (provider sign-in buttons), and `app/logout/route.ts`.
 
 - **Visible session controls**: the dashboard shows the signed-in email when available,
-  exposes a Sign out command, and `/logout` clears Auth.js cookies before routing through
-  Cloudflare Access logout when CF Access is trusted.
+  exposes a Sign out command, and `/logout` clears Auth.js cookies before redirecting
+  to the app's public `/login` page. It no longer calls Cloudflare Access logout.
 
-- **Inert until configured**: with no `AUTH_SECRET`/Google creds and no CF flag, behavior is
-  unchanged (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior,
-  Auth.js cookies, CF Access, public Auth.js routes, and protected Robinhood OAuth routes.
+- **Robinhood OAuth redirect/client integrity**: the OAuth callback route is public
+  but state-bound, callback completion uses the redirect URI stored at OAuth start,
+  and dynamic client registration takes precedence when
+  `ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` is configured. This prevents a stale
+  static client id or callback-time localhost default from replacing the public
+  production redirect/client during reconnect.
+
+- **Inert until configured**: with no `AUTH_SECRET`/provider creds, behavior is unchanged
+  (PRIMARY fallback). Middleware/auth tests cover fail-closed behavior, Auth.js cookies,
+  ignored Cloudflare Access headers, public Auth.js routes, and protected Robinhood OAuth routes.
 
 Per-user Robinhood account linking (originally noted in M6 scope) is deferred as a follow-up.
 
@@ -248,13 +283,19 @@ version, timestamps, and row counts; it does not store raw email, raw userId,
 symbols, broker account numbers, chat text, proposal JSON, or credentials.
 
 Provider identity deletion is intentionally separate. This app cannot delete a
-Google account, Apple ID, or broker account. After app-data deletion, signing in
-again with Google or Apple can create a fresh empty app account; users who also
-want to remove the OAuth grant should revoke Agentic Trading from their Google
-Account third-party access page or Apple ID Sign in with Apple settings. Before
+Google account, GitHub account, Apple ID, or broker account. After app-data deletion, signing in
+again with Google, GitHub, or Apple can create a fresh empty app account; users who also
+want to remove the OAuth grant should revoke the app from their Google Account
+third-party access page, GitHub Authorized OAuth Apps, or Apple ID Sign in with Apple settings. Before
 Apple private-relay identities become a first-class login path, add a
 `user_identities` table keyed by provider + provider account id so identity is
 not derived from relay email alone.
+
+Help and Data Sources copy should be updated in the same change whenever a
+provider, source, API-key destination, account-flow label, or user-facing system
+description changes. The Help modal should reflect the actual provider stack,
+avoid giving one provider special treatment unless the runtime does, and link
+source names to their provider or API-key pages when applicable.
 
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real
