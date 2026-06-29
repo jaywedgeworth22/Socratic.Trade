@@ -26,11 +26,14 @@ those exact fingerprints instead of loosening rules or reducing scan scope.
 
 ## Verification
 
-- Pending: `gitleaks detect --redact -v --exit-code=2 --log-level=debug`
-- Pending: `npm run lint`
-- Pending: `npx tsc --noEmit`
-- Pending: `npm test`
-- Pending: `npm run build`
+- `gitleaks detect --redact -v --exit-code=2 --log-level=debug` - passed;
+  gitleaks found `.gitleaksignore`, skipped the 10 listed fingerprints, and
+  reported `no leaks found`.
+- `npm run lint` - passed; existing warnings only (`0 errors, 240 warnings`).
+- `npx tsc --noEmit` - passed.
+- `npm test` - passed, 157 files / 1,516 tests.
+- `npm run build` - passed; Next.js emitted the existing
+  middleware-to-proxy deprecation warning.
 
 ## Follow-ups
 
