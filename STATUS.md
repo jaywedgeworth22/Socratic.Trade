@@ -51,6 +51,10 @@ do JSON" blocker was a misread: it just needed forced tool-use instead of OpenAI
 `response_format`. Verification: `npx tsc --noEmit` clean, `npm run lint` 0 errors,
 `npm test` 158 files / 1533 tests, `npm run build` clean. See
 `docs/rollouts/2026-06-29-claude-green-red-team.md`.
+## 2026-06-29 — Page title update (Cursor / fix/page-title)
+Changed page/tab title from "AI market research & strategy dashboard" to "Trading
+Dashboard" in `app/layout.tsx` and `app/welcome/page.tsx`. PR auto-merging; no
+follow-ups. See `docs/rollouts/2026-06-29-page-title.md`.
 
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to

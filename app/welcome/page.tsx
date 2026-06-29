@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Card, buttonClass } from "../ui/primitives";
 
 export const metadata: Metadata = {
-  title: "AI market research & strategy dashboard",
+  title: "Trading Dashboard",
   description:
     "AI-assisted dashboard for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
   alternates: { canonical: "/welcome" },
@@ -11,13 +11,13 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "Trading Dashboard",
     url: "/welcome",
-    title: "AI market research & strategy dashboard",
+    title: "Trading Dashboard",
     description:
       "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "AI market research & strategy dashboard",
+    title: "Trading Dashboard",
     description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
   },
   robots:
@@ -114,7 +114,7 @@ export default function WelcomePage() {
           {/* ── Hero ───────────────────────────────────────────────────────── */}
           <section className="text-center space-y-6">
             <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
-              AI market research &amp; strategy dashboard
+              Trading Dashboard
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
               Scan and enrich markets, evaluate ideas across multiple research lenses, test
