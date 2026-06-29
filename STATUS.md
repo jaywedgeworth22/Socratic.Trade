@@ -4,6 +4,15 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Ops diagnostic snapshot API (Cursor / cursor/ops-diagnostic-snapshot-487f)
+Added token-gated `GET /api/ops/snapshot` for remote diagnostics without OAuth: per-account
+autonomy/LLM state, recent `strategy_runs` (with `connected_account_id` + label), and filtered
+audit rows (`strategy_run`, `recoverable_issue`, skips, policy violations). Middleware treats
+`/api/ops/*` as public; handler requires `OPS_DIAGNOSTIC_TOKEN` (or legacy `ADMIN_REINDEX_TOKEN`)
+via `x-ops-token` / `Authorization: Bearer`. Set the token on prod, then agents can curl
+`https://trading.jays.services/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
+Next: deploy + set `OPS_DIAGNOSTIC_TOKEN` on `trading-live`; re-run multi-account Alpaca broker fix.
+
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
 `z-[1300]` so the Settings/Help/Accounts modal no longer sits behind the dashboard header
