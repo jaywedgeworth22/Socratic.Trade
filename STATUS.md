@@ -4,6 +4,37 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
+Branch `codex/google-auth-infisical-note`. PR #225 initially passed local
+`scripts/land.sh` verification (`npx tsc --noEmit`, `npm test` 155 files /
+1,494 tests, `npm run build`) but GitHub-hosted `ubuntu-latest` jobs failed
+before running any steps. Check-run annotations reported: `The job was not
+started because recent account payments have failed or your spending limit
+needs to be increased.` CI, Playwright smoke, and Security now run on the
+existing self-hosted `trading-live` runner for same-repo branches/PRs, with a
+guard preventing fork PRs from executing on the production Mac. See
+`docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`.
+The first self-hosted CI attempt completed lint, typecheck, tests, and build but
+hung in `actions/setup-node` cache post-action cleanup; CI/smoke no longer use
+the setup-node npm cache.
+Required jobs now fail closed before checkout for fork PRs and bot-authored PRs
+instead of being skipped; `gitleaks/gitleaks-action` is pinned to a reviewed
+commit SHA before running on the self-hosted runner.
+
+## 2026-06-29 — Google auth Infisical verification
+Follow-up to `codex/google-auth-primary`: production still reaches app Google
+login after later deploys (`/` -> app `/login`, `/login` shows `Sign in with
+Google`, `/api/auth/providers` exposes Google, unauthenticated `/api/dashboard`
+returns app `401`). Sanitized Infisical verification through
+`scripts/infisical-run.mjs` confirmed `AUTH_SECRET`, `AUTH_GOOGLE_ID`,
+`AUTH_GOOGLE_SECRET`, `NEXT_PUBLIC_SITE_URL`, `AUTH_URL`, `PRIMARY_USER_EMAIL`,
+`PRIMARY_USER_EMAIL_ALIASES`, and `ALLOWED_EMAILS` are configured for prod. The
+shared secret overlay still contains legacy `CF_ACCESS_TRUST_EMAIL_HEADER=1`, so
+the app project now overrides it with `CF_ACCESS_TRUST_EMAIL_HEADER=0`; app code
+ignores that variable, but the override prevents old Access-header auth behavior
+from reappearing if a stale branch reads it. See
+`docs/rollouts/2026-06-28-google-auth-primary.md`.
+
 ## 2026-06-28 — Thin boot strip first-paint loader
 Branch `codex/thin-boot-strip`. Replaced the Quiet Tiles SSR dashboard loading
 shell with option 4, the thin boot strip: the first-paint non-error state now

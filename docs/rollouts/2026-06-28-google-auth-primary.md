@@ -54,12 +54,23 @@ kept reintroducing the old Access-owned session path.
   - `https://trading.jays.services/api/auth/providers` returns the Google provider and callback URL.
   - `https://trading.jays.services/api/dashboard` returns app `401 Unauthorized`.
   - `https://trading.jays.services/logout` clears Auth.js cookies and redirects to app `/login`.
+- 2026-06-29 follow-up after later production deploys:
+  - Live public checks still pass: `/` reaches app `/login`, `/login` shows Google sign-in,
+    `/api/auth/providers` exposes Google, and unauthenticated `/api/dashboard` returns app `401`.
+  - Sanitized Infisical verification through `scripts/infisical-run.mjs` confirmed prod has
+    `NEXT_PUBLIC_SITE_URL=https://trading.jays.services`, `AUTH_URL=https://trading.jays.services`,
+    `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `PRIMARY_USER_EMAIL=<configured>`,
+    `PRIMARY_USER_EMAIL_ALIASES=<configured>`, and `ALLOWED_EMAILS=<configured>`. Concrete account
+    values were intentionally omitted from the public rollout note.
+  - Removed the app-project `CF_ACCESS_TRUST_EMAIL_HEADER` secret, found the shared overlay still
+    supplied `CF_ACCESS_TRUST_EMAIL_HEADER=1`, then set an app-project override to
+    `CF_ACCESS_TRUST_EMAIL_HEADER=0`. Code ignores this variable now, but the override keeps stale
+    branches from rearming Cloudflare Access-header trust if they read the old flag.
 
 ## Follow-ups
 
-- Confirm production Infisical has `AUTH_SECRET`, `AUTH_GOOGLE_ID`,
-  `AUTH_GOOGLE_SECRET`, `PRIMARY_USER_EMAIL`, and any intended
-  `PRIMARY_USER_EMAIL_ALIASES` / `ALLOWED_EMAILS` values.
 - Rollback for the Cloudflare-side change: delete bypass policy
   `42c4adc9-1421-416b-b744-f291afc87938` from Access app
   `9539f646-575d-4e7c-b182-0bbe7c02083a`.
+- Rollback for the Infisical override: delete app-project
+  `CF_ACCESS_TRUST_EMAIL_HEADER=0`; the shared overlay currently supplies `1`.
