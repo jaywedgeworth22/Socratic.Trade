@@ -351,3 +351,23 @@ local multi-worktree/PM2 setup and does NOT apply here.
  Without it, the dashboard, market scan, watchlist/policy/account configuration,
  and Test-mode simulation all still work — only LLM-driven proposal generation
  is unavailable.
+
+### Production ops snapshot (remote diagnostics)
+
+Cloud agents cannot OAuth into `trading.jays.services` or read the Mac's `data/app.db`.
+When investigating **live** strategy runs, multi-account behavior, or production errors,
+**run first**:
+
+```bash
+bash scripts/fetch-prod-ops-snapshot.sh
+```
+
+**One-time owner setup (both sides must use the same token):**
+
+1. Generate: `openssl rand -hex 32`
+2. **trading-live:** set `OPS_DIAGNOSTIC_TOKEN=<token>` in Infisical / `.env.local`, `pm2 restart trading`
+3. **Cursor Cloud Secrets** (Dashboard -> Cloud Agents -> Secrets): add `OPS_DIAGNOSTIC_TOKEN` as a
+   **Runtime Secret**, scoped to this repo. Value must match production.
+
+The script calls `GET /api/ops/snapshot` (token via `x-ops-token`). See
+`docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`. Rule: `.cursor/rules/ops-diagnostics.mdc`.

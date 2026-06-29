@@ -34,6 +34,20 @@
    ```
 5. Optional: add the same token as a Cursor Cloud secret so agents can call the endpoint.
 
+## Cursor Cloud automatic fetch
+
+1. Cursor Dashboard -> **Cloud Agents** -> **Secrets**
+2. Add **Runtime Secret**:
+   - Name: `OPS_DIAGNOSTIC_TOKEN`
+   - Value: same token as production
+   - Scope: this repository (or team-wide)
+3. Cloud agents will receive it as an env var (redacted in chat). Agents run:
+   ```bash
+   bash scripts/fetch-prod-ops-snapshot.sh
+   # or: npm run ops:snapshot
+   ```
+4. Rule `.cursor/rules/ops-diagnostics.mdc` + `AGENTS.md` instruct agents to fetch before diagnosing prod issues.
+
 ## Follow-ups
 - Fix `getAlpacaGateway` to use the run target's connected account (multi-account scheduler bug).
 - Add account column to dashboard Runs tab once broker fix lands.

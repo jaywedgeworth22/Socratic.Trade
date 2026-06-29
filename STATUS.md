@@ -11,7 +11,7 @@ audit rows (`strategy_run`, `recoverable_issue`, skips, policy violations). Midd
 `/api/ops/*` as public; handler requires `OPS_DIAGNOSTIC_TOKEN` (or legacy `ADMIN_REINDEX_TOKEN`)
 via `x-ops-token` / `Authorization: Bearer`. Set the token on prod, then agents can curl
 `https://trading.jays.services/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
-Next: deploy + set `OPS_DIAGNOSTIC_TOKEN` on `trading-live`; re-run multi-account Alpaca broker fix.
+Next: deploy + set `OPS_DIAGNOSTIC_TOKEN` on `trading-live`; add matching secret in Cursor Cloud Agents dashboard; re-run multi-account Alpaca broker fix.
 
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to

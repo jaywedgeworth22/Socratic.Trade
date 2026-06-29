@@ -21,7 +21,8 @@
     "litestream:restore": "bash scripts/litestream-restore.sh",
     "litestream:dry-run": "litestream databases -config litestream.yml",
     "eval:offline": "tsx scripts/eval/run-offline.ts",
-    "eval:congress-score": "tsx scripts/eval/run-congress-score.ts"
+    "eval:congress-score": "tsx scripts/eval/run-congress-score.ts",
+    "ops:snapshot": "bash scripts/fetch-prod-ops-snapshot.sh"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
