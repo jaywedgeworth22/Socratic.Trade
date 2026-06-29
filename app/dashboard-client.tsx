@@ -1829,6 +1829,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         onClose={() => setDecideConfirm(false)}
         onConfirm={() => {
           setDecideConfirm(false);
+          setSnapshot((s) => ({ ...s, policy: { ...s.policy, strategyAuthority: "decide" } }));
           void updatePolicy({ strategyAuthority: "decide" });
         }}
         title="Enable autonomous execution?"
