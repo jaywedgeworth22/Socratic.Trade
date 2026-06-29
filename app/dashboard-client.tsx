@@ -524,7 +524,7 @@ function AccountMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-[1200] mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-lg border border-line bg-white p-2 text-fg shadow-[var(--shadow-lg)] dark:bg-zinc-950"
+          className="absolute right-0 top-full z-[1200] mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-lg border border-line bg-surface p-2 text-fg shadow-[var(--shadow-lg)]"
         >
           <div className="flex items-center gap-3 border-b border-line px-2.5 py-2.5">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-sm font-semibold text-accent">
@@ -725,7 +725,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
     >
       {/* Opaque backdrop — blocks all interaction beneath */}
       <div className="absolute inset-0 bg-black/60 backdrop-blur-[3px]" />
-      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
         {/* Header */}
         <div className="flex items-start gap-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
@@ -4150,18 +4150,18 @@ function SettingsContent({
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
           <div className={cn(
-            "rounded-lg border px-3 py-2 text-[13px] sm:col-span-2",
+            "rounded-lg border px-3 py-2.5 text-[13px] sm:col-span-2",
             executionState.mode === "test/local"
-              ? "border-info/25 bg-info/10 text-muted"
+              ? "border-info/30 bg-info/8 text-info"
               : executionState.mode === "broker/paper"
-                ? "border-up/25 bg-up/10 text-muted"
-                : "border-down/35 bg-down/10 text-down"
+                ? "border-up/30 bg-up/8 text-up"
+                : "border-down/40 bg-down/8 text-down"
           )}>
-            <div className="mb-1 flex items-center gap-2 font-semibold text-fg">
-              <Shield size={14} />
+            <div className="mb-1 flex items-center gap-2 font-semibold">
+              <Shield size={13} className="shrink-0" />
               {executionState.label} mode is active
             </div>
-            <p>
+            <p className="opacity-80">
               {executionState.clarification}
             </p>
           </div>
