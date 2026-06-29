@@ -11,7 +11,7 @@ audit rows (`strategy_run`, `recoverable_issue`, skips, policy violations). Midd
 `/api/ops/*` as public; handler requires `OPS_DIAGNOSTIC_TOKEN` (or legacy `ADMIN_REINDEX_TOKEN`)
 via `x-ops-token` / `Authorization: Bearer`. Set the token on prod, then agents can curl
 `https://trading.jays.services/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
-Next: deploy + set `OPS_DIAGNOSTIC_TOKEN` on `trading-live`; add matching secret in Cursor Cloud Agents dashboard; re-run multi-account Alpaca broker fix.
+Next: merge PR #249 + deploy to `trading-live`; set matching `OPS_DIAGNOSTIC_TOKEN` on prod and `pm2 restart trading`; start a **new** Cloud Agent session so the runtime secret is injected (existing session may not see it). Then `npm run ops:snapshot`. Multi-account Alpaca broker fix still pending.
 ## 2026-06-29 — Claude is a first-class Green/Red Team model (Cursor / cursor/claude-green-red-team-f06c)
 Claude (Anthropic) is now selectable for BOTH the Green Team (Bull proposer) and Red Team
 (Bear reviewer) in Strategy Studio, not just the Assistant chat. Added an
