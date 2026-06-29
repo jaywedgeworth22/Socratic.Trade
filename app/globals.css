@@ -15,8 +15,10 @@
   --line: rgba(221, 227, 234, 0.5);
   --line-strong: rgba(203, 211, 221, 0.6);
   --fg: #0f1722;
-  --muted: #4f5f70;
-  --faint: #55657a;
+  /* WCAG AA: muted/faint must meet 4.5:1 (normal text) on all surface tiers.
+     The values below achieve ≥7.3:1 on surface-3 (worst-case light-mode background). */
+  --muted: #3f4f60;
+  --faint: #3d4d62;
   --accent: #0e9f6e;
   --accent-fg: #ffffff;
   --up: #0e9f6e;
@@ -38,8 +40,10 @@
   --line: rgba(42, 57, 71, 0.4);
   --line-strong: rgba(42, 57, 71, 0.6);
   --fg: #e7eef6;
-  --muted: #aeb9c8;
-  --faint: #93a4b8;
+  /* WCAG AA: muted/faint must meet 4.5:1 (normal text) on all surface tiers.
+     The values below achieve ≥5.5:1 on surface-3 (worst-case dark-mode background). */
+  --muted: #b8c3d0;
+  --faint: #a0b0c0;
   --accent: #10b981;
   --accent-fg: #04130d;
   --up: #34d399;

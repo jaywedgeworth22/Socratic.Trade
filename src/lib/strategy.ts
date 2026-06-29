@@ -72,6 +72,8 @@ import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
 import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
+import { isMarketOpen } from "./market-calendar";
+import { isTradingDay } from "./market-calendar";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -148,6 +150,18 @@ export async function runStrategyOnce(
       : { ...savedPolicy, accountNumber };
     const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
+
+    // Market holiday / closure guard: skip the strategy run when the market is fully closed
+    // (holiday or weekend). Manual runs bypass this check so the operator can always force a run.
+    if (!manualRun && !isTradingDay()) {
+      const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
+      console.log(`[Strategy] ${reason}`);
+      audit("run_skipped_market_closed", { runId, userId, reason }, userId);
+      result = { runId, status: "completed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "completed", reason, userId);
+      releaseStrategyLock(userId, connectedAccountId);
+      return result;
+    }
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -332,21 +346,44 @@ export async function runStrategyOnce(
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
     }
 
-    const llmProposals = await proposeTrades({
-      userId,
-      policyAllowlist: allowedSymbols,
-      prompt: getStrategyPrompt(userId),
-      policy,
-      activeAccount,
-      portfolio: workingPortfolio,
-      positions: workingPositions,
-      recentOrders: compactRecentOrders(orders),
-      marketScan,
-      dailyNotionalUsed: daily.notional,
-      dailyOrderCount: daily.openingOrderCount,
-      ragContext,
-      learnedContext
-    });
+    // ── "Do nothing" threshold (minProposalScoreThreshold) ─────────────────
+    // Filter candidates below the threshold BEFORE they reach the LLM. If none survive,
+    // skip the LLM call entirely — the system sits on its hands rather than proposing
+    // on mediocre candidates. Default 0 = unfiltered (preserves existing behavior).
+    const minScore = policy.tuning?.minProposalScoreThreshold;
+    let skipLlmDueToScoreThreshold = false;
+    if (typeof minScore === "number" && minScore > 0 && marketScan) {
+      const before = marketScan.topCandidates.length;
+      const surviving = marketScan.topCandidates.filter((c) => c.score >= minScore);
+      if (surviving.length === 0 && before > 0) {
+        skipLlmDueToScoreThreshold = true;
+        const reason = `No candidates met minimum score threshold (${minScore}). ${before} candidates all scored below ${minScore}.`;
+        console.log(`[Strategy] ${reason}`);
+        audit("run_skipped_score_threshold", { runId, userId, threshold: minScore, candidateCount: before, reason }, userId);
+        marketScan.topCandidates = [];
+      } else {
+        marketScan.topCandidates = surviving;
+      }
+    }
+
+    let llmProposals: TradeProposal[] = [];
+    if (!skipLlmDueToScoreThreshold) {
+      llmProposals = await proposeTrades({
+        userId,
+        policyAllowlist: allowedSymbols,
+        prompt: getStrategyPrompt(userId),
+        policy,
+        activeAccount,
+        portfolio: workingPortfolio,
+        positions: workingPositions,
+        recentOrders: compactRecentOrders(orders),
+        marketScan,
+        dailyNotionalUsed: daily.notional,
+        dailyOrderCount: daily.openingOrderCount,
+        ragContext,
+        learnedContext
+      });
+    }
 
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
     // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
@@ -2004,7 +2041,9 @@ async function proposeTrades(input: {
       ? "Short selling is enabled: short/cover proposals are permitted. Hold shorts to a HIGHER bar than longs — confirm a clear bearish catalyst and a mandatory stop; reject thesis-light shorts and shorts into strong uptrends or low-float squeeze risk."
       : "Short selling is disabled: only buy/sell are valid. Reject any short or cover proposal outright.",
     "Execution modes are distinct: test/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.",
-    "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
+    "Evaluate each trade against the macro environment, fundamentals (P/B, short float, FCF yield, debt/equity), technicals (techScore, techDir, techSignals), smart-money signals (senateNet, congressScore, insiderSent), and overall sector concentration risk.",
+    "CRITICAL: You have access to structured market data in `candidatesUnderReview` — use it to FACT-CHECK the Bull's price claims, valuation assertions, and signal references. The Bull's prose may misrepresent or omit data; verify against the structured fields (factors, px, fcf, de, pe, shortFloat, techScore, senateNet, insiderSent, etc.). If the Bull's rationale contradicts the data, REJECT.",
+    "The `macroeconomicData` and `currentMarketRegime` fields give you the macro context (VIX regime, yield curve, growth/inflation mix) — weigh each buy/short against the prevailing regime. A high-beta cyclical buy in an inverted-curve/crisis regime demands extraordinary evidence.",
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
     `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}).`,
@@ -2294,6 +2333,9 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     posMV: quote.positionMarketValue,
     score: quote.score,
     factors: quote.factorBreakdown,
+    techScore: quote.technicalScore,
+    techDir: quote.technicalDirection,
+    techSignals: quote.technicalSignals?.slice(0, 5),
     provider: quote.provider,
     asOf: quote.asOf
   });

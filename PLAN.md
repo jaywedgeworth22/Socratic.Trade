@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`main`, Cursor): **Strategy engine improvements** — Bear debate
+> now receives structured market data (technical indicators, factor breakdowns,
+> smart-money signals, macro context) to independently fact-check the Bull.
+> Market holiday/early-close calendar prevents runs on closed days. "Do nothing"
+> threshold (`minProposalScoreThreshold`) skips the LLM when all candidates score
+> below the bar. See `docs/rollouts/2026-06-29-strategy-engine-improvements.md`.
+>
 > 2026-06-29 (`codex/profile-menu`): profile menu and header cleanup —
 > Auth.js sessions now retain display identity metadata, the dashboard snapshot
 > exposes provider avatar/name/login provider, and the header consolidates

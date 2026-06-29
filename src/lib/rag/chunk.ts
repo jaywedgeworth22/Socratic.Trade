@@ -3,10 +3,15 @@
 // headings set section metadata, tables are kept atomic, long prose is split with overlap, and
 // each chunk carries a deterministic context header plus a point-in-time `acceptance_datetime`.
 
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
 const DEFAULT_MAX_TOKENS = 480;
 const DEFAULT_OVERLAP_RATIO = 0.12;
+
+/** Hash chunk text with SHA-256 for dedup (cheaper than re-embedding via Voyage). */
+export function hashContent(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+}
 
 export interface ChunkInput {
   text: string;
@@ -25,6 +30,8 @@ export interface DocumentChunk {
   chunk_id: string;
   title: string;
   text: string;
+  /** SHA-256 hex (first 16 chars) of chunk text for re-embed dedup. */
+  content_hash: string;
   context_header: string;
   ticker: string[];
   doc_type: string;
@@ -184,6 +191,7 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
       chunk_id: `${doc_id}#c${String(n).padStart(3, "0")}`,
       title,
       text: clean,
+      content_hash: hashContent(clean),
       context_header,
       ticker,
       doc_type,

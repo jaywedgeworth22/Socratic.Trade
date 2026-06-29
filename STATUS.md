@@ -4,6 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Strategy engine improvements (Cursor / main)
+Three improvements landed in the `main` integration worktree via Cursor:
+1. **Bear gets structured data** — `compactCandidateForPrompt` now includes
+   `technicalScore`, `technicalDirection`, `technicalSignals`; the Bear system
+   prompt explicitly directs it to fact-check the Bull's prose against the
+   structured fields (factors, px, fcf, de, pe, shortFloat, techScore,
+   senateNet, insiderSent, etc.) and weigh macro context.
+2. **Market holiday calendar** — new `src/lib/market-calendar.ts` with NYSE
+   holidays for 2025–2027, early-close days (Black Friday, Independence Day eve,
+   Christmas Eve), `isMarketOpen()`, `isTradingDay()`, `nextMarketOpen()`. The
+   strategy loop now skips runs on full-closure days with an audit event.
+3. **"Do nothing" threshold** — `policy.tuning.minProposalScoreThreshold` (0–100,
+   default 0 = no filtering) exposed in Settings → Tuning. Candidates below
+   threshold are dropped before the LLM; if none survive, the LLM call is skipped
+   and an audit event fires. Proactive exits still execute.
+Verification: `npx tsc --noEmit` clean, `npm test` 156 files / 1508 tests passed,
+`eslint` on changed files warnings-only. See
+`docs/rollouts/2026-06-29-strategy-engine-improvements.md`.
+
 ## 2026-06-29 — Profile menu and header cleanup
 Branch `codex/profile-menu`. In progress: Auth.js now carries display metadata
 (name, provider avatar, login provider) alongside the verified email, the
@@ -1038,12 +1057,16 @@ tsc clean · policy+persistence tests 56 passed · full trio via land.sh. See
 ## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
 Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
 
-## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
+## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager **(SUPERSEDED — see entry above: Switch all secret delivery to Infisical)**
 Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
 (`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
-git-ignored (only `.env.example` tracked), each worktree's copy is independent, and **GCP
-Secret Manager is the authoritative upstream for secret values** — every `.env.local` is a
-local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
+git-ignored (only `.env.example` tracked), each worktree's copy is independent. **(Superseded
+later the same day: the GCP Secret Manager path was removed entirely — Infisical is now the
+single secrets source. See the "Switch all secret delivery to Infisical" entry above +
+`docs/rollouts/2026-06-25-switch-to-infisical-remove-gcp.md`.)**
+Originally stated **GCP Secret Manager is the authoritative upstream for secret values** —
+every `.env.local` is a local cache. Documented the `*:gcp` runner
+(`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
 `GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
 across the integration/agent/production copies, and that per-user keys live encrypted in
 `user_api_keys`, not `.env.local`. Addressed four Codex review rounds on PR #150: steer to

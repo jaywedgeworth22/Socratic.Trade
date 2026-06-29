@@ -12,9 +12,11 @@
 // Never fabricated: no feed / no CIK match -> no event.
 
 import { audit, getInternalSetting, setInternalSetting } from "../db";
+import { hasIngestedAccession, insertIngestedAccession } from "../db";
 import { normalizeSymbol } from "../money";
 import { retryBackoffMs } from "./congress";
-import { politeFetchText, secUserAgent } from "./http";
+import { politeFetchText, secUserAgent, sleep } from "./http";
+import { extractFilingText } from "./sec-filings";
 
 const DATASET_KEY = "webSource:sec8k:dataset";
 const ATTEMPT_KEY = "webSource:sec8k:lastAttempt";
@@ -390,5 +392,113 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
       .catch((error) => console.warn("[sec8k] vector store failed", error));
   }
 
+  // 8-K full-body ingest: when enabled, fetch + embed the FULL filing text (not just the
+  // 6-line summary) via the same storeDocument pipeline as 10-K/10-Qs. Gated behind
+  // WEB_SOURCE_SEC8K_FULL_BODY (default OFF) because it multiplies EDGAR fetch + Voyage
+  // cost per filing. Fire-and-forget so refresh durability is unaffected.
+  if (eightKFullBodyEnabled() && fresh.length > 0) {
+    const bodyLimit = Number(process.env.WEB_SOURCE_SEC8K_FULL_BODY_LIMIT ?? 5);
+    const cap = Number.isFinite(bodyLimit) && bodyLimit > 0 ? Math.floor(bodyLimit) : 5;
+    const bodyEvents = fresh.slice(0, cap);
+    // Don't block the refresh — body ingest runs async.
+    ingestEightKBodies(bodyEvents, now).catch((error) =>
+      console.warn("[sec8k] full-body ingest failed:", error)
+    );
+  }
+
   return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };
+}
+
+// ── 8-K full-body ingest (gated behind WEB_SOURCE_SEC8K_FULL_BODY) ───────────
+
+const DEFAULT_SEC8K_FULL_BODY_LIMIT = 5;
+
+/** Whether full 8-K body ingestion is enabled (default OFF). */
+export function eightKFullBodyEnabled(): boolean {
+  const v = String(process.env.WEB_SOURCE_SEC8K_FULL_BODY ?? "off").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
+}
+
+/**
+ * Fetch the full 8-K filing body for one event, chunk it via storeDocument, and record
+ * the accession in ingested_accessions so the same filing is never re-fetched.
+ *
+ * Only calls storeDocument when the accession isn't already in ingested_accessions.
+ * Returns the number of chunks indexed (0 = skipped or failed).
+ */
+export async function ingestEightKBody(event: EightKEvent, now: number = Date.now()): Promise<{ skipped: boolean; chunks: number; error?: string }> {
+  if (hasIngestedAccession(event.accession, "8-K-body")) {
+    return { skipped: true, chunks: 0 };
+  }
+
+  const url = absoluteSecUrl(event.filingUrl);
+  if (!url) {
+    return { skipped: false, chunks: 0, error: "no filing URL" };
+  }
+
+  let html: string;
+  try {
+    html = await politeFetchText(url, {
+      headers: { "user-agent": secUserAgent(), accept: "text/html,application/xhtml+xml" },
+      timeoutMs: 30_000
+    });
+  } catch (err) {
+    return { skipped: false, chunks: 0, error: `fetch failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const text = extractFilingText(html);
+  if (text.length < 100) {
+    return { skipped: false, chunks: 0, error: "extracted text too short" };
+  }
+
+  const { storeDocument } = await import("../vector-db");
+  const result = await storeDocument(
+    {
+      text,
+      ticker: event.symbol,
+      title: `${event.symbol} 8-K (${event.filedAt})`,
+      doc_type: "8-k",
+      published_at: event.filedAt,
+      acceptance_datetime: event.filedAt,
+      source: "sec-8k",
+      url
+    },
+    "local"
+  );
+
+  if (result.error) {
+    return { skipped: false, chunks: result.indexed, error: result.error };
+  }
+
+  insertIngestedAccession(event.accession, "8-K-body", event.symbol, result.indexed);
+  return { skipped: false, chunks: result.indexed };
+}
+
+/**
+ * Ingest full 8-K bodies for multiple events sequentially (respects EDGAR fair-use).
+ * Never throws — errors are logged and aggregated.
+ */
+export async function ingestEightKBodies(
+  events: EightKEvent[],
+  now: number = Date.now()
+): Promise<{ attempted: number; ingested: number; skipped: number; errors: string[] }> {
+  const result = { attempted: 0, ingested: 0, skipped: 0, errors: [] as string[] };
+  for (const event of events) {
+    result.attempted++;
+    try {
+      const ingestResult = await ingestEightKBody(event, now);
+      if (ingestResult.skipped) {
+        result.skipped++;
+      } else if (ingestResult.error) {
+        result.errors.push(`${event.symbol} ${event.accession}: ${ingestResult.error}`);
+      } else {
+        result.ingested++;
+      }
+      // Polite delay between EDGAR fetches
+      if (result.attempted < events.length) await sleep(300);
+    } catch (err) {
+      result.errors.push(`${event.symbol} ${event.accession}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return result;
 }

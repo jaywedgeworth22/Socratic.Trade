@@ -588,6 +588,21 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage (user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_llm_usage_source ON llm_usage (key_source, created_at);
 
+    CREATE TABLE IF NOT EXISTS rag_usage (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'local',
+      operation TEXT NOT NULL CHECK(operation IN ('embed','rerank','query','upsert')),
+      provider TEXT NOT NULL DEFAULT 'voyage',
+      model TEXT,
+      tokens_in INTEGER,
+      tokens_out INTEGER,
+      batch_count INTEGER NOT NULL DEFAULT 1,
+      cost_est_usd REAL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rag_usage_user ON rag_usage (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_rag_usage_op ON rag_usage (operation, created_at);
+
     CREATE TABLE IF NOT EXISTS user_memory (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -610,6 +625,15 @@ function migrate(database: Database.Database): void {
       chunk_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (accession, doc_type)
     );
+    CREATE TABLE IF NOT EXISTS document_chunks (
+      content_hash TEXT NOT NULL,
+      symbol TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      chunk_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (content_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_document_chunks_symbol ON document_chunks (symbol);
     CREATE TABLE IF NOT EXISTS learned_context (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

@@ -506,6 +506,63 @@ export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
   return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
 }
 
+// ── document_chunks content-hash dedup ─────────────────────────────────────
+
+/** Check whether a chunk with this content_hash has already been embedded. */
+export function hasDocumentChunk(contentHash: string): boolean {
+  const row = getDb()
+    .prepare("SELECT 1 FROM document_chunks WHERE content_hash = ?")
+    .get(contentHash);
+  return row != null;
+}
+
+/** Batch-check which content_hashes are new (not yet stored). Returns the set of NEW hashes. */
+export function filterNewDocumentChunks(
+  hashes: Array<{ content_hash: string; symbol: string; source: string; chunk_id: string }>
+): typeof hashes {
+  if (hashes.length === 0) return [];
+  // Build placeholders for IN clause — SQLite max is 999, well above any chunk batch.
+  const placeholders = hashes.map(() => "?").join(",");
+  const flatHashes = hashes.map((h) => h.content_hash);
+  const existing = new Set<string>();
+  const rows = getDb()
+    .prepare(`SELECT content_hash FROM document_chunks WHERE content_hash IN (${placeholders})`)
+    .all(...flatHashes) as Array<{ content_hash: string }>;
+  for (const row of rows) existing.add(row.content_hash);
+  return hashes.filter((h) => !existing.has(h.content_hash));
+}
+
+/** Record successfully-embedded chunks so their content_hash is never re-embedded. */
+export function insertDocumentChunks(
+  chunks: Array<{ content_hash: string; symbol: string; source: string; chunk_id: string }>
+): void {
+  if (chunks.length === 0) return;
+  const stmt = getDb().prepare(
+    "INSERT OR IGNORE INTO document_chunks (content_hash, symbol, source, chunk_id, created_at) VALUES (?, ?, ?, ?, ?)"
+  );
+  const now = new Date().toISOString();
+  const insertMany = getDb().transaction((rows: typeof chunks) => {
+    for (const c of rows) stmt.run(c.content_hash, c.symbol, c.source, c.chunk_id, now);
+  });
+  insertMany(chunks);
+}
+
+/** Per-symbol chunk coverage stats (admin/diagnostic). */
+export interface ChunkCoverageRow {
+  symbol: string;
+  chunkCount: number;
+  latestAt: string;
+}
+
+export function getChunkCoverage(): ChunkCoverageRow[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT symbol, COUNT(*) as chunk_count, MAX(created_at) as latest_at FROM document_chunks GROUP BY symbol ORDER BY chunk_count DESC"
+    )
+    .all() as Array<{ symbol: string; chunk_count: number; latest_at: string }>;
+  return rows.map((r) => ({ symbol: r.symbol, chunkCount: r.chunk_count, latestAt: r.latest_at }));
+}
+
 // ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
 // Every helper is ownership-scoped (WHERE user_id = ?). A queued row is a risk-tier candidate that is
 // NOT in the brain — it only ever influences anything via the explicit human approve path, which

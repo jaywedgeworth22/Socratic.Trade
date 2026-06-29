@@ -1,8 +1,10 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
+import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { fuseHybrid } from "./rag/hybrid";
+import { meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank } from "./rag-metering";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -302,6 +304,7 @@ export async function rerankMatches(voyage: VoyageAIClient, query: string, match
       topK: Math.min(topK, matches.length),
       truncation: true
     });
+    meterRerank(query, documents, rerankModel());
     const data = resp.data ?? [];
     if (data.length === 0) return matches;
     const reordered: any[] = [];
@@ -385,6 +388,7 @@ export async function storeContexts(documents: ContextDocument[], userId: string
       if (!batch) continue;
       if (batchIndex > 0) await sleep(embedBatchDelayMs());
       const response = await embedDocumentsWithRetry(voyage, batch.map((doc) => doc.text));
+      meterEmbed(batch.map((doc) => doc.text));
 
       const records: PineconeRecord<RecordMetadata>[] = [];
       response.data?.forEach((item, indexInBatch) => {
@@ -402,6 +406,7 @@ export async function storeContexts(documents: ContextDocument[], userId: string
         // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
         await index.upsert({ records } as any);
         indexed += records.length;
+        meterPineconeUpsert(records.length);
       }
     }
 
@@ -432,7 +437,31 @@ export async function storeDocument(
 ): Promise<StoreContextsResult> {
   const chunked = chunkDocument(doc, options);
   const fallbackSymbol = doc.symbol ?? (Array.isArray(doc.ticker) ? doc.ticker[0] : doc.ticker) ?? "";
-  const documents: ContextDocument[] = chunked.map((c) => ({
+  const source = doc.source || "sec-edgar";
+
+  // Dedup by content_hash: skip chunks whose text byte sequence has already been embedded.
+  // The document_chunks table is keyed on content_hash (SHA-256, first 16 hex chars) so a
+  // re-run of the same filing text never pays Voyage tokens for unchanged chunks.
+  const chunkHashes = chunked.map((c) => ({
+    content_hash: c.content_hash,
+    symbol: c.ticker[0] ?? fallbackSymbol,
+    source,
+    chunk_id: c.chunk_id
+  }));
+  const newHashes = filterNewDocumentChunks(chunkHashes);
+  const newHashSet = new Set(newHashes.map((h) => h.content_hash));
+  const freshChunks = chunked.filter((c) => newHashSet.has(c.content_hash));
+
+  if (freshChunks.length < chunked.length) {
+    console.log(
+      `[vector-db] Content-hash dedup: ${chunked.length - freshChunks.length}/${chunked.length} chunks already indexed, skipping.`
+    );
+  }
+  if (freshChunks.length === 0) {
+    return { attempted: chunked.length, indexed: 0, skipped: true };
+  }
+
+  const documents: ContextDocument[] = freshChunks.map((c) => ({
     text: `${c.context_header}\n\n${c.text}`,
     metadata: {
       symbol: c.ticker[0] ?? fallbackSymbol,
@@ -444,10 +473,32 @@ export async function storeDocument(
       doc_type: c.doc_type,
       is_table: c.is_table,
       ticker: c.ticker,
+      content_hash: c.content_hash,
       ...(doc.url ? { url: doc.url } : {})
     }
   }));
-  return storeContexts(documents, userId);
+
+  const result = await storeContexts(documents, userId);
+
+  // Record fresh chunks in document_chunks so the dedup gate works on subsequent runs.
+  // Do this even on partial success — the table is INSERT OR IGNORE so double-writes are harmless,
+  // and failing to record a chunk means it gets re-embedded next time.
+  if (result.indexed > 0) {
+    const indexedHashes = freshChunks.slice(0, result.indexed).map((c) => ({
+      content_hash: c.content_hash,
+      symbol: c.ticker[0] ?? fallbackSymbol,
+      source: c.source,
+      chunk_id: c.chunk_id
+    }));
+    try {
+      insertDocumentChunks(indexedHashes);
+    } catch (err) {
+      console.warn("[vector-db] insertDocumentChunks failed (non-fatal):", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Restore the full attempted count so callers see the truth about how many chunks exist.
+  return { ...result, attempted: chunked.length };
 }
 
 /**
@@ -579,6 +630,7 @@ export async function retrieveContextDetailed(
 
   try {
     const response = await embedWithRetry(voyage, [query], "query");
+    meterEmbed([query]);
 
     const embedding = response.data?.[0]?.embedding;
     if (!embedding) return [];
@@ -609,6 +661,7 @@ export async function retrieveContextDetailed(
         includeMetadata: true,
       });
       matches = results.matches || [];
+      meterPineconeQuery(fetchK);
     } else {
       const [userResults, localResults] = await Promise.all([
         index.query({
@@ -628,6 +681,7 @@ export async function retrieveContextDetailed(
           includeMetadata: true,
         })
       ]);
+      meterPineconeQuery(fetchK * 2);
 
       const combined = [...(userResults.matches || []), ...(localResults.matches || [])];
       combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
