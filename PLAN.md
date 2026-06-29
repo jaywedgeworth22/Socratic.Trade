@@ -11,6 +11,11 @@ filling the missing pieces.
 > target the existing self-hosted `trading-live` runner for same-repo branches/PRs
 > only. No roadmap change; see
 > `docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`.
+> 2026-06-29 (`cursor/ci-autofix-automation-6dbc`): self-hosted gitleaks cleanup —
+> Security now removes stale macOS gitleaks installer temp files before invoking
+> the pinned action, preserving scan behavior while avoiding persistent-runner
+> temp-file collisions. No roadmap change; see
+> `docs/rollouts/2026-06-29-gitleaks-temp-cleanup.md`.
 >
 > 2026-06-28 (`codex/thin-boot-strip`): first-paint loader selection —
 > replaced the Quiet Tiles SSR loading shell with option 4, the thin boot strip:
