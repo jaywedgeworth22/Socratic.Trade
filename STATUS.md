@@ -25,7 +25,10 @@ checks began while Next dev on port 4001 was still refusing/resetting
 connections, so the script rolled beta back and exited 1. The sync script now
 waits briefly after PM2 restarts and gives preview lanes a longer configurable
 health window before declaring rollback failure. See
-`docs/rollouts/2026-06-29-sync-preview-health-window.md`.
+`docs/rollouts/2026-06-29-sync-preview-health-window.md`. Verification passed:
+`bash -n scripts/sync-preview-lanes.sh`, mocked local preview-sync warm-up run,
+`npm run lint`, `npx tsc --noEmit`, `npm test` (156 files / 1,508 tests), and
+`npm run build`.
 
 ## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
 Branch `codex/google-auth-infisical-note`. PR #225 initially passed local

@@ -27,13 +27,18 @@ workflow even though the landed PR only changed dashboard styling classes.
 
 ## Verification
 
-- Pending: `bash -n scripts/sync-preview-lanes.sh`
-- Pending: mocked local preview-sync run that forces initial curl failures before
-  success
-- Pending: `npm run lint`
-- Pending: `npx tsc --noEmit`
-- Pending: `npm test`
-- Pending: `npm run build`
+- `bash -n scripts/sync-preview-lanes.sh`
+- Mocked local preview-sync run using temporary git worktrees plus stubbed
+  `pm2`, `curl`, and `sleep`; integration beta fast-forwarded, waited after
+  restart, tolerated two initial curl failures, and completed healthy after
+  four curl calls.
+- Initial `npm run lint` failed because dependencies were not installed in the
+  Cloud checkout (`eslint: not found`); `npm ci` restored the lockfile
+  dependencies.
+- `npm run lint` (exit 0; existing warnings only)
+- `npx tsc --noEmit`
+- `npm test` (156 files / 1,508 tests)
+- `npm run build` (existing Next middleware deprecation warning only)
 
 ## Follow-ups
 
