@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { normalizeSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
-import { getActiveConnectedAccount, resolveApiKey } from "./db";
+import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { fetchDailyOHLC } from "./history";
 
 /**
@@ -48,8 +48,8 @@ export async function fillMissingQuotesWithClose(
   return quotes;
 }
 
-export function getAlpacaGateway(userId: string = "local"): BrokerGateway {
-  return new AlpacaBrokerGateway(userId);
+export function getAlpacaGateway(userId: string = "local", connectedAccountId?: string): BrokerGateway {
+  return new AlpacaBrokerGateway(userId, connectedAccountId);
 }
 
 export function classifyAlpacaAccountType(account: Record<string, unknown>): AccountCapabilities["accountType"] {
@@ -115,13 +115,15 @@ class AlpacaBrokerGateway implements BrokerGateway {
   private isMcp: boolean;
   private mcpUrl?: string;
 
-  constructor(private userId: string) {
+  constructor(private userId: string, connectedAccountId?: string) {
+    const targeted = connectedAccountId ? getConnectedAccount(connectedAccountId, userId) : undefined;
     const activeAccount = getActiveConnectedAccount(userId);
+    const brokerAccount = targeted ?? activeAccount;
     const accountKeys =
-      activeAccount?.broker === "alpaca" || activeAccount?.broker === "alpaca-mcp"
-        ? activeAccount
+      brokerAccount?.broker === "alpaca" || brokerAccount?.broker === "alpaca-mcp"
+        ? brokerAccount
         : undefined;
-    this.isMcp = activeAccount?.broker === "alpaca-mcp";
+    this.isMcp = brokerAccount?.broker === "alpaca-mcp";
     this.label = accountKeys?.label || (accountKeys?.environment === "live" ? "Alpaca Brokerage" : "Alpaca Paper");
     // A connected-account key (per-user account data) wins. If an Alpaca account is explicitly
     // selected, never fall back to generic/operator Alpaca keys: those can belong to a different
