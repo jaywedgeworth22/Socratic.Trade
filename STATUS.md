@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Profile menu and header cleanup
+Branch `codex/profile-menu`. In progress: Auth.js now carries display metadata
+(name, provider avatar, login provider) alongside the verified email, the
+dashboard snapshot exposes that display identity, and the command bar uses a
+single profile menu with avatar/initials fallback. The menu contains Settings,
+Account Management, Activity Log, System Help, light/dark mode, and Sign Out,
+removing the separate Help/theme/email/logout/Activity controls from the top
+bar. Verification so far: `npx tsc --noEmit` and focused auth/identity/UI tests.
+Final verification passed: `npx tsc --noEmit`, full `npm test` (156 files /
+1,498 tests), `npm run lint -- --quiet`, `npm run build` (existing Next
+middleware deprecation warning only), and Playwright desktop/mobile menu smoke
+against `http://127.0.0.1:4137/`. See
+`docs/rollouts/2026-06-29-profile-menu.md` for Antigravity handoff notes.
+
 ## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
 Branch `codex/google-auth-infisical-note`. PR #225 initially passed local
 `scripts/land.sh` verification (`npx tsc --noEmit`, `npm test` 155 files /

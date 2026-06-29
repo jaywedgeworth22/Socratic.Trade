@@ -23,7 +23,14 @@ import type { Provider } from "next-auth/providers";
 import { normalizeAuthEmail, selectVerifiedGitHubEmail, type GitHubEmail } from "./github-email";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
 
-type EmailProfile = Profile & { email?: string | null };
+type EmailProfile = Profile & {
+  email?: string | null;
+  name?: string | null;
+  picture?: string | null;
+  avatar_url?: string | null;
+  login?: string | null;
+};
+type SessionWithProvider = Session & { loginProvider?: string };
 
 const providers: Provider[] = [];
 
@@ -81,7 +88,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return true;
     },
-    // Persist the email in the JWT so it survives across requests without a DB lookup.
+    // Persist display identity in the JWT so it survives across requests without a DB lookup.
     async jwt({ token, user, account, profile }: { token: JWT; user?: User; account?: Account | null; profile?: EmailProfile }) {
       let email = normalizeAuthEmail(user?.email ?? profile?.email);
       if (account?.provider === "github" && !email) {
@@ -90,13 +97,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (email) {
         token.email = email;
       }
+      const name = user?.name ?? profile?.name ?? profile?.login;
+      const image = user?.image ?? profile?.picture ?? profile?.avatar_url;
+      if (name) token.name = name;
+      if (image) token.picture = image;
+      if (account?.provider) token.loginProvider = account.provider;
       return token;
     },
-    // Expose the email on the `session` object returned by `auth()`.
+    // Expose display identity on the `session` object returned by `auth()`.
     session({ session, token }: { session: Session; token: JWT }) {
+      session.user = session.user ?? {};
       if (token.email && typeof token.email === "string") {
-        session.user = session.user ?? {};
         session.user.email = token.email;
+      }
+      if (token.name && typeof token.name === "string") {
+        session.user.name = token.name;
+      }
+      if (token.picture && typeof token.picture === "string") {
+        session.user.image = token.picture;
+      }
+      if (token.loginProvider && typeof token.loginProvider === "string") {
+        (session as SessionWithProvider).loginProvider = token.loginProvider;
       }
       return session;
     }
