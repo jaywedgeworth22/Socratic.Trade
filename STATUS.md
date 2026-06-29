@@ -37,6 +37,11 @@ commit SHA before running on the self-hosted runner. Main Security and PR #224
 then exposed a macOS runner cache issue where the pinned action refused to
 overwrite `${TMPDIR}/gitleaks.tmp`; Security now removes that stale temp file
 before invoking the action.
+commit SHA before running on the self-hosted runner. A follow-up on
+`cursor/ci-autofix-automation-6dbc` cleans stale macOS gitleaks installer temp
+files before the pinned action runs, after the self-hosted runner reused a
+leftover `${TMPDIR}/gitleaks.tmp` file and failed before scanning. See
+`docs/rollouts/2026-06-29-gitleaks-temp-cleanup.md`.
 
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google

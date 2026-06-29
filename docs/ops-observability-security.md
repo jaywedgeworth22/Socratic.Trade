@@ -6,9 +6,9 @@ This app now has opt-in scaffolding for the seven selected tools:
   `npm run start:secrets` to execute the app under `infisical run`. Configure
   `INFISICAL_PROJECT_ID`, `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity
   token in the host environment. Do not commit `.env.local`.
-- **Gitleaks**: `npm run gitleaks` runs a local secret scan. GitHub Actions
-  wiring is deferred until the GitHub token used for pushes has `workflow`
-  scope.
+- **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
+  Security workflow runs the pinned gitleaks action on the self-hosted runner
+  and clears stale macOS installer temp files before invoking the action.
 - **Sentry**: add `SENTRY_DSN` for server/edge runtime errors. The app initializes
   Sentry from the Next.js instrumentation hook for runtime/request errors, but
   does not enable the Sentry build wrapper or browser SDK by default
@@ -18,9 +18,9 @@ This app now has opt-in scaffolding for the seven selected tools:
   traced around Bull, Bear, Red Team, post-mortem, and strategy-tuning requests.
   The default `LANGFUSE_CAPTURE_IO=summary` captures model/schema/counts and
   proposal summaries, not raw prompt/account/portfolio text.
-- **Dependabot**: `.github/dependabot.yml` watches npm dependencies. CI/e2e/
-  security workflows were intentionally left out of this push because GitHub
-  rejects workflow-file changes unless the credentials include `workflow` scope.
+- **Dependabot**: `.github/dependabot.yml` watches npm dependencies. CI, smoke,
+  and security workflows are active under `.github/workflows/`; see
+  `STATUS.md` for the current runner policy.
 - **Audit hardening**: npm overrides pin transitive Axios and PostCSS to patched
   releases, and Vitest is on the current major so its Vite dependency is patched.
 - **Litestream**: continuous WAL replication of `data/app.db` to Cloudflare R2, run as
