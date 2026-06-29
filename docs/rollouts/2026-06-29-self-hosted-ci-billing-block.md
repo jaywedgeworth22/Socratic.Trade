@@ -18,6 +18,9 @@
 - Pinned `gitleaks/gitleaks-action` to
   `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` before running it on the
   self-hosted runner.
+- Added a preflight cleanup for stale `${TMPDIR}/gitleaks.tmp`, which can be
+  left behind on the long-lived macOS runner and cause the pinned action's
+  installer to fail before scanning.
 
 ## Why
 
@@ -50,6 +53,9 @@ sync already use it successfully.
   caching enabled; cache was removed before re-running PR checks.
 - `git ls-remote https://github.com/gitleaks/gitleaks-action.git refs/tags/v3`
   resolved the pinned `v3` action commit SHA.
+- PR #224 refreshed run: `verify` passed on the self-hosted runner, while
+  `gitleaks` failed before scanning due only to the stale installer temp file;
+  workflow updated to remove that file before invoking the action.
 
 ## Follow-ups
 

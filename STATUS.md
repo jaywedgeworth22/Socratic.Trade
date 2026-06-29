@@ -19,7 +19,10 @@ hung in `actions/setup-node` cache post-action cleanup; CI/smoke no longer use
 the setup-node npm cache.
 Required jobs now fail closed before checkout for fork PRs and bot-authored PRs
 instead of being skipped; `gitleaks/gitleaks-action` is pinned to a reviewed
-commit SHA before running on the self-hosted runner.
+commit SHA before running on the self-hosted runner. Follow-up on PR #224:
+self-hosted gitleaks failed because a stale `${TMPDIR}/gitleaks.tmp` installer
+file existed on the runner; Security now removes that one temp file before
+invoking the pinned action.
 
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google
