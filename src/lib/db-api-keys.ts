@@ -352,6 +352,19 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
  */
 export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
   if (userId) {
+    const allAccs = listConnectedAccounts(userId);
+    const alpacaAccs = allAccs.filter((a) => a.broker === "alpaca" || a.broker === "alpaca-mcp");
+    if (alpacaAccs.length > 0) {
+      const preferred =
+        alpacaAccs.find((a) => a.isActive) ||
+        alpacaAccs.find((a) => a.environment === "live") ||
+        alpacaAccs[0];
+      const detailed = getConnectedAccount(preferred.id, userId);
+      if (detailed && detailed.apiKey) {
+        return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret, source: "user" };
+      }
+    }
+
     const own = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey;
     if (own) return { apiKey: own, secretKey: getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey, source: "user" };
   }
