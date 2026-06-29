@@ -23,6 +23,7 @@ import {
   LayoutDashboard,
   LineChartIcon,
   LogOut,
+  Moon,
   Network,
   Pause,
   Percent,
@@ -38,6 +39,7 @@ import {
   Sparkles,
   Trash2,
   TrendingUp,
+  Sun,
   Wallet,
   X,
   XCircle,
@@ -128,7 +130,7 @@ import {
   Tabs,
   inputClass
 } from "./ui/primitives";
-import { ThemeToggle } from "./ui/theme";
+import { useTheme } from "./ui/theme";
 import { CommandPalette, type Command } from "./ui/command-palette";
 
 type SortDir = "asc" | "desc";
@@ -393,6 +395,184 @@ function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
             ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+type DashboardCurrentUser = NonNullable<DashboardSnapshot["currentUser"]>;
+
+function loginProviderLabel(provider?: string): string {
+  const normalized = provider?.trim().toLowerCase();
+  if (normalized === "google") return "Google";
+  if (normalized === "github") return "GitHub";
+  if (normalized === "apple") return "Apple";
+  if (!normalized) return "App";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function userInitials(user?: DashboardCurrentUser): string {
+  const source = user?.name?.trim() || user?.email?.split("@")[0] || "User";
+  const parts = source
+    .replace(/[._-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("");
+  return initials || "U";
+}
+
+function AccountMenu({
+  user,
+  pendingCount,
+  onOpenActivity,
+  onOpenSettings,
+  onOpenAccounts,
+  onOpenHelp,
+  onSignOut
+}: {
+  user?: DashboardCurrentUser;
+  pendingCount: number;
+  onOpenActivity: () => void;
+  onOpenSettings: () => void;
+  onOpenAccounts: () => void;
+  onOpenHelp: () => void;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const { theme, toggle } = useTheme();
+  const provider = loginProviderLabel(user?.loginProvider);
+  const email = user?.email ?? "Local session";
+  const name = user?.name ?? (user?.email ? user.email.split("@")[0] : "Signed in");
+  const imageUrl = user?.imageUrl && !imageFailed ? user.imageUrl : undefined;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [user?.imageUrl]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  function run(action: () => void) {
+    setOpen(false);
+    action();
+  }
+
+  const avatar = (
+    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-xs font-semibold text-accent lg:h-9 lg:w-9">
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        userInitials(user)
+      )}
+      {pendingCount > 0 && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warn px-0.5 text-[9px] font-bold text-black ring-2 ring-surface"
+        >
+          {pendingCount}
+        </span>
+      )}
+    </span>
+  );
+
+  const menuItemClass =
+    "flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-sm text-fg transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none";
+  const menuItemLeftClass = "flex min-w-0 items-center gap-2.5";
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Profile menu"
+        title={`${name} · ${email}`}
+        onClick={() => setOpen((value) => !value)}
+        className="relative inline-flex h-8 items-center gap-1 rounded-full border border-line bg-surface/60 pr-1.5 text-fg shadow-sm transition-colors hover:bg-surface-2/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent lg:h-9"
+      >
+        {avatar}
+        <ChevronDown size={14} className="text-muted" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-[1200] mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-lg border border-line bg-white p-2 text-fg shadow-[var(--shadow-lg)] dark:bg-zinc-950"
+        >
+          <div className="flex items-center gap-3 border-b border-line px-2.5 py-2.5">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-sm font-semibold text-accent">
+              {imageUrl ? (
+                <img
+                  src={imageUrl}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover"
+                  onError={() => setImageFailed(true)}
+                />
+              ) : (
+                userInitials(user)
+              )}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-fg">{name}</div>
+              <div className="truncate text-xs text-muted" title={email}>{email}</div>
+              <div className="mt-0.5 text-[11px] text-faint">{provider} account</div>
+            </div>
+          </div>
+
+          <div className="mt-1 space-y-0.5">
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenSettings)}>
+              <span className={menuItemLeftClass}><SettingsIcon size={15} /> Settings</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenAccounts)}>
+              <span className={menuItemLeftClass}><Wallet size={15} /> Account Management</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenActivity)}>
+              <span className={menuItemLeftClass}><ActivityIcon size={15} /> Activity Log</span>
+              {pendingCount > 0 && (
+                <span className="rounded-full bg-warn/20 px-2 py-0.5 text-[11px] font-semibold text-warn">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenHelp)}>
+              <span className={menuItemLeftClass}><HelpCircle size={15} /> System Help</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(toggle)}>
+              <span className={menuItemLeftClass}>
+                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                {theme === "dark" ? "Light Mode" : "Dark Mode"}
+              </span>
+            </button>
+          </div>
+
+          <div className="mt-1 border-t border-line pt-1">
+            <button type="button" role="menuitem" className={cn(menuItemClass, "text-down hover:bg-down/10")} onClick={() => run(onSignOut)}>
+              <span className={menuItemLeftClass}><LogOut size={15} /> Sign Out</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1218,7 +1398,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         </div>
       )}
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:gap-3 xl:py-0 xl:px-4">
+      <header className="relative z-[1100] flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between xl:h-16 xl:gap-3 xl:py-0 xl:px-4">
         {/* Left Side: Logo, Title, Status, and Pills */}
         <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 w-full xl:w-auto xl:justify-start xl:gap-4">
           <div className="flex items-start gap-2.5">
@@ -1303,46 +1483,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <option value="manage" className="italic">Manage Accounts...</option>
               </select>
             </div>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
-              <SettingsIcon size={15} />
-            </IconButton>
-            <Button
-              aria-label="Help"
-              className="h-8 px-2.5 lg:h-9"
-              size="sm"
-              title="Help"
-              variant="accentSoft"
-              onClick={() => setHelpOpen(true)}
-            >
-              <HelpCircle size={15} />
-              <span className="hidden sm:inline">Help</span>
-              <span className="font-semibold sm:hidden">?</span>
-            </Button>
-            <ThemeToggle />
-            {signedInEmail && (
-              <span className="hidden max-w-[12rem] truncate text-[11px] text-faint md:inline" title={`Signed in as ${signedInEmail}`}>
-                {signedInEmail}
-              </span>
-            )}
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Log out" onClick={() => { window.location.href = "/logout"; }}>
-              <LogOut size={15} />
-            </IconButton>
+            <AccountMenu
+              user={snapshot.currentUser}
+              pendingCount={pendingCount}
+              onOpenActivity={() => setFeedOpen(true)}
+              onOpenSettings={() => openSettings("operate")}
+              onOpenAccounts={() => setAccountsOpen(true)}
+              onOpenHelp={() => setHelpOpen(true)}
+              onSignOut={() => { window.location.href = "/logout"; }}
+            />
           </div>
 
           {/* Sub-container 2: Action buttons */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
-            <button
-              onClick={() => setFeedOpen(true)}
-              aria-label={pendingCount > 0 ? `Activity — ${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}` : "Activity"}
-              className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
-            >
-              <ActivityIcon size={15} /> <span className="hidden sm:inline">Activity</span>
-              {pendingCount > 0 && (
-                <span aria-live="polite" className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
-                  {pendingCount}
-                </span>
-              )}
-            </button>
             <LearnedContextQueueBadge
               count={learnedQueueCount}
               onClick={() => setLearnedQueueOpen(true)}

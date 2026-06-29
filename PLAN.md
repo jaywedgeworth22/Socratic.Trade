@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`codex/profile-menu`): profile menu and header cleanup —
+> Auth.js sessions now retain display identity metadata, the dashboard snapshot
+> exposes provider avatar/name/login provider, and the header consolidates
+> Activity, System Help, theme toggle, and Sign Out under a profile menu with
+> photo-or-initials fallback. No roadmap change; see
+> `docs/rollouts/2026-06-29-profile-menu.md`.
+>
 > 2026-06-29 (`codex/google-auth-infisical-note`): CI runner billing unblock —
 > GitHub-hosted `ubuntu-latest` jobs are failing before startup due account
 > billing/spending-limit errors, so CI verify, Playwright smoke, and Security now
