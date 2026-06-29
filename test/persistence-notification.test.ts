@@ -561,7 +561,7 @@ describe("persistence and notifications", () => {
     });
 
     const gateway = getAlpacaGateway(userId, rothId);
-    const config = ((gateway as { alpaca: { configuration: { keyId?: string; oauth?: string; baseUrl?: string } } }).alpaca)
+    const config = ((gateway as unknown as { alpaca: { configuration: { keyId?: string; oauth?: string; baseUrl?: string } } }).alpaca)
       .configuration;
     expect(config.keyId).toBe("PK-ROTH");
     expect(config.baseUrl).toBe("https://api.alpaca.markets");
