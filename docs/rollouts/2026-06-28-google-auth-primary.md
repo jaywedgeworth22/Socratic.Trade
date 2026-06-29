@@ -59,9 +59,9 @@ kept reintroducing the old Access-owned session path.
     `/api/auth/providers` exposes Google, and unauthenticated `/api/dashboard` returns app `401`.
   - Sanitized Infisical verification through `scripts/infisical-run.mjs` confirmed prod has
     `NEXT_PUBLIC_SITE_URL=https://trading.jays.services`, `AUTH_URL=https://trading.jays.services`,
-    `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `PRIMARY_USER_EMAIL=jaywedgeworth22@gmail.com`,
-    `PRIMARY_USER_EMAIL_ALIASES=mail@jaywedgeworth.com,mail@jays.services`, and
-    `ALLOWED_EMAILS=jaywedgeworth22@gmail.com,thewedgeworths@gmail.com,constructtexas@gmail.com,mail@jaywedgeworth.com,mail@jays.services`.
+    `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `PRIMARY_USER_EMAIL=<configured>`,
+    `PRIMARY_USER_EMAIL_ALIASES=<configured>`, and `ALLOWED_EMAILS=<configured>`. Concrete account
+    values were intentionally omitted from the public rollout note.
   - Removed the app-project `CF_ACCESS_TRUST_EMAIL_HEADER` secret, found the shared overlay still
     supplied `CF_ACCESS_TRUST_EMAIL_HEADER=1`, then set an app-project override to
     `CF_ACCESS_TRUST_EMAIL_HEADER=0`. Code ignores this variable now, but the override keeps stale
