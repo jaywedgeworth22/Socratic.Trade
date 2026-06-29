@@ -14,6 +14,9 @@ needs to be increased.` CI, Playwright smoke, and Security now run on the
 existing self-hosted `trading-live` runner for same-repo branches/PRs, with a
 guard preventing fork PRs from executing on the production Mac. See
 `docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`.
+The first self-hosted CI attempt completed lint, typecheck, tests, and build but
+hung in `actions/setup-node` cache post-action cleanup; CI/smoke no longer use
+the setup-node npm cache.
 
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google

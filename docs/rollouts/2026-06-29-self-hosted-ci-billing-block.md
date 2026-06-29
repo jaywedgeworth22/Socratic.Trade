@@ -7,6 +7,9 @@
 - Moved Playwright smoke and gitleaks Security checks to the same runner.
 - Added same-repo PR guards so untrusted fork PRs do not execute on the
   production Mac.
+- Disabled the `actions/setup-node` npm cache in CI and smoke; on the
+  self-hosted runner the meaningful steps passed but the cache post-action
+  cleanup wedged before the job could complete.
 - Made Playwright browser installation OS-aware: Linux uses `--with-deps`,
   macOS installs Chromium only.
 
@@ -36,6 +39,9 @@ sync already use it successfully.
 - `npx tsc --noEmit` - passed.
 - `npm test` - passed, 155 files / 1,494 tests.
 - `npm run build` - passed; Next.js emitted the existing middleware-to-proxy deprecation warning.
+- Remote CI attempt on the self-hosted runner completed lint, typecheck, tests,
+  and build, then hung in `actions/setup-node` post-action cleanup with npm
+  caching enabled; cache was removed before re-running PR checks.
 
 ## Follow-ups
 
