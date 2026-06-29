@@ -528,4 +528,42 @@ describe("persistence and notifications", () => {
       else delete process.env.ALPACA_PAPER_SECRET_KEY;
     }
   });
+
+  it("binds Alpaca credentials to the targeted connected account, not only the active one", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    const userId = `alpaca-target-user-${randomUUID()}`;
+    const paperId = randomUUID();
+    const rothId = randomUUID();
+
+    upsertConnectedAccount({
+      id: paperId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PAPER-ACTIVE",
+      label: "Alpaca Paper",
+      apiKey: "PK-PAPER",
+      apiSecret: "paper-secret",
+      isActive: true
+    });
+    upsertConnectedAccount({
+      id: rothId,
+      userId,
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "ROTH-TARGET",
+      label: "Roth IRA",
+      apiKey: "PK-ROTH",
+      apiSecret: "roth-secret",
+      baseUrl: "https://api.alpaca.markets",
+      isActive: false
+    });
+
+    const gateway = getAlpacaGateway(userId, rothId);
+    const config = ((gateway as { alpaca: { configuration: { keyId?: string; oauth?: string; baseUrl?: string } } }).alpaca)
+      .configuration;
+    expect(config.keyId).toBe("PK-ROTH");
+    expect(config.baseUrl).toBe("https://api.alpaca.markets");
+  });
 });
