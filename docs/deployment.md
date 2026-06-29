@@ -109,6 +109,13 @@ worktrees, unexpected branches, and merge conflicts. If a lane advances but
 fails local `/api/health` or root-page checks, the script rolls that lane back
 to its previous commit and restarts the PM2 app.
 
+After a PM2 restart, Next dev can take longer than a few seconds to accept
+connections while it recompiles. `scripts/sync-preview-lanes.sh` therefore waits
+briefly before health probes and retries each probe for a configurable window:
+`TRADING_SYNC_RESTART_SETTLE_SECONDS` (default `5`),
+`TRADING_SYNC_HEALTH_ATTEMPTS` (default `30`), and
+`TRADING_SYNC_HEALTH_INTERVAL_SECONDS` (default `3`).
+
 Optional PM2 polling fallback:
 
 ```bash

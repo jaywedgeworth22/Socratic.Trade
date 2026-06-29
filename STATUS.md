@@ -18,6 +18,15 @@ middleware deprecation warning only), and Playwright desktop/mobile menu smoke
 against `http://127.0.0.1:4137/`. See
 `docs/rollouts/2026-06-29-profile-menu.md` for Antigravity handoff notes.
 
+## 2026-06-29 — Sync preview restart warm-up
+Branch `cursor/ci-autofix-automation-0d9c`. Main `sync-previews` failed after
+PR #240 fast-forwarded integration beta and restarted PM2: the health/root
+checks began while Next dev on port 4001 was still refusing/resetting
+connections, so the script rolled beta back and exited 1. The sync script now
+waits briefly after PM2 restarts and gives preview lanes a longer configurable
+health window before declaring rollback failure. See
+`docs/rollouts/2026-06-29-sync-preview-health-window.md`.
+
 ## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
 Branch `codex/google-auth-infisical-note`. PR #225 initially passed local
 `scripts/land.sh` verification (`npx tsc --noEmit`, `npm test` 155 files /

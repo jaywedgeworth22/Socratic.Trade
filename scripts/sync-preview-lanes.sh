@@ -20,6 +20,9 @@ trap 'rmdir "$LOCK_DIR"' EXIT
 INTEGRATION_DIR="${TRADING_INTEGRATION_DIR:-$HOME/Code/Agentic Trading}"
 APPS_DIR="${TRADING_APPS_DIR:-$HOME/apps}"
 HEALTH_PATH="${TRADING_SYNC_HEALTH_PATH:-/api/health}"
+HEALTH_ATTEMPTS="${TRADING_SYNC_HEALTH_ATTEMPTS:-30}"
+HEALTH_INTERVAL_SECONDS="${TRADING_SYNC_HEALTH_INTERVAL_SECONDS:-3}"
+RESTART_SETTLE_SECONDS="${TRADING_SYNC_RESTART_SETTLE_SECONDS:-5}"
 FETCH_REPO="${GITHUB_REPOSITORY:-jaywedgeworth22/agentic-trading}"
 
 log() {
@@ -29,6 +32,21 @@ log() {
 warn() {
   printf '[preview-sync] WARN: %s\n' "$*" >&2
 }
+
+if ! [[ "$HEALTH_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  warn "invalid TRADING_SYNC_HEALTH_ATTEMPTS='$HEALTH_ATTEMPTS'; using 30"
+  HEALTH_ATTEMPTS="30"
+fi
+
+if ! [[ "$HEALTH_INTERVAL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  warn "invalid TRADING_SYNC_HEALTH_INTERVAL_SECONDS='$HEALTH_INTERVAL_SECONDS'; using 3"
+  HEALTH_INTERVAL_SECONDS="3"
+fi
+
+if ! [[ "$RESTART_SETTLE_SECONDS" =~ ^[0-9]+$ ]]; then
+  warn "invalid TRADING_SYNC_RESTART_SETTLE_SECONDS='$RESTART_SETTLE_SECONDS'; using 5"
+  RESTART_SETTLE_SECONDS="5"
+fi
 
 fetch_main() {
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
@@ -83,11 +101,13 @@ restart_pm2() {
 check_url() {
   local url="$1"
   local attempt
-  for attempt in 1 2 3 4 5; do
+  for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt++)); do
     if curl -fsS --max-time 20 -o /dev/null "$url"; then
       return 0
     fi
-    sleep 2
+    if [[ "$attempt" -lt "$HEALTH_ATTEMPTS" ]]; then
+      sleep "$HEALTH_INTERVAL_SECONDS"
+    fi
   done
   return 1
 }
@@ -150,6 +170,10 @@ sync_lane() {
     log "$label advanced ${before:0:7} -> ${after:0:7}"
     maybe_install_deps "$before"
     restart_pm2 "$pm2_app"
+    if [[ "$RESTART_SETTLE_SECONDS" -gt 0 ]]; then
+      log "$label: waiting ${RESTART_SETTLE_SECONDS}s for preview restart"
+      sleep "$RESTART_SETTLE_SECONDS"
+    fi
   fi
 
   if verify_lane "$port"; then

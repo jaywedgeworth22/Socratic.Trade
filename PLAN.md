@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`cursor/ci-autofix-automation-0d9c`): sync-preview health window —
+> after main PR #240 landed, integration beta restarted slower than the
+> `sync-previews` script's five short health attempts. Preview lane sync now adds
+> a short post-PM2-restart settle delay and configurable longer health retries.
+> No roadmap change; see
+> `docs/rollouts/2026-06-29-sync-preview-health-window.md`.
+>
 > 2026-06-29 (`codex/profile-menu`): profile menu and header cleanup —
 > Auth.js sessions now retain display identity metadata, the dashboard snapshot
 > exposes provider avatar/name/login provider, and the header consolidates
