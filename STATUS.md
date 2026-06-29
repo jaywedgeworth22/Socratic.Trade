@@ -37,6 +37,20 @@ plus an end-to-end mock-ingest test proving browser + server capture with redact
 scaffolding removed). To activate in prod: set `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`
 (and optionally `SENTRY_AUTH_TOKEN` for source maps). See
 `docs/rollouts/2026-06-29-sentry-browser-and-build-wrapper.md`.
+## 2026-06-29 — PR garden: merged 13, closed 4 stale (Cursor / cursor/fix-robinhood-equity-quotes)
+
+**Blocked-proposal decision persistence fix:** When a proposal is blocked by policy
+at approval (e.g. daily notional limit), the block reasons are now persisted to the
+`decision` column so the Latest Decisions card shows actual reasons rather than an
+invisible empty card. Added `"blocked"` fallback in `decisionLedgerReasons` UI.
+
+**PR cleanup:** 8 PRs auto-merge-enqueued (#237, #244, #253, #254, #239, #251,
+#252, #256), 4 stale/failing PRs closed (#247, #245, #241 bot-guard, #248 SSH),
+3 already merged (#255, #250, #249).
+
+**Pending:** All 8 auto-merge PRs are waiting on the self-hosted runner queue.
+Pull `main` after they land.
+
 ## 2026-06-29 — Alpaca multi-account gateway fix merged (#255)
 `getAlpacaGateway` now binds API keys to `policy.connectedAccountId` instead of always using the
 active account. Fixes crossed Paper/Roth credentials and `Account Mismatch` / `Selected account is
