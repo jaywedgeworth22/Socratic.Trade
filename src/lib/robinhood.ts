@@ -440,6 +440,9 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
 
 export async function callRobinhoodMcpMethod(userId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
   const token = await getMcpAccessToken(userId);
+  if (!token) {
+    throw new Error("Robinhood not connected — reconnect your account in Settings → Connections");
+  }
   const response = await fetch(getRobinhoodMcpUrl(), {
     method: "POST",
     // Bound every Robinhood MCP call (incl. place_equity_order) so a hung connection can't block
@@ -449,7 +452,7 @@ export async function callRobinhoodMcpMethod(userId: string, method: string, par
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       "mcp-protocol-version": getRobinhoodMcpProtocolVersion(),
-      ...(token ? { authorization: `Bearer ${token}` } : {})
+      authorization: `Bearer ${token}`
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
@@ -459,7 +462,10 @@ export async function callRobinhoodMcpMethod(userId: string, method: string, par
     })
   });
 
-  if (response.status === 401) clearMcpOAuthTokens(userId);
+  if (response.status === 401) {
+    clearMcpOAuthTokens(userId);
+    throw new Error("Robinhood session expired — reconnect your account in Settings → Connections");
+  }
 
   const body = await response.text();
   const payload = parseMcpResponseBody(body, response.headers.get("content-type"));
