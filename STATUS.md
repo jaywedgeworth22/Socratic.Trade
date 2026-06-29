@@ -4,6 +4,12 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
+Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
+`z-[1300]` so the Settings/Help/Accounts modal no longer sits behind the dashboard header
+(`z-[1100]`). Verification: `npx tsc --noEmit` clean. PR open with auto-merge enabled; CI
+`verify` will run lint/test/build. See `docs/rollouts/2026-06-29-modal-z-index.md`.
+
 ## 2026-06-29 — Strategy engine improvements (Cursor / main)
 Three improvements landed in the `main` integration worktree via Cursor:
 1. **Bear gets structured data** — `compactCandidateForPrompt` now includes
