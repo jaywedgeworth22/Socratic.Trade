@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-29 (`cursor/claude-green-red-team-f06c`, Cursor): **Claude as a
+> first-class Green/Red Team model** — `claude-*` models are now selectable for
+> both the Bull proposer and Bear reviewer (not just chat), via a new
+> `anthropic-messages` transport in `resolveLlmEndpoint` and a shared request
+> builder (`src/lib/llm-call.ts`) that uses Anthropic forced tool-use for
+> guaranteed JSON while leaving OpenAI-compatible providers unchanged. No roadmap
+> change; see `docs/rollouts/2026-06-29-claude-green-red-team.md`.
+>
 > 2026-06-29 (`main`, Cursor): **Strategy engine improvements** — Bear debate
 > now receives structured market data (technical indicators, factor breakdowns,
 > smart-money signals, macro context) to independently fact-check the Bull.

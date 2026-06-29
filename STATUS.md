@@ -4,6 +4,22 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-29 — Claude is a first-class Green/Red Team model (Cursor / cursor/claude-green-red-team-f06c)
+Claude (Anthropic) is now selectable for BOTH the Green Team (Bull proposer) and Red Team
+(Bear reviewer) in Strategy Studio, not just the Assistant chat. Added an
+`anthropic-messages` transport + `claude-*` routing in `resolveLlmEndpoint`, and a shared
+request builder (`src/lib/llm-call.ts`: `buildLlmRequestBody`/`llmAuthHeaders`/`extractLlmText`)
+that shapes the Anthropic Messages body (top-level `system`, `max_tokens`, `x-api-key`,
+**forced tool-use** for guaranteed JSON) while OpenAI-compatible providers keep their exact
+prior `response_format`/`json_schema` behavior. All six strategy call sites (Bull, Bear,
+red-team debate, tuning, revalidation, post-mortem) now route through it, so a Claude Green
+model works end-to-end. UI gained an "Anthropic (Claude)" optgroup in both selects;
+`strategyLlmServiceForModel` maps `claude-*` → `anthropic` for key-gating. The "Claude can't
+do JSON" blocker was a misread: it just needed forced tool-use instead of OpenAI's
+`response_format`. Verification: `npx tsc --noEmit` clean, `npm run lint` 0 errors,
+`npm test` 158 files / 1533 tests, `npm run build` clean. See
+`docs/rollouts/2026-06-29-claude-green-red-team.md`.
+
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
 `z-[1300]` so the Settings/Help/Accounts modal no longer sits behind the dashboard header

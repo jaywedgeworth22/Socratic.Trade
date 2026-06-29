@@ -1,8 +1,9 @@
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, withLlmRequestBounds } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
@@ -17,6 +18,17 @@ export interface RedTeamDebateResult {
 
 /** Abort the Red Team LLM call after this long so a hung provider can't wedge the run lock. */
 const RED_TEAM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 45_000;
+
+/** Verdict shape the Red Team must return — used as the Anthropic forced-tool schema (Claude red model). */
+const RED_TEAM_VERDICT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["rejected", "reason"],
+  properties: {
+    rejected: { type: "boolean", description: "true if you found a critical flaw, false if approved" },
+    reason: { type: "string", description: "your counter-argument or approval reasoning" }
+  }
+};
 
 /**
  * Which LLM provider runs the Red Team (Bear) debate. Set RED_TEAM_LLM_PROVIDER=anthropic to run the
@@ -95,27 +107,20 @@ Respond with a JSON object containing:
   }
   if (!llmKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured." };
 
-  const isChatCompletions = transport === "chat-completions";
-
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ],
-        response_format: { type: "json_object" }
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ]
-      },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate, model, reasoningEffort: policy.llmReasoningEffort }
+  // OpenAI-compatible providers keep the historical bare-`json_object` request (the verdict shape is
+  // described in the prompt); when the resolved Red model is Claude, the same schema is enforced as a
+  // forced Anthropic tool so the verdict still comes back as clean, parseable JSON.
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent,
+      schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's accept/reject verdict." },
+      openAiJsonObject: true,
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate,
+      reasoningEffort: policy.llmReasoningEffort
+    }
   );
 
   try {
@@ -143,10 +148,7 @@ Respond with a JSON object containing:
       async () => {
         const response = await llmFetch(url, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${llmKey}`
-          },
+          headers: llmAuthHeaders({ provider, key: llmKey }),
           body: JSON.stringify(body),
           // A hung provider would otherwise hold the per-user run lock until the OS socket
           // timeout, starving the scheduler's concurrency slots. Abort and fail closed.
@@ -164,9 +166,7 @@ Respond with a JSON object containing:
 
         const payload = await response.json();
         recordLlmUsage({ userId, provider, model, context: "red-team", keySource, keyRef, ...extractLlmUsage(payload) });
-        const text = payload.choices?.[0]?.message?.content ??
-                     payload.output_text ??
-                     payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
+        const text = extractLlmText(payload);
 
         if (text) {
           const parsed = JSON.parse(text) as RedTeamDebateResult;
