@@ -37,6 +37,16 @@ plus an end-to-end mock-ingest test proving browser + server capture with redact
 scaffolding removed). To activate in prod: set `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`
 (and optionally `SENTRY_AUTH_TOKEN` for source maps). See
 `docs/rollouts/2026-06-29-sentry-browser-and-build-wrapper.md`.
+## 2026-06-29 — Alpaca multi-account gateway fix merged (#255)
+`getAlpacaGateway` now binds API keys to `policy.connectedAccountId` instead of always using the
+active account. Fixes crossed Paper/Roth credentials and `Account Mismatch` / `Selected account is
+not available` on scheduled non-active Alpaca runs. Merged to `main`; deploy in progress.
+
+## 2026-06-29 — Robinhood MCP equity quotes (Cursor / cursor/fix-robinhood-equity-quotes)
+Prod ops snapshot: `get_equity_quotes` failed with `unexpected additional properties
+["account_number"]` — gateway sent `account_number` but Robinhood MCP only accepts `symbols`.
+Agentic runs completed with 0 proposals. Fix + test on branch; PR pending. See
+`docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`.
 
 ## 2026-06-29 — CI trusted-bot allowlist (Cursor / cursor/ops-diagnostic-snapshot-487f)
 PR #249 `verify` / `smoke` / `gitleaks` failed because `cursor[bot]` pushes hit the

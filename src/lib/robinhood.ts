@@ -269,7 +269,6 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
     try {
       const raw = await this.callTool("get_equity_quotes", {
-        account_number: accountNumber,
         symbols: symbols.map(normalizeSymbol)
       }) as Record<string, unknown>;
       const entries = Array.isArray(raw?.results) ? raw.results : Array.isArray(raw?.quotes) ? raw.quotes : Array.isArray(raw) ? raw : [];

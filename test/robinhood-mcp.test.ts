@@ -73,6 +73,48 @@ describe("robinhood mcp transport", () => {
     });
   });
 
+  it("getEquityQuotes does not send account_number to Robinhood MCP", async () => {
+    vi.stubEnv("ROBINHOOD_ADAPTER", "mcp");
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      if (request.method === "tools/call") {
+        toolCalls.push({ name: request.params.name, args: request.params.arguments ?? {} });
+      }
+      if (request.method === "initialize") {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2025-03-26" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            structuredContent: {
+              data: { results: [{ symbol: "AAPL", quote: { last_trade_price: "201.5" } }] },
+              guide: "ok"
+            }
+          }
+        }),
+        { status: 200,
+          headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    const quotes = await getRobinhoodGateway("user-a").getEquityQuotes("713670347", ["AAPL"]);
+    expect(quotes.AAPL?.price).toBe(201.5);
+    const quoteCall = toolCalls.find((call) => call.name === "get_equity_quotes");
+    expect(quoteCall?.args).toEqual({ symbols: ["AAPL"] });
+    expect(quoteCall?.args).not.toHaveProperty("account_number");
+  });
+
   it("reports missing auth without calling the MCP server", async () => {
     vi.stubEnv("ROBINHOOD_ADAPTER", "mcp");
     const fetchMock = vi.fn();
