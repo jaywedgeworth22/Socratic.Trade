@@ -50,7 +50,6 @@ describe("robinhood mcp transport", () => {
   });
 
   it("parses JSON structuredContent tool results", async () => {
-    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "test-token");
     vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
     vi.stubGlobal("fetch", async () => {
       return new Response(
@@ -66,6 +65,8 @@ describe("robinhood mcp transport", () => {
     });
 
     const { callRobinhoodMcpTool } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
     await expect(callRobinhoodMcpTool("user-a", "get_equity_quotes", { symbols: ["AAPL"] })).resolves.toEqual({
       quotes: [{ symbol: "AAPL", price: "200" }]
@@ -125,7 +126,6 @@ describe("robinhood mcp transport", () => {
   });
 
   it("surfaces JSON-RPC errors with the broker message", async () => {
-    vi.stubEnv("ROBINHOOD_MCP_AUTH_TOKEN", "test-token");
     vi.stubGlobal("fetch", async () => {
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: "1", error: { code: -32000, message: "not authorized" } }), {
         status: 200,
@@ -134,6 +134,8 @@ describe("robinhood mcp transport", () => {
     });
 
     const { callRobinhoodMcpTool } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
     await expect(callRobinhoodMcpTool("user-a", "get_accounts", {})).rejects.toThrow("not authorized");
   });

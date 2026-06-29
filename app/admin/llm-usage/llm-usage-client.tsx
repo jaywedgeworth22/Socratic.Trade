@@ -95,7 +95,7 @@ function KeyBadge({ row }: { row: UsageRow }) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-muted bg-surface-2 border border-line rounded px-2 py-0.5">
         <span className="opacity-50">key removed</span>
-        <span className="text-muted/60">·</span>
+        <span className="text-muted/75">·</span>
         <span>{label}</span>
       </span>
     );
@@ -103,7 +103,7 @@ function KeyBadge({ row }: { row: UsageRow }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs bg-surface-2 border border-line rounded px-2 py-0.5 font-mono">
       <span className="text-accent">{display}</span>
-      <span className="text-muted/60">·</span>
+      <span className="text-muted/75">·</span>
       <span className="text-muted font-sans">{label}</span>
     </span>
   );
@@ -149,9 +149,9 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
             <div key={i} className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2 text-muted">
                 <span className="font-mono text-fg/80">{r.model ?? "—"}</span>
-                <span className="text-muted/60">·</span>
+                <span className="text-muted/75">·</span>
                 <span>{contextLabel(r.context)}</span>
-                <span className="text-muted/40">·</span>
+                <span className="text-muted/60">·</span>
                 <span>{r.calls} call{r.calls !== 1 ? "s" : ""}</span>
               </div>
               <div className="flex items-center gap-3 font-mono text-muted">

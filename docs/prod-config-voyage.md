@@ -34,7 +34,8 @@ requires re-embedding every stored document into a new Pinecone index. Plan it a
 Expect a degraded/empty-retrieval window during the migration; version-tag vectors so old/new can
 coexist during cutover. Do NOT flip the model constant without doing this.
 
-## Follow-ups (additive, not yet shipped)
-- Voyage/Pinecone usage metering (mirror `llm-usage.ts`).
-- Chunk-level `content_hash` dedup to skip re-embedding unchanged text (saves tokens).
+## Follow-ups (additive)
+- ~~Voyage/Pinecone usage metering~~ — **shipped 2026-06-29** (`src/lib/rag-metering.ts`, `rag_usage` table, wired into `vector-db.ts`)
+- ~~Chunk-level `content_hash` dedup~~ — **shipped 2026-06-29** (`document_chunks` table, `filterNewDocumentChunks` in `storeDocument`, `hashContent` in `chunkDocument`)
+- Full 8-K body ingest — **shipped 2026-06-29** (gated behind `WEB_SOURCE_SEC8K_FULL_BODY`, default OFF; `ingestEightKBody` in `sec8k.ts`)
 - Wire `docType`/`minScore` into specific callers (e.g. a fundamentals-only retrieval).

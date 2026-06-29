@@ -11,6 +11,19 @@ filling the missing pieces.
 > cancel/drift reconciliation, zero-NAV & sizer boundaries, backtest timeline fixes, WCAG AA contrast,
 > responsive mobile tabs, ARIA accessible model pickers, P&L bar charts, and button standardization.
 > No roadmap change; see `docs/rollouts/2026-06-29-multi-agent-system-optimizations.md`.
+> 2026-06-29 (`main`, Cursor): **Strategy engine improvements** — Bear debate
+> now receives structured market data (technical indicators, factor breakdowns,
+> smart-money signals, macro context) to independently fact-check the Bull.
+> Market holiday/early-close calendar prevents runs on closed days. "Do nothing"
+> threshold (`minProposalScoreThreshold`) skips the LLM when all candidates score
+> below the bar. See `docs/rollouts/2026-06-29-strategy-engine-improvements.md`.
+>
+> 2026-06-29 (`codex/profile-menu`): profile menu and header cleanup —
+> Auth.js sessions now retain display identity metadata, the dashboard snapshot
+> exposes provider avatar/name/login provider, and the header consolidates
+> Activity, System Help, theme toggle, and Sign Out under a profile menu with
+> photo-or-initials fallback. No roadmap change; see
+> `docs/rollouts/2026-06-29-profile-menu.md`.
 >
 > 2026-06-29 (`codex/google-auth-infisical-note`): CI runner billing unblock —
 > GitHub-hosted `ubuntu-latest` jobs are failing before startup due account
@@ -18,6 +31,11 @@ filling the missing pieces.
 > target the existing self-hosted `trading-live` runner for same-repo branches/PRs
 > only. No roadmap change; see
 > `docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md`.
+> 2026-06-29 (`cursor/ci-autofix-automation-6dbc`): self-hosted gitleaks cleanup —
+> Security now removes stale macOS gitleaks installer temp files before invoking
+> the pinned action, preserving scan behavior while avoiding persistent-runner
+> temp-file collisions. No roadmap change; see
+> `docs/rollouts/2026-06-29-gitleaks-temp-cleanup.md`.
 >
 > 2026-06-28 (`codex/thin-boot-strip`): first-paint loader selection —
 > replaced the Quiet Tiles SSR loading shell with option 4, the thin boot strip:
@@ -210,6 +228,21 @@ scope, timeline, or approach changed.
   previously null, are now ALSO fillable via the opt-in FMP `price-target-consensus` provider
   (`FMP_PRICE_TARGETS_ENABLED`) — **BUILT 2026-06-25**; they thread through the enrichment
   surface onto the quote and into `marketQuoteToAnalyst`.
+  (3) **Fundamentals/analyst read-back tier** — App A now exposes
+  `GET /api/market/fundamentals|analyst/:ticker` (the donated tables finally have readers);
+  App B reads them via `getAppAFundamentals`/`getAppAAnalyst` + a
+  `CongressTradeEnrichmentProvider` seated ahead of the paid fundamentals providers, gated by its OWN
+  `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (separate from the price-read `CONGRESS_TRADE_READS_ENABLED`), with a
+  `CONGRESS_TRADE_MAX_STALE_DAYS` freshness cap and `NEWS_CACHE_TTL_MS` caching
+  — **BUILT 2026-06-25** (`docs/congress-trade-consume.md` §1b,
+  `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`). Paid-call elimination is an **opt-in coverage
+  hint** (`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): the cascade hands paid providers a per-symbol set of the
+  fields App A already covers (+ the analyst source) so they skip only the redundant SUB-calls (e.g. FMP's
+  ratios-ttm / grades-consensus / price-target calls) while still fetching their unique fields
+  (insider/senate); no whole provider is skipped → no field lost; default OFF. App A reads are merged
+  across all fresh rows, freshness-gated by the data `date`, and negative-cached 1h (transport errors are
+  NOT cached). A→B push wired (`APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` on App A; App B needs the same token
+  + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`).
 - **congress.trade — App A handoff: new analytics endpoints + adjusted-close fix** (2026-06-25,
   `docs/rollouts/2026-06-25-app-a-handoff-integration.md`): consumes three new App A endpoints
   now live/merging (App A PRs #77/#79/#80): `GET /api/analytics/conviction` (composite 0–100

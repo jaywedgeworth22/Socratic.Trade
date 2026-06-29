@@ -19,6 +19,44 @@ visibility conditionally based on whether any active/tuning model is a reasoning
 other providers' thinking/reasoning configuration options. Verified `npx tsc --noEmit`, `npm run lint`,
 `npm test` (1,498 tests), and `npm run build` are all green. See
 `docs/rollouts/2026-06-29-strategy-tuning-ui-fixes.md`.
+## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
+Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
+`z-[1300]` so the Settings/Help/Accounts modal no longer sits behind the dashboard header
+(`z-[1100]`). Verification: `npx tsc --noEmit` clean. PR open with auto-merge enabled; CI
+`verify` will run lint/test/build. See `docs/rollouts/2026-06-29-modal-z-index.md`.
+
+## 2026-06-29 — Strategy engine improvements (Cursor / main)
+Three improvements landed in the `main` integration worktree via Cursor:
+1. **Bear gets structured data** — `compactCandidateForPrompt` now includes
+   `technicalScore`, `technicalDirection`, `technicalSignals`; the Bear system
+   prompt explicitly directs it to fact-check the Bull's prose against the
+   structured fields (factors, px, fcf, de, pe, shortFloat, techScore,
+   senateNet, insiderSent, etc.) and weigh macro context.
+2. **Market holiday calendar** — new `src/lib/market-calendar.ts` with NYSE
+   holidays for 2025–2027, early-close days (Black Friday, Independence Day eve,
+   Christmas Eve), `isMarketOpen()`, `isTradingDay()`, `nextMarketOpen()`. The
+   strategy loop now skips runs on full-closure days with an audit event.
+3. **"Do nothing" threshold** — `policy.tuning.minProposalScoreThreshold` (0–100,
+   default 0 = no filtering) exposed in Settings → Tuning. Candidates below
+   threshold are dropped before the LLM; if none survive, the LLM call is skipped
+   and an audit event fires. Proactive exits still execute.
+Verification: `npx tsc --noEmit` clean, `npm test` 156 files / 1508 tests passed,
+`eslint` on changed files warnings-only. See
+`docs/rollouts/2026-06-29-strategy-engine-improvements.md`.
+
+## 2026-06-29 — Profile menu and header cleanup
+Branch `codex/profile-menu`. In progress: Auth.js now carries display metadata
+(name, provider avatar, login provider) alongside the verified email, the
+dashboard snapshot exposes that display identity, and the command bar uses a
+single profile menu with avatar/initials fallback. The menu contains Settings,
+Account Management, Activity Log, System Help, light/dark mode, and Sign Out,
+removing the separate Help/theme/email/logout/Activity controls from the top
+bar. Verification so far: `npx tsc --noEmit` and focused auth/identity/UI tests.
+Final verification passed: `npx tsc --noEmit`, full `npm test` (156 files /
+1,498 tests), `npm run lint -- --quiet`, `npm run build` (existing Next
+middleware deprecation warning only), and Playwright desktop/mobile menu smoke
+against `http://127.0.0.1:4137/`. See
+`docs/rollouts/2026-06-29-profile-menu.md` for Antigravity handoff notes.
 
 ## 2026-06-29 — CI uses self-hosted runner while GitHub billing is blocked
 Branch `codex/google-auth-infisical-note`. PR #225 initially passed local
@@ -39,6 +77,11 @@ commit SHA before running on the self-hosted runner. Main Security and PR #224
 then exposed a macOS runner cache issue where the pinned action refused to
 overwrite `${TMPDIR}/gitleaks.tmp`; Security now removes that stale temp file
 before invoking the action.
+commit SHA before running on the self-hosted runner. A follow-up on
+`cursor/ci-autofix-automation-6dbc` cleans stale macOS gitleaks installer temp
+files before the pinned action runs, after the self-hosted runner reused a
+leftover `${TMPDIR}/gitleaks.tmp` file and failed before scanning. See
+`docs/rollouts/2026-06-29-gitleaks-temp-cleanup.md`.
 
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google
@@ -363,6 +406,14 @@ this run: the offending commit `0add0c2` is no longer in branch history; the tip
 ## 2026-06-27 — PR merge resolution & production verification
 Branch `agent/antigravity` (`resolve-prod-merge-prs`). Resolved conflicts in all three open PRs: PR #175 (dashboard-client.tsx + STATUS.md), PR #160 (PLAN.md + STATUS.md), and PR #141 (orchestrator.ts + STATUS.md). Verified each locally: TypeScript compiles clean and all tests passed (1441+, 1446+, and 1442+ respectively). The local `npm run build` gate was run only for PR #175; for PR #160 and PR #141 the build is exercised by the required `verify` CI workflow before merge (see `docs/rollouts/2026-06-27-pr-merge-resolution.md`). Pushed to remote branches; awaiting auto-merge via CI checks. Verified that the production PM2 instance is running and healthy on port 4000 (health check returns 200 OK with ticking scheduler).
 
+## 2026-06-27 — Codex autofix on PR #175 (auth/Robinhood): merge marker + rollout file lists
+Branch `claude/wonderful-wozniak-xploaq`. Addressed the remaining non-outdated Codex review items on
+PR #175: (1) removed the leftover `>>>>>>> origin/main` merge-conflict marker in `STATUS.md`
+(git diff --check clean); (2) completed the Robinhood rollout note's Files section to list `STATUS.md`
+and the note itself, per `AGENTS.md` rollout minimums. The three P1/P2 auth findings (allowlist gating,
+verified-email guard, Apple rollout handoff) were already fixed in earlier commits (`ba7004e`,
+`49e8ad2`, `0cca3fa`) — verified present and threads resolved. Merged `origin/main` (#141 chat
+read-only state tools) cleanly. Verify trio run before push.
 
 ## 2026-06-27 — HANDOFF: cutover crash UNRESOLVED + the "bash 3.2" claim below is WRONG
 Branch `claude/practical-mendel-cqtduf`. The operator reproduced the line-200
@@ -377,6 +428,58 @@ was blocked by a `STATUS.md` merge conflict holding the 4 required checks ("awai
 resolution"), NOT by "agent pushes don't trigger CI" (that earlier conclusion was wrong);
 re-merging `origin/main` into the branch (commit `6476919`) clears it. Cutover on the box is still
 operator-only and outstanding (incl. rotating the two compromised Client Secrets).
+
+## 2026-06-25 — Cross-app consumer reads (fundamentals/analyst from Congress.Trade)
+Branch `claude/crossapp-consumer-reads-y8ojii`. Added the App B half of the
+fundamentals/analyst data-sharing: `getAppAFundamentals()` / `getAppAAnalyst()` in
+`congress-trade-client.ts` and a `CongressTradeEnrichmentProvider` registered ahead
+of the paid fundamentals providers in `data-providers.ts`, **gated OFF by its OWN
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`** (separate from the price-read
+`CONGRESS_TRADE_READS_ENABLED`). Congress.Trade now serves the matching
+`/api/market/fundamentals/:ticker` + `/api/market/analyst/:ticker` reader routes.
+Supplies only fundamentals/analyst (no price) so quote ordering is unchanged; no new
+`SymbolEnrichment` field. tsc clean, 1184 tests pass, build OK. Next: flag flip to
+enable in prod. Now includes an **opt-in paid-call short-circuit**
+(`ENRICHMENT_SHORT_CIRCUIT_ENABLED`): when App A covers a symbol's fundamentals (`peRatio`+`eps`), the
+paid fundamentals providers are skipped for it (`costTier:"paid"` tags; default OFF, +2 tests). App A
+misses are negative-cached 1h. A→B push wired: `APP_B_IMPORT_URL`+`APP_B_INGEST_TOKEN` set as App A
+Worker secrets (App B needs the same token + `SECURITIES_IMPORT_HISTORY_TIER_ENABLED`). tsc clean, 1205
+tests, build OK. See `docs/rollouts/2026-06-25-crossapp-consumer-reads.md`. **Codex round 2 (PR #160):**
+drop non-positive App A peRatio/52w sentinels. **Codex round 3:** replaced the whole-provider skip (it
+silently dropped bundled paid providers' news/insider/senate/quote fields) with a per-symbol
+`EnrichmentContext` coverage hint — paid providers now skip only redundant *sub-calls* (FMP skips
+ratios-ttm/grades-consensus when App A has P/E+analyst, still fetches insider/senate); plus key App A's
+analyst under its upstream source so the cascade doesn't double-count the same consensus. **Codex round 4:**
+freshness now keys off the data `date` (not `updatedAt`) so today's backfill of old data falls through;
+FMP skips consensus only when App A's analyst is fmp-sourced (carries `analystSource` in the hint); a
+coverage-trimmed FMP fetch is no longer cached as a full hit. **Codex round 5:** transport errors no longer
+negative-cached (retry next scan); App A reads merge latest-non-null across all fresh rows; FMP also skips
+the price-target call when App A covers all four targets; cascade credits `congress.trade` as a contributor
+only when its analyst entry survives the same-source de-dupe. **Flag split (owner chose):** fundamentals
+tier now gated by its own `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (default off), independent of price reads;
+set on in Infisical. **Codex round 6:** App A positive cache honors `ttlMs()`/`NEWS_CACHE_TTL_MS`; reads
+bounded with `from=today−maxStaleDays`; FMP target-skip only suppresses caching when targets were actually
+going to be fetched. **Codex round 7:** positive-value guard on App A price targets; short-circuit awaits
+only the congress.trade tier (paid providers no longer serialized behind unrelated free tiers); PLAN.md
+flag ref fixed. **Codex round 8 (doc-only):** rollout enablement steps point at the new
+`CONGRESS_TRADE_FUNDAMENTALS_ENABLED`. Merged `origin/main` (5f83ec2) 2026-06-25. 1224 tests.
+**Codex round 12 (PR #160):** `rowIsFresh` now rejects future-dated App A rows (2-day skew) so clock-skew/
+bad-import rows can't win first-wins; the short-circuit FMP cache-hit path treats a stripped leftover as a
+MISS when App A already covers the remaining field (e.g. `peRatio`) so FMP's unique insider/senate/target
+fields get refetched. Other non-outdated Codex threads this round were already implemented earlier (verified
++ resolved). Merged `origin/main` 2026-06-27. tsc clean, 1450 tests, build OK.
+## 2026-06-26 — Fix: Robinhood auth UX (early exit + readiness chip + error translation)
+Branch `claude/wonderful-wozniak-xploaq`. Three UX improvements for the "Robinhood not connected"
+state. (1) **Early exit:** `callRobinhoodMcpMethod` now throws "Robinhood not connected" before
+making any HTTP request when no OAuth token is stored — prevents the silent no-auth request that
+previously reached the API and always 401'd. (2) **Friendlier errors:** 401 response now produces
+"Robinhood session expired — reconnect in Settings → Connections" instead of the raw
+"Robinhood MCP HTTP 401: authentication required". (3) **Readiness chip:** a new
+`robinhoodMcpConnected` field in the dashboard snapshot drives a conditional "⚠ Robinhood" chip
+in the ReadinessStrip when `activeBroker === "robinhood"` and no token is stored — visible on page
+load, before any order attempt. (4) **UI translation:** `humanizeBrokerError()` maps already-stored
+"Robinhood MCP HTTP 401" proposal error strings to the friendlier message in the Decisions tab.
+Verify: tsc ✓ · 1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-robinhood-auth-ux.md`.
 
 ## 2026-06-26 — Cutover crash root cause: macOS bash 3.2 mis-parses a multibyte char next to `$VAR`
 Branch `claude/practical-mendel-cqtduf`. The operator's `scripts/infisical-prod-cutover.sh: line 200:
@@ -597,6 +700,7 @@ Verify: `node --check` ✓ · `bash -n` ✓ · fake-`infisical`-shim tests (UA m
 per-project identities, token-drop, exit-code propagation) ✓ · tsc ✓ · **1250/1250** ✓ · build ✓.
 Operator unblock for the in-flight cutover: `unset INFISICAL_SHARED_TOKEN` then re-run (app verify
 already passes). See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
+
 ## 2026-06-26 — Stop-execution capability correction (copy) + verified broker matrix
 Branch `agent/claude-stop-execution`. Retracts a wrong Phase-3 claim ("no broker holds trailing stops").
 Diverse adversarial verification (84 agents, primary docs, 2 skeptics/claim — workflow `wf_e5bf1b0a-04d`):
@@ -646,6 +750,7 @@ available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · 
 200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
 for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
 
+>>>>>>> origin/main
 ## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
 Branch `feat/deepseek-ntfy-price-tiers` (throwaway worktree `~/apps/trading-ag13`). (1) **DeepSeek** =
 6th provider (chat + strategy), same OpenAI-compatible wiring as gemini/mistral: db-api-keys
@@ -738,6 +843,20 @@ live dashboard 200 + chat mock 200 (Alpaca fallback not exercisable locally — 
 render test was dropped: the repo's oxc transformer honors tsconfig `jsx: preserve` and can't transform
 an imported `.tsx` in vitest; Markdown is covered by build + live + react-markdown's escaping.) See
 `docs/rollouts/2026-06-25-chat-markdown-and-quote-fallback.md`.
+
+## 2026-06-26 — GitHub OAuth + Apple Sign In + auth security hardening
+Branch `claude/wonderful-wozniak-xploaq`. Three auth features + two Codex P1 security fixes.
+**GitHub OAuth:** added GitHub as a second sign-in option alongside Google so a deployment without
+GCP credentials can still use Auth.js. **Security P1 (Codex):** empty `ALLOWED_EMAILS` with Auth.js
+(no CF Access) now defaults to primary-only, not allow-all — prevents any GitHub account from signing
+in without an explicit allowlist entry. **Identity-source fix (Codex P1):** `isEmailAllowed` now
+takes a `fromCf: boolean` parameter tracked per-request in middleware — CF-defer only applies when CF
+actually provided the header, not just when the CF config flag is on. **Apple Sign In:** added Apple
+as a third OAuth option (`AUTH_APPLE_ID`/`AUTH_APPLE_SECRET`); warns in the UI when Apple is the only
+provider (Apple only sends email on first authorization — session expiry would lock users out).
+**GitHub verified-email:** `signIn` callback calls `/user/emails` independently and verifies the
+`verified` flag; fails closed on any API error. Verify: tsc ✓ · 1253/1253 ✓ · build ✓ · /login ƒ
+(Dynamic). See `docs/rollouts/2026-06-26-github-oauth.md` and `docs/rollouts/2026-06-26-apple-login.md`.
 
 ## 2026-06-26 — Cutover script prompts for the Infisical token
 Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,
@@ -959,12 +1078,16 @@ tsc clean · policy+persistence tests 56 passed · full trio via land.sh. See
 ## 2026-06-25 — cache-provenance.test.ts CI fix (pre-existing flake)
 Branch `claude/magical-faraday-uce1uy`. Fixed the long-standing flake in `test/cache-provenance.test.ts:112` that was blocking PR #151. The "user-keyed result is NOT returned for a different userId" test called `vi.unstubAllGlobals()` before userB's `fetchMacroData()` call, assuming all network calls would fail. But the Yahoo VIX fallback path added to `fetchMacroData` (added after the test was written) can reach the live Yahoo Finance URL in CI, returning `asOf: today` instead of `"unavailable"`. Fix: replace `vi.unstubAllGlobals()` with a rejecting fetch stub so the VIX fetch also fails deterministically. No production code changed. 1151/1151 tests pass.
 
-## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager
+## 2026-06-25 — Docs: `.env.local` source-of-truth + GCP Secret Manager **(SUPERSEDED — see entry above: Switch all secret delivery to Infisical)**
 Branch `claude/practical-mendel-cqtduf`. Docs-only. Added a "Configuration & secrets
 (`.env.local`) — what's authoritative" section to `docs/deployment.md`: `.env.local` is
-git-ignored (only `.env.example` tracked), each worktree's copy is independent, and **GCP
-Secret Manager is the authoritative upstream for secret values** — every `.env.local` is a
-local cache. Documents the `*:gcp` runner (`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
+git-ignored (only `.env.example` tracked), each worktree's copy is independent. **(Superseded
+later the same day: the GCP Secret Manager path was removed entirely — Infisical is now the
+single secrets source. See the "Switch all secret delivery to Infisical" entry above +
+`docs/rollouts/2026-06-25-switch-to-infisical-remove-gcp.md`.)**
+Originally stated **GCP Secret Manager is the authoritative upstream for secret values** —
+every `.env.local` is a local cache. Documented the `*:gcp` runner
+(`scripts/gcp-secrets-run.mjs`: `GCP_PROJECT_ID`+ADC,
 `GCP_SECRET_NAMES`/`GCP_SECRETS_PREFIX`/`GCP_SECRETS_OVERWRITE`), the seed→diverge relationship
 across the integration/agent/production copies, and that per-user keys live encrypted in
 `user_api_keys`, not `.env.local`. Addressed four Codex review rounds on PR #150: steer to

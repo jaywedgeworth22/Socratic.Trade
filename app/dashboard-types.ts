@@ -44,6 +44,9 @@ export interface DashboardSnapshot {
   currentUser?: {
     userId: string;
     email?: string;
+    name?: string;
+    imageUrl?: string;
+    loginProvider?: string;
     isAdmin: boolean;
   };
   /** At least one LLM provider has a resolvable credential for this user (own key OR operator failover).
@@ -105,6 +108,8 @@ export interface DashboardSnapshot {
     configured: boolean;
     enabledEvents: string[];
   };
+  /** True when activeBroker is not Robinhood, or when it is and an OAuth token is stored. */
+  robinhoodMcpConnected: boolean;
 }
 
 export type SortDir = "asc" | "desc";

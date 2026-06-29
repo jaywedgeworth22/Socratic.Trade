@@ -10,6 +10,14 @@
 // the final real tier — no API key required, uses session crumb auth.
 
 import { normalizeSymbol } from "./money";
+import {
+  congressReadsEnabled,
+  congressFundamentalsEnabled,
+  getAppAFundamentals,
+  getAppAAnalyst,
+  type AppAFundamental,
+  type AppAAnalyst,
+} from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
 import { getStreamedHeadlines } from "./streams/news-store";
@@ -153,12 +161,43 @@ export type EnrichmentSourcedField =
   | "targetLow"
   | "targetMedian";
 
+/** Per-run hint the cascade passes to paid providers when the short-circuit is on.
+ *  `coveredFields[symbol]` is the set of `SymbolEnrichment` keys a free upstream
+ *  (App A / congress.trade) already filled for that symbol. A provider may use it to
+ *  skip the redundant SUB-calls that would only re-fetch already-covered fields —
+ *  while still fetching everything else it uniquely supplies, so no field is lost. */
+export interface EnrichmentContext {
+  coveredFields?: Record<string, ReadonlySet<string>>;
+  /** Per-symbol upstream provider of App A's analyst row (e.g. "fmp"/"finnhub"/
+   *  "yahoo-finance"), so a provider only skips its OWN consensus sub-call when App A's
+   *  analyst actually came from it — otherwise its independent vote must still be fetched
+   *  and blended. Absent/unknown source → don't skip (treat as a distinct vote). */
+  analystSource?: Record<string, string>;
+}
+
 export interface MarketEnrichmentProvider {
   name: string;
   configured: boolean;
-  enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>>;
+  enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>>;
   /** Registered providers that supplied ≥1 field in the most recent enrich() run (cascade only). */
   activeSources?: string[];
+  /** Cost classification for the optional short-circuit (default "free" when unset).
+   *  "paid" providers receive a coverage hint so they can skip redundant sub-calls
+   *  for symbols a free upstream (App A) already covered. */
+  costTier?: "free" | "paid";
+}
+
+function flagEnabled(value: string | undefined): boolean {
+  const v = (value ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+/** Opt-in: skip a *paid* fundamentals provider's fetch for a symbol that App A
+ *  (congress.trade) already FULLY covered (the complete fundamentals + analyst
+ *  set), to eliminate the duplicate paid call. Default OFF — when off the cascade
+ *  runs every provider as before. */
+function enrichmentShortCircuitEnabled(): boolean {
+  // Needs the fundamentals tier (it supplies the coverage hint), not just price reads.
+  return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressFundamentalsEnabled();
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -324,6 +363,223 @@ async function fetchWithRetry(
   }
 }
 
+// Map a consensus label back to a representative 0–100 score, so App A rows that
+// carry only a `rating` string (no buy/sell counts) still flow through the
+// cascade's analystBySource blend (it builds the displayed rating from scores,
+// not from a raw analystRating scalar).
+const ANALYST_LABEL_SCORE: Record<string, number> = {
+  "strong buy": 90,
+  buy: 70,
+  outperform: 70,
+  overweight: 70,
+  accumulate: 70,
+  hold: 50,
+  neutral: 50,
+  "market perform": 50,
+  underperform: 30,
+  underweight: 30,
+  reduce: 30,
+  sell: 30,
+  "strong sell": 10,
+};
+function scoreFromAnalystLabel(label: string): number | undefined {
+  return ANALYST_LABEL_SCORE[label.trim().toLowerCase()];
+}
+// Short TTL for a *negative* App A cache entry (a symbol App A had nothing fresh
+// for). Long enough to stop re-hitting both endpoints on back-to-back scans, short
+// enough that a newly-pushed row is picked up the same day.
+const CONGRESS_NEG_TTL_MS = 60 * 60_000; // 1h
+// How stale an App A row may be before we treat it as a cache miss and let the
+// fresh paid providers win instead. Fundamentals move slowly, but a paused
+// cross-app push or an old backfilled-only row should not override current data.
+function congressMaxStaleMs(): number {
+  const days = Number(process.env.CONGRESS_TRADE_MAX_STALE_DAYS ?? 21);
+  return (Number.isFinite(days) && days > 0 ? days : 21) * 86_400_000;
+}
+function rowIsFresh(row: { date?: string | null; updatedAt?: string | null }, now: number): boolean {
+  // Judge freshness by the row's market-data `date`, NOT `updatedAt`: a backfill run
+  // today bumps `updatedAt` while the underlying data is months old, and such a stale
+  // row must fall through to the live paid providers rather than override them. Fall
+  // back to `updatedAt` only when `date` is absent.
+  const stamp = row.date || row.updatedAt;
+  if (!stamp) return false;
+  const t = Date.parse(stamp);
+  if (!Number.isFinite(t)) return false;
+  const age = now - t;
+  // Reject FUTURE-dated rows (clock skew / bad import / accidental future as-of date): a
+  // negative age would otherwise sail through the max-stale check and let future-dated
+  // fundamentals/analyst data win first-wins ahead of current providers. Allow a small
+  // skew so a date-only stamp from a timezone ahead of UTC (parsed as UTC midnight) isn't
+  // mistaken for the future; anything beyond that is not real data.
+  const FUTURE_SKEW_MS = 2 * 86_400_000;
+  if (age < -FUTURE_SKEW_MS) return false;
+  return age <= congressMaxStaleMs();
+}
+
+// ── Congress.Trade (App A) cross-app read tier ───────────────────────────────
+// Reads fundamentals + analyst consensus that App A already stored (it ingests
+// the same providers + receives our donated data), so App B doesn't re-derive
+// numbers App A has. Default-OFF (CONGRESS_TRADE_READS_ENABLED); fills only
+// fundamentals/analyst fields (no price), so it never disturbs real-time quote
+// ordering. Seated ahead of the paid fundamentals providers so its free,
+// congressional-universe data wins those fields when present. Reads go through
+// the same 6h enrichment cache as the other slow-moving providers, and stale App A
+// rows fall through so they don't override fresh paid data.
+export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "congress.trade";
+  constructor(private readonly userId?: string) {}
+  get configured(): boolean {
+    return congressFundamentalsEnabled();
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    if (!congressFundamentalsEnabled()) return {};
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    // Cache hits short-circuit before any HTTP — repeated scans don't re-hit App A.
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache(this.name, symbol, this.userId, false, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+    if (misses.length === 0) return result;
+
+    await Promise.all(
+      misses.map(async (symbol) => {
+        // Track whether EITHER read failed at the transport level (timeout/5xx/401 →
+        // []). A genuine "App A has nothing" (both reads OK, no fresh rows) is
+        // negative-cached; a transport error is NOT, so a fixed outage/token is retried
+        // on the next scan instead of being suppressed for the whole negative TTL.
+        let transportError = false;
+        // Bound the pull to the freshness window: rowIsFresh discards anything older than
+        // CONGRESS_TRADE_MAX_STALE_DAYS, so there's no point downloading the full history.
+        const fromDate = new Date(now - congressMaxStaleMs()).toISOString().slice(0, 10);
+        const [funds, analysts] = await Promise.all([
+          getAppAFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAFundamental[]; }),
+          getAppAAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAAnalyst[]; }),
+        ]);
+        // App A may return multiple fresh rows from different sources; merge the LATEST
+        // non-null value per field across all of them (rows are date-ascending), so a
+        // partial latest row doesn't discard a field an earlier fresh row supplied.
+        const freshFunds = funds.filter((r) => rowIsFresh(r, now));
+        const freshAnalysts = analysts.filter((r) => rowIsFresh(r, now));
+        const latestFund = <K extends keyof AppAFundamental>(
+          key: K,
+          valid: (v: NonNullable<AppAFundamental[K]>) => boolean = () => true
+        ): NonNullable<AppAFundamental[K]> | undefined => {
+          for (let i = freshFunds.length - 1; i >= 0; i--) {
+            const v = freshFunds[i][key];
+            if (v != null && valid(v as NonNullable<AppAFundamental[K]>)) return v as NonNullable<AppAFundamental[K]>;
+          }
+          return undefined;
+        };
+        const latestAnalyst = <K extends keyof AppAAnalyst>(
+          key: K,
+          valid: (v: NonNullable<AppAAnalyst[K]>) => boolean = () => true
+        ): NonNullable<AppAAnalyst[K]> | undefined => {
+          for (let i = freshAnalysts.length - 1; i >= 0; i--) {
+            const v = freshAnalysts[i][key];
+            if (v != null && valid(v as NonNullable<AppAAnalyst[K]>)) return v as NonNullable<AppAAnalyst[K]>;
+          }
+          return undefined;
+        };
+        const e: SymbolEnrichment = {};
+        if (freshFunds.length) {
+          // Validity filters: a non-positive P/E or 52-week high/low is a sentinel for
+          // "no real value", not a usable number — drop so they never win first-wins.
+          const pe = latestFund("peRatio", (v) => v > 0); if (pe !== undefined) e.peRatio = pe;
+          const eps = latestFund("eps"); if (eps !== undefined) e.eps = eps;
+          const beta = latestFund("beta"); if (beta !== undefined) e.beta = beta;
+          const dy = latestFund("dividendYield"); if (dy !== undefined) e.dividendYield = dy;
+          const hi = latestFund("week52High", (v) => v > 0); if (hi !== undefined) e.fiftyTwoWeekHigh = hi;
+          const lo = latestFund("week52Low", (v) => v > 0); if (lo !== undefined) e.fiftyTwoWeekLow = lo;
+          const fcf = latestFund("fcfYield"); if (fcf !== undefined) e.fcfYield = fcf;
+          const de = latestFund("debtToEquity"); if (de !== undefined) e.debtToEquity = de;
+          const eg = latestFund("epsGrowth"); if (eg !== undefined) e.epsGrowth = eg;
+        }
+        if (freshAnalysts.length) {
+          // Targets are independent scalars — fill each from the latest fresh row that has
+          // a POSITIVE value (App A can carry a 0/negative sentinel; the direct FMP parser
+          // keeps only positives, so a bad App A target must not win first-wins or, under
+          // the short-circuit, suppress FMP's valid target call).
+          const pos = (v: number) => v > 0;
+          const tMean = latestAnalyst("targetMean", pos); if (tMean !== undefined) e.targetMean = tMean;
+          const tHigh = latestAnalyst("targetHigh", pos); if (tHigh !== undefined) e.targetHigh = tHigh;
+          const tLow = latestAnalyst("targetLow", pos); if (tLow !== undefined) e.targetLow = tLow;
+          const tMed = latestAnalyst("targetMedian", pos); if (tMed !== undefined) e.targetMedian = tMed;
+          // The rating/counts/source form ONE coherent unit — take them from the latest
+          // fresh row that actually yields a score (keeps the source key consistent with
+          // the counts it came from), rather than mixing a rating from one source with
+          // counts from another.
+          for (let i = freshAnalysts.length - 1; i >= 0; i--) {
+            const a = freshAnalysts[i];
+            const counts = {
+              strongBuy: a.strongBuy ?? 0,
+              buy: a.buy ?? 0,
+              hold: a.hold ?? 0,
+              sell: a.sell ?? 0,
+              strongSell: a.strongSell ?? 0,
+            };
+            // Prefer counts; fall back to the label so rating-only rows still surface
+            // (the cascade derives the rating from analystBySource, not analystRating).
+            const score = analystScoreFromCounts(counts) ?? (a.rating ? scoreFromAnalystLabel(a.rating) : undefined);
+            if (score === undefined) continue;
+            const total = counts.strongBuy + counts.buy + counts.hold + counts.sell + counts.strongSell;
+            // Key the analyst entry under the UPSTREAM provider App A got it from (e.g.
+            // "fmp"/"finnhub"/"yahoo-finance"), not "congress.trade". The cascade blends
+            // analystBySource by key; if that same direct provider also runs, its entry
+            // overwrites this one (Object.assign) instead of counting the identical
+            // consensus as a second independent vote. Only when App A's source is unknown
+            // do we fall back to our own name so it still surfaces as a distinct read.
+            const sourceKey = a.source?.trim() ? a.source.trim().toLowerCase() : this.name;
+            e.analystRating = a.rating || labelFromAnalystScore(score);
+            e.analystScore = Math.round(score);
+            e.analystBySource = {
+              [sourceKey]: {
+                score: Math.round(score),
+                label: a.rating || labelFromAnalystScore(score),
+                ...(total > 0 ? { counts } : {}),
+              },
+            };
+            break;
+          }
+        }
+        if (Object.keys(e).length > 0) {
+          result[symbol] = e;
+          // Return e for THIS scan regardless, but only CACHE it when neither read failed:
+          // if one endpoint errored, caching the surviving half would suppress retry of the
+          // failed side for the whole TTL after the outage/token is fixed.
+          if (!transportError) {
+            // A PARTIAL hit — one field group actually contributed values and the other did
+            // not (e.g. fundamentals landed but the analyst push is minutes behind, OR a fresh
+            // row existed but carried only invalid/empty values) — must not be cached as
+            // complete under the full TTL, or the late-arriving half can't surface for hours.
+            // Judge by CONTRIBUTED fields, not just whether a fresh row existed. Cache a partial
+            // briefly (negative TTL); cache a complete both-halves row at the full TTL.
+            const FUND_KEYS = ["peRatio", "eps", "beta", "dividendYield", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "fcfYield", "debtToEquity", "epsGrowth"] as const;
+            const ANALYST_KEYS = ["analystBySource", "analystRating", "analystScore", "targetMean", "targetHigh", "targetLow", "targetMedian"] as const;
+            const haveFund = FUND_KEYS.some((k) => e[k] !== undefined);
+            const haveAnalyst = ANALYST_KEYS.some((k) => e[k] !== undefined);
+            const partial = haveFund !== haveAnalyst;
+            const expiry = now + (partial ? CONGRESS_NEG_TTL_MS : ttlMs());
+            writeEnrichmentCache(this.name, symbol, "shared", this.userId, e, expiry);
+          }
+        } else if (!transportError) {
+          // Negative cache ONLY a genuine "App A had nothing fresh" — never a transport
+          // error. Remember the miss briefly so repeated scans don't re-hit both
+          // endpoints every time; short TTL so a newly-pushed row is picked up soon.
+          writeEnrichmentCache(this.name, symbol, "shared", this.userId, {}, now + CONGRESS_NEG_TTL_MS);
+        }
+      })
+    );
+    return result;
+  }
+}
+
 // ── Provider factory ────────────────────────────────────────────────────────
 // Builds a cascade: [Finnhub?, FMP?] → Yahoo Finance.
 // Yahoo Finance requires no API key and is always the final real tier.
@@ -354,6 +610,11 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
   if (alpacaData.apiKey && alpacaData.secretKey) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId));
+  // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
+  // Gated by its OWN flag (CONGRESS_TRADE_FUNDAMENTALS_ENABLED), separate from the
+  // price/history reads, so enabling price cache-aside doesn't silently give App A
+  // precedence over the direct fundamentals providers. Default-OFF.
+  if (congressFundamentalsEnabled()) providers.push(new CongressTradeEnrichmentProvider(userId));
   // Tier 2 — DELAYED quotes + fundamentals, in availability order (unchanged relative ordering).
   if (webullUnofficialEnabled()) providers.push(new WebullUnofficialEnrichmentProvider());
   // First-party Robinhood fundamentals — opt-in: requires ROBINHOOD_ADAPTER=mcp (connected)
@@ -427,22 +688,67 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     this.contributingNames = new Set();
-    // Run all providers in parallel; pair each result set with its provider name.
-    const results = await Promise.all(
-      this.providers.map((p) =>
-        p
-          .enrich(symbols)
-          .then((data) => ({ name: p.name, data }))
-          .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }))
-      )
-    );
-    const merged: Record<string, SymbolEnrichment> = {};
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
+    // Each provider's result set, paired with its name, kept in REGISTRATION order
+    // so the first-wins merge below is unchanged regardless of how we fetched.
+    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext) =>
+      p
+        .enrich(syms, context)
+        .then((data) => ({ name: p.name, data }))
+        .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }));
+
+    let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
+    if (enrichmentShortCircuitEnabled()) {
+      // Short-circuit: ONLY the Congress.Trade tier feeds the coverage hint, so await
+      // just it first, then run EVERY other provider (free AND paid) in parallel. Paid
+      // providers use the per-symbol hint to skip only the redundant SUB-calls (e.g.
+      // FMP's ratios-ttm + grades-consensus when App A already has P/E + analyst) while
+      // STILL fetching the fields they uniquely supply — insider/senate, news/sentiment,
+      // quotes. No whole provider is skipped, so no field is lost; only duplicate upstream
+      // calls are eliminated. Crucially, paid providers are NOT serialized behind
+      // unrelated free tiers (Yahoo/Alpaca/SEC) — only behind the single App A read.
+      const congressProvider = this.providers.find((p) => p.name === "congress.trade");
+      const appAResult = congressProvider
+        ? await run(congressProvider, normalized)
+        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> };
+      const appA = appAResult.data;
+      const coveredFields: Record<string, ReadonlySet<string>> = {};
+      const analystSource: Record<string, string> = {};
+      for (const s of normalized) {
+        const e = appA[s];
+        if (e) {
+          coveredFields[s] = new Set(Object.keys(e));
+          // App A keys its analyst entry under the upstream provider it came from, so the
+          // single key here IS that source. A paid provider uses it to skip its own
+          // consensus sub-call only when App A's analyst is genuinely its data.
+          const srcKey = e.analystBySource ? Object.keys(e.analystBySource)[0] : undefined;
+          if (srcKey) analystSource[s] = srcKey;
+        }
+      }
+      const context: EnrichmentContext = { coveredFields, analystSource };
+      const otherProviders = this.providers.filter((p) => p.name !== "congress.trade");
+      const otherResults = await Promise.all(
+        otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
+      );
+      // Reassemble in registration order so the merge precedence is identical.
+      const byName = new Map<string, Record<string, SymbolEnrichment>>();
+      for (const r of [appAResult, ...otherResults]) byName.set(r.name, r.data);
+      results = this.providers.map((p) => ({ name: p.name, data: byName.get(p.name) ?? {} }));
+    } else {
+      // Default: run every provider over every symbol in parallel.
+      results = await Promise.all(this.providers.map((p) => run(p, normalized)));
+    }
+    const merged: Record<string, SymbolEnrichment> = {};
 
     for (const symbol of normalized) {
       const base: SymbolEnrichment = {};
       const sources: Partial<Record<EnrichmentSourcedField, string>> = {};
       const analystBySource: Record<string, AnalystRatingDetail> = {};
+      // Which provider supplied the SURVIVING entry for each analyst source-key (last
+      // writer wins, mirroring Object.assign). Used to credit contributors only after
+      // de-dupe — a provider whose entry is overwritten by a same-source provider
+      // supplied no final value and must not appear in MarketScan.source.
+      const analystKeyOwner: Record<string, string> = {};
 
       const takeScalar = <K extends keyof SymbolEnrichment>(
         field: K,
@@ -491,11 +797,25 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           base.headlines = r.headlines;
           this.contributingNames.add(name);
         }
-        // Collect every provider's analyst read (an analyst contribution counts as a contribution too).
+        // Collect every provider's analyst read. Defer crediting it as a contributor:
+        // if its entry is overwritten by a same-source provider that runs later (same
+        // analystBySource key), it supplied no FINAL value. Track the last writer per key.
         if (r.analystBySource && Object.keys(r.analystBySource).length > 0) {
-          Object.assign(analystBySource, r.analystBySource);
-          this.contributingNames.add(name);
+          for (const [k, v] of Object.entries(r.analystBySource)) {
+            analystBySource[k] = v;
+            analystKeyOwner[k] = name;
+          }
         }
+      }
+
+      // A "congress.trade"-keyed entry is a SOURCE-UNKNOWN blended aggregate (App A's
+      // donated analyst[] rows carry no per-provider source). When granular per-source
+      // votes exist alongside it, those supersede it — counting the aggregate too would
+      // double-count the same upstream FMP/Finnhub/Yahoo consensus. Drop it in that case;
+      // keep it only when it's the lone analyst signal.
+      if (analystBySource["congress.trade"] && Object.keys(analystBySource).length > 1) {
+        delete analystBySource["congress.trade"];
+        delete analystKeyOwner["congress.trade"];
       }
 
       // Blend analyst scores across all sources that reported one.
@@ -506,6 +826,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         base.analystRating = labelFromAnalystScore(blended);
         base.analystBySource = analystBySource;
         sources.analystRating = Object.keys(analystBySource).length > 1 ? "blended" : Object.keys(analystBySource)[0];
+        // Credit only the providers whose analyst entry SURVIVED the de-dupe.
+        for (const owner of new Set(Object.values(analystKeyOwner))) this.contributingNames.add(owner);
       }
 
       // Prefer a REAL model sentiment (Alpha Vantage NEWS_SENTIMENT) over the keyword-proxy
@@ -1202,6 +1524,7 @@ export function isTransientError(error: unknown): boolean {
 
 export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "finnhub";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://finnhub.io/api/v1";
   private readonly scope: CacheScope;
@@ -1373,6 +1696,7 @@ export function fmpPriceTargetsEnabled(): boolean {
 
 export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fmp";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://financialmodelingprep.com/stable";
   private readonly scope: CacheScope;
@@ -1387,7 +1711,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     this.keySource = keySource;
   }
 
-  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+  async enrich(symbols: string[], context?: EnrichmentContext): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
@@ -1395,22 +1719,63 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
+    // Per-symbol coverage-hint skip flags (short-circuit only). Shared by the cache-hit
+    // path AND the fetch path so a cached FMP row is trimmed the same way a fresh fetch is.
+    const skipFlagsFor = (symbol: string) => {
+      const covered = context?.coveredFields?.[symbol];
+      // P/E is first-wins (App A registered first wins anyway); analyst consensus is
+      // blended, so skip it only when App A's analyst genuinely came from FMP; targets
+      // are first-wins but skip the call only when App A covers all four.
+      const skipPe = covered?.has("peRatio") ?? false;
+      const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[symbol] === this.name;
+      const skipTargets = ["targetMean", "targetHigh", "targetLow", "targetMedian"].every((k) => covered?.has(k));
+      return { skipPe, skipConsensus, skipTargets };
+    };
     for (const symbol of normalized) {
       const cached = readEnrichmentCache("fmp", symbol, this.userId, consented, now);
-      if (cached) result[symbol] = cached.data;
-      else misses.push(symbol);
+      if (cached) {
+        // A cache hit bypasses the fetch-path skip logic, so apply the hint here too:
+        // if App A covers FMP's OWN consensus with a fresher row, drop the cached FMP
+        // analyst (analystBySource merges last-writer-wins, so a stale cached fmp entry
+        // would otherwise overwrite App A's fresher fmp-keyed analyst in the blend).
+        if (skipFlagsFor(symbol).skipConsensus && cached.data.analystBySource) {
+          const { analystBySource, analystRating, analystScore, ...rest } = cached.data;
+          // A leftover field is only USEFUL if App A doesn't ALSO cover it. A cached
+          // { peRatio, analystBySource } leaves { peRatio } after stripping the consensus,
+          // but App A's first-wins peRatio (or covered targets) makes that contribute
+          // nothing — so the entry is effectively empty and FMP's unique fields
+          // (insider/senate, enabled targets) would never be refetched. Treat it as a MISS
+          // unless a NON-covered field survives, so the fetch path runs.
+          const covered = context?.coveredFields?.[symbol];
+          const usefulKeys = Object.keys(rest).filter((k) => !(covered?.has(k) ?? false));
+          if (usefulKeys.length > 0) result[symbol] = rest;
+          else misses.push(symbol);
+        } else {
+          result[symbol] = cached.data;
+        }
+      } else misses.push(symbol);
     }
 
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
+          // Coverage hint (short-circuit only): when a free upstream (App A) already
+          // supplied P/E, analyst consensus, or price targets for this symbol, skip the
+          // matching FMP SUB-call — but always keep fetching insider/senate, which App A
+          // never supplies, so nothing FMP uniquely provides is lost. (Same flags are
+          // applied to cache hits above.)
+          const { skipPe, skipConsensus, skipTargets } = skipFlagsFor(symbol);
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
-          const wantTargets = fmpPriceTargetsEnabled();
+          const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;
           const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
-            this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
+            skipPe
+              ? Promise.resolve(undefined)
+              : this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
+            skipConsensus
+              ? Promise.resolve(undefined)
+              : this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`),
             this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`),
             wantTargets
@@ -1510,12 +1875,23 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             (p) => p.status === "rejected" && isTransientError(p.reason)
           );
           const isEmpty = Object.keys(data).length === 0;
+          // A coverage-trimmed fetch (we skipped ratios-ttm and/or grades-consensus)
+          // yields a PARTIAL row. Don't write it to the normal fmp cache: a later scan
+          // with App A off/stale, or with the short-circuit flag off, would otherwise
+          // treat the partial as a full FMP hit and never refetch P/E/analyst until TTL.
+          // The covered fields come from App A live each scan; FMP refetches its uniques.
+          // A skipped target call only "trims" the result when targets would actually have
+          // been fetched (FMP_PRICE_TARGETS_ENABLED on); otherwise the row is complete and
+          // must still be cached, or FMP's calls would repeat every scan.
+          const trimmed = skipPe || skipConsensus || (skipTargets && fmpPriceTargetsEnabled());
 
-          if (allRejected || hasTransientError || isEmpty) {
-            console.warn(
-              `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
-              `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
-            );
+          if (allRejected || hasTransientError || isEmpty || trimmed) {
+            if (!trimmed) {
+              console.warn(
+                `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
+                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+              );
+            }
           } else {
             writeEnrichmentCache("fmp", symbol, this.scope, this.userId, data, now + ttlMs());
           }
@@ -1543,6 +1919,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
 export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "alpha-vantage";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://www.alphavantage.co/query";
   private readonly scope: CacheScope;
@@ -1709,6 +2086,7 @@ export function clearEnrichmentCache(): void {
 
 export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "fintechstudios";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base: string;
   private readonly scope: CacheScope;
@@ -1819,6 +2197,7 @@ export class FintechStudiosEnrichmentProvider implements MarketEnrichmentProvide
 
 export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "intrinio";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly base = "https://api-v2.intrinio.com";
   private readonly scope: CacheScope;
@@ -1963,6 +2342,7 @@ export class IntrinioEnrichmentProvider implements MarketEnrichmentProvider {
 
 export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "tiingo";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
@@ -2094,6 +2474,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
 
 export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "twelvedata";
+  readonly costTier = "paid" as const;
   readonly configured = true;
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;

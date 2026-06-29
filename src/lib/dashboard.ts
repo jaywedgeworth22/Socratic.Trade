@@ -26,6 +26,7 @@ import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
+import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
@@ -191,7 +192,16 @@ export function accountReadinessForSnapshot(input: {
   };
 }
 
-export async function getDashboardSnapshot(userId: string = "local", currentUserEmail?: string) {
+export interface CurrentUserDisplay {
+  email?: string;
+  name?: string;
+  imageUrl?: string;
+  loginProvider?: string;
+}
+
+export async function getDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
+  const currentUserDisplay: CurrentUserDisplay =
+    typeof currentUser === "string" ? { email: currentUser } : currentUser ?? {};
   ensureTestAccount(userId);
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
@@ -447,8 +457,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   return {
     currentUser: {
       userId,
-      ...(currentUserEmail ? { email: currentUserEmail } : {}),
-      isAdmin: isAdminEmail(currentUserEmail)
+      ...(currentUserDisplay.email ? { email: currentUserDisplay.email } : {}),
+      ...(currentUserDisplay.name ? { name: currentUserDisplay.name } : {}),
+      ...(currentUserDisplay.imageUrl ? { imageUrl: currentUserDisplay.imageUrl } : {}),
+      ...(currentUserDisplay.loginProvider ? { loginProvider: currentUserDisplay.loginProvider } : {}),
+      isAdmin: isAdminEmail(currentUserDisplay.email)
     },
     // Whether at least one LLM provider has a resolvable credential for this user (own key OR operator
     // failover). The two LLM-driven actions (Run once / chat) are gated on this; everything else works
@@ -488,6 +501,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     },
     scheduler: getSchedulerState(userId),
     webSources: getWebSourcesStatus(),
+    robinhoodMcpConnected: policy.activeBroker === "robinhood" ? Boolean(getStoredMcpOAuthTokens(userId)) : true,
     smartMoney: {
       congress: [...(getCongressDataset()?.trades ?? [])]
         .sort((a, b) => (b.tradedAt ?? "").localeCompare(a.tradedAt ?? ""))

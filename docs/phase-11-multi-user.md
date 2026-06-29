@@ -67,8 +67,9 @@ allowed users map to isolated hashed user IDs only when present in
   wrappers for secret injection, local Gitleaks scanning, Sentry runtime error
   capture, Langfuse LLM traces with redacted summary capture by default, npm
   Dependabot, Litestream SQLite backup scripts, and a Playwright dashboard smoke
-  test. GitHub CI/e2e/security workflows are deferred until push credentials
-  include `workflow` scope. See `docs/ops-observability-security.md`.
+  test. GitHub CI, Playwright smoke, and gitleaks Security workflows are active
+  under `.github/workflows/` and currently use the self-hosted runner while
+  GitHub-hosted billing is blocked. See `docs/ops-observability-security.md`.
 - Market-data sharing is now explicit for the first keyed OHLC path: free/env-key
   history is cached as shared market data, while history fetched through a saved
   user key is private unless `MARKET_DATA_SHARE_USER_KEYED_HISTORY=on` is set.

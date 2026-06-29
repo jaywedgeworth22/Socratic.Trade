@@ -23,6 +23,7 @@ import {
   LayoutDashboard,
   LineChartIcon,
   LogOut,
+  Moon,
   Network,
   Pause,
   Percent,
@@ -38,6 +39,7 @@ import {
   Sparkles,
   Trash2,
   TrendingUp,
+  Sun,
   Wallet,
   X,
   XCircle,
@@ -128,8 +130,9 @@ import {
   Tabs,
   inputClass
 } from "./ui/primitives";
-import { ThemeToggle } from "./ui/theme";
+import { useTheme } from "./ui/theme";
 import { CommandPalette, type Command } from "./ui/command-palette";
+import { ConfirmationModal } from "./components/ConfirmationModal";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
@@ -275,6 +278,13 @@ function showStoppedProposalActionToast() {
   toast.warning(STOPPED_PROPOSAL_ACTION_TITLE, { description: STOPPED_PROPOSAL_ACTION_DESCRIPTION });
 }
 
+function humanizeBrokerError(msg: string): string {
+  if (/robinhood mcp http 401/i.test(msg)) return "Robinhood session expired — reconnect in Settings → Connections";
+  if (/robinhood.*not connected/i.test(msg)) return "Robinhood not connected — reconnect in Settings → Connections";
+  if (/robinhood.*session expired/i.test(msg)) return "Robinhood session expired — reconnect in Settings → Connections";
+  return msg;
+}
+
 function activeConnectedAccountFor(snapshot: DashboardSnapshot) {
   return (
     snapshot.connectedAccounts?.find((account) => account.id === snapshot.policy.connectedAccountId) ??
@@ -393,6 +403,184 @@ function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
             ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+type DashboardCurrentUser = NonNullable<DashboardSnapshot["currentUser"]>;
+
+function loginProviderLabel(provider?: string): string {
+  const normalized = provider?.trim().toLowerCase();
+  if (normalized === "google") return "Google";
+  if (normalized === "github") return "GitHub";
+  if (normalized === "apple") return "Apple";
+  if (!normalized) return "App";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function userInitials(user?: DashboardCurrentUser): string {
+  const source = user?.name?.trim() || user?.email?.split("@")[0] || "User";
+  const parts = source
+    .replace(/[._-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("");
+  return initials || "U";
+}
+
+function AccountMenu({
+  user,
+  pendingCount,
+  onOpenActivity,
+  onOpenSettings,
+  onOpenAccounts,
+  onOpenHelp,
+  onSignOut
+}: {
+  user?: DashboardCurrentUser;
+  pendingCount: number;
+  onOpenActivity: () => void;
+  onOpenSettings: () => void;
+  onOpenAccounts: () => void;
+  onOpenHelp: () => void;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const { theme, toggle } = useTheme();
+  const provider = loginProviderLabel(user?.loginProvider);
+  const email = user?.email ?? "Local session";
+  const name = user?.name ?? (user?.email ? user.email.split("@")[0] : "Signed in");
+  const imageUrl = user?.imageUrl && !imageFailed ? user.imageUrl : undefined;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [user?.imageUrl]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  function run(action: () => void) {
+    setOpen(false);
+    action();
+  }
+
+  const avatar = (
+    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-xs font-semibold text-accent lg:h-9 lg:w-9">
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        userInitials(user)
+      )}
+      {pendingCount > 0 && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warn px-0.5 text-[9px] font-bold text-black ring-2 ring-surface"
+        >
+          {pendingCount}
+        </span>
+      )}
+    </span>
+  );
+
+  const menuItemClass =
+    "flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-sm text-fg transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none";
+  const menuItemLeftClass = "flex min-w-0 items-center gap-2.5";
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Profile menu"
+        title={`${name} · ${email}`}
+        onClick={() => setOpen((value) => !value)}
+        className="relative inline-flex h-8 items-center gap-1 rounded-full border border-line bg-surface/60 pr-1.5 text-fg shadow-sm transition-colors hover:bg-surface-2/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent lg:h-9"
+      >
+        {avatar}
+        <ChevronDown size={14} className="text-muted" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-[1200] mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-lg border border-line bg-surface p-2 text-fg shadow-[var(--shadow-lg)]"
+        >
+          <div className="flex items-center gap-3 border-b border-line px-2.5 py-2.5">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-sm font-semibold text-accent">
+              {imageUrl ? (
+                <img
+                  src={imageUrl}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover"
+                  onError={() => setImageFailed(true)}
+                />
+              ) : (
+                userInitials(user)
+              )}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-fg">{name}</div>
+              <div className="truncate text-xs text-muted" title={email}>{email}</div>
+              <div className="mt-0.5 text-[11px] text-faint">{provider} account</div>
+            </div>
+          </div>
+
+          <div className="mt-1 space-y-0.5">
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenSettings)}>
+              <span className={menuItemLeftClass}><SettingsIcon size={15} /> Settings</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenAccounts)}>
+              <span className={menuItemLeftClass}><Wallet size={15} /> Account Management</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenActivity)}>
+              <span className={menuItemLeftClass}><ActivityIcon size={15} /> Activity Log</span>
+              {pendingCount > 0 && (
+                <span className="rounded-full bg-warn/20 px-2 py-0.5 text-[11px] font-semibold text-warn">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenHelp)}>
+              <span className={menuItemLeftClass}><HelpCircle size={15} /> System Help</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(toggle)}>
+              <span className={menuItemLeftClass}>
+                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                {theme === "dark" ? "Light Mode" : "Dark Mode"}
+              </span>
+            </button>
+          </div>
+
+          <div className="mt-1 border-t border-line pt-1">
+            <button type="button" role="menuitem" className={cn(menuItemClass, "text-down hover:bg-down/10")} onClick={() => run(onSignOut)}>
+              <span className={menuItemLeftClass}><LogOut size={15} /> Sign Out</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -538,7 +726,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
     >
       {/* Opaque backdrop — blocks all interaction beneath */}
       <div className="absolute inset-0 bg-black/60 backdrop-blur-[3px]" />
-      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-white dark:bg-zinc-950 shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
         {/* Header */}
         <div className="flex items-start gap-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
@@ -632,6 +820,16 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [killConfirm, setKillConfirm] = useState(false);
   const [decideConfirm, setDecideConfirm] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [liveConfirmation, setLiveConfirmation] = useState<{
+    proposalId: string;
+    symbol: string;
+    side: string;
+    quantity?: number;
+    dollarAmount?: number;
+    price?: number;
+    estimatedNotional?: number;
+    accountNumber?: string;
+  } | null>(null);
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
   // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
@@ -889,38 +1087,37 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       return;
     }
     const pending = snapshot.pendingProposals.find((proposal) => proposal.id === proposalId);
-    let requestBody: Record<string, unknown> = {};
     if (executionState.mode === "broker/live") {
       if (!pending) {
         toast.error("Live approval is unavailable because the proposal snapshot is stale. Refresh and try again.");
         return;
       }
-      const symbol = pending.proposal.symbol.trim().toUpperCase();
-      const expectedText = `APPROVE LIVE ${symbol}`;
-      const typedText = window.prompt(
-        `This can submit a live brokerage order for ${symbol}. Type ${expectedText} to continue.`
-      );
-      if (typedText === null) return;
-      if (typedText.trim().toUpperCase() !== expectedText) {
-        toast.warning("Live approval cancelled.", { description: `Required phrase: ${expectedText}` });
-        return;
-      }
-      requestBody = {
-        liveConfirmation: {
-          proposalId,
-          accountNumber: pending.accountNumber || snapshot.policy.accountNumber,
-          executionMode: executionState.mode,
-          estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
-          typedText
-        }
-      };
+      // Show the in-app confirmation modal instead of window.prompt()
+      setLiveConfirmation({
+        proposalId,
+        symbol: pending.proposal.symbol,
+        side: pending.proposal.side,
+        quantity: pending.proposal.quantity,
+        dollarAmount: pending.proposal.dollarAmount,
+        price: pending.proposal.limitPrice ?? pending.proposal.referencePrice,
+        estimatedNotional: pending.estimatedNotional ?? pending.review?.estimatedNotional,
+        accountNumber: pending.accountNumber || snapshot.policy.accountNumber
+      });
+      return; // The modal flow takes over from here
     }
+    await submitProposalApproval(proposalId, {});
+  }
+
+  /** Submit a proposal approval request, optionally with live-confirmation payload. */
+  async function submitProposalApproval(proposalId: string, liveConfirmationPayload: Record<string, unknown>) {
     setBusy(true);
     try {
       const response = await fetch(`/api/proposals/${proposalId}/approve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(requestBody)
+        body: liveConfirmationPayload && Object.keys(liveConfirmationPayload).length > 0
+          ? JSON.stringify({ liveConfirmation: liveConfirmationPayload })
+          : JSON.stringify({})
       });
       if (!response.ok) throw await responseError(response, "Proposal approval failed");
       const body = (await response.json()) as { status: string; orderId?: string; brokerState?: string; fillStatus?: string; reasons?: string[] };
@@ -956,6 +1153,21 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Called by the ConfirmationModal when the user has typed the confirmation phrase and clicks Confirm. */
+  function handleLiveConfirm() {
+    const pending = liveConfirmation;
+    if (!pending) return;
+    setLiveConfirmation(null);
+    const confirmationPayload = {
+      proposalId: pending.proposalId,
+      accountNumber: pending.accountNumber,
+      executionMode: executionState.mode,
+      estimatedNotional: pending.estimatedNotional,
+      typedText: `APPROVE LIVE ${pending.symbol.trim().toUpperCase()}`
+    };
+    void submitProposalApproval(pending.proposalId, confirmationPayload);
   }
 
   async function rejectProposal(proposalId: string) {
@@ -1178,6 +1390,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       actionLabel: "Settings",
       onAction: () => openSettings("operate")
     },
+    ...(policy.activeBroker === "robinhood" && !snapshot.robinhoodMcpConnected ? [{
+      label: "Robinhood",
+      ok: false,
+      detail: "Robinhood MCP session not connected — reconnect your account in Connections.",
+      actionLabel: "Connections",
+      onAction: () => setAccountsOpen(true)
+    }] : [])
   ];
 
   const safetyBanner = executionBanner(executionState);
@@ -1222,7 +1441,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         </div>
       )}
       {/* ── Command bar ─────────────────────────────────────────── */}
-      <header className="flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 lg:flex-row lg:items-center lg:justify-between lg:h-16 lg:gap-3 lg:py-0 lg:px-4">
+      <header className="relative z-[1100] flex min-h-16 shrink-0 flex-col gap-2 border-b border-line bg-surface/70 px-3 py-2 backdrop-blur-md sm:px-4 sm:py-3 lg:flex-row lg:items-center lg:justify-between lg:h-16 lg:gap-3 lg:py-0 lg:px-4">
         {/* Left Side: Logo, Title, Status, and Pills */}
         <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 w-full lg:w-auto lg:justify-start lg:gap-4">
           <div className="flex items-start gap-2.5">
@@ -1307,46 +1526,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 <option value="manage" className="italic">Manage Accounts...</option>
               </select>
             </div>
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Settings" onClick={() => openSettings("operate")}>
-              <SettingsIcon size={15} />
-            </IconButton>
-            <Button
-              aria-label="Help"
-              className="h-8 px-2.5 lg:h-9"
-              size="sm"
-              title="Help"
-              variant="accentSoft"
-              onClick={() => setHelpOpen(true)}
-            >
-              <HelpCircle size={15} />
-              <span className="hidden sm:inline">Help</span>
-              <span className="font-semibold sm:hidden">?</span>
-            </Button>
-            <ThemeToggle />
-            {signedInEmail && (
-              <span className="hidden max-w-[12rem] truncate text-[11px] text-faint md:inline" title={`Signed in as ${signedInEmail}`}>
-                {signedInEmail}
-              </span>
-            )}
-            <IconButton className="h-8 w-8 lg:h-9 lg:w-9" label="Log out" onClick={() => { window.location.href = "/logout"; }}>
-              <LogOut size={15} />
-            </IconButton>
+            <AccountMenu
+              user={snapshot.currentUser}
+              pendingCount={pendingCount}
+              onOpenActivity={() => setFeedOpen(true)}
+              onOpenSettings={() => openSettings("operate")}
+              onOpenAccounts={() => setAccountsOpen(true)}
+              onOpenHelp={() => setHelpOpen(true)}
+              onSignOut={() => { window.location.href = "/logout"; }}
+            />
           </div>
 
           {/* Sub-container 2: Action buttons */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
-            <button
-              onClick={() => setFeedOpen(true)}
-              aria-label={pendingCount > 0 ? `Activity — ${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}` : "Activity"}
-              className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
-            >
-              <ActivityIcon size={15} /> <span className="hidden sm:inline">Activity</span>
-              {pendingCount > 0 && (
-                <span aria-live="polite" className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">
-                  {pendingCount}
-                </span>
-              )}
-            </button>
             <LearnedContextQueueBadge
               count={learnedQueueCount}
               onClick={() => setLearnedQueueOpen(true)}
@@ -1647,6 +1839,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         body="Autonomous mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
         confirmLabel="Enable auto-execute"
         tone="danger"
+      />
+
+      <ConfirmationModal
+        open={!!liveConfirmation}
+        onClose={() => setLiveConfirmation(null)}
+        onConfirm={handleLiveConfirm}
+        symbol={liveConfirmation?.symbol ?? ""}
+        side={liveConfirmation?.side ?? ""}
+        quantity={liveConfirmation?.quantity}
+        dollarAmount={liveConfirmation?.dollarAmount}
+        price={liveConfirmation?.price}
+        estimatedNotional={liveConfirmation?.estimatedNotional}
+        accountNumber={liveConfirmation?.accountNumber}
       />
     </div>
   );
@@ -2078,7 +2283,7 @@ function DecisionView({
                   )}
                   {item.errorMessage && (
                     <p className="mt-2 rounded-md border border-warn/30 bg-warn/10 px-2 py-1 text-[11px] text-muted">
-                      <span className="font-semibold">Order error: </span>{item.errorMessage}
+                      <span className="font-semibold">Order error: </span>{humanizeBrokerError(item.errorMessage)}
                     </p>
                   )}
                 </div>
@@ -2917,7 +3122,7 @@ function PerformanceView({
             <span className="text-faint">
               (you {benchmark.accountReturnPct >= 0 ? "+" : ""}{benchmark.accountReturnPct.toFixed(1)}% · {benchmark.benchmarkSymbol} {benchmark.benchmarkReturnPct >= 0 ? "+" : ""}{benchmark.benchmarkReturnPct.toFixed(1)}%, {benchmark.startDate}→{benchmark.endDate})
             </span>
-            <span className="text-faint/70" title="Compares equity growth from the first snapshot date. Not adjusted for deposits/withdrawals.">ⓘ</span>
+            <span className="text-faint/85" title="Compares equity growth from the first snapshot date. Not adjusted for deposits/withdrawals.">ⓘ</span>
           </div>
         ) : null}
       </Card>
@@ -4072,18 +4277,18 @@ function SettingsContent({
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
           <div className={cn(
-            "rounded-lg border px-3 py-2 text-[13px] sm:col-span-2",
+            "rounded-lg border px-3 py-2.5 text-[13px] sm:col-span-2",
             executionState.mode === "test/local"
-              ? "border-info/25 bg-info/10 text-muted"
+              ? "border-info/30 bg-info/8 text-info"
               : executionState.mode === "broker/paper"
-                ? "border-up/25 bg-up/10 text-muted"
-                : "border-down/35 bg-down/10 text-down"
+                ? "border-up/30 bg-up/8 text-up"
+                : "border-down/40 bg-down/8 text-down"
           )}>
-            <div className="mb-1 flex items-center gap-2 font-semibold text-fg">
-              <Shield size={14} />
+            <div className="mb-1 flex items-center gap-2 font-semibold">
+              <Shield size={13} className="shrink-0" />
               {executionState.label} mode is active
             </div>
-            <p>
+            <p className="opacity-80">
               {executionState.clarification}
             </p>
           </div>
@@ -4573,6 +4778,13 @@ function SettingsContent({
               value={tuning.crisisMaxOpeningExposurePct ?? 0}
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, crisisMaxOpeningExposurePct: v } })}
             />
+            <NumberField
+              label="Min proposal score threshold"
+              value={tuning.minProposalScoreThreshold ?? 0}
+              min={0}
+              max={100}
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, minProposalScoreThreshold: v } })}
+            />
             <OptionalNumberField
               label="FCF-yield veto floor %"
               value={tuning.bearVetoFcfYieldFloorPct}
@@ -4609,6 +4821,9 @@ function SettingsContent({
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Red-team threshold</span> sends proposals at or above that confidence score to the adversarial review (default 80).{" "}
             <span className="font-medium text-muted">Crisis open cap</span> blocks new buy/short notional above that portfolio percentage when the deterministic regime is crisis or inverted curve; 0 leaves it off.
+          </p>
+          <p className="text-xs text-faint">
+            <span className="font-medium text-muted">Min proposal score threshold</span> drops candidates below this scan score (0–100) before they reach the LLM. If ALL candidates are below the threshold, the entire LLM call is skipped and the system sits on its hands (proactive stop-loss/take-profit exits still fire). Default 0 = no filtering. Set to e.g. 30 to skip when every candidate is mediocre.
           </p>
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">FCF-yield veto floor</span> deterministically vetoes BUYS whose free-cash-flow yield is below this value (e.g. 0 vetoes any negative-FCF buy); blank disables.{" "}

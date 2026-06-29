@@ -72,6 +72,14 @@ export function congressReadsEnabled(): boolean {
   return flagOn(process.env.CONGRESS_TRADE_READS_ENABLED);
 }
 
+/** Whether App B should read App A's FUNDAMENTALS/ANALYST cache as an enrichment tier.
+ *  Gated SEPARATELY from market/price reads (`CONGRESS_TRADE_READS_ENABLED`) so enabling
+ *  the price cache-aside doesn't also give App A precedence over the direct fundamentals
+ *  providers (Finnhub/FMP/Yahoo). Default OFF — an explicit, independent opt-in. */
+export function congressFundamentalsEnabled(): boolean {
+  return flagOn(process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED);
+}
+
 /** Whether App B should source congressional trades from App A's /api/transactions feed. */
 export function congressAsCongressSourceEnabled(): boolean {
   return flagOn(process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE);
@@ -162,6 +170,65 @@ export async function getAppASpx(opts?: { from?: string; to?: string }): Promise
   if (!congressReadsEnabled()) return [];
   const json = await getJson<{ closes?: CongressClose[] }>(`/api/market/spx${dateRangeQuery(opts)}`, readToken());
   return Array.isArray(json?.closes) ? json!.closes : [];
+}
+
+/** One cached fundamentals row from App A (rows are date-ascending; newest last). */
+export interface AppAFundamental {
+  date: string;
+  peRatio: number | null;
+  eps: number | null;
+  beta: number | null;
+  dividendYield: number | null;
+  week52High: number | null;
+  week52Low: number | null;
+  fcfYield: number | null;
+  debtToEquity: number | null;
+  epsGrowth: number | null;
+  source: string | null;
+  updatedAt: string;
+}
+
+/** One cached analyst-consensus row from App A (date-ascending; newest last). */
+export interface AppAAnalyst {
+  date: string;
+  rating: string | null;
+  targetMean: number | null;
+  targetHigh: number | null;
+  targetLow: number | null;
+  targetMedian: number | null;
+  analystCount: number | null;
+  strongBuy: number | null;
+  buy: number | null;
+  hold: number | null;
+  sell: number | null;
+  strongSell: number | null;
+  source: string | null;
+  updatedAt: string;
+}
+
+/** Read App A's cached fundamentals (P/E, EPS, beta, 52w, FCF, debt/equity…) so App B
+ *  doesn't re-pay a provider for data App A already stored. [] when the gate is off / on error. */
+export async function getAppAFundamentals(ticker: string, opts?: { from?: string; to?: string }): Promise<AppAFundamental[]> {
+  if (!congressFundamentalsEnabled()) return [];
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return [];
+  const json = await getJson<{ rows?: AppAFundamental[] }>(
+    `/api/market/fundamentals/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+    readToken()
+  );
+  return Array.isArray(json?.rows) ? json!.rows : [];
+}
+
+/** Read App A's cached analyst consensus + price targets. [] when off / on error. */
+export async function getAppAAnalyst(ticker: string, opts?: { from?: string; to?: string }): Promise<AppAAnalyst[]> {
+  if (!congressFundamentalsEnabled()) return [];
+  const sym = normalizeSymbol(ticker);
+  if (!sym) return [];
+  const json = await getJson<{ rows?: AppAAnalyst[] }>(
+    `/api/market/analyst/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+    readToken()
+  );
+  return Array.isArray(json?.rows) ? json!.rows : [];
 }
 
 /** Pull a page of congressional transactions. Null when the congress-source gate is off / on error. */
