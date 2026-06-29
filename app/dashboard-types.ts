@@ -44,6 +44,9 @@ export interface DashboardSnapshot {
   currentUser?: {
     userId: string;
     email?: string;
+    name?: string;
+    imageUrl?: string;
+    loginProvider?: string;
     isAdmin: boolean;
   };
   /** At least one LLM provider has a resolvable credential for this user (own key OR operator failover).
