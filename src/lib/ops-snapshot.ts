@@ -1,5 +1,5 @@
 import { getInternalSetting } from "./db-settings";
-import { getDb, getPolicy, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers } from "./db";
+import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy } from "./db";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
 
@@ -202,7 +202,7 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
   for (const userId of listUsers()) {
     const labels = accountLabelById(userId);
     const accounts: OpsAccountSnapshot[] = listConnectedAccounts(userId).map((account) => {
-      const policy = getPolicy(userId, account.id);
+      const policy = peekPolicy(userId, account.id);
       const endpoint = resolveLlmEndpoint(policy, userId);
       return {
         connectedAccountId: account.id,

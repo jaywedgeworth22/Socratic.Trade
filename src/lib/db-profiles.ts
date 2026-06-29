@@ -228,6 +228,42 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
   return policy;
 }
 
+/**
+ * Read-only policy projection for diagnostics. Never seeds `account_strategy_state`.
+ * When no per-account row exists, returns the same effective policy `getPolicy` would
+ * compute on first touch — without persisting it.
+ */
+export function peekPolicy(userId: string = "local", connectedAccountId?: string): TradingPolicy {
+  const account = resolveAccount(userId, connectedAccountId);
+  let policy: TradingPolicy;
+
+  if (account) {
+    const state = getAccountStrategyStateRow(userId, account.id);
+    if (state) {
+      const stored = JSON.parse(state.policy) as Partial<TradingPolicy>;
+      const scoringWeights = normalizeScoringWeights(
+        (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
+      );
+      policy = mergePolicy({ ...stored, scoringWeights });
+    } else {
+      policy = getBasePolicy(userId);
+      const activeId = getActiveConnectedAccount(userId)?.id;
+      if (account.id !== activeId && policy.systemState === "active") {
+        policy = { ...policy, systemState: "halted" };
+      }
+    }
+    policy.connectedAccountId = account.id;
+    policy.activeBroker = account.broker;
+    policy.accountNumber = account.accountNumber;
+    policy.paperMode = account.broker === "test";
+  } else {
+    policy = getBasePolicy(userId);
+    policy.paperMode = true;
+  }
+
+  return policy;
+}
+
 export function setPolicy(policy: TradingPolicy, userId: string = "local", connectedAccountId?: string): void {
   const merged = mergePolicy(policy);
   setUserSetting(userId, "policy", merged);

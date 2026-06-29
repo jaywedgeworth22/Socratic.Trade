@@ -14,14 +14,12 @@ function tokensMatch(provided: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-/** Accepted env secrets, in preference order. */
+/** Accepted env secrets. Legacy admin token is only used when OPS token is unset. */
 export function opsDiagnosticSecrets(): string[] {
-  const out: string[] = [];
-  for (const raw of [process.env.OPS_DIAGNOSTIC_TOKEN, process.env.ADMIN_REINDEX_TOKEN]) {
-    const token = raw?.trim();
-    if (token && !out.includes(token)) out.push(token);
-  }
-  return out;
+  const ops = process.env.OPS_DIAGNOSTIC_TOKEN?.trim();
+  if (ops) return [ops];
+  const legacy = process.env.ADMIN_REINDEX_TOKEN?.trim();
+  return legacy ? [legacy] : [];
 }
 
 /**

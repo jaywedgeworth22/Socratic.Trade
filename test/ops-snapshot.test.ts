@@ -2,9 +2,22 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { opsDiagnosticSecrets } from "../src/lib/ops-auth";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-ops-snapshot-${randomUUID()}.db`)}`;
+});
+
+describe("ops auth", () => {
+  it("prefers OPS_DIAGNOSTIC_TOKEN exclusively over legacy admin token", () => {
+    process.env.OPS_DIAGNOSTIC_TOKEN = "ops-only";
+    process.env.ADMIN_REINDEX_TOKEN = "legacy-admin";
+    expect(opsDiagnosticSecrets()).toEqual(["ops-only"]);
+    delete process.env.OPS_DIAGNOSTIC_TOKEN;
+    expect(opsDiagnosticSecrets()).toEqual(["legacy-admin"]);
+    delete process.env.ADMIN_REINDEX_TOKEN;
+    expect(opsDiagnosticSecrets()).toEqual([]);
+  });
 });
 
 describe("ops diagnostic snapshot", () => {
@@ -39,8 +52,12 @@ describe("ops diagnostic snapshot", () => {
       label: "Roth IRA",
       isActive: false
     });
+    const stateBefore = db.getDb()
+      .prepare("SELECT COUNT(*) AS c FROM account_strategy_state WHERE user_id = ? AND connected_account_id = ?")
+      .get(userId, rothId) as { c: number };
+    expect(stateBefore.c).toBe(0);
+
     db.setPolicy({ ...db.getPolicy(userId, paperId), systemState: "active", strategyAuthority: "decide", llmModel: "gpt-5.4-mini" }, userId, paperId);
-    db.setPolicy({ ...db.getPolicy(userId, rothId), systemState: "active", strategyAuthority: "decide", llmModel: "gemini-2.5-flash" }, userId, rothId);
 
     const runId = randomUUID();
     db.insertStrategyRun(runId, userId, rothId);
@@ -54,10 +71,14 @@ describe("ops diagnostic snapshot", () => {
 
     const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
     const snapshot = buildOpsSnapshot({ runsPerUser: 5, auditPerUser: 5 });
+    const stateAfter = db.getDb()
+      .prepare("SELECT COUNT(*) AS c FROM account_strategy_state WHERE user_id = ? AND connected_account_id = ?")
+      .get(userId, rothId) as { c: number };
+    expect(stateAfter.c).toBe(0);
     const user = snapshot.users.find((row) => row.userId === userId);
     expect(user).toBeDefined();
     expect(user!.accounts).toHaveLength(2);
-    expect(user!.accounts.find((a) => a.connectedAccountId === rothId)?.llmModel).toBe("gemini-2.5-flash");
+    expect(user!.accounts.find((a) => a.connectedAccountId === rothId)?.label).toBe("Roth IRA");
     expect(user!.recentRuns.some((r) => r.connectedAccountId === rothId && r.summary?.includes("not available"))).toBe(true);
     expect(user!.recentAudit.some((a) => a.kind === "strategy_run" && a.accountLabel === "Roth IRA")).toBe(true);
 
