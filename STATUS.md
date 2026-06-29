@@ -19,10 +19,10 @@ hung in `actions/setup-node` cache post-action cleanup; CI/smoke no longer use
 the setup-node npm cache.
 Required jobs now fail closed before checkout for fork PRs and bot-authored PRs
 instead of being skipped; `gitleaks/gitleaks-action` is pinned to a reviewed
-commit SHA before running on the self-hosted runner.
-Main Security then exposed a macOS runner cache issue where the pinned action
-refused to overwrite `${TMPDIR}/gitleaks.tmp`; `codex/gitleaks-temp-cleanup`
-removes that stale temp file before invoking the action.
+commit SHA before running on the self-hosted runner. Main Security and PR #224
+then exposed a macOS runner cache issue where the pinned action refused to
+overwrite `${TMPDIR}/gitleaks.tmp`; Security now removes that stale temp file
+before invoking the action.
 
 ## 2026-06-29 — Google auth Infisical verification
 Follow-up to `codex/google-auth-primary`: production still reaches app Google
@@ -75,6 +75,25 @@ Market Scan column chooser, and BAC symbol drawer. Full verification passed:
 (existing Next middleware deprecation warning only). Lint follow-up verification:
 `npm run lint -- --quiet` passed. See
 `docs/rollouts/2026-06-28-proposal-dashboard-ui-fixes.md`.
+
+## 2026-06-28 — GitHub login on same-email Auth.js identity
+Branch `codex/github-login`. Added conditional Auth.js GitHub OAuth support next
+to Google: the login page now renders any configured provider, GitHub requests
+`read:user user:email`, and GitHub sign-in is rejected unless GitHub returns a
+verified email. The app still derives user identity from normalized verified
+email, so Google and GitHub sign-ins with the same verified email resolve to the
+same app account/user ID; different emails remain separate unless listed in
+`PRIMARY_USER_EMAIL_ALIASES`. Updated account-deletion copy, env docs, Phase 11,
+deployment notes, and tests. Verified `npx tsc --noEmit`, focused auth tests,
+full `npm test` (155 files / 1,495 tests), `npm run build` (existing Next.js
+middleware-to-proxy deprecation warning only), and a local `/login` smoke on
+port 4126 showing both Google and GitHub when both provider env pairs are set.
+PR #224 is open with squash auto-merge armed. After the GitHub billing/spending
+limit issue was fixed, the required `verify`, `smoke`, and `gitleaks` checks ran
+green on the pre-merge branch head. The branch then merged current `origin/main`
+from PR #225 and PR #226. Codex review found a GitHub multi-email edge case;
+GitHub login now prefers a verified app-allowed email before GitHub's primary
+verified email.
 
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header

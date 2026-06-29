@@ -49,6 +49,12 @@ filling the missing pieces.
 > `ALLOWED_EMAILS` allows only the primary operator/aliases. No roadmap change; see
 > `docs/rollouts/2026-06-28-google-auth-primary.md`.
 >
+> 2026-06-28 (`codex/github-login`): GitHub login added —
+> Auth.js now renders GitHub when `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` are set,
+> requires a verified GitHub email via `user:email`, and maps Google/GitHub
+> sign-ins with the same verified email to the same app account. No roadmap change;
+> see `docs/rollouts/2026-06-28-github-login.md`.
+>
 > 2026-06-28 (`codex/robinhood-mcp-resource-param`): Robinhood MCP OAuth resource indicator —
 > production still used the public callback and dynamic client registration, but reconnect
 > continued to land on Robinhood `/oauth/error`. OAuth authorization and token requests now

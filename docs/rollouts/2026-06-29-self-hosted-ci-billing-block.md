@@ -18,6 +18,9 @@
 - Pinned `gitleaks/gitleaks-action` to
   `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` before running it on the
   self-hosted runner.
+- Added a preflight cleanup for stale `${TMPDIR}/gitleaks.tmp`, which can be
+  left behind on the long-lived macOS runner and cause the pinned action's
+  installer to fail before scanning.
 
 ## Why
 
@@ -54,6 +57,9 @@ sync already use it successfully.
   pinned action refused to overwrite `${TMPDIR}/gitleaks.tmp` on the macOS
   runner; the workflow now removes that stale download file before invoking
   gitleaks.
+- PR #224 refreshed run confirmed `verify` passed on the self-hosted runner;
+  its `gitleaks` retry hit the same stale temp-file installer failure before
+  scanning, which this workflow cleanup addresses.
 
 ## Follow-ups
 

@@ -68,7 +68,7 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
   });
 
   // ── Test 2: Cloudflare Access headers are no longer app identity ─────────────
-  it("CF header + legacy flag are ignored when Google auth is armed", async () => {
+  it("CF header + legacy flag are ignored when Auth.js is armed", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
@@ -220,13 +220,17 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
   });
 
-  it("Auth.js callback path is public so Google sign-in can complete", async () => {
+  it("Auth.js callback paths are public so provider sign-in can complete", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "");
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/auth/callback/google");
     const res = await middleware(req);
     expect(res.status).toBe(200);
+
+    const githubReq = makeRequest("/api/auth/callback/github");
+    const githubRes = await middleware(githubReq);
+    expect(githubRes.status).toBe(200);
   });
 
   it("Robinhood OAuth start is not public; it still requires a verified app user", async () => {
