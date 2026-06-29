@@ -361,6 +361,14 @@ this run: the offending commit `0add0c2` is no longer in branch history; the tip
 ## 2026-06-27 — PR merge resolution & production verification
 Branch `agent/antigravity` (`resolve-prod-merge-prs`). Resolved conflicts in all three open PRs: PR #175 (dashboard-client.tsx + STATUS.md), PR #160 (PLAN.md + STATUS.md), and PR #141 (orchestrator.ts + STATUS.md). Verified each locally: TypeScript compiles clean and all tests passed (1441+, 1446+, and 1442+ respectively). The local `npm run build` gate was run only for PR #175; for PR #160 and PR #141 the build is exercised by the required `verify` CI workflow before merge (see `docs/rollouts/2026-06-27-pr-merge-resolution.md`). Pushed to remote branches; awaiting auto-merge via CI checks. Verified that the production PM2 instance is running and healthy on port 4000 (health check returns 200 OK with ticking scheduler).
 
+## 2026-06-27 — Codex autofix on PR #175 (auth/Robinhood): merge marker + rollout file lists
+Branch `claude/wonderful-wozniak-xploaq`. Addressed the remaining non-outdated Codex review items on
+PR #175: (1) removed the leftover `>>>>>>> origin/main` merge-conflict marker in `STATUS.md`
+(git diff --check clean); (2) completed the Robinhood rollout note's Files section to list `STATUS.md`
+and the note itself, per `AGENTS.md` rollout minimums. The three P1/P2 auth findings (allowlist gating,
+verified-email guard, Apple rollout handoff) were already fixed in earlier commits (`ba7004e`,
+`49e8ad2`, `0cca3fa`) — verified present and threads resolved. Merged `origin/main` (#141 chat
+read-only state tools) cleanly. Verify trio run before push.
 
 ## 2026-06-27 — HANDOFF: cutover crash UNRESOLVED + the "bash 3.2" claim below is WRONG
 Branch `claude/practical-mendel-cqtduf`. The operator reproduced the line-200
@@ -415,6 +423,18 @@ bad-import rows can't win first-wins; the short-circuit FMP cache-hit path treat
 MISS when App A already covers the remaining field (e.g. `peRatio`) so FMP's unique insider/senate/target
 fields get refetched. Other non-outdated Codex threads this round were already implemented earlier (verified
 + resolved). Merged `origin/main` 2026-06-27. tsc clean, 1450 tests, build OK.
+## 2026-06-26 — Fix: Robinhood auth UX (early exit + readiness chip + error translation)
+Branch `claude/wonderful-wozniak-xploaq`. Three UX improvements for the "Robinhood not connected"
+state. (1) **Early exit:** `callRobinhoodMcpMethod` now throws "Robinhood not connected" before
+making any HTTP request when no OAuth token is stored — prevents the silent no-auth request that
+previously reached the API and always 401'd. (2) **Friendlier errors:** 401 response now produces
+"Robinhood session expired — reconnect in Settings → Connections" instead of the raw
+"Robinhood MCP HTTP 401: authentication required". (3) **Readiness chip:** a new
+`robinhoodMcpConnected` field in the dashboard snapshot drives a conditional "⚠ Robinhood" chip
+in the ReadinessStrip when `activeBroker === "robinhood"` and no token is stored — visible on page
+load, before any order attempt. (4) **UI translation:** `humanizeBrokerError()` maps already-stored
+"Robinhood MCP HTTP 401" proposal error strings to the friendlier message in the Decisions tab.
+Verify: tsc ✓ · 1257/1257 ✓ · build ✓. See `docs/rollouts/2026-06-26-robinhood-auth-ux.md`.
 
 ## 2026-06-26 — Cutover crash root cause: macOS bash 3.2 mis-parses a multibyte char next to `$VAR`
 Branch `claude/practical-mendel-cqtduf`. The operator's `scripts/infisical-prod-cutover.sh: line 200:
@@ -635,6 +655,7 @@ Verify: `node --check` ✓ · `bash -n` ✓ · fake-`infisical`-shim tests (UA m
 per-project identities, token-drop, exit-code propagation) ✓ · tsc ✓ · **1250/1250** ✓ · build ✓.
 Operator unblock for the in-flight cutover: `unset INFISICAL_SHARED_TOKEN` then re-run (app verify
 already passes). See `docs/rollouts/2026-06-26-infisical-universal-auth.md`.
+
 ## 2026-06-26 — Stop-execution capability correction (copy) + verified broker matrix
 Branch `agent/claude-stop-execution`. Retracts a wrong Phase-3 claim ("no broker holds trailing stops").
 Diverse adversarial verification (84 agents, primary docs, 2 skeptics/claim — workflow `wf_e5bf1b0a-04d`):
@@ -777,6 +798,20 @@ live dashboard 200 + chat mock 200 (Alpaca fallback not exercisable locally — 
 render test was dropped: the repo's oxc transformer honors tsconfig `jsx: preserve` and can't transform
 an imported `.tsx` in vitest; Markdown is covered by build + live + react-markdown's escaping.) See
 `docs/rollouts/2026-06-25-chat-markdown-and-quote-fallback.md`.
+
+## 2026-06-26 — GitHub OAuth + Apple Sign In + auth security hardening
+Branch `claude/wonderful-wozniak-xploaq`. Three auth features + two Codex P1 security fixes.
+**GitHub OAuth:** added GitHub as a second sign-in option alongside Google so a deployment without
+GCP credentials can still use Auth.js. **Security P1 (Codex):** empty `ALLOWED_EMAILS` with Auth.js
+(no CF Access) now defaults to primary-only, not allow-all — prevents any GitHub account from signing
+in without an explicit allowlist entry. **Identity-source fix (Codex P1):** `isEmailAllowed` now
+takes a `fromCf: boolean` parameter tracked per-request in middleware — CF-defer only applies when CF
+actually provided the header, not just when the CF config flag is on. **Apple Sign In:** added Apple
+as a third OAuth option (`AUTH_APPLE_ID`/`AUTH_APPLE_SECRET`); warns in the UI when Apple is the only
+provider (Apple only sends email on first authorization — session expiry would lock users out).
+**GitHub verified-email:** `signIn` callback calls `/user/emails` independently and verifies the
+`verified` flag; fails closed on any API error. Verify: tsc ✓ · 1253/1253 ✓ · build ✓ · /login ƒ
+(Dynamic). See `docs/rollouts/2026-06-26-github-oauth.md` and `docs/rollouts/2026-06-26-apple-login.md`.
 
 ## 2026-06-26 — Cutover script prompts for the Infisical token
 Branch `claude/cutover-prompt-token`. `scripts/infisical-prod-cutover.sh` now prompts (hidden,

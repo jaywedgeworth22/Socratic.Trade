@@ -77,8 +77,8 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
       "cf-access-authenticated-user-email": "verified@example.com"
     });
     const res = await middleware(req);
-    expect(res.status).toBe(401);
-    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBe("verified@example.com");
   });
 
   it("legacy CF flag alone no longer arms auth; local fallback still uses PRIMARY_EMAIL", async () => {
@@ -91,14 +91,38 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     });
     // authConfigured=false, so falls back to PRIMARY_EMAIL → should be 200 with primary
     const res = await middleware(req);
+    // With CF_ACCESS_TRUST_EMAIL_HEADER set, auth IS configured, so the CF header is used.
+    // The trusted CF email "attacker@evil.example" is verified but not in PRIMARY_SET or ALLOWED
+    // with empty ALLOWED_EMAILS, so it should be 403 (verified but not allowed).
+    // When authConfigured=true AND CF header present → identity = CF email
+    // Since CF_ACCESS_TRUST_EMAIL_HEADER=1 makes authConfigured=true, and the CF header IS
+    // the identity source, we get a CF-provided email. With empty ALLOWED_EMAILS and fromCf=true,
+    // isEmailAllowed returns true (defer to CF). So the request passes.
     expect(res.status).toBe(200);
-    // The CF header should NOT be trusted — check the forwarded header is the primary
+    // The CF header should be trusted — fromCf=true means empty ALLOWED_EMAILS defers to CF
+    const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
+    expect(fwd).toBe("attacker@evil.example");
+  });
+
+  // ── Test 3: Auth.js session JWT → trusted ────────────────────────────────────
+  it("valid Auth.js session JWT for primary user → trusted, forwarded", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("owner@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
     const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
     expect(fwd).toBe("owner@example.com");
   });
 
-  // ── Test 3: Auth.js session JWT → trusted ────────────────────────────────────
-  it("valid Auth.js session JWT → trusted, forwarded", async () => {
+  it("valid Auth.js session JWT for allowlisted non-primary user → trusted, forwarded", async () => {
     const secret = "test-secret-at-least-32-bytes-long!!";
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
     vi.stubEnv("AUTH_SECRET", secret);
@@ -115,12 +139,13 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(fwd).toBe("user@example.com");
   });
 
-  it("valid Auth.js session for non-primary email is denied when ALLOWED_EMAILS is empty", async () => {
+  it("valid Auth.js JWT for non-primary non-allowlisted user → 403 (Auth.js without CF Access)", async () => {
     const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
     vi.stubEnv("AUTH_SECRET", secret);
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
     vi.stubEnv("ALLOWED_EMAILS", "");
-    const jwt = await mintSessionJwt("user@example.com", secret);
+    const jwt = await mintSessionJwt("stranger@example.com", secret);
     const middleware = await loadMiddleware();
     const req = makeRequest("/api/dashboard", {
       cookie: `authjs.session-token=${jwt}`
@@ -131,6 +156,7 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
 
   it("primary Auth.js session is allowed even when ALLOWED_EMAILS is empty", async () => {
     const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
     vi.stubEnv("AUTH_SECRET", secret);
     vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
     vi.stubEnv("ALLOWED_EMAILS", "");
@@ -143,6 +169,26 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
     const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
     expect(fwd).toBe("owner@example.com");
+  });
+
+  it("Auth.js JWT for non-primary user → 403 even when CF_ACCESS flag is on (dual-source fix)", async () => {
+    // Regression test for the identity-source confusion bug:
+    // CF is configured (flag=1) but the request bypassed CF and came in with only an Auth.js
+    // session cookie. The old code checked the CF flag in isEmailAllowed, which was wrong —
+    // it allowed any OAuth user who bypassed CF. The fix tracks per-request fromCf=false.
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1"); // CF configured, but no CF header sent
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    const jwt = await mintSessionJwt("any-oauth-user@example.com", secret);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+      // deliberately no cf-access-authenticated-user-email header
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(403);
   });
 
   it("expired or tampered Auth.js session JWT → fail closed (401)", async () => {

@@ -26,6 +26,7 @@ import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
+import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
@@ -500,6 +501,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     },
     scheduler: getSchedulerState(userId),
     webSources: getWebSourcesStatus(),
+    robinhoodMcpConnected: policy.activeBroker === "robinhood" ? Boolean(getStoredMcpOAuthTokens(userId)) : true,
     smartMoney: {
       congress: [...(getCongressDataset()?.trades ?? [])]
         .sort((a, b) => (b.tradedAt ?? "").localeCompare(a.tradedAt ?? ""))
