@@ -35,15 +35,25 @@ direct dependency.
 
 ## Verification
 
-To be run after the initial commit/push:
-
 ```bash
 npm install postcss@8.5.16 --package-lock-only --dry-run=true --ignore-scripts
+npm ci
 npm run lint
 npx tsc --noEmit
 npm test
 npm run build
 ```
+
+Results:
+
+- `npm install postcss@8.5.16 --package-lock-only --dry-run=true --ignore-scripts`
+  passed with no `EOVERRIDE`.
+- `npm ci` passed, confirming `package.json` and `package-lock.json` remain in
+  sync with the `$postcss` override.
+- `npm run lint` passed with the existing warning backlog.
+- `npx tsc --noEmit` passed.
+- `npm test` passed: 156 files / 1,498 tests.
+- `npm run build` passed; existing Next.js middleware deprecation warning only.
 
 ## Follow-ups
 
