@@ -53,9 +53,13 @@ sync already use it successfully.
   caching enabled; cache was removed before re-running PR checks.
 - `git ls-remote https://github.com/gitleaks/gitleaks-action.git refs/tags/v3`
   resolved the pinned `v3` action commit SHA.
-- PR #224 refreshed run: `verify` passed on the self-hosted runner, while
-  `gitleaks` failed before scanning due only to the stale installer temp file;
-  workflow updated to remove that file before invoking the action.
+- Main Security run `28349078730` failed after PR #225 merged because the
+  pinned action refused to overwrite `${TMPDIR}/gitleaks.tmp` on the macOS
+  runner; the workflow now removes that stale download file before invoking
+  gitleaks.
+- PR #224 refreshed run confirmed `verify` passed on the self-hosted runner;
+  its `gitleaks` retry hit the same stale temp-file installer failure before
+  scanning, which this workflow cleanup addresses.
 
 ## Follow-ups
 
