@@ -25,13 +25,23 @@ best handled as preview-sync restart tolerance rather than an application bug.
 
 ## Verification
 
-Pending:
+Initial verification attempt:
 
-- `bash -n scripts/sync-preview-lanes.sh`
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
+- `bash -n scripts/sync-preview-lanes.sh && npm run lint && npx tsc --noEmit && npm test && npm run build`
+  - Failed at `npm run lint` because the Cloud checkout did not have dependencies
+    installed yet (`eslint: not found`).
+
+Remediation and final verification:
+
+- `npm ci`
+  - Passed; existing npm deprecation/audit warnings only.
+- `bash -n scripts/sync-preview-lanes.sh && npm run lint && npx tsc --noEmit && npm test && npm run build`
+  - Passed.
+  - `npm run lint`: 0 errors, 240 existing warnings.
+  - `npx tsc --noEmit`: no errors.
+  - `npm test`: 157 files / 1,516 tests passed.
+  - `npm run build`: passed; existing Next.js middleware-to-proxy deprecation
+    warning only.
 
 ## Follow-ups
 

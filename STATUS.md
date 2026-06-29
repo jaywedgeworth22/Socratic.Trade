@@ -10,7 +10,9 @@ failure on main commit `1640919`. The self-hosted sync advanced beta, restarted
 PM2, then rolled back after repeated connect/empty/reset responses from port
 4001 within a short health window. `scripts/sync-preview-lanes.sh` now uses
 configurable health retry settings with a longer default so Next dev/PM2 restarts
-can finish warming before rollback. See
+can finish warming before rollback. Verification passed after `npm ci`: `bash -n
+scripts/sync-preview-lanes.sh && npm run lint && npx tsc --noEmit && npm test &&
+npm run build` (lint warnings only). See
 `docs/rollouts/2026-06-29-preview-sync-health-window.md`.
 
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
