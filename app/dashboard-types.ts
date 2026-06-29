@@ -110,6 +110,8 @@ export interface DashboardSnapshot {
   };
   /** True when activeBroker is not Robinhood, or when it is and an OAuth token is stored. */
   robinhoodMcpConnected: boolean;
+  /** Per-user setting: when true, accounts left in "active" state auto-resume on server boot. */
+  autoResumeOnBoot: boolean;
 }
 
 export type SortDir = "asc" | "desc";
