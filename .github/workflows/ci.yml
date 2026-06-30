@@ -47,20 +47,17 @@ jobs:
       - name: Install dependencies
         shell: bash
         env:
-          JOB_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
         run: |
-          dep_token="$(GH_TOKEN= GITHUB_TOKEN= gh auth token 2>/dev/null || true)"
-          dep_token="${dep_token:-$JOB_GITHUB_TOKEN}"
-          auth="$(printf 'x-access-token:%s' "$dep_token" | base64 | tr -d '\n')"
-          git config --local --unset-all http.https://github.com/.extraheader || true
-          GIT_CONFIG_COUNT=3 \
-            GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf \
-            GIT_CONFIG_VALUE_0=ssh://git@github.com/ \
-            GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf \
-            GIT_CONFIG_VALUE_1=git@github.com: \
-            GIT_CONFIG_KEY_2=http.https://github.com/.extraheader \
-            GIT_CONFIG_VALUE_2="AUTHORIZATION: basic $auth" \
-            npm ci
+          if [ -n "${CONGRESS_TRADING_SHARED_DEPLOY_KEY:-}" ]; then
+            key_file="${RUNNER_TEMP:-/tmp}/congress_trading_shared_deploy_key"
+            mkdir -p "$(dirname "$key_file")" "$HOME/.ssh"
+            printf '%s\n' "$CONGRESS_TRADING_SHARED_DEPLOY_KEY" > "$key_file"
+            chmod 600 "$key_file"
+            ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
+            export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          fi
+          npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test

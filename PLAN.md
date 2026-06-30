@@ -13,8 +13,8 @@ filling the missing pieces.
 > 2026-06-30 (`fix/page-title` / PR #251): Congress.Trade shared contract package —
 > App A/B wire types, API path constants, and Zod schemas are now imported from
 > `@jaywedgeworth22/congress-trading-shared` instead of being duplicated locally.
-> The package is pinned to shared commit `220677a`; CI/deploy install steps include
-> private-repo HTTPS auth for npm's git dependency. No roadmap change; see
+> The package is pinned to shared commit `220677a`; CI/deploy install steps use a
+> read-only deploy key for npm's private git dependency. No roadmap change; see
 > `docs/rollouts/2026-06-30-congress-trading-shared.md`.
 
 > 2026-06-29 (`antigravity/multi-agent-optimizations`): multi-agent optimizations —

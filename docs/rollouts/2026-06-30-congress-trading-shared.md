@@ -33,7 +33,7 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 ## Decisions
 
 - Pin the app dependency to shared-package commit `220677a3fb768c9e378404736e8f1f8c933220e1` until the package is published or a versioned release process is active.
-- Keep private repo access narrow: set the shared repo's Actions access to `user`; CI/smoke/deploy rewrite npm's SSH-style git URL to HTTPS and add an ephemeral auth header from the self-hosted runner's existing `gh` token, falling back to the job token if no host token is available.
+- Keep private repo access narrow: set the shared repo's Actions access to `user` and add a read-only deploy key (`agentic-trading dependency read key`) on the shared repo. Agentic Trading stores the matching private key as the Actions secret `CONGRESS_TRADING_SHARED_DEPLOY_KEY`; CI/smoke/deploy load it only for the `npm ci` process.
 - Remove unrelated PR drift from the app branch: page-title copy changes, `scripts/deploy.sh`, and the auto-deploy `AGENTS.md` block do not belong to this integration.
 
 ## Verification
@@ -45,7 +45,7 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 - Shared package: `npm run publish:dry`
 - App: `npm install --package-lock-only`
 - App: workflow YAML parse check with Ruby `YAML.load_file`
-- App: clean install using the self-hosted-runner private-git auth pattern: `npm ci`
+- App: clean install using the deploy-key private-git auth pattern: `npm ci`
 - App: `npm run lint` - passed with the existing warning backlog and 0 errors
 - App: `npx tsc --noEmit` - passed
 - App: `npm test` - 159 files / 1537 tests passed
@@ -54,4 +54,4 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 ## Follow-ups
 
 - Merge/publish `jaywedgeworth22/congress-trading-shared#1`, then move Agentic Trading from a pinned git commit to a versioned GitHub Packages release if desired.
-- Watch PR #251 CI to confirm the private git dependency auth path works on the self-hosted runner.
+- Rotate/delete the deploy key if this package moves to GitHub Packages and Agentic Trading no longer needs git-based private dependency access.
