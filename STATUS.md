@@ -11,9 +11,10 @@ failed during `npm run build` because Next 16 route validation rejected
 handlers/config. Moved the helper to `src/lib/policy-null-stripping.ts` and
 updated its unit test to import from the library module, leaving the route with
 only valid route exports. Antigravity strategy-review/test-quote fallback work
-is owned by the parallel `codex/merge-antigravity-20260630` worktree and is not
-included in this branch. Verification passed: `npm run lint`, `npx tsc --noEmit`,
-`npm test`, and `npm run build`; the first build retry hit host
+has since landed on `origin/main` as PR #274 and is included via the merged base;
+this branch's own diff is limited to the policy route export fix. Verification
+passed: `npm run lint`, `npx tsc --noEmit`, `npm test`, and `npm run build`; the
+first build retry hit host
 `ENOSPC`, then passed after clearing generated/cache output. See
 `docs/rollouts/2026-06-30-policy-route-export-fix.md`.
 

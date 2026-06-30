@@ -8,8 +8,8 @@ filling the missing pieces.
 > 2026-06-30 (`codex/fix-policy-route-export`): production build fix - moved
 > `stripNullsDeep` out of `app/api/policy/route.ts` because Next 16 rejects
 > non-route exports from app route modules. Antigravity strategy-review/test
-> quote fallback work is intentionally left to the parallel
-> `codex/merge-antigravity-20260630` branch. No roadmap change; see
+> quote fallback work has since landed on `origin/main` as PR #274 and is
+> included via the merged base, not this fix diff. No roadmap change; see
 > `docs/rollouts/2026-06-30-policy-route-export-fix.md`.
 >
 > 2026-06-30 (`codex/prod-merge-sweep-20260630`): production merge sweep -

@@ -11,9 +11,9 @@ Next 16 validates app route module exports during `npm run build`. The merged
 `app/api/policy/route.ts` exported `stripNullsDeep` for a unit test, which made
 the route invalid even though the runtime policy logic was otherwise correct.
 
-Antigravity strategy-review/test-quote fallback work is being handled by the
-parallel `codex/merge-antigravity-20260630` worktree and is intentionally not
-included here.
+Antigravity strategy-review/test-quote fallback work landed separately on
+`origin/main` as PR #274. This branch has merged that base for deployment, but
+its own fix remains limited to the policy route export blocker.
 
 ## Files
 
@@ -32,8 +32,11 @@ included here.
 - `npm run build` - first rerun failed with host `ENOSPC` while writing
   `.next/trace`; after clearing this worktree's generated `.next` output and
   Homebrew download cache, rerun passed. Route table includes `/api/policy`.
+- After merging `origin/main` with PR #274: `npm run lint` passed with 0 errors
+  / 254 existing warnings, `npx tsc --noEmit` passed, `npm test` passed (165
+  files / 1577 tests), and `npm run build` passed.
 
 ## Follow-ups
 
 - Merge this fix before retrying the production deploy.
-- Account for the parallel Antigravity branch only after it is verified/merged.
+- Antigravity work is already accounted for through merged PR #274.
