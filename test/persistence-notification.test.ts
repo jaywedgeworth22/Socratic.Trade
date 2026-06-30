@@ -259,6 +259,98 @@ describe("persistence and notifications", () => {
     }
   }, 15_000);
 
+  it("records a failed Green Team LLM step when the proposal request times out", async () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("api.openai.com")) {
+        throw new Error("The operation was aborted due to timeout");
+      }
+      if (href.includes("nasdaq.com")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-06-15",
+              table: {
+                rows: [
+                  {
+                    symbol: "AAPL",
+                    lastsale: "$200",
+                    pctchange: "1%",
+                    volume: "1000000",
+                    marketCap: "3000000000000",
+                    sector: "Technology",
+                    industry: "Consumer Electronics"
+                  }
+                ]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      const { listAudit, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
+      const { runStrategyOnce } = await import("../src/lib/strategy");
+
+      const mockAccountId = randomUUID();
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "test",
+        environment: "paper",
+        accountNumber: "TEST",
+        label: "Timeout Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+      setPolicy({
+        ...DEFAULT_POLICY,
+        systemState: "active",
+        paperMode: true,
+        llmModel: "gpt-5.5",
+        llmReasoningEffort: "high",
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        strategyAuthority: "decide"
+      });
+
+      const result = await runStrategyOnce();
+      expect(result.status).toBe("failed");
+      expect(result.summary).toContain("Green Team proposal timed out after 60s using OpenAI gpt-5.5");
+      expect(result.llmSteps).toMatchObject([
+        {
+          step: "bull",
+          label: "Green Team proposal",
+          provider: "openai",
+          model: "gpt-5.5",
+          status: "failed"
+        }
+      ]);
+
+      const audit = listAudit(200);
+      const stepEvents = audit
+        .filter((event) => event.kind === "llm_step")
+        .map((event) => event.payload as { runId?: string; status?: string; reason?: string })
+        .filter((payload) => payload.runId === result.runId);
+      expect(stepEvents.map((event) => event.status).sort()).toEqual(["failed", "started"]);
+      expect(stepEvents.find((event) => event.status === "failed")?.reason).toContain("Lower reasoning effort");
+
+      const runAudit = audit
+        .filter((event) => event.kind === "strategy_run")
+        .map((event) => event.payload as { runId?: string; llmSteps?: unknown[] })
+        .find((payload) => payload.runId === result.runId);
+      expect(runAudit?.llmSteps).toMatchObject([{ step: "bull", status: "failed" }]);
+    } finally {
+      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
+    }
+  }, 15_000);
+
   it("records a pre-run portfolio snapshot before any proposals execute", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     // Seed a key + stub the LLM to return 0 proposals → the run completes as a no-op. (The strategy
