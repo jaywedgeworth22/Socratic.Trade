@@ -28,6 +28,13 @@ filling the missing pieces.
 > once as `Congress.Trade`, and `yahoo-finance-delayed-quotes` displays as
 > `Yahoo Finance`. No roadmap change; see
 > `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+> 2026-06-30 (`codex/merge-antigravity-20260630`): strategy review persistence
+> & test quote fallback — incorporates `agent/antigravity-strategy-review-decisions`,
+> saving Strategy Studio LLM review proposals in local storage so they survive
+> page refresh/modal closure, adding a discard button, and making test broker
+> quote fetching fall back to a simulated Test-mode price instead of crashing
+> when Yahoo Finance is rate-limited. No roadmap change; see
+> `docs/rollouts/2026-06-30-antigravity-strategy-review-localstorage.md`.
 >
 > 2026-06-30 (`codex/strategy-llm-timeout-diagnostics`): strategy LLM timeout
 > diagnostics - production run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` failed
