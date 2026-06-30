@@ -1834,6 +1834,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             setStudioOpen(true);
           }}
           load={load}
+          onChangeAccount={activateAccount}
           onRequestDecideConfirm={() => setDecideConfirm(true)}
           onRequestSystemToggle={() => setKillConfirm(true)}
         />
@@ -4151,6 +4152,7 @@ function SettingsContent({
   openAccounts,
   openStrategyStudio,
   load,
+  onChangeAccount,
   onRequestDecideConfirm,
   onRequestSystemToggle
 }: {
@@ -4168,7 +4170,8 @@ function SettingsContent({
   setExecutionBannerMode: (next: ExecutionBannerMode) => void;
   openAccounts: () => void;
   openStrategyStudio: () => void;
-  load: () => Promise<void>;
+  load: (options?: { quiet?: boolean }) => Promise<void>;
+  onChangeAccount: (id: string) => Promise<void>;
   onRequestDecideConfirm: () => void;
   onRequestSystemToggle: () => void;
 }) {
@@ -4250,6 +4253,7 @@ function SettingsContent({
   }
 
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
+  const [settingsTier, setSettingsTier] = useState<"user" | "account">("user");
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
   const activeAccount = activeConnectedAccountFor(snapshot);
@@ -4317,22 +4321,108 @@ function SettingsContent({
   return (
     <>
       <div className="min-h-[60vh] space-y-4">
+        {/* ── Tier selector ── */}
+        <div className="overflow-x-auto overscroll-x-contain">
+          <Segmented<"user" | "account">
+            value={settingsTier}
+            onChange={(v) => {
+              setSettingsTier(v);
+              setSection(v === "user" ? "connections" : "operate");
+            }}
+            options={[
+              { value: "user", label: "User Settings" },
+              { value: "account", label: "Account Settings" }
+            ]}
+          />
+        </div>
+
+        {/* ── Account picker (account tier only) ── */}
+        {settingsTier === "account" && (() => {
+          const accounts = (snapshot.connectedAccounts ?? []).filter((a) => a.broker !== "test" || a.id === snapshot.policy.connectedAccountId);
+          return (
+            <div className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/45 px-3 py-2.5">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                <Wallet size={14} />
+              </span>
+              <span className="text-sm font-medium text-fg">Editing:</span>
+              {accounts.length > 0 ? (
+                <select
+                  className="h-8 max-w-[14rem] rounded-lg border border-line bg-surface/50 px-2 text-sm text-fg outline-none focus:border-accent"
+                  value={activeAccount?.id ?? ""}
+                  onChange={async (e) => {
+                    const id = e.target.value;
+                    if (id) {
+                      try {
+                        await onChangeAccount(id);
+                      } catch {
+                        toast.error("Account switch failed.");
+                      }
+                    }
+                  }}
+                >
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-xs text-muted">No accounts connected</span>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Auto-resume (user tier only) ── */}
+        {settingsTier === "user" && (
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
+            <span>
+              <span className="block text-sm font-medium text-fg">Resume strategy on server restart</span>
+              <span className="block text-xs text-faint">
+                When enabled, accounts left in &ldquo;active&rdquo; state will auto-resume on server boot. When off (default), every restart requires manually re-arming autonomy.
+              </span>
+            </span>
+            <Switch
+              checked={snapshot.autoResumeOnBoot}
+              onChange={async (v) => {
+                try {
+                  const res = await fetch("/api/settings/auto-resume", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ enabled: v })
+                  });
+                  if (!res.ok) throw new Error("Failed to save setting");
+                  await load({ quiet: true });
+                } catch {
+                  toast.error("Could not save auto-resume setting.");
+                }
+              }}
+            />
+          </label>
+        )}
+
+        {/* ── Section tabs ── */}
         <div className="overflow-x-auto overscroll-x-contain">
           <Tabs
             value={section}
             onChange={(v) => setSection(v as SettingsSection)}
-            tabs={[
-              { id: "operate", label: "Operate" },
-              { id: "risk", label: "Safety" },
-              { id: "connections", label: "Connections" },
-              { id: "display", label: "Display" },
-              { id: "tax", label: "Tax" },
-              { id: "tuning", label: "Tuning" },
-              { id: "notifications", label: "Notifications" },
-              { id: "data", label: "Data" }
-            ]}
+            tabs={
+              settingsTier === "user"
+                ? [
+                    { id: "connections", label: "Connections" },
+                    { id: "display", label: "Display" },
+                    { id: "notifications", label: "Notifications" },
+                    { id: "data", label: "Data" }
+                  ]
+                : [
+                    { id: "operate", label: "Operate" },
+                    { id: "risk", label: "Safety" },
+                    { id: "tax", label: "Tax" },
+                    { id: "tuning", label: "Tuning" }
+                  ]
+            }
           />
         </div>
+
+        {settingsTier === "account" && <>
 
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -4687,6 +4777,9 @@ function SettingsContent({
             </div>
           </div>
         )}
+        </>}
+
+        {settingsTier === "user" && <>
 
         {section === "connections" && (
           <div className="space-y-4">
@@ -4748,6 +4841,9 @@ function SettingsContent({
             )}
           </div>
         )}
+        </>}
+
+        {settingsTier === "account" && <>
 
       {section === "tax" && (
         <div className="space-y-3">
@@ -4897,6 +4993,9 @@ function SettingsContent({
           </p>
         </div>
       )}
+      </>}
+
+      {settingsTier === "user" && <>
 
       {section === "data" && (
         <div className="space-y-3">
@@ -5023,6 +5122,9 @@ function SettingsContent({
           />
         </div>
       )}
+      </>}
+
+      {settingsTier === "user" && <>
 
       {section === "notifications" && (
         <div className="space-y-3">
@@ -5062,6 +5164,8 @@ function SettingsContent({
           </div>
         </div>
       )}
+      </>}
+
       </div>
       <ConfirmModal
         open={liveConfirmOpen}

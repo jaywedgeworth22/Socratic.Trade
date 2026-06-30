@@ -1,6 +1,7 @@
 import {
   dailyExecutionStats,
   getActiveStrategyProfile,
+  getAutoResumeOnBoot,
   getPolicy,
   getProposal,
   getStrategyPrompt,
@@ -502,6 +503,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     scheduler: getSchedulerState(userId),
     webSources: getWebSourcesStatus(),
     robinhoodMcpConnected: policy.activeBroker === "robinhood" ? Boolean(getStoredMcpOAuthTokens(userId)) : true,
+    autoResumeOnBoot: getAutoResumeOnBoot(userId),
     smartMoney: {
       congress: [...(getCongressDataset()?.trades ?? [])]
         .sort((a, b) => (b.tradedAt ?? "").localeCompare(a.tradedAt ?? ""))

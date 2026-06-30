@@ -12,6 +12,76 @@ import type {
   TradingPolicy
 } from "./types";
 
+// ── User-level vs account-level policy field split ─────────────────────────────
+// User-level fields are stored in user_settings.policy and overlaid on top of the
+// account-level base on every read. Account-level fields live in account_strategy_state.
+// New additions must be added to the set below to ensure they land in the correct store.
+
+const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
+  "llmModel",
+  "redTeamLlmModel",
+  "llmReasoningEffort",
+  "notificationSettings",
+  "marketScanCandidateLimit",
+  "marketScanOutlierReserve"
+]);
+
+/** Extract only the user-level fields from a TradingPolicy. */
+function pickUserFields(policy: TradingPolicy): Partial<TradingPolicy> {
+  const result: Partial<TradingPolicy> = {};
+  for (const key of USER_LEVEL_POLICY_FIELDS) {
+    if (key in policy) {
+      (result as Record<string, unknown>)[key as string] = policy[key];
+    }
+  }
+  return result;
+}
+
+/** Extract only the account-level fields from a TradingPolicy (everything NOT in USER_LEVEL_POLICY_FIELDS). */
+function pickAccountFields(policy: TradingPolicy): Partial<TradingPolicy> {
+  const result: Partial<TradingPolicy> = {};
+  for (const key of Object.keys(policy) as Array<keyof TradingPolicy>) {
+    if (!USER_LEVEL_POLICY_FIELDS.has(key) && key !== "scoringWeights") {
+      (result as Record<string, unknown>)[key as string] = policy[key];
+    }
+  }
+  // scoringWeights are already handled inside mergePolicy, write them to the account policy
+  if (policy.scoringWeights) {
+    result.scoringWeights = policy.scoringWeights;
+  }
+  return result;
+}
+
+/** Drop user-level fields from legacy account rows before applying the user-level overlay. */
+function stripUserFields(policy: Partial<TradingPolicy>): Partial<TradingPolicy> {
+  const result: Partial<TradingPolicy> = { ...policy };
+  for (const key of USER_LEVEL_POLICY_FIELDS) {
+    delete result[key];
+  }
+  return result;
+}
+
+/** Read user-level policy fields from user_settings and return them as a partial policy. */
+function readUserPolicyFields(userId: string): Partial<TradingPolicy> {
+  const stored = getUserSetting<Partial<TradingPolicy>>(userId, "policy", {});
+  if (!stored || typeof stored !== "object") return {};
+  // Only pluck the known user-level fields from whatever is stored (backward-compat:
+  // existing DBs have the full policy in user_settings — we only care about user fields now).
+  const result: Partial<TradingPolicy> = {};
+  for (const key of USER_LEVEL_POLICY_FIELDS) {
+    if (key in stored) {
+      (result as Record<string, unknown>)[key as string] = stored[key];
+    }
+  }
+  return result;
+}
+
+/** Write only the user-level fields of a policy to user_settings.policy. */
+function writeUserPolicyFields(userId: string, policy: TradingPolicy): void {
+  const userFields = pickUserFields(policy);
+  setUserSetting(userId, "policy", userFields);
+}
+
 // ── Internal raw-row type ──────────────────────────────────────────────────────
 
 type RawStrategyProfile = {
@@ -187,20 +257,12 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
   if (account) {
     const state = getAccountStrategyStateRow(userId, account.id);
     if (state) {
-      // Account's live state is authoritative once it exists.
       const stored = JSON.parse(state.policy) as Partial<TradingPolicy>;
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...stored, scoringWeights });
+      policy = mergePolicy({ ...stripUserFields(stored), scoringWeights });
     } else {
-      // First touch: seed the live row from the user-level base so behavior is identical
-      // to the pre-isolation single-account path on day one — EXCEPT autonomy must never
-      // auto-arm a freshly-seeded account. Only the currently-active account inherits the
-      // base `systemState`; any other account seeds as "halted" so per-account autonomy is
-      // opt-in (mirrors reconcileAutonomyOnBoot's safe default). Without this, adding a
-      // second account while the first is "active" would silently start trading the new one
-      // the moment the multi-account scheduler iterates it.
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;
       if (account.id !== activeId && policy.systemState === "active") {
@@ -213,12 +275,14 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
         derivedFromProfileId: policy.activeProfileId ?? null
       });
     }
+    // Overlay user-level fields from user_settings.policy on top of the account base.
+    // This makes user-level settings (LLM models, notifications, scan limits) apply
+    // consistently across all accounts while keeping risk/strategy per-account.
+    const userFields = readUserPolicyFields(userId);
+    policy = mergePolicy({ ...policy, ...userFields });
     policy.connectedAccountId = account.id;
     policy.activeBroker = account.broker;
     policy.accountNumber = account.accountNumber;
-    // The active account IS the mode: the Test account runs the local simulator
-    // (paperMode), while any real broker account (Alpaca paper/brokerage, Robinhood)
-    // runs against the broker. There is no separate paperMode override anymore.
     policy.paperMode = account.broker === "test";
   } else {
     policy = getBasePolicy(userId);
@@ -244,7 +308,7 @@ export function peekPolicy(userId: string = "local", connectedAccountId?: string
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...stored, scoringWeights });
+      policy = mergePolicy({ ...stripUserFields(stored), scoringWeights });
     } else {
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;
@@ -266,16 +330,23 @@ export function peekPolicy(userId: string = "local", connectedAccountId?: string
 
 export function setPolicy(policy: TradingPolicy, userId: string = "local", connectedAccountId?: string): void {
   const merged = mergePolicy(policy);
-  setUserSetting(userId, "policy", merged);
-  syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
-  // Per-account isolation: write the live row for the target (default active) account.
   const account = resolveAccount(userId, connectedAccountId);
+
   if (account) {
+    // ── Tiered write: user fields → user_settings, account fields → account_strategy_state ──
+    writeUserPolicyFields(userId, merged);
+    syncActiveProfile({ policy: pickAccountFields(merged) as TradingPolicy, scoringWeights: merged.scoringWeights }, userId);
     writeAccountStrategyState(userId, account.id, {
-      policy: merged,
+      policy: pickAccountFields(merged) as TradingPolicy,
       prompt: getStrategyPrompt(userId, account.id),
       scoringWeights: merged.scoringWeights
     });
+  } else {
+    // ── No connected account: store the full policy in user_settings (backward compat) ──
+    // Users without a connected account (legacy single-user mode) keep the old behaviour:
+    // the full policy is stored as a single blob under user_settings.policy.
+    setUserSetting(userId, "policy", merged);
+    syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
   }
 }
 

@@ -10,6 +10,11 @@ filling the missing pieces.
 > build-generated route-types path so required builds do not dirty the worktree.
 > No roadmap change; see
 > `docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`.
+> 2026-06-30 (`feat/tiered-settings` / PR #252): tiered settings review fix —
+> stale user-level policy fields in legacy account rows are stripped before the
+> user-level overlay, so cleared fields like `redTeamLlmModel` cannot reappear
+> from inactive account state. No roadmap change; see
+> `docs/rollouts/2026-06-29-tiered-settings.md`.
 
 > 2026-06-29 (`agent/antigravity`): sticky top bar & slide-over offsets —
 > made the dashboard top bar sticky and offset the SlideOver components (Activity Log, etc.)
