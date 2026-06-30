@@ -47,10 +47,10 @@ jobs:
       - name: Install dependencies
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          dep_token="$(gh auth token 2>/dev/null || true)"
-          dep_token="${dep_token:-$GH_TOKEN}"
+          dep_token="$(GH_TOKEN= GITHUB_TOKEN= gh auth token 2>/dev/null || true)"
+          dep_token="${dep_token:-$JOB_GITHUB_TOKEN}"
           auth="$(printf 'x-access-token:%s' "$dep_token" | base64 | tr -d '\n')"
           git config --local --unset-all http.https://github.com/.extraheader || true
           GIT_CONFIG_COUNT=3 \
