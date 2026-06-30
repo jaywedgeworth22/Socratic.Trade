@@ -43,12 +43,20 @@ jobs:
           node-version: 24
       - name: Install dependencies
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          GIT_CONFIG_COUNT=2 \
+          dep_token="$(gh auth token 2>/dev/null || true)"
+          dep_token="${dep_token:-$GH_TOKEN}"
+          auth="$(printf 'x-access-token:%s' "$dep_token" | base64 | tr -d '\n')"
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          GIT_CONFIG_COUNT=3 \
             GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf \
             GIT_CONFIG_VALUE_0=ssh://git@github.com/ \
             GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf \
             GIT_CONFIG_VALUE_1=git@github.com: \
+            GIT_CONFIG_KEY_2=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_2="AUTHORIZATION: basic $auth" \
             npm ci
       - name: Install Playwright browser
         shell: bash

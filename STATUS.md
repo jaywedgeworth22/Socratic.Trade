@@ -12,7 +12,8 @@ integration. Agentic Trading now depends on
 Congress.Trade read/share/event paths, and validates transactions, share payloads,
 and inbound events at runtime. The private shared repo's Actions access was set
 to `user`; CI/e2e/deploy `npm ci` steps now rewrite npm's `git+ssh` lockfile URL
-to HTTPS with an ephemeral GitHub token extraheader. Companion shared-package PR:
+to HTTPS with an ephemeral auth header from the self-hosted runner's `gh` token.
+Companion shared-package PR:
 jaywedgeworth22/congress-trading-shared#1. See
 `docs/rollouts/2026-06-30-congress-trading-shared.md`.
 

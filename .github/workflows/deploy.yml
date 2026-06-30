@@ -67,7 +67,9 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Install dependencies (lockfile-exact)"
-          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          dep_token="$(gh auth token 2>/dev/null || true)"
+          dep_token="${dep_token:-$GH_TOKEN}"
+          auth="$(printf 'x-access-token:%s' "$dep_token" | base64 | tr -d '\n')"
           GIT_CONFIG_COUNT=3 \
             GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf \
             GIT_CONFIG_VALUE_0=ssh://git@github.com/ \
