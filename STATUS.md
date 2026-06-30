@@ -7,8 +7,9 @@ steps materially change.
 ## 2026-06-30 — PR #237 review-thread fix: Alpaca shared market-data fallback
 Branch `fix/merge-pr-205`. Resolved review blockers by making
 `resolveAlpacaMarketData` fall back to the operator/local connected Alpaca
-account for read-only shared/background snapshot market data while preserving a
-tenant's key-only Alpaca credential for the news tier when no shared fallback is
+account for read-only shared/background snapshot market data, scanning alternate
+connected Alpaca accounts before falling back, while preserving a tenant's
+key-only Alpaca credential for the news tier when no shared fallback is
 configured. Trading credential resolution remains per-user/fail-closed.
 Verification: `npm test -- test/key-resolution-tiering.test.ts`,
 `npx tsc --noEmit`, and `npm run lint`.

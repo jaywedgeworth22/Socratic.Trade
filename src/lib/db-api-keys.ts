@@ -339,17 +339,34 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   return resolveApiKeyWithSource(service, userId).key;
 }
 
+function rankConnectedAlpacaAccounts(
+  accounts: ReturnType<typeof listConnectedAccounts>
+): ReturnType<typeof listConnectedAccounts> {
+  const ranked = [
+    accounts.find((a) => a.isActive && a.environment === "live"),
+    accounts.find((a) => a.isActive),
+    accounts.find((a) => a.environment === "live"),
+    accounts.find((a) => a.environment === "paper"),
+    ...accounts
+  ];
+  const seen = new Set<string>();
+  return ranked.filter((account): account is NonNullable<(typeof ranked)[number]> => {
+    if (!account || seen.has(account.id)) return false;
+    seen.add(account.id);
+    return true;
+  });
+}
+
 function resolveConnectedAlpacaMarketData(userId: string, requireSecret = true): { apiKey: string; secretKey?: string } | undefined {
   const alpacaAccs = listConnectedAccounts(userId).filter((a) => a.broker === "alpaca" || a.broker === "alpaca-mcp");
   if (alpacaAccs.length === 0) return undefined;
 
-  const preferred =
-    alpacaAccs.find((a) => a.isActive) ||
-    alpacaAccs.find((a) => a.environment === "live") ||
-    alpacaAccs[0];
-  const detailed = getConnectedAccount(preferred.id, userId);
-  if (!detailed?.apiKey || (requireSecret && !detailed.apiSecret)) return undefined;
-  return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret };
+  for (const account of rankConnectedAlpacaAccounts(alpacaAccs)) {
+    const detailed = getConnectedAccount(account.id, userId);
+    if (!detailed?.apiKey || (requireSecret && !detailed.apiSecret)) continue;
+    return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret };
+  }
+  return undefined;
 }
 
 /**

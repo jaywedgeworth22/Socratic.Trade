@@ -338,6 +338,38 @@ describe("Alpaca market-data credential (shared data, per-user trading)", () => 
     expect(resolveAlpacaMarketData("u_tenant").secretKey).toBeUndefined();
   });
 
+  it("checks another connected Alpaca account before falling back from a key-only preferred account", async () => {
+    const { resolveAlpacaMarketData, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: "tenant-live-oauth-only",
+      userId: "u_tenant",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "LA-TENANT",
+      label: "Tenant Live OAuth",
+      apiKey: "tenant-live-token",
+      isActive: true
+    });
+    upsertConnectedAccount({
+      id: "tenant-paper-complete",
+      userId: "u_tenant",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-TENANT",
+      label: "Tenant Paper",
+      apiKey: "tenant-paper-key",
+      apiSecret: "tenant-paper-secret",
+      isActive: true
+    });
+
+    expect(resolveAlpacaMarketData("u_tenant")).toMatchObject({
+      apiKey: "tenant-paper-key",
+      secretKey: "tenant-paper-secret",
+      source: "user"
+    });
+  });
+
   it("trading resolution is unaffected — a tenant never gets the operator's Alpaca key to trade", async () => {
     vi.stubEnv("ALPACA_PAPER_API_KEY", "op-alpaca-key");
     const { resolveApiKeyWithSource } = await import("../src/lib/db");
