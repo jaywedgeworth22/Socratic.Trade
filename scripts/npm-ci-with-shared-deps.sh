@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Run npm ci with optional SSH auth for private git dependencies.
+# Run npm ci with optional auth for the private GitHub Packages dependency.
 #
-# Set CONGRESS_TRADING_SHARED_DEPLOY_KEY to a private key, or
-# CONGRESS_TRADING_SHARED_DEPLOY_KEY_FILE to a key file path. When neither is set,
-# this falls back to the caller's normal git/ssh credentials.
+# Set NODE_AUTH_TOKEN to a GitHub token with read access to
+# @jaywedgeworth22/congress-trading-shared. The legacy SSH deploy-key path is
+# kept for older lockfiles and local rollbacks.
 set -euo pipefail
 
 KEY_FILE=""
 CLEANUP_KEY_FILE=""
+NPMRC_FILE=""
 
 if [ -n "${CONGRESS_TRADING_SHARED_DEPLOY_KEY_FILE:-}" ]; then
   KEY_FILE="$CONGRESS_TRADING_SHARED_DEPLOY_KEY_FILE"
@@ -24,8 +25,22 @@ cleanup() {
   if [ -n "$CLEANUP_KEY_FILE" ]; then
     rm -f "$CLEANUP_KEY_FILE"
   fi
+  if [ -n "$NPMRC_FILE" ]; then
+    rm -f "$NPMRC_FILE"
+  fi
 }
 trap cleanup EXIT
+
+if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+  tmp_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+  NPMRC_FILE="$tmp_dir/congress_trading_shared_npmrc_$$"
+  {
+    printf '@jaywedgeworth22:registry=https://npm.pkg.github.com\n'
+    printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN"
+  } > "$NPMRC_FILE"
+  chmod 600 "$NPMRC_FILE"
+  export NPM_CONFIG_USERCONFIG="$NPMRC_FILE"
+fi
 
 if [ -n "$KEY_FILE" ]; then
   mkdir -p "$HOME/.ssh"

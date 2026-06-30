@@ -16,6 +16,7 @@ jobs:
     runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
@@ -45,6 +46,7 @@ jobs:
         shell: bash
         env:
           CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: bash scripts/npm-ci-with-shared-deps.sh
       - name: Install Playwright browser
         shell: bash
