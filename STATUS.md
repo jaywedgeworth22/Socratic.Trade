@@ -64,6 +64,15 @@ warnings), `npx tsc --noEmit`, `npm test` (159 files / 1539 tests), and
 `npm run build` all pass. See
 `docs/rollouts/2026-06-30-audit-log-strategy-ui.md`.
 
+## 2026-06-30 - Blocked proposal decision persistence
+Branch `codex/blocked-proposal-decision-persistence`. Reapplied the safe unique
+piece from stale PR #256 on current main: blocked proposal status updates can now
+persist the blocking `PolicyDecision`, `executeProposal` stores policy/tradability
+block reasons, and Latest Decisions has a generic blocked fallback for older rows.
+The rest of PR #256 remains intentionally unmerged because it would revert newer
+merged audit/settings/notification/provider work. See
+`docs/rollouts/2026-06-30-blocked-proposal-decision-persistence.md`.
+
 ## 2026-06-30 — PR #253 review-thread fix: custom model path + next-env
 Branch `cursor/trim-openai-strategy-options-f06c`. Resolved review blockers by
 keeping `next-env.d.ts` on the production build-generated `.next/types` route

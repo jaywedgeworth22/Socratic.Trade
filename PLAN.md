@@ -36,6 +36,12 @@ filling the missing pieces.
 > fallback details when no compact summary field exists. No roadmap change; see
 > `docs/rollouts/2026-06-30-audit-log-strategy-ui.md`.
 
+> 2026-06-30 (`codex/blocked-proposal-decision-persistence`): blocked proposals
+> now persist the policy/tradability decision reasons when they move to
+> `blocked`, with a Latest Decisions fallback for older blocked rows. This is the
+> safe replacement for stale PR #256's unique persistence behavior; no roadmap
+> change. See `docs/rollouts/2026-06-30-blocked-proposal-decision-persistence.md`.
+
 >
 > 2026-06-30 (`cursor/trim-openai-strategy-options-f06c` / PR #253):
 > custom model selector review fix — trimmed OpenAI options remain reachable via

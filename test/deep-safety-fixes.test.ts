@@ -54,6 +54,28 @@ describe("claimProposalForExecution — atomic proposal claim", () => {
     expect(getProposal(id, "local")?.status).toBe("blocked");
   });
 
+  it("can persist blocked policy decisions when status changes", () => {
+    const id = seedProposed();
+    updateProposalStatus(
+      id,
+      "blocked",
+      undefined,
+      undefined,
+      undefined,
+      "local",
+      undefined,
+      undefined,
+      { approved: false, reasons: ["Symbol is not in the allowed universe."] }
+    );
+
+    const row = getProposal(id, "local");
+    expect(row?.status).toBe("blocked");
+    expect(row?.decision).toMatchObject({
+      approved: false,
+      reasons: ["Symbol is not in the allowed universe."]
+    });
+  });
+
   it("is scoped by userId (cannot claim another user's proposal)", () => {
     const id = seedProposed("local");
     expect(claimProposalForExecution(id, "placing", "someone-else")).toBe(false);
