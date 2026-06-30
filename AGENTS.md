@@ -19,23 +19,6 @@ the hard way.
   `docs/*.md` and the latest matching note under `docs/rollouts/` before making
   a non-trivial change.
 
-## Auto-deploy (DEFAULT — skip only when told not to)
-
-After completing any non-trivial code change and running verification
-(`npx tsc --noEmit`, `npm test`, `npm run build`), **automatically deploy
-without waiting to be asked**. Use the single command:
-
-```bash
-bash scripts/deploy.sh "descriptive commit message"
-```
-
-This commits, pushes, creates a PR with auto-merge, and returns to `main`.
-CI verifies on the branch; once green the PR self-merges and `deploy.yml`
-restarts production. The user should never have to type "deploy" or "push".
-
-**Exception:** skip only when the user explicitly says "don't deploy this" or
-"leave this uncommitted."
-
 ## Pre-Commit / Handoff Protocol (Claude, Codex, Antigravity, Cursor, etc.)
 
 Before every commit/push to the GitHub repo, you MUST update the following:

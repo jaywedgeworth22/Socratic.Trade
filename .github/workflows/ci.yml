@@ -44,7 +44,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm ci
+      - name: Install dependencies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          GIT_CONFIG_COUNT=3 \
+            GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf \
+            GIT_CONFIG_VALUE_0=ssh://git@github.com/ \
+            GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf \
+            GIT_CONFIG_VALUE_1=git@github.com: \
+            GIT_CONFIG_KEY_2=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_2="AUTHORIZATION: basic $auth" \
+            npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test

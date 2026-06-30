@@ -7,7 +7,7 @@ import { GlobalErrorToasts } from "./ui/global-error-toasts";
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://trading.jays.services"),
   title: {
-    default: "Trading Dashboard",
+    default: "AI market research & strategy dashboard",
     template: "%s · Trading Dashboard"
   },
   description:
@@ -25,13 +25,13 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "Trading Dashboard",
     url: "/",
-    title: "Trading Dashboard",
+    title: "AI market research & strategy dashboard",
     description:
       "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "Trading Dashboard",
+    title: "AI market research & strategy dashboard",
     description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
   },
   // Default = NOINDEX. Only allow indexing when explicitly opted in (the app is private by default).

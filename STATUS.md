@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 — Congress.Trade shared contract package integration
+Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
+integration. Agentic Trading now depends on
+`@jaywedgeworth22/congress-trading-shared` pinned to shared-package commit
+`220677a`, imports the shared App A/B types, constants, and Zod schemas across the
+Congress.Trade read/share/event paths, and validates transactions, share payloads,
+and inbound events at runtime. The private shared repo's Actions access was set
+to `user`; CI/e2e/deploy `npm ci` steps now rewrite npm's `git+ssh` lockfile URL
+to HTTPS with an ephemeral GitHub token extraheader. Companion shared-package PR:
+jaywedgeworth22/congress-trading-shared#1. See
+`docs/rollouts/2026-06-30-congress-trading-shared.md`.
+
 ## 2026-06-29 — Sticky top bar, slide-over layout offsets & verification
 Branch `agent/antigravity`. Made the dashboard header/top bar sticky so it always stays at the top of the viewport. Offset the `SlideOver` component dynamically from the top of the viewport using a measured `--header-height` CSS variable so drawer panels (like the Activity Log) render cleanly below the top bar instead of overlapping/sliding behind it. Verified `npx tsc --noEmit`, `npm run lint`, `npm test` (1,516 tests), and `npm run build` are all green. See `docs/rollouts/2026-06-29-sticky-top-bar-and-slideover-offsets.md`.
 
@@ -67,10 +79,6 @@ do JSON" blocker was a misread: it just needed forced tool-use instead of OpenAI
 `response_format`. Verification: `npx tsc --noEmit` clean, `npm run lint` 0 errors,
 `npm test` 158 files / 1533 tests, `npm run build` clean. See
 `docs/rollouts/2026-06-29-claude-green-red-team.md`.
-## 2026-06-29 — Page title update (Cursor / fix/page-title)
-Changed page/tab title from "AI market research & strategy dashboard" to "Trading
-Dashboard" in `app/layout.tsx` and `app/welcome/page.tsx`. PR auto-merging; no
-follow-ups. See `docs/rollouts/2026-06-29-page-title.md`.
 
 ## 2026-06-29 — Modal z-index fix (Cursor / fix/modal-z-index)
 Single-line fix: raised `Modal` container in `app/ui/overlays.tsx` from `z-[1000]` to
