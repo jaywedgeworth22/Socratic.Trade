@@ -35,7 +35,7 @@ The Antigravity strategy-review persistence work landed separately as PR #274. T
   - `curl -I http://127.0.0.1:4000/` - 307 to `/login`.
   - `curl -i http://127.0.0.1:4000/api/health` - 200, `{"ok":true,...}`.
   - `curl -I https://trading.jays.services/` - 307 to `/login`.
-- Branch verification:
+- Branch verification after merging current `origin/main` (`40bdc24e`, PR #274):
   - `npm run lint` - pass, 0 errors, 254 existing warnings.
   - `npx tsc --noEmit` - pass after freeing disposable worktree build/cache artifacts to resolve host `ENOSPC`.
   - `npm test` - pass, 165 files / 1,577 tests.
