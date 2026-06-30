@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`codex/prod-build-hotfix-20260630`): production build/start hotfix -
+> after PR #270, the live box needed a manual repair because the default Next 16
+> Turbopack build did not emit the production files consumed by the existing
+> `next start` PM2 runtime. `npm run build` now uses `next build --webpack`, the
+> policy route no longer exports a non-route helper, and server-only crypto
+> imports use webpack-compatible specifiers. No roadmap change; see
+> `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+>
 > 2026-06-30 (`codex/prod-merge-sweep-20260630`): production merge sweep -
 > integrates the pending Settings scope/help overhaul, Settings review-action
 > polish, Market Scan source-label cleanup, and the now-landed Alpaca

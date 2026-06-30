@@ -2,6 +2,7 @@ import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
+import { stripNullsDeep } from "@/lib/policy-null-stripping";
 import { normalizeExclusivePolicyCaps } from "@/lib/policy-normalization";
 import { resolveRequestUserId } from "@/lib/request-user";
 import {
@@ -207,19 +208,6 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
     } catch {
       return "Could not verify the selected account right now. Please try again in a moment.";
     }
-  }
-}
-
-/**
- * Recursively delete keys whose value is `null` from a policy object (in place), so a client clearing an
- * optional field (sent as `null` to survive JSON) becomes an ABSENT key — i.e. the guard is off / default.
- * Skips arrays (e.g. permittedOrderTypes, enabledEvents never carry intentional nulls).
- */
-export function stripNullsDeep(obj: Record<string, unknown>): void {
-  for (const key of Object.keys(obj)) {
-    const value = obj[key];
-    if (value === null) delete obj[key];
-    else if (typeof value === "object" && !Array.isArray(value)) stripNullsDeep(value as Record<string, unknown>);
   }
 }
 

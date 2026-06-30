@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Production build/start hotfix
+Branch `codex/prod-build-hotfix-20260630`. After PR #270 merged, the self-hosted
+Deploy workflow reset `~/apps/trading-live` to `07085c91` but failed during
+dependency install, and a manual Turbopack production build did not emit the
+root `BUILD_ID` / route manifests expected by the current `next start` PM2
+runtime. Production was manually repaired on the live box by moving the policy
+null-stripping helper out of `app/api/policy/route.ts`, switching three
+server-only crypto imports from `node:crypto` to webpack-compatible `crypto`,
+building with `next build --webpack`, and restarting PM2. Local smoke now
+passes: `/` redirects to `/login`, `/api/health` returns `ok:true`, and
+`https://trading.jays.services/` returns a 307 to `/login`. This branch makes
+that repeatable by changing `npm run build` to `next build --webpack`.
+See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+
 ## 2026-06-30 - Production merge sweep for pending settings, source labels, and order lifecycle work
 Branch `codex/prod-merge-sweep-20260630`. Built a production integration branch
 from `origin/main`, folded in the still-unmerged Settings scope/help overhaul

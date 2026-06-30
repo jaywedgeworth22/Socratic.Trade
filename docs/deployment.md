@@ -84,6 +84,9 @@ pm2 save
 ```
 
 - A `deploy-production` concurrency group prevents overlapping deploys.
+- `npm run build` intentionally runs `next build --webpack` while production
+  still starts with `next start`; the default Next 16 Turbopack build did not
+  emit the root `BUILD_ID` / route manifest files consumed by this runtime path.
 - Only **tracked** files are reset, so `.env.local`, `data/app.db`, and
   `data/logos/` on the box are preserved.
 - Auth uses the job's `GITHUB_TOKEN` (the headless launchd runner has no git
