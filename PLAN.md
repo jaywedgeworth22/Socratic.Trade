@@ -15,6 +15,13 @@ filling the missing pieces.
 > choices are migrated into every connected account before global user policy is
 > reduced to true user-level fields. No roadmap change; see
 > `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
+> 2026-06-30 (`codex/robinhood-public-oauth-20260630`): Robinhood MCP reconnect -
+> live diagnostics showed public `/api/auth/robinhood/start` returns a valid
+> Robinhood authorize URL, while stale state rows indicate the logged-in
+> Robinhood leg is not returning to the public callback. Added an explicit
+> same-machine loopback callback opt-in so reconnect can start from
+> `trading.jays.services` without requiring app login on localhost. No roadmap
+> change; see `docs/rollouts/2026-06-30-robinhood-public-oauth-loopback.md`.
 > 2026-06-30 (`codex/market-scan-source-labels`): Latest Decisions and Market
 > Scan source subtitles now share alias-aware source-list formatting, so
 > `congress`, `congress.trade`, and repeated Congress.Trade segments display

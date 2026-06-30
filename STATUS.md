@@ -4,6 +4,23 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
+Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
+Reconnect path without using browser secrets: production `/api/auth/robinhood/start`
+returns a valid `https://robinhood.com/oauth` redirect with public callback,
+`internal` scope, PKCE, and the Trading MCP resource; Robinhood serves the
+pre-login OAuth page for that exact URL. Live state rows under `local` show
+public starts are created but not completed, matching a failure in Robinhood's
+logged-in consent leg rather than app auth, tenant mapping, or token persistence.
+Added `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on` as an explicit same-machine
+escape hatch: public app login starts the flow, but Robinhood may return to
+`http://localhost:4000/api/auth/robinhood/callback` when that callback is
+configured. The callback is public and state-bound, then redirects back to the
+public app after storing the token. Verification: `npm run lint` (0 errors,
+254 existing warnings), `npx tsc --noEmit`, `npm test` (165 files / 1,578
+tests), and `npm run build` all pass. See
+`docs/rollouts/2026-06-30-robinhood-public-oauth-loopback.md`.
+
 ## 2026-06-30 - Production merge sweep for pending settings, source labels, and order lifecycle work
 Branch `codex/prod-merge-sweep-20260630`. Built a production integration branch
 from `origin/main`, folded in the still-unmerged Settings scope/help overhaul

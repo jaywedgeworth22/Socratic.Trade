@@ -212,6 +212,7 @@ ROBINHOOD_MCP_URL=https://agent.robinhood.com/mcp/trading
 ROBINHOOD_MCP_RESOURCE=https://agent.robinhood.com/mcp/trading
 # Optional. Leave blank in hosted environments; the app derives the public callback URL.
 ROBINHOOD_MCP_REDIRECT_URI=
+ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off
 ROBINHOOD_MCP_SCOPES=internal
 ```
 
@@ -228,10 +229,15 @@ or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
 settings table.
 
-For production behind the Cloudflare tunnel, do not set a localhost
-`ROBINHOOD_MCP_REDIRECT_URI`; the app will use `x-forwarded-host`,
+For production behind the Cloudflare tunnel, the default is to leave
+`ROBINHOOD_MCP_REDIRECT_URI` blank; the app will use `x-forwarded-host`,
 `NEXT_PUBLIC_SITE_URL`, or `https://trading.jays.services` for
-`/api/auth/robinhood/callback`.
+`/api/auth/robinhood/callback`. If Robinhood rejects the public callback during
+the logged-in consent step, a same-machine operator can instead set
+`ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback`
+and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`. Public app login still starts
+the flow; only Robinhood's provider callback returns through localhost, and the
+state-bound callback redirects back to the public site after token storage.
 
 ## Tests
 
