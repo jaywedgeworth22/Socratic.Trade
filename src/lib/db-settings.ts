@@ -240,3 +240,19 @@ export function fulfillMarketDataDemand(input: {
 export function clearMarketDataDemandsForTests(): void {
   getDb().prepare("DELETE FROM market_data_demands").run();
 }
+
+// ── Per-user auto-resume-on-boot ─────────────────────────────────────────────
+// Replaces the blunt AUTONOMY_RESUME_ON_BOOT env var with a per-user toggle
+// stored in user_settings. When enabled, the user's accounts auto-resume on
+// server boot; when disabled (default), they stay halted.
+
+const AUTO_RESUME_ON_BOOT_KEY = "auto_resume_on_boot";
+
+export function getAutoResumeOnBoot(userId: string): boolean {
+  return getUserSetting<boolean>(userId, AUTO_RESUME_ON_BOOT_KEY, false);
+}
+
+export function setAutoResumeOnBoot(userId: string, enabled: boolean): void {
+  setUserSetting(userId, AUTO_RESUME_ON_BOOT_KEY, enabled);
+  audit("auto_resume_on_boot", { userId, enabled }, userId);
+}
