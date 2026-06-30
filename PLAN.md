@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`cursor/fix-robinhood-equity-quotes` / PR #256):
+> generated-file review fix — `next-env.d.ts` stays on the production
+> build-generated route-types path so required builds do not dirty the worktree.
+> No roadmap change; see
+> `docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`.
+
 > 2026-06-29 (`agent/antigravity`): sticky top bar & slide-over offsets —
 > made the dashboard top bar sticky and offset the SlideOver components (Activity Log, etc.)
 > so they slide in below the top bar instead of overlapping or rendering behind it.

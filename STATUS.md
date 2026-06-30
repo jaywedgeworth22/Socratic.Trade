@@ -4,6 +4,13 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 — PR #256 review-thread fix: next-env production typegen path
+Branch `cursor/fix-robinhood-equity-quotes`. Resolved the remaining review
+blocker by keeping `next-env.d.ts` on the production build-generated
+`./.next/types/routes.d.ts` import instead of the dev-server route-types path.
+Verification planned/running on this branch; see
+`docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`.
+
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
 integration. Agentic Trading now depends on

@@ -22,3 +22,23 @@
 ## Follow-ups
 - Deploy + restart `trading`; confirm Agentic runs show quotes and non-zero evaluations.
 - After PR #255 deploy: re-Start halted Alpaca accounts and verify per-account credentials.
+
+## 2026-06-30 PR #256 Review Follow-up
+
+### Summary
+- Resolved the remaining review blocker by keeping `next-env.d.ts` on the production build-generated `./.next/types/routes.d.ts` import.
+
+### Why
+- The branch had committed the dev-server route-types path, which `npm run build` rewrites and would leave clean-tree workflows dirty after verification.
+
+### Files
+- `next-env.d.ts`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`
+
+### Verification
+- `npm ci` - first attempt failed with a transient missing private package directory during extraction; `rm -rf node_modules && npm ci --prefer-online` passed.
+- `npm run lint` - passed with 0 errors and 257 existing warnings.
+- `npx tsc --noEmit` - passed cleanly.
+- `npm run build` - passed; post-build `git status --short` showed only the intended docs/`next-env.d.ts` changes.
