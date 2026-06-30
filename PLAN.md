@@ -21,6 +21,18 @@ filling the missing pieces.
 > to Bull proposals with an auditable reason. No roadmap change; see
 > `docs/rollouts/2026-06-30-strategy-llm-timeout-diagnostics.md`.
 >
+> 2026-06-30 (`codex/settings-help-overhaul`): Settings scope/help overhaul —
+> Strategy Studio now lives under Account Settings -> Strategy, Settings opens
+> the correct scope tier for requested account/user sections, Green/Red model
+> choices plus reasoning effort are account-scoped strategy fields with a legacy
+> user-level seed, and compact field help plus a System Help Settings Glossary
+> explain advanced knobs like "Min lots for weight shift" without long tab
+> footers. Follow-up refresh centralizes the Strategy/Assistant model catalog,
+> adds Claude to the strategy-review picker, removes old curated OpenAI
+> `gpt-4o`/`o1`/`o3` options, and switches DeepSeek curated choices to
+> `deepseek-v4-flash` / `deepseek-v4-pro`. No roadmap change; see
+> `docs/rollouts/2026-06-30-settings-scope-help-overhaul.md`.
+
 > 2026-06-30 (`codex/alpaca-held-order-guard`): Alpaca broker-held exit guard -
 > production KO sell approval failed because an existing Alpaca bracket sell leg
 > already reserved all 29 KO shares. Strategy now subtracts active broker-held

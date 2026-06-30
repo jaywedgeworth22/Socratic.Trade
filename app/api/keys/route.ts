@@ -48,7 +48,7 @@ const API_KEY_CATALOG = [
     label: "Google Gemini",
     category: "LLM",
     required: false,
-    unlocks: "Gemini models for the Assistant chat. Select a gemini-* model in the Assistant to use.",
+    unlocks: "Gemini models for the Assistant and strategy review. Select a gemini-* model in the Assistant or Strategy Studio to use.",
     docsUrl: "https://aistudio.google.com/app/apikey"
   },
   {
@@ -56,7 +56,7 @@ const API_KEY_CATALOG = [
     label: "Mistral AI",
     category: "LLM",
     required: false,
-    unlocks: "Mistral models for the Assistant chat. Select a mistral-* model in the Assistant to use.",
+    unlocks: "Mistral models for the Assistant and strategy review. Select a mistral-* model in the Assistant or Strategy Studio to use.",
     docsUrl: "https://console.mistral.ai/api-keys/"
   },
   {
@@ -64,7 +64,7 @@ const API_KEY_CATALOG = [
     label: "DeepSeek",
     category: "LLM",
     required: false,
-    unlocks: "DeepSeek models (deepseek-chat / deepseek-reasoner) for the Assistant and strategy. Note: requests are processed on DeepSeek's servers (China).",
+    unlocks: "DeepSeek V4 models (deepseek-v4-flash / deepseek-v4-pro) for the Assistant and strategy. Note: requests are processed on DeepSeek's servers (China).",
     docsUrl: "https://platform.deepseek.com/api_keys"
   },
   {

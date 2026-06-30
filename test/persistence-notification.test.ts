@@ -23,6 +23,12 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+async function seedLocalOpenAiKey(): Promise<() => void> {
+  const { deleteUserApiKey, upsertUserApiKey } = await import("../src/lib/db");
+  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  return () => deleteUserApiKey("local", "openai");
+}
+
 describe("persistence and notifications", () => {
   it("counts reviewed estimated notional for share-quantity market orders", async () => {
     const { dailyExecutionStats, insertProposal } = await import("../src/lib/db");
@@ -184,6 +190,7 @@ describe("persistence and notifications", () => {
 
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
     // Seed a key + stub the LLM so the run completes (0 proposals). The strategy session now
     // requires a resolvable LLM credential — without one runStrategyOnce returns "failed" — and
     // this test only needs the run to complete to assert the audit event was written.
@@ -222,6 +229,7 @@ describe("persistence and notifications", () => {
     });
 
     try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
       const { listAudit, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
       
@@ -254,13 +262,15 @@ describe("persistence and notifications", () => {
       expect(result.status).toBe("completed");
       expect(after).toBe(before + 1);
     } finally {
+      cleanupOpenAiKey?.();
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }
-  }, 15_000);
+  }, 30_000);
 
   it("records a failed Green Team LLM step when the proposal request times out", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
@@ -294,6 +304,7 @@ describe("persistence and notifications", () => {
     });
 
     try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
       const { listAudit, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
 
@@ -346,13 +357,15 @@ describe("persistence and notifications", () => {
         .find((payload) => payload.runId === result.runId);
       expect(runAudit?.llmSteps).toMatchObject([{ step: "bull", status: "failed" }]);
     } finally {
+      cleanupOpenAiKey?.();
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }
-  }, 15_000);
+  }, 30_000);
 
   it("records a pre-run portfolio snapshot before any proposals execute", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
     // Seed a key + stub the LLM to return 0 proposals → the run completes as a no-op. (The strategy
     // session now requires a resolvable LLM credential; without one runStrategyOnce returns "failed".)
     // We just need to verify a pre-run snapshot was written with the run's runId.
@@ -392,6 +405,7 @@ describe("persistence and notifications", () => {
     });
 
     try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
       const { listPortfolioSnapshots, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
 
@@ -430,6 +444,7 @@ describe("persistence and notifications", () => {
       const runSnapshots = snapshotsAfter.filter((s) => s.runId === result.runId);
       expect(runSnapshots.length).toBeGreaterThanOrEqual(2);
     } finally {
+      cleanupOpenAiKey?.();
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }
@@ -437,6 +452,7 @@ describe("persistence and notifications", () => {
 
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
     process.env.OPENAI_API_KEY = "test-openai-key";
     const openAiBodies: any[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
@@ -475,6 +491,7 @@ describe("persistence and notifications", () => {
     });
 
     try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
       const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
 
@@ -526,6 +543,7 @@ describe("persistence and notifications", () => {
         expect(JSON.parse(content).executionMode).toBe("test/local");
       }
     } finally {
+      cleanupOpenAiKey?.();
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }

@@ -135,25 +135,37 @@ import {
 import { useTheme } from "./ui/theme";
 import { CommandPalette, type Command } from "./ui/command-palette";
 import { ConfirmationModal } from "./components/ConfirmationModal";
+import {
+  CURATED_LLM_MODEL_GROUPS,
+  CURATED_LLM_MODEL_IDS as STRATEGY_MODEL_IDS,
+  CUSTOM_MODEL_ID_SEED as CUSTOM_STRATEGY_MODEL_SEED,
+  DEFAULT_LLM_MODEL
+} from "./ui/llm-model-catalog";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 
-// The model ids that appear as explicit options in the Green/Red Team selects. Anything else is
-// treated as a "Custom Model ID..." free-text entry. Kept in one place so the <select> value
-// mapping and the custom-input fallback can't drift apart across the four call sites that use it.
-const STRATEGY_MODEL_IDS = [
-  "gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5",
-  "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8",
-  "grok-build-0.1", "grok-4.3",
-  "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash",
-  "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest",
-  "deepseek-chat", "deepseek-reasoner"
-];
-const CUSTOM_STRATEGY_MODEL_SEED = "gpt-4o-mini";
+function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode {
+  return CURATED_LLM_MODEL_GROUPS.map((group) => (
+    <optgroup key={group.label} label={group.label}>
+      {group.options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {descriptive ? option.label : option.value === DEFAULT_LLM_MODEL ? `${option.value} (default)` : option.value}
+        </option>
+      ))}
+    </optgroup>
+  ));
+}
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
-type SettingsSection = "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
+type SettingsSection = "strategy" | "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
+type SettingsTier = "user" | "account";
+
+const ACCOUNT_SETTINGS_SECTIONS = new Set<SettingsSection>(["strategy", "operate", "risk", "tax", "tuning"]);
+
+function settingsTierForSection(section: SettingsSection): SettingsTier {
+  return ACCOUNT_SETTINGS_SECTIONS.has(section) ? "account" : "user";
+}
 type AccountDeletionPreview = {
   userId: string;
   email?: string;
@@ -3360,7 +3372,7 @@ function StrategyView({
 }) {
   // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
   const [copyTarget, setCopyTarget] = useState("");
-  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -3529,31 +3541,7 @@ function StrategyView({
                 value={tuningModel}
                 onChange={(e) => setTuningModel(e.target.value)}
               >
-                <optgroup label="OpenAI">
-                  <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
-                  <option value="gpt-4o">gpt-4o</option>
-                  <option value="o1-mini">o1-mini</option>
-                  <option value="o3-mini">o3-mini</option>
-                  <option value="o1">o1</option>
-                </optgroup>
-                <optgroup label="xAI (Grok)">
-                  <option value="grok-build-0.1">grok-build-0.1</option>
-                  <option value="grok-4.3">grok-4.3</option>
-                </optgroup>
-                <optgroup label="Google Gemini">
-                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistral-small-latest">mistral-small-latest</option>
-                  <option value="mistral-medium-latest">mistral-medium-latest</option>
-                  <option value="mistral-large-latest">mistral-large-latest</option>
-                </optgroup>
-                <optgroup label="DeepSeek">
-                  <option value="deepseek-chat">deepseek-chat</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner</option>
-                </optgroup>
+                {renderCuratedModelOptions(false)}
               </select>
               <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
                 <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}
@@ -3989,7 +3977,7 @@ function StrategyStudio({
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
 }) {
-  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -4022,50 +4010,22 @@ function StrategyStudio({
           <div className="grid gap-3">
             <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
               <div className="space-y-2">
-                <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
+                <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? DEFAULT_LLM_MODEL) ? (policy.llmModel ?? DEFAULT_LLM_MODEL) : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
                     updatePolicy({ llmModel: CUSTOM_STRATEGY_MODEL_SEED });
                   } else {
                     updatePolicy({ llmModel: e.target.value });
                   }
                 }}>
-                  <optgroup label="OpenAI">
-                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
-                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
-                  </optgroup>
-                  <optgroup label="Anthropic (Claude)">
-                    <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast review</option>
-                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced Claude analysis</option>
-                    <option value="claude-opus-4-8">claude-opus-4-8 — strongest Claude analysis, highest cost</option>
-                  </optgroup>
-                  <optgroup label="xAI (Grok)">
-                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
-                    <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
-                  </optgroup>
-                  <optgroup label="Google Gemini">
-                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                  </optgroup>
-                  <optgroup label="Mistral">
-                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                  </optgroup>
-                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                  </optgroup>
+                  {renderCuratedModelOptions()}
                   <option value="custom">Custom Model ID...</option>
                 </select>
-                {!STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") && (
+                {!STRATEGY_MODEL_IDS.includes(policy.llmModel ?? DEFAULT_LLM_MODEL) && (
                   <input
                     type="text"
                     className={inputClass}
                     value={policy.llmModel ?? ""}
-                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    placeholder="Enter custom model ID (e.g. gpt-5.5)"
                     onChange={(e) => updatePolicy({ llmModel: e.target.value })}
                   />
                 )}
@@ -4081,35 +4041,7 @@ function StrategyStudio({
                   }
                 }}>
                   <option value="">Same as Green Team model</option>
-                  <optgroup label="OpenAI">
-                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
-                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
-                  </optgroup>
-                  <optgroup label="Anthropic (Claude)">
-                    <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast critique</option>
-                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced Claude critique</option>
-                    <option value="claude-opus-4-8">claude-opus-4-8 — strongest Claude critique, highest cost</option>
-                  </optgroup>
-                  <optgroup label="xAI (Grok)">
-                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
-                    <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
-                  </optgroup>
-                  <optgroup label="Google Gemini">
-                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                  </optgroup>
-                  <optgroup label="Mistral">
-                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                  </optgroup>
-                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                  </optgroup>
+                  {renderCuratedModelOptions()}
                   <option value="custom">Custom Model ID...</option>
                 </select>
                 {policy.redTeamLlmModel !== undefined && !STRATEGY_MODEL_IDS.includes(policy.redTeamLlmModel) && (
@@ -4117,7 +4049,7 @@ function StrategyStudio({
                     type="text"
                     className={inputClass}
                     value={policy.redTeamLlmModel ?? ""}
-                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    placeholder="Enter custom model ID (e.g. claude-mythos-5)"
                     onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}
                   />
                 )}
@@ -4152,35 +4084,7 @@ function StrategyStudio({
               value={tuningModel}
               onChange={(e) => setTuningModel(e.target.value)}
             >
-              <optgroup label="OpenAI">
-                <option value="gpt-5.4-nano">gpt-5.4-nano</option>
-                <option value="gpt-5.4-mini">gpt-5.4-mini (default)</option>
-                <option value="gpt-5.4">gpt-5.4</option>
-                <option value="gpt-5.5">gpt-5.5</option>
-                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                <option value="gpt-4o">gpt-4o</option>
-                <option value="o1-mini">o1-mini</option>
-                <option value="o3-mini">o3-mini</option>
-                <option value="o1">o1</option>
-              </optgroup>
-              <optgroup label="xAI (Grok)">
-                <option value="grok-build-0.1">grok-build-0.1</option>
-                <option value="grok-4.3">grok-4.3</option>
-              </optgroup>
-              <optgroup label="Google Gemini">
-                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-              </optgroup>
-              <optgroup label="Mistral">
-                <option value="mistral-small-latest">mistral-small-latest</option>
-                <option value="mistral-medium-latest">mistral-medium-latest</option>
-                <option value="mistral-large-latest">mistral-large-latest</option>
-              </optgroup>
-              <optgroup label="DeepSeek">
-                <option value="deepseek-chat">deepseek-chat</option>
-                <option value="deepseek-reasoner">deepseek-reasoner</option>
-              </optgroup>
+              {renderCuratedModelOptions(false)}
             </select>
             <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
               <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}
@@ -4250,7 +4154,11 @@ function SettingsContent({
   const [draft, setDraft] = useState("");
   const [blockDraft, setBlockDraft] = useState("");
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
-  useEffect(() => setSection(initialSection), [initialSection]);
+  const [settingsTier, setSettingsTier] = useState<SettingsTier>(() => settingsTierForSection(initialSection));
+  useEffect(() => {
+    setSection(initialSection);
+    setSettingsTier(settingsTierForSection(initialSection));
+  }, [initialSection]);
   // ── Shared data pool consent state ──────────────────────────────────────
   const [poolConsent, setPoolConsent] = useState<boolean | null>(null);
   const [poolConsentLoading, setPoolConsentLoading] = useState(false);
@@ -4324,7 +4232,6 @@ function SettingsContent({
   }
 
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
-  const [settingsTier, setSettingsTier] = useState<"user" | "account">("user");
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
   const activeAccount = activeConnectedAccountFor(snapshot);
@@ -4343,10 +4250,10 @@ function SettingsContent({
   const scanOutlierMax = Math.min(MAX_MARKET_SCAN_OUTLIER_RESERVE, scanCandidateLimit);
   const settingsScopeTitle = settingsTier === "user" ? "User Settings" : "Account Settings";
   const settingsScopeDetail = settingsTier === "user"
-    ? "Connections, display, notifications, and data defaults."
+    ? "Provider keys, display, notifications, and shared data."
     : activeAccount
-      ? `${activeAccount.label} · ${activeAccount.broker}`
-      : "Operate, safety, tax, and tuning for the selected account.";
+      ? `${activeAccount.label} · ${activeAccount.broker} strategy, operation, safety, tax, and tuning.`
+      : "Strategy, operation, safety, tax, and tuning for the selected account.";
 
   function addAllowlist() {
     if (draft.trim() === "") return;
@@ -4414,7 +4321,7 @@ function SettingsContent({
                 value={settingsTier}
                 onChange={(v) => {
                   setSettingsTier(v);
-                  setSection(v === "user" ? "connections" : "operate");
+                  setSection(v === "user" ? "connections" : "strategy");
                 }}
                 className="w-max min-w-full bg-bg/60 p-1 sm:min-w-0"
                 buttonClassName="h-8 flex-1 px-3 text-[13px] sm:min-w-36"
@@ -4502,6 +4409,7 @@ function SettingsContent({
                       { id: "data", label: "Data" }
                     ]
                   : [
+                      { id: "strategy", label: "Strategy" },
                       { id: "operate", label: "Operate" },
                       { id: "risk", label: "Safety" },
                       { id: "tax", label: "Tax" },
@@ -4513,6 +4421,33 @@ function SettingsContent({
         </div>
 
         {settingsTier === "account" && <>
+
+        {section === "strategy" && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+              <div className="flex flex-wrap items-start gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                  <BrainCircuit size={15} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-fg">Strategy Studio</div>
+                  <p className="mt-1 text-[13px] text-muted">
+                    Prompt, Green/Red Team models, reasoning effort, scoring weights, and LLM strategy reviews are saved for the selected account&apos;s live strategy.
+                  </p>
+                  <p className="mt-1 text-xs text-faint">Provider API keys remain under User → Connections because credentials belong to you, not to a single account strategy.</p>
+                </div>
+                <Button size="sm" variant="ghost" className="sm:ml-auto" onClick={openStrategyStudio}>
+                  <BrainCircuit size={13} /> Open Strategy Studio
+                </Button>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <KeyVal label="Green Team" value={policy.llmModel ?? DEFAULT_LLM_MODEL} />
+              <KeyVal label="Red Team" value={policy.redTeamLlmModel || "Same as Green Team"} />
+              <KeyVal label="Reasoning" value={(policy.llmReasoningEffort ?? "medium").replace(/^./, (c) => c.toUpperCase())} />
+            </div>
+          </div>
+        )}
 
         {section === "operate" && (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -4670,11 +4605,11 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Account circuit breakers</div>
-                <p className="mt-0.5 text-xs text-faint">Auto-switch to close-only when breached. Blank = off. See Definitions.</p>
+                <p className="mt-0.5 text-xs text-faint">Auto-switch to close-only when breached. Blank = off.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
-                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
+                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} hint="If the account falls this far from its equity high-water mark, the engine switches to close-only and fires a kill-switch alert. Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
+                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} hint="If realized plus open daily loss reaches this dollar amount, the engine switches to close-only for the account. Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
               </div>
             </div>
 
@@ -4683,15 +4618,15 @@ function SettingsContent({
               <label className="flex items-center justify-between gap-3">
                 <span>
                   <span className="block text-sm font-semibold text-fg">Volatility panic brake</span>
-                  <span className="block text-xs text-faint">Auto-switch to close-only on a volatility tail extreme. On by default. Blank threshold = built-in default. See Definitions.</span>
+                  <span className="block text-xs text-faint">Auto-switch to close-only on a volatility tail extreme. On by default. Blank threshold = built-in default.</span>
                 </span>
                 <Switch checked={policy.volPanicBrakeEnabled !== false} onChange={(v) => updatePolicy({ volPanicBrakeEnabled: v })} />
               </label>
               {policy.volPanicBrakeEnabled !== false && (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <OptionalNumberField label="VIX ≥" value={policy.volPanicVixThreshold} placeholder="40" step={1} onCommit={(v) => updatePolicy({ volPanicVixThreshold: v })} />
-                  <OptionalNumberField label="VVIX ≥" value={policy.volPanicVvixThreshold} placeholder="150" step={1} onCommit={(v) => updatePolicy({ volPanicVvixThreshold: v })} />
-                  <OptionalNumberField label="SKEW ≥" value={policy.volPanicSkewThreshold} placeholder="160" step={1} onCommit={(v) => updatePolicy({ volPanicSkewThreshold: v })} />
+                  <OptionalNumberField label="VIX ≥" value={policy.volPanicVixThreshold} placeholder="40" step={1} hint="VIX tail-risk threshold for the volatility panic brake. Blank uses the built-in default of 40." onCommit={(v) => updatePolicy({ volPanicVixThreshold: v })} />
+                  <OptionalNumberField label="VVIX ≥" value={policy.volPanicVvixThreshold} placeholder="150" step={1} hint="Volatility-of-volatility threshold for the panic brake. Blank uses the built-in default of 150." onCommit={(v) => updatePolicy({ volPanicVvixThreshold: v })} />
+                  <OptionalNumberField label="SKEW ≥" value={policy.volPanicSkewThreshold} placeholder="160" step={1} hint="Cboe SKEW tail-risk threshold for the panic brake. Blank uses the built-in default of 160." onCommit={(v) => updatePolicy({ volPanicSkewThreshold: v })} />
                 </div>
               )}
             </div>
@@ -4700,11 +4635,11 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Whole-portfolio exposure caps</div>
-                <p className="mt-0.5 text-xs text-faint"><strong>Default 80%</strong> keeps ~20% cash — raise to 100 for full deployment. See Definitions.</p>
+                <p className="mt-0.5 text-xs text-faint"><strong>Default 80%</strong> keeps ~20% cash — raise to 100 for full deployment.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <OptionalNumberField label="Max gross exposure %" value={policy.maxGrossExposurePct} placeholder="80" step={1} onCommit={(v) => updatePolicy({ maxGrossExposurePct: v })} />
-                <OptionalNumberField label="Max net exposure %" value={policy.maxNetExposurePct} placeholder="80" step={1} onCommit={(v) => updatePolicy({ maxNetExposurePct: v })} />
+                <OptionalNumberField label="Max gross exposure %" value={policy.maxGrossExposurePct} placeholder="80" step={1} hint="Caps total absolute exposure: sum of long value plus absolute short value. Default 80% keeps cash available; shorting makes this especially important." onCommit={(v) => updatePolicy({ maxGrossExposurePct: v })} />
+                <OptionalNumberField label="Max net exposure %" value={policy.maxNetExposurePct} placeholder="80" step={1} hint="Caps directional exposure: long value minus short value. Net can be lower than gross when shorts offset longs." onCommit={(v) => updatePolicy({ maxNetExposurePct: v })} />
               </div>
             </div>
 
@@ -4712,7 +4647,7 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Stops &amp; exits</div>
-                <p className="mt-0.5 text-xs text-faint">Stop-loss / take-profit % live under Key Parameters. These tune the additional exit types.</p>
+                <p className="mt-0.5 text-xs text-faint">Stop-loss / take-profit % live under Strategy → Key Parameters. These tune the additional exit types.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <OptionalNumberField label="Trailing stop %" value={policy.riskRules.trailingStopPct || undefined} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, trailingStopPct: v ?? 0 } })} />
@@ -4758,7 +4693,7 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Short-selling limits</div>
-                <p className="mt-0.5 text-xs text-faint">Apply only when &quot;Enable short selling&quot; (Operate → Key Parameters) is on. A short stop-loss % is <strong>required</strong> — without it every short is rejected.</p>
+                <p className="mt-0.5 text-xs text-faint">Apply only when &quot;Enable short selling&quot; (Strategy → Key Parameters) is on. A short stop-loss % is <strong>required</strong> — without it every short is rejected.</p>
               </div>
               {policy.shortSellingEnabled && !(policy.riskRules.shortStopLossPct && policy.riskRules.shortStopLossPct > 0) && (
                 <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn"><AlertTriangle size={14} className="mr-1 inline" />Short selling is on but no short stop-loss % is set — every short proposal will be rejected until you set one below.</p>
@@ -4832,39 +4767,13 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Universe floor (exclude penny / illiquid names)</div>
-                <p className="mt-0.5 text-xs text-faint">Filters the SCANNED candidates only. Watchlist symbols and holdings are always exempt. See Definitions.</p>
+                <p className="mt-0.5 text-xs text-faint">Filters the SCANNED candidates only. Watchlist symbols and holdings are always exempt.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <OptionalNumberField label="Min share price $" value={policy.universeFloor?.minPrice} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minPrice: v } })} />
-                <OptionalNumberField label="Min market cap $" value={policy.universeFloor?.minMarketCapUsd} placeholder="off" step={1_000_000} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minMarketCapUsd: v } })} />
-                <OptionalNumberField label="Min daily $-volume" value={policy.universeFloor?.minDollarVolume} placeholder="off" step={100_000} onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minDollarVolume: v } })} />
+                <OptionalNumberField label="Min share price $" value={policy.universeFloor?.minPrice} placeholder="off" step={0.5} hint="Primary penny-stock gate for scanned candidates. Explicit watchlist symbols and current holdings are exempt so exits are never trapped." onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minPrice: v } })} />
+                <OptionalNumberField label="Min market cap $" value={policy.universeFloor?.minMarketCapUsd} placeholder="off" step={1_000_000} hint="Filters scanned candidates below this market cap only when market-cap data is known. Missing data does not false-exclude a symbol." onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minMarketCapUsd: v } })} />
+                <OptionalNumberField label="Min daily $-volume" value={policy.universeFloor?.minDollarVolume} placeholder="off" step={100_000} hint="Filters scanned candidates below this recent daily dollar-volume only when volume data is known. Explicit watchlist names and holdings are exempt." onCommit={(v) => updatePolicy({ universeFloor: { ...policy.universeFloor, minDollarVolume: v } })} />
               </div>
-            </div>
-
-            {/* Definitions — fuller explanations for the guards above, in the order they appear */}
-            <div className="rounded-lg border border-line bg-surface-1/60 px-3 py-2 text-xs text-faint space-y-1.5">
-              <span className="block font-medium text-muted">Definitions</span>
-              <p>
-                <span className="font-medium text-muted">Account circuit breakers</span> — when max drawdown % or max daily loss ($) is breached, the system auto-switches to close-only (no new entries) and fires a kill-switch alert. Blank = off.
-              </p>
-              <p>
-                <span className="font-medium text-muted">Volatility panic brake</span> — on a VIX / VVIX / Cboe SKEW tail extreme, auto-switch to close-only. On by default. A blank threshold uses the built-in default (40 / 150 / 160).
-              </p>
-              <p>
-                <span className="font-medium text-muted">Whole-portfolio exposure caps</span> — gross = Σ|position value|; net = Σ position value (directional). Default 80% deliberately keeps ~20% cash — raise to 100 to allow full deployment. These mainly bite once shorting is enabled.
-              </p>
-              <p>
-                <span className="font-medium text-muted">Stops &amp; exits</span> — a fixed stop-loss % is a static price (entry minus the %), so it rests at the broker 24/7 where the integration allows it (see &ldquo;Stop support&rdquo; above). Trailing stops are currently app-managed (they fire only while this app/scheduler runs): most brokers — incl. Alpaca and Robinhood — support trailing natively, but the app doesn&apos;t place native trailing orders yet, and Robinhood&apos;s trading API can&apos;t carry them at all. Take-profit trim % = how much of a position to sell at the take-profit target (the rest rides; laddered per target band).
-              </p>
-              <p>
-                <span className="font-medium text-muted">Short-selling limits</span> — apply only when &ldquo;Enable short selling&rdquo; (Operate → Key Parameters) is on. A short stop-loss % is required — without it every short is rejected.
-              </p>
-              <p>
-                <span className="font-medium text-muted">Order execution</span> — a proposal whose type is not permitted is blocked; most accounts only need market + limit. Extended-hours orders, marketable-limit entries, and extended-hours synthetic stops each gate the respective behavior.
-              </p>
-              <p>
-                <span className="font-medium text-muted">Universe floor</span> — filters the scanned candidates only. Your explicit Additional Watchlist symbols and current holdings are always exempt. Market-cap / $-volume bounds apply only when that datum is known.
-              </p>
             </div>
           </div>
         )}
@@ -4874,27 +4783,6 @@ function SettingsContent({
 
         {section === "connections" && (
           <div className="space-y-4">
-            <div className="rounded-lg border border-line bg-surface-2/45 p-3">
-              <div className="flex flex-wrap items-start gap-3">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-                  <BrainCircuit size={15} />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-fg">Strategy Models</div>
-                  <p className="mt-1 text-[13px] text-muted">
-                    Green: <span className="font-medium text-fg">{policy.llmModel ?? "gpt-5.4-mini"}</span>
-                    {" · "}
-                    Red: <span className="font-medium text-fg">{policy.redTeamLlmModel || "Same as Green Team"}</span>
-                    {" · "}
-                    Effort: <span className="font-medium text-fg">{(policy.llmReasoningEffort ?? "medium").replace(/^./, (c) => c.toUpperCase())}</span>
-                  </p>
-                  <p className="mt-1 text-xs text-faint">Edit Green/Red Team behavior in Strategy Studio. Provider keys are saved below.</p>
-                </div>
-                <Button size="sm" variant="ghost" className="sm:ml-auto" onClick={openStrategyStudio}>
-                  <BrainCircuit size={13} /> Open Strategy Studio
-                </Button>
-              </div>
-            </div>
             <ApiKeysSection policy={policy} />
           </div>
         )}
@@ -4912,7 +4800,7 @@ function SettingsContent({
                 ]}
               />
             </Field>
-            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional &amp; insider trades, and more. Option 1 uses a tile; Option 2 uses the transparent logo style.">
+            <Field label="Ticker Logos" hint="Shown wherever tickers appear: portfolio, market scan, decisions, congressional and insider trades, and more. Option 1 uses a tile; Option 2 uses the transparent logo style.">
               <Segmented<TickerLogoDisplay>
                 value={tickerLogoDisplay}
                 onChange={setTickerLogoDisplay}
@@ -4944,8 +4832,7 @@ function SettingsContent({
           <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[13px] text-muted">
             Estimates only — not tax advice. These settings tune the after-tax signals the agent sees and the wash-sale guardrail.
           </p>
-          <div className="grid gap-1">
-            <label className="text-sm font-medium text-fg">Account tax treatment</label>
+          <Field label="Account tax treatment" hint="Account-level classification used for estimated tax and wash-sale behavior. IRAs are tax-sheltered in this app: 0% estimated tax and no in-account wash-sale lockout; taxable losses can still lock rebuys across accounts.">
             <select
               className={inputClass}
               value={taxSettings.taxationType ?? "taxable"}
@@ -4955,7 +4842,7 @@ function SettingsContent({
               <option value="roth_ira">Roth IRA — tax-free</option>
               <option value="traditional_ira">Traditional IRA — tax-deferred</option>
             </select>
-          </div>
+          </Field>
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Wash-sale guard</span>
@@ -4964,8 +4851,8 @@ function SettingsContent({
             <Switch checked={taxSettings.washSaleGuard} onChange={(v) => updatePolicy({ taxSettings: { ...taxSettings, washSaleGuard: v } })} />
           </label>
           <div className="grid grid-cols-2 gap-3">
-            <NumberField label="Short-term rate (%)" value={taxSettings.shortTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, shortTermRatePct: v } })} />
-            <NumberField label="Long-term rate (%)" value={taxSettings.longTermRatePct} onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, longTermRatePct: v } })} />
+            <NumberField label="Short-term rate (%)" value={taxSettings.shortTermRatePct} hint="Rough ordinary-income tax rate used for short-term realized gain estimates in taxable accounts. Default 24%." onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, shortTermRatePct: v } })} />
+            <NumberField label="Long-term rate (%)" value={taxSettings.longTermRatePct} hint="Rough capital-gains rate used for lots held at least one year in taxable accounts. Default 15%." onCommit={(v) => updatePolicy({ taxSettings: { ...taxSettings, longTermRatePct: v } })} />
           </div>
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
@@ -4974,21 +4861,6 @@ function SettingsContent({
             </span>
             <Switch checked={Boolean(taxSettings.subtractFromResults)} onChange={(v) => updatePolicy({ taxSettings: { ...taxSettings, subtractFromResults: v } })} />
           </label>
-          <div className="rounded-lg border border-line bg-surface-1/60 px-3 py-2 text-xs text-faint space-y-1.5">
-            <span className="block font-medium text-muted">Definitions</span>
-            <p>
-              <span className="font-medium text-muted">Account tax treatment</span> — IRAs are tax-sheltered: 0% estimated tax and no in-account wash-sale lockout. A loss in a <em>taxable</em> account still locks rebuys of that symbol across all your accounts for 30 days.
-            </p>
-            <p>
-              <span className="font-medium text-muted">Wash-sale guard</span> — blocks rebuying a symbol sold at a loss within 30 days (IRC §1091).
-            </p>
-            <p>
-              <span className="font-medium text-muted">Short-term / Long-term rate</span> — used only for the rough liability estimate on the Tax tab. Defaults: 24% short-term (ordinary), 15% long-term.
-            </p>
-            <p>
-              <span className="font-medium text-muted">Subtract estimated tax from results</span> — shows realized P&amp;L on the Performance tab net of the estimated tax burden.
-            </p>
-          </div>
         </div>
       )}
 
@@ -5001,31 +4873,37 @@ function SettingsContent({
             <NumberField
               label="Shrinkage prior (trades)"
               value={tuning.shrinkPrior ?? 5}
+              hint="Bayesian pseudo-trades that pull thin-sample win rate and average return toward neutral. Higher values make the learner more skeptical of a small number of wins or losses. Default 5."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, shrinkPrior: v } })}
             />
             <NumberField
               label="Min lots for weight shift"
               value={tuning.minClosedLotsForWeightShift ?? 20}
+              hint="Closed lots are completed trade outcomes for this selected account. The auto-tuner may not change factor/scoring weights until at least this many lots exist, default 20, to avoid overfitting a thin sample. Below the gate it can still suggest prompt or risk-sizing changes."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, minClosedLotsForWeightShift: v } })}
             />
             <NumberField
               label="Sizing floor (% of max)"
               value={tuning.sizingFloorPct ?? 10}
+              hint="Lowest exploratory position size the deterministic sizer will use for an unproven or weakly supported thesis, expressed as a percent of the configured max order size. Default 10%."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, sizingFloorPct: v } })}
             />
             <NumberField
               label="Sizing ceiling (% of max)"
               value={tuning.sizingCeilingPct ?? 100}
+              hint="Highest size the deterministic sizer may allocate before normal risk caps apply, expressed as a percent of max order size. Default 100%."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, sizingCeilingPct: v } })}
             />
             <NumberField
               label="Red-team threshold"
               value={tuning.redTeamConvictionThreshold ?? 80}
+              hint="Proposal confidence at or above this value triggers the adversarial Bear/Red Team review. Default 80."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, redTeamConvictionThreshold: v } })}
             />
             <NumberField
               label="Crisis open cap (% NAV)"
               value={tuning.crisisMaxOpeningExposurePct ?? 0}
+              hint="When the deterministic regime is crisis or inverted curve, block new buy/short openings above this percent of portfolio NAV. 0 leaves this crisis-specific cap off."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, crisisMaxOpeningExposurePct: v } })}
             />
             <NumberField
@@ -5033,6 +4911,7 @@ function SettingsContent({
               value={tuning.minProposalScoreThreshold ?? 0}
               min={0}
               max={100}
+              hint="Drops scan candidates below this 0-100 score before they reach the LLM. If every candidate is below the threshold, the LLM call is skipped and only existing protective exits can fire. Default 0 means no filtering."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, minProposalScoreThreshold: v } })}
             />
             <OptionalNumberField
@@ -5040,6 +4919,7 @@ function SettingsContent({
               value={tuning.bearVetoFcfYieldFloorPct}
               placeholder="blank disables"
               step={0.5}
+              hint="Deterministically vetoes buys whose free-cash-flow yield is below this floor. Example: 0 vetoes negative-FCF buys. Blank disables the veto; missing FCF data never false-vetoes."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, bearVetoFcfYieldFloorPct: v } })}
             />
             <OptionalNumberField
@@ -5047,12 +4927,14 @@ function SettingsContent({
               value={tuning.bearVetoDebtToEquityCeiling}
               placeholder="blank disables"
               step={0.5}
+              hint="Deterministically vetoes buys whose debt/equity ratio exceeds this ceiling. Example: 3 vetoes names levered above 300%. Blank disables the veto; missing debt/equity data never false-vetoes."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, bearVetoDebtToEquityCeiling: v } })}
             />
             {tuning.skipNegativeExpectancy && (
               <NumberField
                 label="Negative-EV skip threshold %"
                 value={tuning.skipNegativeExpectancyEdgePct ?? 0}
+                hint="When the negative-EV gate is on, skip opening a proven thesis whose shrunk realized post-cost edge is at or below this percentage. Default 0 skips proven non-positive edge."
                 onCommit={(v) => updatePolicy({ tuning: { ...tuning, skipNegativeExpectancyEdgePct: v } })}
               />
             )}
@@ -5060,25 +4942,10 @@ function SettingsContent({
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
             <span>
               <span className="block text-sm font-medium text-fg">Skip proven money-losers (negative-EV gate)</span>
-              <span className="block text-xs text-faint">Off by default. When on, skip opening a trade whose thesis is already proven to lose money. See Definitions below.</span>
+              <span className="block text-xs text-faint">Off by default. When on, skip opening a trade whose thesis is already proven to lose money.</span>
             </span>
             <Switch checked={Boolean(tuning.skipNegativeExpectancy)} onChange={(v) => updatePolicy({ tuning: { ...tuning, skipNegativeExpectancy: v } })} />
           </label>
-          <p className="text-xs text-faint">
-            <span className="font-medium text-muted">Shrinkage prior</span> pulls thin-sample win/return stats toward neutral (higher = more skeptical of small samples; default 5).{" "}
-            <span className="font-medium text-muted">Min lots for weight shift</span> is how many closed trades must accumulate before the auto-tuner may change factor weights (default 20).
-          </p>
-          <p className="text-xs text-faint">
-            <span className="font-medium text-muted">Red-team threshold</span> sends proposals at or above that confidence score to the adversarial review (default 80).{" "}
-            <span className="font-medium text-muted">Crisis open cap</span> blocks new buy/short notional above that portfolio percentage when the deterministic regime is crisis or inverted curve; 0 leaves it off.
-          </p>
-          <p className="text-xs text-faint">
-            <span className="font-medium text-muted">Min proposal score threshold</span> drops candidates below this scan score (0–100) before they reach the LLM. If ALL candidates are below the threshold, the entire LLM call is skipped and the system sits on its hands (proactive stop-loss/take-profit exits still fire). Default 0 = no filtering. Set to e.g. 30 to skip when every candidate is mediocre.
-          </p>
-          <p className="text-xs text-faint">
-            <span className="font-medium text-muted">FCF-yield veto floor</span> deterministically vetoes BUYS whose free-cash-flow yield is below this value (e.g. 0 vetoes any negative-FCF buy); blank disables.{" "}
-            <span className="font-medium text-muted">Debt/equity veto ceiling</span> vetoes BUYS whose debt/equity ratio exceeds this (e.g. 3); blank disables.
-          </p>
           <p className="text-xs text-faint">
             <span className="font-medium text-muted">Skip proven money-losers</span> — when on, an opening trade is skipped entirely if its thesis is <em>proven</em> (≥ min lots) and its realized post-cost edge is at or below the threshold. Normally the sizer instead downsizes such theses to the exploratory floor to keep gathering data; this is the more conservative &ldquo;don&apos;t open a proven money-loser&rdquo; stance. Unproven theses are never skipped.
           </p>
@@ -5112,6 +4979,7 @@ function SettingsContent({
               min={MIN_MARKET_SCAN_CANDIDATE_LIMIT}
               max={MAX_MARKET_SCAN_CANDIDATE_LIMIT}
               step={1}
+              hint={`Top-ranked scan rows that receive expensive enrichment and are sent to the LLM as the primary opportunity set. Default ${DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT}; ${MIN_MARKET_SCAN_CANDIDATE_LIMIT}-12 is cost-sensitive, 25-40 is balanced, 60-80 is broad research.`}
               onCommit={(v) => {
                 const nextLimit = normalizeMarketScanCandidateLimit(v);
                 updatePolicy({
@@ -5126,16 +4994,10 @@ function SettingsContent({
               min={MIN_MARKET_SCAN_OUTLIER_RESERVE}
               max={scanOutlierMax}
               step={1}
+              hint="Added on top of the candidate cap, not swapped inside it. Pulls below-cutoff names with congressional, insider, short-pressure, technical, or statistically extreme price/volume signals. Current holdings are scanned regardless."
               onCommit={(v) => updatePolicy({ marketScanOutlierReserve: normalizeMarketScanOutlierReserve(v, scanCandidateLimit) })}
             />
           </div>
-          <p className="text-xs text-faint">
-            <span className="font-medium text-muted">Candidate cap</span> is the top-ranked count (default {DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT}) the LLM may choose from.{" "}
-            <span className="font-medium text-muted">Outlier reserve</span> names are <span className="font-medium text-muted">added on top of</span> the candidate cap, not swapped inside it — below-cutoff names with notable congressional, insider, short-pressure, or technical signals, plus statistically extreme price/volume movers. Your current holdings are always scanned regardless of either limit.
-          </p>
-          <p className="text-xs text-faint">
-            So a run sends up to the cap (top-N) plus up to the outlier reserve of added outliers, plus every position you currently hold. Expert consensus on the cap: {MIN_MARKET_SCAN_CANDIDATE_LIMIT}-12 is the lowest reasonable range for very cost-sensitive runs, 25-40 is balanced, 60-80 is broad research, and {MAX_MARKET_SCAN_CANDIDATE_LIMIT} is the practical upper bound before attention dilution usually outweighs extra breadth.
-          </p>
 
           <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
@@ -5567,7 +5429,7 @@ function AccountDeletionModal({
 
 /* ───────────────────────── Form controls ───────────────────────── */
 
-function NumberField({ label, value, min = 0, max, step = 1, onCommit }: { label: string; value?: number; min?: number; max?: number; step?: number; onCommit: (v: number) => void }) {
+function NumberField({ label, value, min = 0, max, step = 1, hint, onCommit }: { label: string; value?: number; min?: number; max?: number; step?: number; hint?: React.ReactNode; onCommit: (v: number) => void }) {
   const [draft, setDraft] = useState(String(value ?? 0));
   useEffect(() => setDraft(String(value ?? 0)), [value]);
   function commit() {
@@ -5580,7 +5442,7 @@ function NumberField({ label, value, min = 0, max, step = 1, onCommit }: { label
     onCommit(clamped);
   }
   return (
-    <Field label={label}>
+    <Field label={label} hint={hint}>
       <input
         type="number"
         min={min}
@@ -5598,7 +5460,7 @@ function NumberField({ label, value, min = 0, max, step = 1, onCommit }: { label
   );
 }
 
-function OptionalNumberField({ label, value, placeholder, step, onCommit }: { label: string; value?: number; placeholder?: string; step?: number; onCommit: (v: number | undefined) => void }) {
+function OptionalNumberField({ label, value, placeholder, step, hint, onCommit }: { label: string; value?: number; placeholder?: string; step?: number; hint?: React.ReactNode; onCommit: (v: number | undefined) => void }) {
   const [draft, setDraft] = useState(value !== undefined ? String(value) : "");
   useEffect(() => setDraft(value !== undefined ? String(value) : ""), [value]);
   function commit() {
@@ -5608,7 +5470,7 @@ function OptionalNumberField({ label, value, placeholder, step, onCommit }: { la
     else setDraft(value !== undefined ? String(value) : "");
   }
   return (
-    <Field label={label}>
+    <Field label={label} hint={hint}>
       <input
         type="number"
         min="0"
@@ -5899,7 +5761,7 @@ const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
 };
 
 function strategyLlmServiceForModel(model?: string | null): LlmApiService {
-  const value = (model || "gpt-5.4-mini").trim();
+  const value = (model || DEFAULT_LLM_MODEL).trim();
   if (/^claude/i.test(value)) return "anthropic";
   if (/^grok/i.test(value)) return "xai";
   if (/^gemini/i.test(value)) return "gemini";
@@ -5968,7 +5830,7 @@ function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
   }
 
   const requiredUnsetLabels = keys.filter((row) => row.required && row.source === "none").map((row) => row.label);
-  const strategyModel = policy.llmModel || "gpt-5.4-mini";
+  const strategyModel = policy.llmModel || DEFAULT_LLM_MODEL;
   const strategyService = strategyLlmServiceForModel(strategyModel);
   const strategyServiceLabel = LLM_SERVICE_LABELS[strategyService];
   const selectedStrategyRow = keys.find((row) => row.service === strategyService);
@@ -6537,7 +6399,7 @@ function CongressionalTradesHelpLine({ sources }: { sources: string[] }) {
 }
 
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
-  type Section = "overview" | "guardrails" | "tax" | "data" | "mcp";
+  type Section = "overview" | "guardrails" | "settings" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
@@ -6551,6 +6413,7 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "guardrails", label: "Guardrails" },
+          { id: "settings", label: "Settings Glossary" },
           { id: "tax", label: "Tax" },
           { id: "data", label: "Data Sources" },
           { id: "mcp", label: "MCP Connection" }
@@ -6606,6 +6469,40 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
                 <li><strong>Propose Mode:</strong> Order proposals are staged and require your explicit click to send to the brokerage.</li>
                 <li><strong>Autonomous Mode:</strong> The agent places orders autonomously when matching signals are identified.</li>
               </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {section === "settings" && (
+        <div className="space-y-3 text-[13px] text-muted">
+          <p>
+            Settings are split by scope. <strong>User Settings</strong> cover provider keys, display, notifications, and shared data preferences. <strong>Account Settings</strong> cover the selected account&apos;s strategy, universe, safety, tax treatment, and tuning behavior.
+          </p>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-1 font-semibold text-fg">Strategy Studio</div>
+              <p>Prompt, Green/Red Team model choices, reasoning effort, scoring weights, and LLM strategy reviews belong to the active account strategy. Provider API keys stay user-level because credentials belong to you.</p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-1 font-semibold text-fg">Min lots for weight shift</div>
+              <p>Closed lots are completed trade outcomes. The auto-tuner withholds factor-weight changes until the selected account has enough closed lots, default 20, so a few lucky or unlucky trades do not reshape scoring weights. Below the gate, prompt and risk-sizing suggestions can still be proposed.</p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-1 font-semibold text-fg">Candidate cap and outlier reserve</div>
+              <p>Candidate cap is the top-ranked scan count sent to the LLM. Outlier reserve adds extra below-cutoff names with unusual congressional, insider, short-pressure, technical, or price/volume signals. Current holdings are always scanned.</p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-1 font-semibold text-fg">Stops and broker protection</div>
+              <p>Broker-held brackets are native OCO stop/take-profit orders where supported, currently Alpaca. Synthetic stops, beta/ATR stops, and take-profit trims are app-managed unless the UI says the broker is holding the order.</p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-1 font-semibold text-fg">Universe floor</div>
+              <p>Minimum price, market-cap, and dollar-volume filters apply only to scanned candidates. Explicit watchlist symbols and current holdings are exempt so deliberate research targets and exits are not blocked by the scanner floor.</p>
+            </div>
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-1 font-semibold text-fg">Negative-EV gate</div>
+              <p>When enabled, the engine skips opening a thesis whose realized record is proven enough and whose shrunk post-cost edge is at or below the configured threshold. With the gate off, weak proven theses are usually downsized to the exploratory floor instead of skipped.</p>
             </div>
           </div>
         </div>
