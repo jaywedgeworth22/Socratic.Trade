@@ -10,6 +10,13 @@ filling the missing pieces.
 > build-generated route-types path so required builds do not dirty the worktree.
 > No roadmap change; see
 > `docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`.
+> 2026-06-30 (`fix/merge-pr-205` / PR #237): Alpaca shared market-data fallback —
+> review-thread follow-up now lets shared/background scans use the operator's
+> connected Alpaca account when a tenant has no complete Alpaca market-data
+> credential. Also ignores hidden worktree and build directories in ESLint config
+> to prevent local linting errors. Trading resolution remains per-user/fail-closed.
+> No roadmap change; see `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`
+> and `docs/rollouts/2026-06-30-ci-worktree-eslint-ignores.md`.
 > 2026-06-30 (`codex/notification-direct-bridge`): direct notification delivery
 > now covers legacy operational events (`fill`, `block`, `pending_approval`,
 > `kill_switch`, `run_failed`, `proposal_withdrawn`) through the existing
