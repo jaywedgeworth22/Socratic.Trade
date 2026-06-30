@@ -18,13 +18,12 @@ import type {
 // New additions must be added to the set below to ensure they land in the correct store.
 
 const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
-  "llmModel",
-  "redTeamLlmModel",
-  "llmReasoningEffort",
   "notificationSettings",
   "marketScanCandidateLimit",
   "marketScanOutlierReserve"
 ]);
+
+const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];
 
 /** Extract only the user-level fields from a TradingPolicy. */
 function pickUserFields(policy: TradingPolicy): Partial<TradingPolicy> {
@@ -74,6 +73,24 @@ function readUserPolicyFields(userId: string): Partial<TradingPolicy> {
     }
   }
   return result;
+}
+
+/** Back-compat seed for accounts written before Strategy Studio became account-scoped. */
+function readLegacyStrategyModelFields(userId: string): Partial<TradingPolicy> {
+  const stored = getUserSetting<Partial<TradingPolicy>>(userId, "policy", {});
+  if (!stored || typeof stored !== "object") return {};
+  const result: Partial<TradingPolicy> = {};
+  for (const key of LEGACY_STRATEGY_MODEL_FIELDS) {
+    if (key in stored) {
+      (result as Record<string, unknown>)[key as string] = stored[key];
+    }
+  }
+  return result;
+}
+
+function withLegacyStrategyModelSeed(userId: string, policy: Partial<TradingPolicy>): Partial<TradingPolicy> {
+  if (Object.prototype.hasOwnProperty.call(policy, "llmModel")) return policy;
+  return { ...readLegacyStrategyModelFields(userId), ...policy };
 }
 
 /** Write only the user-level fields of a policy to user_settings.policy. */
@@ -261,7 +278,7 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...stripUserFields(stored), scoringWeights });
+      policy = mergePolicy({ ...withLegacyStrategyModelSeed(userId, stripUserFields(stored)), scoringWeights });
     } else {
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;
@@ -275,9 +292,9 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
         derivedFromProfileId: policy.activeProfileId ?? null
       });
     }
-    // Overlay user-level fields from user_settings.policy on top of the account base.
-    // This makes user-level settings (LLM models, notifications, scan limits) apply
-    // consistently across all accounts while keeping risk/strategy per-account.
+    // Overlay true user-level fields from user_settings.policy on top of the account base.
+    // Provider keys, notification prefs, and market-scan breadth apply across accounts;
+    // Strategy Studio settings (prompt/models/weights) remain account-scoped.
     const userFields = readUserPolicyFields(userId);
     policy = mergePolicy({ ...policy, ...userFields });
     policy.connectedAccountId = account.id;
@@ -308,7 +325,7 @@ export function peekPolicy(userId: string = "local", connectedAccountId?: string
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...stripUserFields(stored), scoringWeights });
+      policy = mergePolicy({ ...withLegacyStrategyModelSeed(userId, stripUserFields(stored)), scoringWeights });
     } else {
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;

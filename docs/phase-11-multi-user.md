@@ -110,12 +110,12 @@ xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
 Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
 env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
 Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
-secret values. Strategy Studio lets each user choose a Green Team model for
-proposal generation and an optional separate Red Team model for Bear review; if
-no Red Team override is set, Red reuses Green. Connections
-shows a read-only model summary and a link back to Strategy Studio so provider
-keys and model behavior stay connected without making Connections the editing
-surface. The visible model list omits legacy `gpt-4.1-mini`, keeps
+secret values. Strategy Studio lets the selected account strategy choose a Green
+Team model for proposal generation and an optional separate Red Team model for
+Bear review; if no Red Team override is set, Red reuses Green. Connections owns
+provider API keys only, while Account Settings -> Strategy links to Strategy
+Studio so model behavior stays account-scoped and credentials stay user-scoped.
+The visible model list omits legacy `gpt-4.1-mini`, keeps
 `gpt-5.4-nano` as the cheapest listed OpenAI option, and labels Grok choices
 with the same cost/strength style as OpenAI. Settings -> Operate stays focused
 on universe, authority, horizon, and system Start/Stop controls. Settings ->

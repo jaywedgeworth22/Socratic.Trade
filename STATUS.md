@@ -33,6 +33,23 @@ failures. Verification: `npm run lint` (0 errors, existing warnings),
 `npx tsc --noEmit`, `npm test` (160 files / 1557 tests), and `npm run build`
 all pass.
 See `docs/rollouts/2026-06-30-strategy-llm-timeout-diagnostics.md`.
+## 2026-06-30 - Settings scope and help overhaul
+Branch `codex/settings-help-overhaul`. Strategy Studio is now surfaced under
+Account Settings -> Strategy instead of User Settings -> Connections, Settings
+opens the correct User/Account tier for requested sections, and Green/Red model
+plus reasoning-effort policy fields are account-scoped with a compatibility seed
+from older user-level model settings. Settings field hints now render as compact
+help buttons that work on hover, focus, and tap, and System Help has a Settings
+Glossary including the "Min lots for weight shift" guardrail. After rebasing
+onto the strategy LLM timeout diagnostics work, strategy-run LLM tests now seed
+a `local` user OpenAI key instead of depending on operator fallback env state.
+Verification: `npm test -- test/per-account-policy-isolation.test.ts`,
+`npm test -- test/persistence-notification.test.ts`, `npm run lint`,
+`npx tsc --noEmit`, `npm test` (161 files / 1559 tests), and `npm run build`
+all pass after `bash scripts/npm-ci-with-shared-deps.sh`. Branch preview is running at
+`http://localhost:4113` via PM2 process `trading-settings-help-overhaul`, and
+health/dashboard smoke checks returned 200. See
+`docs/rollouts/2026-06-30-settings-scope-help-overhaul.md`.
 
 ## 2026-06-30 - Test account readiness ignores local portfolio display errors
 Branch `codex/test-account-readiness`. Fixed the Test/local Start blocker where a

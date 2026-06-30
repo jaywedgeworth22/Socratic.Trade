@@ -14,6 +14,15 @@ filling the missing pieces.
 > to Bull proposals with an auditable reason. No roadmap change; see
 > `docs/rollouts/2026-06-30-strategy-llm-timeout-diagnostics.md`.
 >
+> 2026-06-30 (`codex/settings-help-overhaul`): Settings scope/help overhaul —
+> Strategy Studio now lives under Account Settings -> Strategy, Settings opens
+> the correct scope tier for requested account/user sections, Green/Red model
+> choices plus reasoning effort are account-scoped strategy fields with a legacy
+> user-level seed, and compact field help plus a System Help Settings Glossary
+> explain advanced knobs like "Min lots for weight shift" without long tab
+> footers. No roadmap change; see
+> `docs/rollouts/2026-06-30-settings-scope-help-overhaul.md`.
+
 > 2026-06-30 (`codex/test-account-readiness`): Test/local readiness no longer
 > blocks Start on dashboard portfolio display read errors. Broker-backed
 > Paper/Brokerage modes still require account and portfolio reads. No roadmap
