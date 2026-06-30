@@ -4,19 +4,23 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-06-30 - Production merge sweep for pending settings and order lifecycle work
+## 2026-06-30 - Production merge sweep for pending settings, source labels, and order lifecycle work
 Branch `codex/prod-merge-sweep-20260630`. Built a production integration branch
 from `origin/main`, folded in the still-unmerged Settings scope/help overhaul
-and Settings review-action polish, and reconciled with the Alpaca
-broker-held/order-lifecycle branch after it landed on `main` as PR #268. Review
-blockers fixed in this sweep: broker-filled orders with only
+and Settings review-action polish, reconciled with the Alpaca
+broker-held/order-lifecycle branch after it landed on `main` as PR #268, and
+folded in Market Scan source-label cleanup PR #269. Review blockers fixed in
+this sweep: broker-filled orders with only
 `pending_reconciliation` local fills stay in `pending_order`/Working state
 instead of assuming a local `filled` event exists, and legacy Strategy Studio
 model choices migrate into every connected account before the global
 `user_settings.policy` row is stripped to true user-level fields. Also removed
 two stray historical conflict-marker lines from `STATUS.md`. Verification:
 `npm run lint` (0 errors, 255 existing warnings), `npx tsc --noEmit`,
-`npm test` (163 files / 1570 tests), and `npm run build` all pass. See
+`npm test` (164 files / 1574 tests), and `npm run build` all pass. PR #271 is
+not included because its diff reintroduced inline model lists/settings churn and
+a simulated `$100` quote fallback outside `NODE_ENV=test`; revisit as a scoped
+review-persistence-only patch. See
 `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
 
 ## 2026-06-30 - Market Scan source label cleanup

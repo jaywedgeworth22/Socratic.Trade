@@ -9,6 +9,8 @@ production-ready work into one deploy path:
 - `codex/settings-review-polish` review-action placement and Settings UI polish.
 - `codex/alpaca-held-order-guard` / PR #268, reconciled after it landed on
   `main` as squash commit `44466cbb`.
+- `codex/market-scan-source-labels` / PR #269 source-label dedupe for Latest
+  Decisions and Market Scan.
 
 The sweep also fixes the two review blockers that were preventing a clean
 production push:
@@ -22,19 +24,27 @@ production push:
 ## Why
 
 The user asked to get all not-yet-merged/deployed work to production ASAP. These
-branches were the relevant active deltas, but PR review threads identified one
-broker-feed crash risk and one migration-data-loss risk. Both needed to be fixed
-before deployment.
+branches were the relevant production-safe active deltas, but PR review threads
+identified one broker-feed crash risk and one migration-data-loss risk. Both
+needed to be fixed before deployment. PR #271 was left out because its diff
+reintroduced inline model lists/settings churn and a simulated `$100` quote
+fallback outside `NODE_ENV=test`; that conflicts with the current settings
+direction and the no-fabricated-data rule.
 
 ## Files
 
 - `STATUS.md`
 - `PLAN.md`
 - `docs/phase-7-strategy.md`
+- `docs/phase-4-market-data-scoring.md`
+- `docs/phase-8-cockpit-ui.md`
+- `docs/rollouts/2026-06-30-market-scan-source-labels.md`
 - `docs/rollouts/2026-06-30-prod-merge-sweep.md`
 - `src/lib/dashboard-feed.ts`
+- `src/lib/dashboard-ui.ts`
 - `src/lib/db-profiles.ts`
 - `test/dashboard-feed.test.ts`
+- `test/dashboard-ui.test.ts`
 - `test/per-account-policy-isolation.test.ts`
 
 ## Verification
@@ -42,7 +52,7 @@ before deployment.
 - `npx vitest run test/dashboard-feed.test.ts test/per-account-policy-isolation.test.ts` - pass, 2 files / 26 tests.
 - `npm run lint` - pass, 0 errors / 255 existing warnings.
 - `npx tsc --noEmit` - pass.
-- `npm test` - pass, 163 files / 1570 tests.
+- `npm test` - pass, 164 files / 1574 tests.
 - `npm run build` - pass.
 
 ## Follow-ups

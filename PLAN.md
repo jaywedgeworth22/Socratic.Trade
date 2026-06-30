@@ -7,8 +7,9 @@ filling the missing pieces.
 
 > 2026-06-30 (`codex/prod-merge-sweep-20260630`): production merge sweep -
 > integrates the pending Settings scope/help overhaul, Settings review-action
-> polish, and the now-landed Alpaca broker-held/order-lifecycle work into one
-> deployment path. The sweep fixes two review blockers before PR: broker-filled
+> polish, Market Scan source-label cleanup, and the now-landed Alpaca
+> broker-held/order-lifecycle work into one deployment path. The sweep fixes two
+> review blockers before PR: broker-filled
 > orders with only pending local reconciliation remain Working instead of
 > dereferencing a nonexistent filled event, and legacy Strategy Studio model
 > choices are migrated into every connected account before global user policy is
