@@ -34,6 +34,17 @@ and historical scan rows are unchanged. Verification: focused
 existing warnings), `npx tsc --noEmit`, `npm test` (163 files / 1569 tests),
 and `npm run build` pass. See
 `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+## 2026-06-30 - Strategy review persistence & test quote fallback
+Branch `agent/antigravity-strategy-review-decisions`. Stored Strategy Studio
+LLM review proposals in `localStorage` to prevent losing reviews on page refresh
+or modal/slide-over closure. Added a "Discard review" button to TuningCard to
+let users manually clear the review proposal. Added a quote fallback in
+`TestBrokerGateway.getEquityQuotes` to return simulated prices (100.00) instead
+of throwing errors for missing/rate-limited symbols on test/paper accounts,
+preventing cascading failures from breaking active account dashboard loading.
+Verification: `npm test` passed 1561 tests across 161 test files cleanly.
+See `docs/rollouts/2026-06-30-antigravity-strategy-review-localstorage.md`.
+
 ## 2026-06-30 - PR #267 codex-autofix: account-scoped model migration
 Branch `codex/settings-help-overhaul`. Addressed the two P2 review threads from
 chatgpt-codex-connector on PR #267. Both flagged that moving
