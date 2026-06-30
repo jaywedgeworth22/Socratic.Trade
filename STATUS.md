@@ -14,6 +14,13 @@ configured. Trading credential resolution remains per-user/fail-closed.
 Verification: `npm test -- test/key-resolution-tiering.test.ts`,
 `npx tsc --noEmit`, and `npm run lint`.
 See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
+## 2026-06-30 — PR #253 review-thread fix: custom model path + next-env
+Branch `cursor/trim-openai-strategy-options-f06c`. Resolved review blockers by
+keeping `next-env.d.ts` on the production build-generated `.next/types` route
+types path, and by making Green/Red "Custom Model ID..." seed `gpt-4o-mini`,
+which is intentionally outside the curated `STRATEGY_MODEL_IDS` list so the
+free-text input is reachable. Verification planned/running on this branch; see
+`docs/rollouts/2026-06-29-claude-green-red-team.md`.
 ## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
 Branch `feat/tiered-settings`. Resolved the remaining review blocker by
 stripping user-level policy fields out of legacy/stale `account_strategy_state`

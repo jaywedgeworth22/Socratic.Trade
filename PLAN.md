@@ -11,6 +11,11 @@ filling the missing pieces.
 > credential. Trading resolution remains per-user/fail-closed. No roadmap
 > change; see
 > `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
+> 2026-06-30 (`cursor/trim-openai-strategy-options-f06c` / PR #253):
+> custom model selector review fix — trimmed OpenAI options remain reachable via
+> Custom because the selector now seeds an out-of-list model id, and
+> `next-env.d.ts` is kept on the build-generated route-types path. No roadmap
+> change; see `docs/rollouts/2026-06-29-claude-green-red-team.md`.
 > 2026-06-30 (`feat/tiered-settings` / PR #252): tiered settings review fix —
 > stale user-level policy fields in legacy account rows are stripped before the
 > user-level overlay, so cleared fields like `redTeamLlmModel` cannot reappear
