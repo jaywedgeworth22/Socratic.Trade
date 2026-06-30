@@ -52,6 +52,15 @@ function pickAccountFields(policy: TradingPolicy): Partial<TradingPolicy> {
   return result;
 }
 
+/** Drop user-level fields from legacy account rows before applying the user-level overlay. */
+function stripUserFields(policy: Partial<TradingPolicy>): Partial<TradingPolicy> {
+  const result: Partial<TradingPolicy> = { ...policy };
+  for (const key of USER_LEVEL_POLICY_FIELDS) {
+    delete result[key];
+  }
+  return result;
+}
+
 /** Read user-level policy fields from user_settings and return them as a partial policy. */
 function readUserPolicyFields(userId: string): Partial<TradingPolicy> {
   const stored = getUserSetting<Partial<TradingPolicy>>(userId, "policy", {});
@@ -252,7 +261,7 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...stored, scoringWeights });
+      policy = mergePolicy({ ...stripUserFields(stored), scoringWeights });
     } else {
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;
@@ -299,7 +308,7 @@ export function peekPolicy(userId: string = "local", connectedAccountId?: string
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...stored, scoringWeights });
+      policy = mergePolicy({ ...stripUserFields(stored), scoringWeights });
     } else {
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;

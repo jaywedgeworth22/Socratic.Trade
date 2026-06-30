@@ -51,3 +51,25 @@ The settings had two tiers but the code treated everything as one monolithic blo
 - Monitor auto-resume behavior in production after a restart
 - Consider migrating existing `user_settings.policy` blobs to the split format (low priority — backward compat works)
 - The account picker in settings could be enhanced to show more account details (broker, environment)
+
+## 2026-06-30 PR #252 Review Follow-up
+
+### Summary
+- Resolved the remaining review blocker by stripping user-level policy fields from legacy/stale `account_strategy_state.policy` blobs before applying the current user-level overlay in both `getPolicy` and `peekPolicy`.
+- Added a regression that seeds a stale inactive account row containing `redTeamLlmModel`, clears that user-level field, and verifies it does not reappear or get written back during a later account update.
+
+### Why
+- Optional user-level fields disappear from `readUserPolicyFields()` when cleared. Without stripping stale account-row copies first, an old inactive account policy could keep using a cleared model and later write it back into storage.
+
+### Files
+- `src/lib/db-profiles.ts`
+- `test/per-account-policy-isolation.test.ts`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/rollouts/2026-06-29-tiered-settings.md`
+
+### Verification
+- `npm ci` - passed in the temporary PR worktree.
+- `npm test -- test/per-account-policy-isolation.test.ts` - first run failed because the regression setup inserted over an already lazily seeded account row; changed the setup to `INSERT OR REPLACE`, then passed with 10 tests.
+- `npx tsc --noEmit` - passed cleanly.
+- `npm run lint` - passed with 0 errors and 256 existing warnings.

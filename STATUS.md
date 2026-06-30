@@ -4,6 +4,14 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
+Branch `feat/tiered-settings`. Resolved the remaining review blocker by
+stripping user-level policy fields out of legacy/stale `account_strategy_state`
+policy blobs before applying the current user-level overlay in `getPolicy` and
+`peekPolicy`. Cleared fields like `redTeamLlmModel` no longer resurrect from an
+inactive account row or get written back on a later account update. Verification
+planned/running on this branch; see `docs/rollouts/2026-06-29-tiered-settings.md`.
+
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
 integration. Agentic Trading now depends on
