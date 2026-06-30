@@ -20,6 +20,7 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("persistence and notifications", () => {
@@ -444,6 +445,49 @@ describe("persistence and notifications", () => {
     expect(event.status).toBe("skipped");
     expect(event.error).toContain("Notifications Webhook");
   });
+
+  it("bridges legacy notification events to direct email delivery", async () => {
+    const { getDb, setNotifyPrefs } = await import("../src/lib/db");
+    const { sendNotification } = await import("../src/lib/notifications");
+    const userId = `notify-email-${randomUUID()}`;
+    const calls: Array<{ url: string; body: unknown }> = [];
+
+    vi.stubEnv("RESEND_API_KEY", "rk_test");
+    vi.stubEnv("NOTIFY_EMAIL_FROM", "alerts@example.test");
+    vi.stubGlobal(
+      "fetch",
+      (async (url: string | URL, init?: RequestInit) => {
+        calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch
+    );
+    setNotifyPrefs(userId, { channels: ["email"], email: "ops@example.test" });
+
+    const event = await sendNotification(
+      {
+        type: "fill",
+        title: "AAPL fill",
+        payload: { fill: { symbol: "AAPL", side: "buy", status: "filled", quantity: 1, notional: 123.45 } }
+      },
+      { policy: DEFAULT_POLICY, userId }
+    );
+
+    expect(event.status).toBe("skipped");
+    expect(event.error).toContain("Notifications Webhook");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.resend.com/emails");
+    const emailBody = calls[0]?.body as { text?: string };
+    expect(emailBody).toMatchObject({
+      from: "alerts@example.test",
+      to: ["ops@example.test"],
+      subject: "AAPL fill"
+    });
+    expect(String(emailBody.text)).toContain("AAPL");
+    const audit = getDb()
+      .prepare("SELECT payload FROM audit_events WHERE user_id = ? AND kind = 'notify.sent' ORDER BY created_at DESC LIMIT 1")
+      .get(userId) as { payload: string } | undefined;
+    expect(JSON.parse(audit?.payload ?? "{}")).toMatchObject({ channel: "email", kind: "fill" });
+  }, 15000);
 
   it("records notification events under the requested user", async () => {
     const { listNotificationEvents } = await import("../src/lib/db");
