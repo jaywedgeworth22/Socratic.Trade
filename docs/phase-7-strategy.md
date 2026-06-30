@@ -157,6 +157,12 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   temperature and explicit output caps. Their prompts and payloads also use
   `test/local`, `broker/paper`, and `broker/live` wording so broker-hosted paper
   fills are not confused with local simulated fills.
+- **LLM step timeout diagnostics (2026-06-30)** — strategy runs now audit
+  `llm_step` start/failure rows and preserve failed Green Team context in the
+  final `strategy_run` audit. Raw abort strings are translated into
+  provider/model-specific guidance (for example, Green Team `gpt-5.5` high
+  reasoning timing out after the shared 60s cap), while Red Team transport
+  failures fallback to Bull proposals with an auditable reason.
 - **Context trimming** — large allowlists (e.g. full S&P 500) are sent as a
   compact note instead of every ticker; `recentOrders` is slimmed to 8 records;
   the Bear/critique agent receives only the candidates under review rather than

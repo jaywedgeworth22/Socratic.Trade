@@ -29,10 +29,10 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
-import { humanizeLlmError } from "./llm-errors";
+import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
@@ -93,7 +93,7 @@ export interface StrategyLlmStep {
   model: string;
   transport: string;
   keySource: "operator" | "user";
-  status: "completed" | "skipped" | "fallback";
+  status: "started" | "completed" | "skipped" | "fallback" | "failed";
   proposalCount?: number;
   reason?: string;
 }
@@ -130,6 +130,17 @@ export class LiveApprovalConfirmationError extends Error {
   }
 }
 
+class StrategyLlmStepFailure extends Error {
+  llmSteps: StrategyLlmStep[];
+
+  constructor(message: string, llmSteps: StrategyLlmStep[], cause: unknown) {
+    super(message);
+    this.name = "StrategyLlmStepFailure";
+    this.llmSteps = llmSteps;
+    this.cause = cause;
+  }
+}
+
 export function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
 }
@@ -152,6 +163,7 @@ export async function runStrategyOnce(
   const runId = crypto.randomUUID();
   insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
+  let llmSteps: StrategyLlmStep[] = [];
   const manualRun = Boolean(options.manual);
 
   try {
@@ -381,7 +393,6 @@ export async function runStrategyOnce(
     }
 
     let llmProposals: TradeProposal[] = [];
-    let llmSteps: StrategyLlmStep[] = [];
     if (!skipLlmDueToScoreThreshold) {
       const proposed = await proposeTrades({
         runId,
@@ -813,9 +824,12 @@ export async function runStrategyOnce(
     
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
+    if (error instanceof StrategyLlmStepFailure) {
+      llmSteps = error.llmSteps;
+    }
     finishStrategyRun(runId, "failed", summary, userId);
     const policy = getPolicy(userId, targetAccountId);
-    result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber };
+    result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber, ...(llmSteps.length > 0 ? { llmSteps } : {}) };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
     } else {
@@ -1907,8 +1921,8 @@ async function proposeTrades(input: {
   const model = resolvedModel;
   const llmSteps: StrategyLlmStep[] = [];
 
-  const recordStep = (step: StrategyLlmStep) => {
-    llmSteps.push(step);
+  const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
+    if (options.includeInResult !== false) llmSteps.push(step);
     audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
   };
 
@@ -1970,69 +1984,81 @@ async function proposeTrades(input: {
     }
   );
 
-  const bullResult = await withLlmGeneration(
-    {
-      name: "trading.strategy.bull",
-      model,
-      userId: input.userId,
-      input: summarizeOpenAiRequest(body),
-      metadata: {
-        endpoint: url,
-        transport,
-        maxProposals,
-        executionMode,
-        internalPaperMode: input.policy.paperMode,
-        usesLocalSimulation: executionState.usesLocalSimulation,
-        currentMarketRegime
+  const bullStepBase = {
+    step: "bull" as const,
+    label: "Green Team proposal",
+    provider,
+    model,
+    transport,
+    keySource: llmKeySource
+  };
+  recordStep({ ...bullStepBase, status: "started" }, { includeInResult: false });
+  let bullResult: { text?: string; proposals: TradeProposal[] };
+  try {
+    bullResult = await withLlmGeneration(
+      {
+        name: "trading.strategy.bull",
+        model,
+        userId: input.userId,
+        input: summarizeOpenAiRequest(body),
+        metadata: {
+          endpoint: url,
+          transport,
+          maxProposals,
+          executionMode,
+          internalPaperMode: input.policy.paperMode,
+          usesLocalSimulation: executionState.usesLocalSimulation,
+          currentMarketRegime
+        },
+        tags: ["strategy", "bull-agent"],
+        output: (result) => ({
+          ...summarizeOpenAiResponseText(result.text),
+          ...summarizeTradeProposals(result.proposals)
+        })
       },
-      tags: ["strategy", "bull-agent"],
-      output: (result) => ({
-        ...summarizeOpenAiResponseText(result.text),
-        ...summarizeTradeProposals(result.proposals)
-      })
-    },
-    async () => {
-      const response = await llmFetch(url, {
-        method: "POST",
-        headers: llmAuthHeaders({ provider, key: openaiKey }),
-        body: JSON.stringify(body)
-      });
+      async () => {
+        const response = await llmFetch(url, {
+          method: "POST",
+          headers: llmAuthHeaders({ provider, key: openaiKey }),
+          body: JSON.stringify(body)
+        });
 
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
-      }
-      const payload = await response.json();
-      recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
-      const text = extractLlmText(payload);
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
+        }
+        const payload = await response.json();
+        recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
+        const text = extractLlmText(payload);
 
-      if (!text) {
-        throw new Error("Empty response returned from LLM API.");
-      }
+        if (!text) {
+          throw new Error("Empty response returned from LLM API.");
+        }
 
-      try {
-        const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
-        return { text, proposals: parsed.proposals ?? [] };
-      } catch (error) {
-        // A truncated/malformed model response must not crash the whole autonomous
-        // run; degrade to zero proposals for this tick.
-        console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", error);
-        return { text, proposals: [] as TradeProposal[] };
+        try {
+          const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
+          return { text, proposals: parsed.proposals ?? [] };
+        } catch (error) {
+          // A truncated/malformed model response must not crash the whole autonomous
+          // run; degrade to zero proposals for this tick.
+          console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", error);
+          return { text, proposals: [] as TradeProposal[] };
+        }
       }
-    }
-  );
+    );
+  } catch (error) {
+    const reason = humanizeLlmTransportError(error, { provider, model, stepLabel: "Green Team proposal", timeoutMs: LLM_TIMEOUT_MS });
+    const failedStep: StrategyLlmStep = { ...bullStepBase, status: "failed", reason };
+    recordStep(failedStep);
+    throw new StrategyLlmStepFailure(reason, llmSteps, error);
+  }
 
   const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
   recordStep({
-    step: "bull",
-    label: "Green Team proposal",
-    provider,
-    model,
-    transport,
-    keySource: llmKeySource,
+    ...bullStepBase,
     status: "completed",
     proposalCount: rawBullProposals.length
   });
@@ -2175,68 +2201,84 @@ async function proposeTrades(input: {
     }
   );
 
-  const bearResult = await withLlmGeneration(
-    {
-      name: "trading.strategy.bear",
-      model: bearModel,
-      userId: input.userId,
-      input: summarizeOpenAiRequest(bearBody),
-      metadata: {
-        endpoint: bearUrl,
-        transport: bearTransport,
-        reviewedProposalCount: bullProposals.length,
-        executionMode,
-        internalPaperMode: input.policy.paperMode,
-        usesLocalSimulation: executionState.usesLocalSimulation,
-        currentMarketRegime
+  const bearStepBase = {
+    step: "bear" as const,
+    label: "Red Team review",
+    provider: bearProvider,
+    model: bearModel,
+    transport: bearTransport,
+    keySource: bearKeySource
+  };
+  recordStep({ ...bearStepBase, status: "started" }, { includeInResult: false });
+  let bearResult: { text?: string; proposals: TradeProposal[]; fallbackToBull?: boolean };
+  try {
+    bearResult = await withLlmGeneration(
+      {
+        name: "trading.strategy.bear",
+        model: bearModel,
+        userId: input.userId,
+        input: summarizeOpenAiRequest(bearBody),
+        metadata: {
+          endpoint: bearUrl,
+          transport: bearTransport,
+          reviewedProposalCount: bullProposals.length,
+          executionMode,
+          internalPaperMode: input.policy.paperMode,
+          usesLocalSimulation: executionState.usesLocalSimulation,
+          currentMarketRegime
+        },
+        tags: ["strategy", "bear-agent", "red-team"],
+        output: (result) => ({
+          ...summarizeOpenAiResponseText(result.text),
+          ...summarizeTradeProposals(result.proposals),
+          fallbackToBull: result.fallbackToBull
+        })
       },
-      tags: ["strategy", "bear-agent", "red-team"],
-      output: (result) => ({
-        ...summarizeOpenAiResponseText(result.text),
-        ...summarizeTradeProposals(result.proposals),
-        fallbackToBull: result.fallbackToBull
-      })
-    },
-    async () => {
-      const bearResponse = await llmFetch(bearUrl, {
-        method: "POST",
-        headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
-        body: JSON.stringify(bearBody)
-      });
+      async () => {
+        const bearResponse = await llmFetch(bearUrl, {
+          method: "POST",
+          headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
+          body: JSON.stringify(bearBody)
+        });
 
-      if (!bearResponse.ok) {
-        console.warn("Bear Agent API failed, falling back to Bull proposals");
-        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        if (!bearResponse.ok) {
+          console.warn("Bear Agent API failed, falling back to Bull proposals");
+          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        }
+
+        const bearPayload = await bearResponse.json();
+        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
+        const bearText = extractLlmText(bearPayload);
+
+        if (!bearText) {
+          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        }
+
+        try {
+          const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
+          return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
+        } catch (error) {
+          // Don't discard already-valid Bull proposals because the Bear critique came
+          // back as malformed JSON — reuse the existing fall-back-to-Bull path.
+          console.warn("Bear Agent returned unparseable JSON; falling back to Bull proposals", error);
+          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        }
       }
-
-      const bearPayload = await bearResponse.json();
-      recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
-      const bearText = extractLlmText(bearPayload);
-
-      if (!bearText) {
-        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-      }
-
-      try {
-        const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
-        return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
-      } catch (error) {
-        // Don't discard already-valid Bull proposals because the Bear critique came
-        // back as malformed JSON — reuse the existing fall-back-to-Bull path.
-        console.warn("Bear Agent returned unparseable JSON; falling back to Bull proposals", error);
-        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-      }
-    }
-  );
+    );
+  } catch (error) {
+    const reason = `${humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: LLM_TIMEOUT_MS })} Bull proposals carried forward.`;
+    recordStep({
+      ...bearStepBase,
+      status: "fallback",
+      proposalCount: bullProposals.length,
+      reason
+    });
+    return { proposals: bullProposals, llmSteps };
+  }
 
   if (bearResult.fallbackToBull) {
     recordStep({
-      step: "bear",
-      label: "Red Team review",
-      provider: bearProvider,
-      model: bearModel,
-      transport: bearTransport,
-      keySource: bearKeySource,
+      ...bearStepBase,
       status: "fallback",
       proposalCount: bullProposals.length,
       reason: "Red Team review was unavailable or unparseable; Bull proposals carried forward."
@@ -2249,12 +2291,7 @@ async function proposeTrades(input: {
     entryMarketRegime: currentMarketRegime
   }));
   recordStep({
-    step: "bear",
-    label: "Red Team review",
-    provider: bearProvider,
-    model: bearModel,
-    transport: bearTransport,
-    keySource: bearKeySource,
+    ...bearStepBase,
     status: "completed",
     proposalCount: bearProposals.length
   });
