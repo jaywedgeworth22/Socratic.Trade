@@ -12,7 +12,7 @@
 // Do NOT use setSetting() here — that calls audit("policy_change") which is noisy for lease ops.
 // Use direct getDb() prepared statements, matching the acquireStrategyLock approach.
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 import { getDb } from "./db";
 
 const LEASE_KEY = "scheduler:lease"; // colon-namespaced, mirrors "scheduler:lastTick"

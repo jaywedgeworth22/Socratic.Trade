@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "crypto";
 
 function readBearerToken(request: Request): string | null {
   const header = request.headers.get("authorization");

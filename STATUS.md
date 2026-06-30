@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Production build/start hotfix
+Branch `codex/prod-build-hotfix-20260630`. After PR #270 merged, the self-hosted
+Deploy workflow reset `~/apps/trading-live` to `07085c91` but failed during
+dependency install, and a manual Turbopack production build did not emit the
+root `BUILD_ID` / route manifests expected by the current `next start` PM2
+runtime. Production was manually repaired on the live box by moving the policy
+null-stripping helper out of `app/api/policy/route.ts`, switching three
+server-only crypto imports from `node:crypto` to webpack-compatible `crypto`,
+building with `next build --webpack`, and restarting PM2. The route helper
+repair now lives on `main` via PR #275; this branch carries the remaining
+repeatability fixes by changing `npm run build` to `next build --webpack` and
+keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
+redirects to `/login`, `/api/health` returns `ok:true`, and
+`https://trading.jays.services/` returns a 307 to `/login`.
+See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
 ## 2026-06-30 - Policy route export build fix
 Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270
 failed during `npm run build` because Next 16 route validation rejected
