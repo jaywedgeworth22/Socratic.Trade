@@ -130,6 +130,25 @@ describe("mcp oauth", () => {
     expect(resolveMcpOAuthRedirectUri(request)).toBe("https://trading.jays.services/api/auth/robinhood/callback");
   });
 
+  it("honors the configured loopback callback when explicitly enabled for Robinhood OAuth", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:4000/api/auth/robinhood/callback");
+    vi.stubEnv("ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT", "on");
+    const { buildMcpAuthorizationUrl, findMcpOAuthStateByRandom, resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
+
+    const request = new Request("https://trading.jays.services/api/auth/robinhood/start");
+    const redirectUri = resolveMcpOAuthRedirectUri(request);
+    const authorizationUrl = new URL(await buildMcpAuthorizationUrl("user-a", { redirectUri }));
+    const randomPart = authorizationUrl.searchParams.get("state")!;
+    const found = findMcpOAuthStateByRandom(randomPart);
+
+    expect(redirectUri).toBe("http://localhost:4000/api/auth/robinhood/callback");
+    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe("http://localhost:4000/api/auth/robinhood/callback");
+    expect(found!.value.redirectUri).toBe("http://localhost:4000/api/auth/robinhood/callback");
+  });
+
   it("re-registers a dynamic OAuth client when the callback redirect changes", async () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");

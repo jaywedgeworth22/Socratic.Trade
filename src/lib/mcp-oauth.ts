@@ -93,8 +93,13 @@ export function resolveMcpOAuthRedirectUri(request: Request): string {
   const configured = process.env.ROBINHOOD_MCP_REDIRECT_URI?.trim();
   const requestRedirectUri = new URL(ROBINHOOD_MCP_CALLBACK_PATH, resolvePublicAppOrigin(request)).toString();
   if (!configured) return requestRedirectUri;
-  if (isLoopbackUrl(configured) && !isLoopbackUrl(requestRedirectUri)) return requestRedirectUri;
+  if (isLoopbackUrl(configured) && !isLoopbackUrl(requestRedirectUri) && !allowConfiguredLoopbackRedirect()) return requestRedirectUri;
   return configured;
+}
+
+function allowConfiguredLoopbackRedirect(): boolean {
+  const value = process.env.ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "on" || value === "yes";
 }
 
 export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcpAuthorizationUrlOptions = {}): Promise<string> {
