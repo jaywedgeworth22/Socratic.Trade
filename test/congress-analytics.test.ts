@@ -149,7 +149,7 @@ describe("buildMemberScores", () => {
   });
 
   it("is empty when no recognized activity field is present (inert until filer_id resolves on App A)", () => {
-    expect(buildMemberScores([{ fullName: "A", buyCount: 5 }]).size).toBe(0);
+    expect(buildMemberScores([{ fullName: "A", buyCount: 5 } as any]).size).toBe(0);
   });
 });
 

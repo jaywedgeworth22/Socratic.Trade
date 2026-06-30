@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Canonical setup for a fresh, isolated checkout (Claude Code cloud/remote sandbox,
-# Codespaces, devcontainer, or any throwaway clone). Idempotent — safe to re-run.
+# Codespaces, devcontainer, or any throwaway clone). Idempotent - safe to re-run.
 #
 # Point your environment's "setup script" field at this file:
 #   bash scripts/cloud-setup.sh
@@ -16,7 +16,7 @@ echo "==> Node: $(node --version 2>/dev/null || echo 'not found')  npm: $(npm --
 
 # Deterministic install from the committed lockfile.
 echo "==> Installing dependencies (npm ci)"
-npm ci
+bash scripts/npm-ci-with-shared-deps.sh
 
 # Give the sandbox explicit, safe defaults + a place for injected secrets.
 # Non-destructive: never clobber an existing .env.local.

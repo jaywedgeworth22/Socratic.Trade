@@ -35,6 +35,7 @@ jobs:
       DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
       PM2_APP: ${{ vars.PM2_APP }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
 
     steps:
       - name: Pull, build, and restart production
@@ -67,7 +68,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Install dependencies (lockfile-exact)"
-          npm ci
+          bash scripts/npm-ci-with-shared-deps.sh
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"

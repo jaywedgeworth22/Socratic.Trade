@@ -87,7 +87,7 @@ export function buildMemberScores(members: AppAMemberRow[]): Map<string, number>
     if (!name) continue;
     let perf: number | undefined;
     for (const f of PERF_FIELDS) {
-      const v = m[f];
+      const v = (m as Record<string, unknown>)[f];
       if (typeof v === "number" && Number.isFinite(v)) {
         perf = v;
         break;
