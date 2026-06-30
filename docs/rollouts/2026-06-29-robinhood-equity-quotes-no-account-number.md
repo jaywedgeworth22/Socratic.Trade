@@ -38,7 +38,16 @@
 - `docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`
 
 ### Verification
-- `npm ci` - first attempt failed with a transient missing private package directory during extraction; `rm -rf node_modules && npm ci --prefer-online` passed.
-- `npm run lint` - passed with 0 errors and 257 existing warnings.
-- `npx tsc --noEmit` - passed cleanly.
-- `npm run build` - passed; post-build `git status --short` showed only the intended docs/`next-env.d.ts` changes.
+- Initial `npm run lint` failed before linting with `eslint: command not found`
+  because this PR worktree's dependency tree was incomplete.
+- `npm ci` failed while repairing the stale dependency tree with npm/macOS
+  `ENOTEMPTY` under `node_modules/next`; `npm install --no-audit --no-fund`
+  repaired the local dependency tree without tracked dependency-file changes.
+- `npm run lint` - passed with 0 errors and existing warnings.
+- `npx tsc --noEmit` - passed.
+- `npm test` - failed one existing timeout:
+  `test/strategy-tuning.test.ts` manual-review fallback exceeded 20 seconds;
+  158 files / 1537 tests passed before the timeout.
+- `npm test -- --testTimeout=40000` - passed, 159 files / 1538 tests.
+- `npm run build` - passed; `next-env.d.ts` remained on
+  `./.next/types/routes.d.ts`.

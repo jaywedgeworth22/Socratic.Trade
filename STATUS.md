@@ -8,7 +8,9 @@ steps materially change.
 Branch `cursor/fix-robinhood-equity-quotes`. Resolved the remaining review
 blocker by keeping `next-env.d.ts` on the production build-generated
 `./.next/types/routes.d.ts` import instead of the dev-server route-types path.
-Verification planned/running on this branch; see
+Verification passed for lint, typecheck, full Vitest with an extended timeout,
+and production build; default `npm test` hit the existing strategy-tuning
+20-second timeout under full-suite load. See
 `docs/rollouts/2026-06-29-robinhood-equity-quotes-no-account-number.md`.
 ## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
 Branch `feat/tiered-settings`. Resolved the remaining review blocker by
