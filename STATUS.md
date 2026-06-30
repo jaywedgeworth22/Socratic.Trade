@@ -19,6 +19,17 @@ two stray historical conflict-marker lines from `STATUS.md`. Verification:
 `npm test` (163 files / 1570 tests), and `npm run build` all pass. See
 `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
 
+## 2026-06-30 - Market Scan source label cleanup
+Branch `codex/market-scan-source-labels`. Latest Decisions and Market Scan source
+subtitles now use one shared source-list formatter that aliases `congress`,
+`congress.trade`, and repeated Congress.Trade segments to a single
+`Congress.Trade` label and folds `yahoo-finance-delayed-quotes` into
+`Yahoo Finance`. This is a display/provenance cleanup only; provider execution
+and historical scan rows are unchanged. Verification: focused
+`npm test -- dashboard-ui`, then post-merge `npm run lint` (0 errors, 256
+existing warnings), `npx tsc --noEmit`, `npm test` (163 files / 1569 tests),
+and `npm run build` pass. See
+`docs/rollouts/2026-06-30-market-scan-source-labels.md`.
 ## 2026-06-30 - PR #267 codex-autofix: account-scoped model migration
 Branch `codex/settings-help-overhaul`. Addressed the two P2 review threads from
 chatgpt-codex-connector on PR #267. Both flagged that moving

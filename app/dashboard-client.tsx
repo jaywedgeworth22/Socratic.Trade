@@ -59,6 +59,7 @@ import {
 import {
   companyTitle,
   enrichPositionsForDisplay,
+  formatSourceList,
   formatNotificationDisplay,
   formatShareQuantity,
   friendlySource,
@@ -2244,7 +2245,7 @@ function DecisionView({
             recentDecisionItems.length > 0
               ? `${Math.min(recentDecisionItems.length, 100)} recent proposal decisions`
               : decision?.marketScan
-                ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}`
+                ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSourceList(decision.marketScan.source)}`
                 : "Run the strategy to generate a decision"
           }
           icon={<Sparkles size={16} />}
@@ -2549,11 +2550,7 @@ function vwapTitle(q: MarketQuote): string | undefined {
 }
 
 function formatScanSources(sourceString: string): string {
-  const sources = formatSources(sourceString)
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part && !/^live$/i.test(part) && !/^(none|unknown|-)$/i.test(part));
-  return Array.from(new Set(sources)).join(", ");
+  return formatSourceList(sourceString);
 }
 
 const SCAN_COLUMNS: ScanColumn[] = [
@@ -5799,31 +5796,6 @@ function parseSectorCaps(value: string): Record<string, number> {
 
 function normalizeSymbols(values: string[]): string[] {
   return Array.from(new Set(values.map((v) => v.trim().toUpperCase()).filter((v) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(v))));
-}
-
-function formatSources(sourceString: string): string {
-  if (!sourceString) return "";
-  return sourceString
-    .split("+")
-    .map((part) => {
-      switch (part.trim().toLowerCase()) {
-        case "nasdaq-delayed-screener":
-          return "NASDAQ";
-        case "finnhub":
-          return "Finnhub";
-        case "yahoo-finance":
-          return "Yahoo";
-        case "fmp":
-          return "FMP";
-        case "alpha-vantage":
-          return "Alpha Vantage";
-        case "massive-vwap":
-          return "Massive VWAP";
-        default:
-          return part.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-      }
-    })
-    .join(", ");
 }
 
 function renderActionTitle(title: string) {

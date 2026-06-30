@@ -21,6 +21,7 @@ const SOURCE_LABELS: Record<string, string> = {
   finnhub: "Finnhub",
   fmp: "FMP",
   "yahoo-finance": "Yahoo Finance",
+  "yahoo-finance-delayed-quotes": "Yahoo Finance",
   "nasdaq-delayed-screener": "Nasdaq",
   "alpaca-quotes": "Alpaca",
   "alpaca-snapshot": "Alpaca",
@@ -29,7 +30,20 @@ const SOURCE_LABELS: Record<string, string> = {
   "broker-quotes": "Broker quotes",
   robinhood: "Robinhood",
   "robinhood-quotes": "Robinhood",
+  congress: "Congress.Trade",
+  "congress.trade": "Congress.Trade",
   blended: "blended (multiple sources)"
+};
+
+const SOURCE_LIST_LABELS: Record<string, string> = {
+  ...SOURCE_LABELS,
+  "nasdaq-delayed-screener": "NASDAQ",
+  tiingo: "Tiingo",
+  "alpha-vantage": "Alpha Vantage",
+  finra: "FINRA",
+  computed: "Computed",
+  "sec-edgar": "SEC EDGAR",
+  "blackrock-oef-holdings": "BlackRock holdings"
 };
 
 const PROVENANCE_LABELS: Partial<Record<keyof EnrichmentSources, string>> = {
@@ -92,7 +106,24 @@ export function enrichPositionsForDisplay(positions: EquityPosition[], totalMark
 
 export function friendlySource(name?: string): string {
   if (!name) return "unknown";
-  return SOURCE_LABELS[name] ?? name;
+  return SOURCE_LABELS[normalizeSourceKey(name)] ?? name;
+}
+
+export function formatSourceList(sourceString?: string): string {
+  if (!sourceString) return "";
+  const labels = sourceString
+    .split("+")
+    .map((source) => sourceListLabel(source))
+    .filter((label) => label && !/^live$/i.test(label) && !/^(none|unknown|-)$/i.test(label));
+  const seen = new Set<string>();
+  return labels
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(", ");
 }
 
 export function provenanceLabel(field: keyof EnrichmentSources): string {
@@ -108,6 +139,22 @@ export function orderedSourceEntries(sources?: EnrichmentSources): Array<[keyof 
     if (leftOrder !== rightOrder) return leftOrder - rightOrder;
     return String(left).localeCompare(String(right));
   });
+}
+
+function normalizeSourceKey(source: string): string {
+  return source.trim().toLowerCase();
+}
+
+function sourceListLabel(source: string): string {
+  const key = normalizeSourceKey(source);
+  return SOURCE_LIST_LABELS[key] ?? titleizeSource(key);
+}
+
+function titleizeSource(source: string): string {
+  return source
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
 }
 
 export function companyTitle(symbol: string, symbolMetaBySymbol: Record<string, SymbolMeta>): string | undefined {

@@ -14,6 +14,12 @@ filling the missing pieces.
 > choices are migrated into every connected account before global user policy is
 > reduced to true user-level fields. No roadmap change; see
 > `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
+> 2026-06-30 (`codex/market-scan-source-labels`): Latest Decisions and Market
+> Scan source subtitles now share alias-aware source-list formatting, so
+> `congress`, `congress.trade`, and repeated Congress.Trade segments display
+> once as `Congress.Trade`, and `yahoo-finance-delayed-quotes` displays as
+> `Yahoo Finance`. No roadmap change; see
+> `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
 >
 > 2026-06-30 (`codex/strategy-llm-timeout-diagnostics`): strategy LLM timeout
 > diagnostics - production run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` failed
