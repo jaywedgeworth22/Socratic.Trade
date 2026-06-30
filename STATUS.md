@@ -12,10 +12,12 @@ root `BUILD_ID` / route manifests expected by the current `next start` PM2
 runtime. Production was manually repaired on the live box by moving the policy
 null-stripping helper out of `app/api/policy/route.ts`, switching three
 server-only crypto imports from `node:crypto` to webpack-compatible `crypto`,
-building with `next build --webpack`, and restarting PM2. Local smoke now
-passes: `/` redirects to `/login`, `/api/health` returns `ok:true`, and
-`https://trading.jays.services/` returns a 307 to `/login`. This branch makes
-that repeatable by changing `npm run build` to `next build --webpack`.
+building with `next build --webpack`, and restarting PM2. The route helper
+repair now lives on `main` via PR #275; this branch carries the remaining
+repeatability fixes by changing `npm run build` to `next build --webpack` and
+keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
+redirects to `/login`, `/api/health` returns `ok:true`, and
+`https://trading.jays.services/` returns a 307 to `/login`.
 See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
 ## 2026-06-30 - Policy route export build fix
 Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270

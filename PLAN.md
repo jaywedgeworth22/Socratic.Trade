@@ -8,9 +8,9 @@ filling the missing pieces.
 > 2026-06-30 (`codex/prod-build-hotfix-20260630`): production build/start hotfix -
 > after PR #270, the live box needed a manual repair because the default Next 16
 > Turbopack build did not emit the production files consumed by the existing
-> `next start` PM2 runtime. `npm run build` now uses `next build --webpack`, the
-> policy route no longer exports a non-route helper, and server-only crypto
-> imports use webpack-compatible specifiers. No roadmap change; see
+> `next start` PM2 runtime. With the route export repair now landed in PR #275,
+> this branch keeps deploys repeatable by using `next build --webpack` and
+> webpack-compatible server-only crypto imports. No roadmap change; see
 > `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
 > 2026-06-30 (`codex/fix-policy-route-export`): production build fix - moved
 > `stripNullsDeep` out of `app/api/policy/route.ts` because Next 16 rejects
