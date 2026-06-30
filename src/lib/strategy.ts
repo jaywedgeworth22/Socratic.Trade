@@ -59,6 +59,8 @@ import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
+import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { avgReturnCorrelation } from "./correlation";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
@@ -225,6 +227,9 @@ export async function runStrategyOnce(
     const workingPositions = account.positions;
     const executionMode = executionState.mode;
     const learningSource = fillSourceForExecutionMode(executionMode);
+    if (!executionState.usesLocalSimulation) {
+      await notifyStaleLimitOrders({ userId, policy, orders });
+    }
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
     // post-mortem / reconciliation always has a pre-execution baseline even if the run
@@ -592,6 +597,43 @@ export async function runStrategyOnce(
         }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
+      }
+
+      if (!executionState.usesLocalSimulation) {
+        const heldExit = evaluateBrokerHeldExitAvailability(normalizedProposal, workingPositions, orders);
+        if (heldExit) {
+          const heldReason = brokerHeldExitBlockReason(heldExit);
+          const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+          const proposalId = crypto.randomUUID();
+          insertProposal({
+            userId,
+            executionMode,
+            id: proposalId,
+            runId,
+            accountNumber: policy.accountNumber,
+            proposal: normalizedProposal,
+            decision: heldDecision,
+            review,
+            estimatedNotional: review.estimatedNotional,
+            status: "blocked"
+          });
+          audit(
+            "proposal_blocked_broker_held_exit",
+            { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
+            userId,
+            connectedAccountId
+          );
+          await sendNotification(
+            {
+              type: "block",
+              title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
+              payload: { runId, proposalId, decision: heldDecision, review, proposal: normalizedProposal }
+            },
+            { policy, userId }
+          );
+          results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+          continue;
+        }
       }
 
       // Sell-to-fund "propose" mode: funding sells queue for human approval even under "decide"
@@ -1397,9 +1439,10 @@ export async function executeProposal(
   try {
     const gateway = getBrokerGateway(policy, userId);
 
-    const [portfolio, positions] = await Promise.all([
+    const [portfolio, positions, orders] = await Promise.all([
       gateway.getPortfolio(policy.accountNumber),
-      gateway.getEquityPositions(policy.accountNumber)
+      gateway.getEquityPositions(policy.accountNumber),
+      gateway.getEquityOrders(policy.accountNumber)
     ]);
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
@@ -1418,6 +1461,9 @@ export async function executeProposal(
     const account = executionState.usesLocalSimulation
       ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
       : { portfolio, positions };
+    if (!executionState.usesLocalSimulation) {
+      await notifyStaleLimitOrders({ userId, policy, orders });
+    }
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
@@ -1488,6 +1534,29 @@ export async function executeProposal(
     if (!stillPending || stillPending.status !== "proposed") {
       const current = stillPending?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+    }
+
+    if (!executionState.usesLocalSimulation) {
+      const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
+      if (heldExit) {
+        const heldReason = brokerHeldExitBlockReason(heldExit);
+        const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+        updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
+        audit(
+          "proposal_approved",
+          { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
+          userId
+        );
+        await sendNotification(
+          {
+            type: "block",
+            title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
+            payload: { proposalId, decision: heldDecision, review, proposal }
+          },
+          { policy, userId }
+        );
+        return { status: "blocked", reasons: heldDecision.reasons };
+      }
     }
 
     if (executionState.usesLocalSimulation) {

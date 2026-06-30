@@ -23,6 +23,17 @@ filling the missing pieces.
 > footers. No roadmap change; see
 > `docs/rollouts/2026-06-30-settings-scope-help-overhaul.md`.
 
+> 2026-06-30 (`codex/alpaca-held-order-guard`): Alpaca broker-held exit guard -
+> production KO sell approval failed because an existing Alpaca bracket sell leg
+> already reserved all 29 KO shares. Strategy now subtracts active broker-held
+> sell/cover orders from available exit quantity before autonomous placement or
+> manual approval, blocking duplicate exits before broker submission. The same
+> branch also clarifies broker order lifecycle display (`Submitted`/`Working`
+> until filled), reconciles broker-paper pending fills on the scheduler, excludes
+> pending broker-paper fills from paper P&L/projections, and adds a configurable
+> stale limit-order alert (`staleLimitOrderMinutes`, default 15). No roadmap
+> change; see `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
+>
 > 2026-06-30 (`codex/test-account-readiness`): Test/local readiness no longer
 > blocks Start on dashboard portfolio display read errors. Broker-backed
 > Paper/Brokerage modes still require account and portfolio reads. No roadmap

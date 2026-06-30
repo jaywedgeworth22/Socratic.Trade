@@ -23,7 +23,7 @@ describe("policy notification event settings", () => {
         body: JSON.stringify({
           notificationSettings: {
             ...getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings,
-            enabledEvents: ["fill", "provider_degraded", "not_real"]
+            enabledEvents: ["fill", "provider_degraded", "limit_order_stale", "not_real"]
           }
         })
       })
@@ -31,7 +31,7 @@ describe("policy notification event settings", () => {
 
     expect(response.status).toBe(200);
     const policy = await response.json();
-    expect(policy.notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded"]);
-    expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded"]);
+    expect(policy.notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded", "limit_order_stale"]);
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded", "limit_order_stale"]);
   });
 });

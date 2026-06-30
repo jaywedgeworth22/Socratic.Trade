@@ -126,6 +126,8 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
     case "kill_switch":
     case "run_failed":
       return String(payload.summary ?? input.title);
+    case "limit_order_stale":
+      return String(payload.summary ?? input.title);
     case "proposal_withdrawn":
       return String(payload.reason ?? input.title);
     default:
@@ -254,6 +256,25 @@ function formatDiscordPayload(input: {
       if (payload?.reason) description = String(payload.reason);
       if (payload?.proposalId) {
         fields.push({ name: "Proposal ID", value: String(payload.proposalId), inline: false });
+      }
+      break;
+    }
+    case "limit_order_stale": {
+      color = 15105570; // Orange
+      const order = payload?.order;
+      description = payload?.summary ?? "Limit order is still working after the configured threshold.";
+      if (order) {
+        fields.push(
+          { name: "Symbol", value: String(order.symbol), inline: true },
+          { name: "Side", value: String(order.side).toUpperCase(), inline: true },
+          { name: "State", value: String(order.state), inline: true }
+        );
+        if (payload?.remainingQuantity !== undefined) {
+          fields.push({ name: "Remaining", value: String(payload.remainingQuantity), inline: true });
+        }
+        if (payload?.ageMinutes !== undefined) {
+          fields.push({ name: "Age", value: `${payload.ageMinutes} min`, inline: true });
+        }
       }
       break;
     }

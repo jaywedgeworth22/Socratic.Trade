@@ -963,7 +963,11 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
 }
 
 function isAccountingFill(fill: FillEvent): boolean {
-  return fill.status === "filled" || fill.source === "paper";
+  if (fill.status === "filled") return true;
+  if (fill.source !== "paper") return false;
+  // Legacy/local Test rows used source=paper before executionMode existed. They have no broker
+  // order id and were already simulated fills. Broker-paper rows must wait for a filled broker state.
+  return !fill.brokerOrderId && (fill.executionMode === undefined || fill.executionMode === "test/local");
 }
 
 function syntheticPaperCurve(fills: FillEvent[]) {
