@@ -14,6 +14,29 @@ and historical scan rows are unchanged. Verification: focused
 `npm test -- dashboard-ui`, `npm run lint` (0 errors, 256 existing warnings),
 `npx tsc --noEmit`, `npm test` (161 files / 1560 tests), and `npm run build`
 pass. See `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+## 2026-06-30 - Alpaca broker-held exit guard and order lifecycle clarity
+Branch `codex/alpaca-held-order-guard`. Diagnosed the KO approval failure:
+Alpaca rejected a 17-share KO sell with HTTP 403 / `40310000` because the account
+held 29 KO shares and all 29 were already reserved by an open broker-held
+bracket sell leg from the prior KO buy order (`2a6ae4c7-c7d3-450c-a9c0-7a9a6a9099e5`).
+The strategy path checked sell quantity against broker position quantity but did
+not subtract open sell/cover orders. Added a shared broker-held exit availability
+guard that blocks duplicate sell/cover proposals before broker submission in both
+autonomous and manual approval paths, with a normal blocked decision reason
+instead of an order-placement-uncertain alert.
+
+Also clarified broker order lifecycle: accepted broker orders now display as
+`Submitted` / `Working` until broker state or fill reconciliation says executed;
+Alpaca Paper pending broker orders are reconciled on the scheduler like live
+broker orders; pending broker-paper fills no longer count in paper P&L/portfolio
+projection until filled; and broker-backed limit/stop-limit orders trigger a
+deduped `limit_order_stale` alert after `policy.staleLimitOrderMinutes`
+(default 15). Verification: `npm ci`,
+`npx vitest run test/broker-held-orders.test.ts`,
+targeted 5-file Vitest run (63 tests), `npm run lint` (0 errors, 256 existing
+warnings), `npx tsc --noEmit`, `npm test` (163 files / 1568 tests), and
+`npm run build` all pass.
+See `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
 
 ## 2026-06-30 - Strategy review diff clarity
 Branch `codex/strategy-review-diff`. Strategy Studio and the Strategy tab now

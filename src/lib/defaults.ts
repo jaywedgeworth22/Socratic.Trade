@@ -67,6 +67,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   marketScanOutlierReserve: DEFAULT_MARKET_SCAN_OUTLIER_RESERVE,
   proposalExpiryMinutes: 2880,
   proposalRevalidateCadenceHours: 0,
+  staleLimitOrderMinutes: 15,
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,

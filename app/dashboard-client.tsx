@@ -1171,7 +1171,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         } else {
           toast.success(
             body.status === "placed"
-              ? `Order filled or placed${body.orderId ? `: ${body.orderId}` : ""}.`
+              ? `Order submitted${body.orderId ? `: ${body.orderId}` : ""}.`
               : body.status === "paper"
                 ? "Proposal executed in Test mode."
                 : `Result: ${body.status}`
@@ -2357,21 +2357,29 @@ type DecisionLedgerItem = {
 function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
   const recent = snapshot.recentProposals ?? [];
   if (recent.length > 0) {
-    return recent.map((item) => ({
-      id: item.id,
-      createdAt: item.createdAt,
-      accountNumber: item.accountNumber,
-      executionMode: item.executionMode,
-      proposal: item.proposal,
-      status: item.status,
-      reasons: item.decision?.reasons ?? [],
-      estimatedNotional: item.estimatedNotional,
-      review: item.review,
-      performanceSinceProposalPct: item.performanceSinceProposalPct,
-      proposalReferencePrice: item.proposalReferencePrice,
-      proposalCurrentPrice: item.proposalCurrentPrice,
-      errorMessage: item.errorMessage
-    }));
+    const feedStatusByProposalId = new Map(
+      (snapshot.unifiedFeed ?? [])
+        .filter((group) => group.proposalId)
+        .map((group) => [group.proposalId!, group.status])
+    );
+    return recent.map((item) => {
+      const effectiveStatus = feedStatusByProposalId.get(item.id) ?? item.status;
+      return {
+        id: item.id,
+        createdAt: item.createdAt,
+        accountNumber: item.accountNumber,
+        executionMode: item.executionMode,
+        proposal: item.proposal,
+        status: effectiveStatus,
+        reasons: item.decision?.reasons ?? [],
+        estimatedNotional: item.estimatedNotional,
+        review: item.review,
+        performanceSinceProposalPct: item.performanceSinceProposalPct,
+        proposalReferencePrice: item.proposalReferencePrice,
+        proposalCurrentPrice: item.proposalCurrentPrice,
+        errorMessage: item.errorMessage
+      };
+    });
   }
   const decision = snapshot.latestStrategyRun;
   if (!decision) return [];
@@ -2396,8 +2404,8 @@ function decisionLedgerReasons(item: DecisionLedgerItem): string[] {
 
 function decisionCardTone(status: string): string {
   if (status === "rejected" || status === "blocked" || status === "failed" || status === "expired") return "border-down/35";
-  if (status === "proposed" || status === "placing" || status === "pending_order" || status === "pending_reconciliation") return "border-warn/35";
-  if (status === "placed" || status === "paper" || status === "filled") return "border-up/30";
+  if (status === "proposed" || status === "placing" || status === "pending_order" || status === "pending_reconciliation" || status === "placed" || status === "partially_filled") return "border-warn/35";
+  if (status === "paper" || status === "filled") return "border-up/30";
   return "border-line";
 }
 
@@ -3821,7 +3829,7 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                 </div>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
-                <Chip tone={statusTone(group.status)}>{group.status.replace(/_/g, " ")}</Chip>
+                <Chip tone={statusTone(group.status)}>{displayStatus(group.status)}</Chip>
                 {hasSub && (
                   <button onClick={() => setExpanded((e) => ({ ...e, [group.id]: !e[group.id] }))} className="text-[11px] text-muted hover:text-fg">
                     {open ? "Hide" : `+${group.events.length}`}
@@ -4795,6 +4803,7 @@ function SettingsContent({
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <OptionalNumberField label="Max order % of ADV" value={policy.maxOrderPctOfAdv} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ maxOrderPctOfAdv: v })} />
+                <OptionalNumberField label="Stale limit alert (min)" value={policy.staleLimitOrderMinutes} placeholder="15" step={1} onCommit={(v) => updatePolicy({ staleLimitOrderMinutes: v })} />
               </div>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
                 <span>
@@ -5219,7 +5228,7 @@ function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "provider_degraded"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "limit_order_stale", "provider_degraded"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex min-h-10 items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
@@ -5697,9 +5706,9 @@ function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
 }
 
 function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
-  if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
+  if (status === "filled" || status === "paper" || status === "approved" || status === "completed") return "up";
   if (status === "blocked" || status === "rejected" || status === "failed" || status === "canceled" || status === "cancelled" || status === "expired" || status === "withdrawn") return "down";
-  if (status === "pending_approval" || status === "pending" || status === "proposed" || status === "pending_order" || status === "pending_reconciliation" || status === "partially_filled" || status === "placing" || status === "placing_failed") return "warn";
+  if (status === "pending_approval" || status === "pending" || status === "proposed" || status === "pending_order" || status === "pending_reconciliation" || status === "partially_filled" || status === "placing" || status === "placing_failed" || status === "placed") return "warn";
   return "neutral";
 }
 
@@ -5707,11 +5716,11 @@ function displayStatus(status: string): string {
   if (status === "paper") return "TEST";
   const labels: Record<string, string> = {
     pending_approval: "Pending approval",
-    pending_order: "Pending order",
-    pending_reconciliation: "Pending order",
+    pending_order: "Working",
+    pending_reconciliation: "Working",
     partially_filled: "Partially filled",
     placing_failed: "Placement uncertain",
-    placed: "Placed",
+    placed: "Submitted",
     proposed: "Proposed",
     rejected: "Rejected",
     blocked: "Blocked",
