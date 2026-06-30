@@ -37,7 +37,9 @@ jobs:
       PM2_APP: ${{ vars.PM2_APP }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-      NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      # GH_PAT lacks read:packages (see ci.yml); keep it out of the package-auth chain. This token is
+      # unset after `npm ci` below so it never reaches the PM2 --update-env restart. (Review: PR #279.)
+      NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Pull, build, and restart production
@@ -71,6 +73,11 @@ jobs:
 
           echo "::group::Install dependencies (lockfile-exact)"
           bash scripts/npm-ci-with-shared-deps.sh
+          # NODE_AUTH_TOKEN (GitHub Packages auth) is only needed for the install above. Unset it
+          # before build/restart so `pm2 restart --update-env` cannot propagate the packages token
+          # into the long-running production process's environment, where runtime code could read it.
+          # (Review: PR #279.)
+          unset NODE_AUTH_TOKEN
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"

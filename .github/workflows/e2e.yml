@@ -46,7 +46,8 @@ jobs:
         shell: bash
         env:
           CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          # See ci.yml: GH_PAT lacks read:packages, so it must not precede the job GITHUB_TOKEN here.
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: bash scripts/npm-ci-with-shared-deps.sh
       - name: Install Playwright browser
         shell: bash
