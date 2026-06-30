@@ -19,6 +19,13 @@ filling the missing pieces.
 > Paper/Brokerage modes still require account and portfolio reads. No roadmap
 > change; see `docs/rollouts/2026-06-30-test-account-readiness.md`.
 >
+> 2026-06-30 (`codex/strategy-review-diff`): Strategy Studio review proposals
+> now render before/after diffs for prompt replacements, scoring weights, and
+> risk/automation settings. The LLM tuning prompt also asks models to describe
+> below-gate scoring weights as "no scoring-weight changes" instead of exposing
+> JSON-null schema language. No roadmap change; see
+> `docs/rollouts/2026-06-30-strategy-review-diff.md`.
+>
 > 2026-06-30 (`fix/merge-pr-205` / PR #237): Alpaca shared market-data fallback —
 > review-thread follow-up now lets shared/background scans use the operator's
 > connected Alpaca account when a tenant has no complete Alpaca market-data
