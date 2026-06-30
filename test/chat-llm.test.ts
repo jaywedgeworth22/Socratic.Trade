@@ -327,10 +327,10 @@ describe("chatProviderForModel — model name → provider", () => {
     expect(chatProviderForModel("claude-haiku-4-5")).toBe("anthropic");
     expect(chatProviderForModel("grok-4.3")).toBe("xai");
     expect(chatProviderForModel("gemini-2.5-flash")).toBe("gemini");
-    expect(chatProviderForModel("mistral-large-latest")).toBe("mistral");
+    expect(chatProviderForModel("mistral-large-2512")).toBe("mistral");
     expect(chatProviderForModel("ministral-3b-latest")).toBe("mistral");
-    expect(chatProviderForModel("deepseek-chat")).toBe("deepseek");
-    expect(chatProviderForModel("deepseek-reasoner")).toBe("deepseek");
+    expect(chatProviderForModel("deepseek-v4-flash")).toBe("deepseek");
+    expect(chatProviderForModel("deepseek-v4-pro")).toBe("deepseek");
     expect(chatProviderForModel("gpt-5.4-mini")).toBe("openai");
     expect(chatProviderForModel("o4-mini")).toBe("openai");
   });
@@ -379,14 +379,14 @@ describe("llmForModel — multi-provider routing", () => {
     withOnlyKey("OPENAI_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("XAI_API_KEY", () => expect(llmForModel("grok-4.3", "u_xai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("GEMINI_API_KEY", () => expect(llmForModel("gemini-2.5-flash", "u_gemini")).toBeInstanceOf(OpenAILLM));
-    withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-latest", "u_mistral")).toBeInstanceOf(OpenAILLM));
-    withOnlyKey("DEEPSEEK_API_KEY", () => expect(llmForModel("deepseek-chat", "u_deepseek")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-3-5", "u_mistral")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("DEEPSEEK_API_KEY", () => expect(llmForModel("deepseek-v4-flash", "u_deepseek")).toBeInstanceOf(OpenAILLM));
   });
 
   it("does NOT borrow another provider's key — a non-OpenAI model with only an OpenAI key is MockLLM", () => {
     withOnlyKey("OPENAI_API_KEY", () => {
       expect(llmForModel("gemini-2.5-flash", "u_gem2")).toBeInstanceOf(MockLLM);
-      expect(llmForModel("mistral-large-latest", "u_mis2")).toBeInstanceOf(MockLLM);
+      expect(llmForModel("mistral-large-2512", "u_mis2")).toBeInstanceOf(MockLLM);
       expect(llmForModel("claude-sonnet-4-6", "u_ant2")).toBeInstanceOf(MockLLM);
       expect(llmForModel("grok-4.3", "u_xai2")).toBeInstanceOf(MockLLM);
     });

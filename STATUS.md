@@ -19,6 +19,25 @@ two stray historical conflict-marker lines from `STATUS.md`. Verification:
 `npm test` (163 files / 1570 tests), and `npm run build` all pass. See
 `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
 
+## 2026-06-30 - PR #267 codex-autofix: account-scoped model migration
+Branch `codex/settings-help-overhaul`. Addressed the two P2 review threads from
+chatgpt-codex-connector on PR #267. Both flagged that moving
+`llmModel`/`redTeamLlmModel`/`llmReasoningEffort` from user-level to
+account-scoped relied on a transient runtime seed: (1) the first per-account save
+rewrites `user_settings.policy` without the model fields, stranding not-yet-saved
+accounts on defaults; (2) a stale model a row picked up from earlier lazy seeding
+could resurrect a value the user has since cleared globally. Fixed with a
+one-time versioned migration (v7, `backfillAccountScopedStrategyModels`) that
+backfills the single legacy user-level value into every `account_strategy_state`
+row (overwriting stale row copies; dropping fields the user never overrode) then
+strips them from `user_settings.policy`. Added
+`test/account-scoped-models-migration.test.ts`. Verification: `npx tsc --noEmit`
+type-clean for the change, and the new migration suite + existing
+`test/per-account-policy-isolation.test.ts` pass (13 tests). NOTE: full
+`npm test`/`npm run build` could not run in the autofix env because the private
+`@jaywedgeworth22/congress-trading-shared` git dep is inaccessible to the bot
+token (404); the `verify` CI gate runs the authoritative trio on push. See
+`docs/rollouts/2026-06-30-codex-autofix-account-scoped-models.md`.
 ## 2026-06-30 - Alpaca broker-held exit guard and order lifecycle clarity
 Branch `codex/alpaca-held-order-guard`. Diagnosed the KO approval failure:
 Alpaca rejected a 17-share KO sell with HTTP 403 / `40310000` because the account
@@ -85,6 +104,14 @@ a `local` user OpenAI key instead of depending on operator fallback env state.
 Verification: `npm test -- test/per-account-policy-isolation.test.ts`,
 `npm test -- test/persistence-notification.test.ts`, `npm run lint`,
 `npx tsc --noEmit`, `npm test` (161 files / 1559 tests), and `npm run build`
+Follow-up model-picker refresh removes old curated OpenAI `gpt-4o`/`o1`/`o3`
+options, adds Claude to the strategy-review selector that was still missing it,
+centralizes Strategy/Assistant model lists, and updates DeepSeek to
+`deepseek-v4-flash` / `deepseek-v4-pro`.
+Verification: `npm test -- test/per-account-policy-isolation.test.ts`,
+`npm test -- test/llm-provider.test.ts test/chat-llm.test.ts test/llm-call.test.ts`,
+`npm test -- test/persistence-notification.test.ts`, `npm run lint`,
+`npx tsc --noEmit`, `npm test` (164 files / 1571 tests), and `npm run build`
 all pass after `bash scripts/npm-ci-with-shared-deps.sh`. Branch preview is running at
 `http://localhost:4113` via PM2 process `trading-settings-help-overhaul`, and
 health/dashboard smoke checks returned 200. See

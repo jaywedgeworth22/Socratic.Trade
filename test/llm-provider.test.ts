@@ -114,7 +114,7 @@ describe("resolveLlmEndpoint", () => {
     const savedUrl = process.env.MISTRAL_API_URL;
     delete process.env.MISTRAL_API_URL;
     try {
-      for (const model of ["mistral-large-latest", "ministral-3b-latest", "codestral-latest"]) {
+      for (const model of ["mistral-large-2512", "ministral-3b-latest", "codestral-latest"]) {
         const endpoint = resolveLlmEndpoint({ llmModel: model });
         expect(endpoint.provider).toBe("mistral");
         expect(endpoint.url).toContain("api.mistral.ai");
@@ -131,7 +131,7 @@ describe("resolveLlmEndpoint", () => {
     process.env.MISTRAL_API_URL = "https://custom.mistral.example.com/v1/chat/completions";
     try {
       expect(resolveLlmEndpoint({ llmModel: "gemini-2.5-flash" }).url).toBe("https://custom.gemini.example.com/v1/chat/completions");
-      expect(resolveLlmEndpoint({ llmModel: "mistral-large-latest" }).url).toBe("https://custom.mistral.example.com/v1/chat/completions");
+      expect(resolveLlmEndpoint({ llmModel: "mistral-large-2512" }).url).toBe("https://custom.mistral.example.com/v1/chat/completions");
     } finally {
       delete process.env.GEMINI_API_URL;
       delete process.env.MISTRAL_API_URL;
@@ -141,7 +141,7 @@ describe("resolveLlmEndpoint", () => {
   it("routes the Red Team to Gemini/Mistral via redTeamLlmModel", () => {
     const gem = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "gemini-2.5-flash" }, "local", "https://api.openai.com/v1/responses", "red");
     expect(gem.provider).toBe("gemini");
-    const mis = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "mistral-large-latest" }, "local", "https://api.openai.com/v1/responses", "red");
+    const mis = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "mistral-large-2512" }, "local", "https://api.openai.com/v1/responses", "red");
     expect(mis.provider).toBe("mistral");
   });
 

@@ -31,6 +31,10 @@ filling the missing pieces.
 > user-level seed, and compact field help plus a System Help Settings Glossary
 > explain advanced knobs like "Min lots for weight shift" without long tab
 > footers. No roadmap change; see
+> footers. Follow-up refresh centralizes the Strategy/Assistant model catalog,
+> adds Claude to the strategy-review picker, removes old curated OpenAI
+> `gpt-4o`/`o1`/`o3` options, and switches DeepSeek curated choices to
+> `deepseek-v4-flash` / `deepseek-v4-pro`. No roadmap change; see
 > `docs/rollouts/2026-06-30-settings-scope-help-overhaul.md`.
 
 > 2026-06-30 (`codex/alpaca-held-order-guard`): Alpaca broker-held exit guard -
