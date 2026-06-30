@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`agent/antigravity-strategy-review-decisions`): strategy review persistence
+> & test quote fallback — saved Strategy Studio LLM review proposals in local storage
+> so they survive page refresh/modal closure, added a discard button, and made
+> test broker quote fetching fall back to a mock price instead of crashing when
+> Yahoo Finance is rate-limited. No roadmap change; see
+> `docs/rollouts/2026-06-30-antigravity-strategy-review-localstorage.md`.
+>
 > 2026-06-30 (`codex/strategy-llm-timeout-diagnostics`): strategy LLM timeout
 > diagnostics - production run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` failed
 > during the Green Team `gpt-5.5` high-reasoning request before any Red Team,

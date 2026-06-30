@@ -694,7 +694,15 @@ class TestBrokerGateway implements BrokerGateway {
           provider: "test"
         };
       } else {
-        throw new Error(`Real-time quote for symbol ${symbol} is unavailable.`);
+        // Fall back to a default simulated price rather than crashing the client's position display
+        result[symbol] = {
+          symbol,
+          price: 100,
+          bid: 99.9,
+          ask: 100.1,
+          asOf: new Date().toISOString(),
+          provider: "test-fallback"
+        };
       }
     }
 
