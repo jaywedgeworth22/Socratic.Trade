@@ -13,7 +13,7 @@ returns ready for selected Test/local accounts even when the portfolio panel had
 transient display read error; broker-backed Paper/Brokerage accounts still block
 on account/portfolio read failures. Added a regression in
 `test/dashboard-agentic-fallback.test.ts`. Verification: `npm run lint` (0
-errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1540
+errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1547
 tests), and `npm run build` all pass.
 
 ## 2026-06-30 — PR #237 review-thread fix: Alpaca shared market-data fallback

@@ -21,7 +21,7 @@ account blocker, so local Test mode could incorrectly route the user back to Acc
 - `npx vitest run test/dashboard-agentic-fallback.test.ts` - 1 file / 9 tests passed.
 - `npm run lint` - passed with 0 errors and 256 existing warnings.
 - `npx tsc --noEmit` - passed.
-- `npm test` - first post-merge run timed out in `test/route-ownership.test.ts`; focused rerun of that file passed, then a full rerun passed with 159 files / 1540 tests.
+- `npm test` - first post-merge run timed out in `test/route-ownership.test.ts`; focused rerun of that file passed, then full reruns passed with 159 files / 1540 tests and, after merging the latest `origin/main`, 159 files / 1547 tests.
 - `npm run build` - passed; Next production build completed successfully.
 
 ## Follow-ups
