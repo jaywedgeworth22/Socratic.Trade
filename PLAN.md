@@ -33,6 +33,11 @@ filling the missing pieces.
 > pending broker-paper fills from paper P&L/projections, and adds a configurable
 > stale limit-order alert (`staleLimitOrderMinutes`, default 15). No roadmap
 > change; see `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
+> 2026-06-30 (`codex/settings-review-polish`): Settings/Strategy Studio polish
+> moved LLM Strategy Review controls into an advisory panel instead of a
+> header/corner action, unified the strategy-review model picker across review
+> surfaces, and tightened Settings scope/account-selector spacing. No roadmap
+> change; see `docs/rollouts/2026-06-30-settings-review-polish.md`.
 >
 > 2026-06-30 (`codex/test-account-readiness`): Test/local readiness no longer
 > blocks Start on dashboard portfolio display read errors. Broker-backed
