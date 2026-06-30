@@ -115,9 +115,11 @@ Team model for proposal generation and an optional separate Red Team model for
 Bear review; if no Red Team override is set, Red reuses Green. Connections owns
 provider API keys only, while Account Settings -> Strategy links to Strategy
 Studio so model behavior stays account-scoped and credentials stay user-scoped.
-The visible model list omits legacy `gpt-4.1-mini`, keeps
-`gpt-5.4-nano` as the cheapest listed OpenAI option, and labels Grok choices
-with the same cost/strength style as OpenAI. Settings -> Operate stays focused
+The visible model list omits legacy OpenAI `gpt-4o`/`o1`/`o3` options from curated selectors,
+keeps `gpt-5.4-nano` as the cheapest listed OpenAI option, offers Claude alongside
+OpenAI for Green/Red Team and review work, and uses current DeepSeek V4 selections
+(`deepseek-v4-flash` / `deepseek-v4-pro`) instead of the older DeepSeek aliases.
+Settings -> Operate stays focused
 on universe, authority, horizon, and system Start/Stop controls. Settings ->
 Accounts continues to own brokerage-account credentials. Settings -> Accounts
 presents Robinhood through the same supported-account button

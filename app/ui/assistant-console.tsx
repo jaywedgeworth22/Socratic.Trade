@@ -13,7 +13,8 @@ import { humanizeLlmError } from "@/lib/llm-errors";
 import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
 import { Markdown } from "./markdown";
-import { ModelPicker, type ModelGroup } from "./model-picker";
+import { ModelPicker } from "./model-picker";
+import { CHAT_MODEL_GROUPS, CUSTOM_MODEL_ID_SEED, DEFAULT_LLM_MODEL } from "./llm-model-catalog";
 import { cn } from "./cn";
 
 interface ChatDraft {
@@ -108,72 +109,7 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
 // (claude-*→Anthropic, grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, deepseek-*→DeepSeek, else
 // OpenAI). Tiers ($/$$/$$$) are relative blended cost. Selection is sticky via localStorage. Per-
 // provider key availability comes from /api/chat/providers; unkeyed providers show "no key" + disabled.
-const CHAT_MODEL_GROUPS: ModelGroup[] = [
-  { provider: "offline", label: "Offline", options: [
-    { value: "mock", label: "Mock — deterministic, no key", tier: "" },
-    { value: "custom", label: "Custom Model ID...", tier: "" }
-  ] },
-  {
-    provider: "openai",
-    label: "OpenAI",
-    options: [
-      { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost, fastest", tier: "$" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default", tier: "$$" },
-      { value: "gpt-5.4", label: "gpt-5.4 — strongest, higher cost", tier: "$$$" },
-      { value: "gpt-5.5", label: "gpt-5.5 — ultra reasoning, highest cost", tier: "$$$" },
-      { value: "gpt-4o-mini", label: "gpt-4o-mini — standard mini", tier: "$" },
-      { value: "gpt-4o", label: "gpt-4o — standard large", tier: "$$" },
-      { value: "o1-mini", label: "o1-mini — fast reasoning", tier: "$$" },
-      { value: "o3-mini", label: "o3-mini — balanced reasoning", tier: "$$" },
-      { value: "o1", label: "o1 — deepest reasoning", tier: "$$$" }
-    ]
-  },
-  {
-    provider: "anthropic",
-    label: "Anthropic",
-    options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast & low cost", tier: "$$" },
-      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — stronger reasoning", tier: "$$$" },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 — strongest, premium", tier: "$$$" }
-    ]
-  },
-  {
-    provider: "xai",
-    label: "xAI (Grok)",
-    options: [
-      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost", tier: "$" },
-      { value: "grok-4.3", label: "grok-4.3 — stronger, large context", tier: "$$" }
-    ]
-  },
-  {
-    provider: "gemini",
-    label: "Google Gemini",
-    options: [
-      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost", tier: "$" },
-      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — balanced, long context", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — strongest flash", tier: "$" }
-    ]
-  },
-  {
-    provider: "mistral",
-    label: "Mistral",
-    options: [
-      { value: "mistral-small-latest", label: "mistral-small-latest — lowest cost", tier: "$" },
-      { value: "mistral-medium-latest", label: "mistral-medium-latest — balanced", tier: "$" },
-      { value: "mistral-large-latest", label: "mistral-large-latest — strongest", tier: "$$" }
-    ]
-  },
-  {
-    provider: "deepseek",
-    label: "DeepSeek",
-    options: [
-      { value: "deepseek-chat", label: "deepseek-chat (V3) — cheap, tool-capable", tier: "$" },
-      { value: "deepseek-reasoner", label: "deepseek-reasoner (R1) — reasoning; limited tools", tier: "$" }
-    ]
-  }
-];
-
-const DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
+const DEFAULT_CHAT_MODEL = DEFAULT_LLM_MODEL;
 const CHAT_MODEL_STORAGE_KEY = "assistant.chatModel";
 
 export function AssistantView({
@@ -185,7 +121,7 @@ export function AssistantView({
   executionState: ExecutionState;
   approveProposal: (proposalId: string) => Promise<void>;
   rejectProposal: (proposalId: string) => Promise<void>;
-  /** Initial chat model. Overridden by a sticky localStorage choice; defaults to gpt-5.4-mini. */
+  /** Initial chat model. Overridden by a sticky localStorage choice; defaults to the catalog default. */
   defaultModel?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -381,7 +317,7 @@ export function AssistantView({
               type="text"
               className="h-7 w-[10rem] rounded border border-line bg-surface px-2 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
               value={model === "custom" ? "" : model}
-              placeholder="Model ID (e.g. gpt-4o)"
+              placeholder="Model ID (e.g. gpt-5.5)"
               onChange={(e) => {
                 const val = e.target.value;
                 setModel(val || "custom");
@@ -396,8 +332,8 @@ export function AssistantView({
             providerStatus={providerStatus}
             onChange={(m) => {
               if (m === "custom") {
-                setModel("gpt-4o-mini");
-                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, "gpt-4o-mini");
+                setModel(CUSTOM_MODEL_ID_SEED);
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, CUSTOM_MODEL_ID_SEED);
               } else {
                 setModel(m);
                 window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, m);

@@ -134,23 +134,28 @@ import {
 import { useTheme } from "./ui/theme";
 import { CommandPalette, type Command } from "./ui/command-palette";
 import { ConfirmationModal } from "./components/ConfirmationModal";
+import {
+  CURATED_LLM_MODEL_GROUPS,
+  CURATED_LLM_MODEL_IDS as STRATEGY_MODEL_IDS,
+  CUSTOM_MODEL_ID_SEED as CUSTOM_STRATEGY_MODEL_SEED,
+  DEFAULT_LLM_MODEL
+} from "./ui/llm-model-catalog";
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
 type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 
-// The model ids that appear as explicit options in the Green/Red Team selects. Anything else is
-// treated as a "Custom Model ID..." free-text entry. Kept in one place so the <select> value
-// mapping and the custom-input fallback can't drift apart across the four call sites that use it.
-const STRATEGY_MODEL_IDS = [
-  "gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5",
-  "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8",
-  "grok-build-0.1", "grok-4.3",
-  "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash",
-  "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest",
-  "deepseek-chat", "deepseek-reasoner"
-];
-const CUSTOM_STRATEGY_MODEL_SEED = "gpt-4o-mini";
+function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode {
+  return CURATED_LLM_MODEL_GROUPS.map((group) => (
+    <optgroup key={group.label} label={group.label}>
+      {group.options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {descriptive ? option.label : option.value === DEFAULT_LLM_MODEL ? `${option.value} (default)` : option.value}
+        </option>
+      ))}
+    </optgroup>
+  ));
+}
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
 type SettingsSection = "strategy" | "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
 type SettingsTier = "user" | "account";
@@ -1177,7 +1182,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         } else {
           toast.success(
             body.status === "placed"
-              ? `Order filled or placed${body.orderId ? `: ${body.orderId}` : ""}.`
+              ? `Order submitted${body.orderId ? `: ${body.orderId}` : ""}.`
               : body.status === "paper"
                 ? "Proposal executed in Test mode."
                 : `Result: ${body.status}`
@@ -2363,21 +2368,29 @@ type DecisionLedgerItem = {
 function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] {
   const recent = snapshot.recentProposals ?? [];
   if (recent.length > 0) {
-    return recent.map((item) => ({
-      id: item.id,
-      createdAt: item.createdAt,
-      accountNumber: item.accountNumber,
-      executionMode: item.executionMode,
-      proposal: item.proposal,
-      status: item.status,
-      reasons: item.decision?.reasons ?? [],
-      estimatedNotional: item.estimatedNotional,
-      review: item.review,
-      performanceSinceProposalPct: item.performanceSinceProposalPct,
-      proposalReferencePrice: item.proposalReferencePrice,
-      proposalCurrentPrice: item.proposalCurrentPrice,
-      errorMessage: item.errorMessage
-    }));
+    const feedStatusByProposalId = new Map(
+      (snapshot.unifiedFeed ?? [])
+        .filter((group) => group.proposalId)
+        .map((group) => [group.proposalId!, group.status])
+    );
+    return recent.map((item) => {
+      const effectiveStatus = feedStatusByProposalId.get(item.id) ?? item.status;
+      return {
+        id: item.id,
+        createdAt: item.createdAt,
+        accountNumber: item.accountNumber,
+        executionMode: item.executionMode,
+        proposal: item.proposal,
+        status: effectiveStatus,
+        reasons: item.decision?.reasons ?? [],
+        estimatedNotional: item.estimatedNotional,
+        review: item.review,
+        performanceSinceProposalPct: item.performanceSinceProposalPct,
+        proposalReferencePrice: item.proposalReferencePrice,
+        proposalCurrentPrice: item.proposalCurrentPrice,
+        errorMessage: item.errorMessage
+      };
+    });
   }
   const decision = snapshot.latestStrategyRun;
   if (!decision) return [];
@@ -2402,8 +2415,8 @@ function decisionLedgerReasons(item: DecisionLedgerItem): string[] {
 
 function decisionCardTone(status: string): string {
   if (status === "rejected" || status === "blocked" || status === "failed" || status === "expired") return "border-down/35";
-  if (status === "proposed" || status === "placing" || status === "pending_order" || status === "pending_reconciliation") return "border-warn/35";
-  if (status === "placed" || status === "paper" || status === "filled") return "border-up/30";
+  if (status === "proposed" || status === "placing" || status === "pending_order" || status === "pending_reconciliation" || status === "placed" || status === "partially_filled") return "border-warn/35";
+  if (status === "paper" || status === "filled") return "border-up/30";
   return "border-line";
 }
 
@@ -3362,7 +3375,7 @@ function StrategyView({
 }) {
   // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
   const [copyTarget, setCopyTarget] = useState("");
-  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -3531,31 +3544,7 @@ function StrategyView({
                 value={tuningModel}
                 onChange={(e) => setTuningModel(e.target.value)}
               >
-                <optgroup label="OpenAI">
-                  <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
-                  <option value="gpt-4o">gpt-4o</option>
-                  <option value="o1-mini">o1-mini</option>
-                  <option value="o3-mini">o3-mini</option>
-                  <option value="o1">o1</option>
-                </optgroup>
-                <optgroup label="xAI (Grok)">
-                  <option value="grok-build-0.1">grok-build-0.1</option>
-                  <option value="grok-4.3">grok-4.3</option>
-                </optgroup>
-                <optgroup label="Google Gemini">
-                  <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistral-small-latest">mistral-small-latest</option>
-                  <option value="mistral-medium-latest">mistral-medium-latest</option>
-                  <option value="mistral-large-latest">mistral-large-latest</option>
-                </optgroup>
-                <optgroup label="DeepSeek">
-                  <option value="deepseek-chat">deepseek-chat</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner</option>
-                </optgroup>
+                {renderCuratedModelOptions(false)}
               </select>
               <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
                 <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}
@@ -3831,7 +3820,7 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                 </div>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
-                <Chip tone={statusTone(group.status)}>{group.status.replace(/_/g, " ")}</Chip>
+                <Chip tone={statusTone(group.status)}>{displayStatus(group.status)}</Chip>
                 {hasSub && (
                   <button onClick={() => setExpanded((e) => ({ ...e, [group.id]: !e[group.id] }))} className="text-[11px] text-muted hover:text-fg">
                     {open ? "Hide" : `+${group.events.length}`}
@@ -3991,7 +3980,7 @@ function StrategyStudio({
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
 }) {
-  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? "gpt-5.4-mini");
+  const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -4024,50 +4013,22 @@ function StrategyStudio({
           <div className="grid gap-3">
             <Field label="Green Team Model" hint="Primary proposal generator — choose any provider's model. Manage provider keys in Settings -> Connections.">
               <div className="space-y-2">
-                <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
+                <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? DEFAULT_LLM_MODEL) ? (policy.llmModel ?? DEFAULT_LLM_MODEL) : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
                     updatePolicy({ llmModel: CUSTOM_STRATEGY_MODEL_SEED });
                   } else {
                     updatePolicy({ llmModel: e.target.value });
                   }
                 }}>
-                  <optgroup label="OpenAI">
-                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI analysis, higher cost</option>
-                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI analysis, highest cost</option>
-                  </optgroup>
-                  <optgroup label="Anthropic (Claude)">
-                    <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast review</option>
-                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced Claude analysis</option>
-                    <option value="claude-opus-4-8">claude-opus-4-8 — strongest Claude analysis, highest cost</option>
-                  </optgroup>
-                  <optgroup label="xAI (Grok)">
-                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter proposal generation</option>
-                    <option value="grok-4.3">grok-4.3 — stronger Grok analysis, larger context</option>
-                  </optgroup>
-                  <optgroup label="Google Gemini">
-                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                  </optgroup>
-                  <optgroup label="Mistral">
-                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                  </optgroup>
-                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                  </optgroup>
+                  {renderCuratedModelOptions()}
                   <option value="custom">Custom Model ID...</option>
                 </select>
-                {!STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") && (
+                {!STRATEGY_MODEL_IDS.includes(policy.llmModel ?? DEFAULT_LLM_MODEL) && (
                   <input
                     type="text"
                     className={inputClass}
                     value={policy.llmModel ?? ""}
-                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    placeholder="Enter custom model ID (e.g. gpt-5.5)"
                     onChange={(e) => updatePolicy({ llmModel: e.target.value })}
                   />
                 )}
@@ -4083,35 +4044,7 @@ function StrategyStudio({
                   }
                 }}>
                   <option value="">Same as Green Team model</option>
-                  <optgroup label="OpenAI">
-                    <option value="gpt-5.4-nano">gpt-5.4-nano — lowest cost OpenAI, lightest reasoning</option>
-                    <option value="gpt-5.4-mini">gpt-5.4-mini — balanced OpenAI default</option>
-                    <option value="gpt-5.4">gpt-5.4 — stronger OpenAI review, higher cost</option>
-                    <option value="gpt-5.5">gpt-5.5 — strongest OpenAI review, highest cost</option>
-                  </optgroup>
-                  <optgroup label="Anthropic (Claude)">
-                    <option value="claude-haiku-4-5">claude-haiku-4-5 — lowest cost Claude, fast critique</option>
-                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — balanced Claude critique</option>
-                    <option value="claude-opus-4-8">claude-opus-4-8 — strongest Claude critique, highest cost</option>
-                  </optgroup>
-                  <optgroup label="xAI (Grok)">
-                    <option value="grok-build-0.1">grok-build-0.1 — lowest cost Grok, lighter review</option>
-                    <option value="grok-4.3">grok-4.3 — stronger Grok review, larger context</option>
-                  </optgroup>
-                  <optgroup label="Google Gemini">
-                    <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — lowest cost Gemini</option>
-                    <option value="gemini-2.5-flash">gemini-2.5-flash — balanced, long context</option>
-                    <option value="gemini-3.5-flash">gemini-3.5-flash — strongest Gemini flash</option>
-                  </optgroup>
-                  <optgroup label="Mistral">
-                    <option value="mistral-small-latest">mistral-small-latest — lowest cost Mistral</option>
-                    <option value="mistral-medium-latest">mistral-medium-latest — balanced</option>
-                    <option value="mistral-large-latest">mistral-large-latest — strongest Mistral</option>
-                  </optgroup>
-                  <optgroup label="DeepSeek (processed on DeepSeek servers, China)">
-                    <option value="deepseek-chat">deepseek-chat (V3) — cheap, tool/JSON capable</option>
-                    <option value="deepseek-reasoner">deepseek-reasoner (R1) — reasoning, higher latency</option>
-                  </optgroup>
+                  {renderCuratedModelOptions()}
                   <option value="custom">Custom Model ID...</option>
                 </select>
                 {policy.redTeamLlmModel !== undefined && !STRATEGY_MODEL_IDS.includes(policy.redTeamLlmModel) && (
@@ -4119,7 +4052,7 @@ function StrategyStudio({
                     type="text"
                     className={inputClass}
                     value={policy.redTeamLlmModel ?? ""}
-                    placeholder="Enter custom model ID (e.g. gpt-4-turbo)"
+                    placeholder="Enter custom model ID (e.g. claude-mythos-5)"
                     onChange={(e) => updatePolicy({ redTeamLlmModel: e.target.value })}
                   />
                 )}
@@ -4154,35 +4087,7 @@ function StrategyStudio({
               value={tuningModel}
               onChange={(e) => setTuningModel(e.target.value)}
             >
-              <optgroup label="OpenAI">
-                <option value="gpt-5.4-nano">gpt-5.4-nano</option>
-                <option value="gpt-5.4-mini">gpt-5.4-mini (default)</option>
-                <option value="gpt-5.4">gpt-5.4</option>
-                <option value="gpt-5.5">gpt-5.5</option>
-                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                <option value="gpt-4o">gpt-4o</option>
-                <option value="o1-mini">o1-mini</option>
-                <option value="o3-mini">o3-mini</option>
-                <option value="o1">o1</option>
-              </optgroup>
-              <optgroup label="xAI (Grok)">
-                <option value="grok-build-0.1">grok-build-0.1</option>
-                <option value="grok-4.3">grok-4.3</option>
-              </optgroup>
-              <optgroup label="Google Gemini">
-                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-              </optgroup>
-              <optgroup label="Mistral">
-                <option value="mistral-small-latest">mistral-small-latest</option>
-                <option value="mistral-medium-latest">mistral-medium-latest</option>
-                <option value="mistral-large-latest">mistral-large-latest</option>
-              </optgroup>
-              <optgroup label="DeepSeek">
-                <option value="deepseek-chat">deepseek-chat</option>
-                <option value="deepseek-reasoner">deepseek-reasoner</option>
-              </optgroup>
+              {renderCuratedModelOptions(false)}
             </select>
             <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
               <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}
@@ -4540,7 +4445,7 @@ function SettingsContent({
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <KeyVal label="Green Team" value={policy.llmModel ?? "gpt-5.4-mini"} />
+              <KeyVal label="Green Team" value={policy.llmModel ?? DEFAULT_LLM_MODEL} />
               <KeyVal label="Red Team" value={policy.redTeamLlmModel || "Same as Green Team"} />
               <KeyVal label="Reasoning" value={(policy.llmReasoningEffort ?? "medium").replace(/^./, (c) => c.toUpperCase())} />
             </div>
@@ -4836,6 +4741,7 @@ function SettingsContent({
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <OptionalNumberField label="Max order % of ADV" value={policy.maxOrderPctOfAdv} placeholder="off" step={0.5} onCommit={(v) => updatePolicy({ maxOrderPctOfAdv: v })} />
+                <OptionalNumberField label="Stale limit alert (min)" value={policy.staleLimitOrderMinutes} placeholder="15" step={1} onCommit={(v) => updatePolicy({ staleLimitOrderMinutes: v })} />
               </div>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-2.5">
                 <span>
@@ -5187,7 +5093,7 @@ function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "provider_degraded"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "limit_order_stale", "provider_degraded"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex min-h-10 items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
@@ -5665,9 +5571,9 @@ function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
 }
 
 function statusTone(status: string): "up" | "down" | "warn" | "accent" | "neutral" {
-  if (status === "filled" || status === "placed" || status === "paper" || status === "approved" || status === "completed") return "up";
+  if (status === "filled" || status === "paper" || status === "approved" || status === "completed") return "up";
   if (status === "blocked" || status === "rejected" || status === "failed" || status === "canceled" || status === "cancelled" || status === "expired" || status === "withdrawn") return "down";
-  if (status === "pending_approval" || status === "pending" || status === "proposed" || status === "pending_order" || status === "pending_reconciliation" || status === "partially_filled" || status === "placing" || status === "placing_failed") return "warn";
+  if (status === "pending_approval" || status === "pending" || status === "proposed" || status === "pending_order" || status === "pending_reconciliation" || status === "partially_filled" || status === "placing" || status === "placing_failed" || status === "placed") return "warn";
   return "neutral";
 }
 
@@ -5675,11 +5581,11 @@ function displayStatus(status: string): string {
   if (status === "paper") return "TEST";
   const labels: Record<string, string> = {
     pending_approval: "Pending approval",
-    pending_order: "Pending order",
-    pending_reconciliation: "Pending order",
+    pending_order: "Working",
+    pending_reconciliation: "Working",
     partially_filled: "Partially filled",
     placing_failed: "Placement uncertain",
-    placed: "Placed",
+    placed: "Submitted",
     proposed: "Proposed",
     rejected: "Rejected",
     blocked: "Blocked",
@@ -5883,7 +5789,7 @@ const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
 };
 
 function strategyLlmServiceForModel(model?: string | null): LlmApiService {
-  const value = (model || "gpt-5.4-mini").trim();
+  const value = (model || DEFAULT_LLM_MODEL).trim();
   if (/^claude/i.test(value)) return "anthropic";
   if (/^grok/i.test(value)) return "xai";
   if (/^gemini/i.test(value)) return "gemini";
@@ -5952,7 +5858,7 @@ function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
   }
 
   const requiredUnsetLabels = keys.filter((row) => row.required && row.source === "none").map((row) => row.label);
-  const strategyModel = policy.llmModel || "gpt-5.4-mini";
+  const strategyModel = policy.llmModel || DEFAULT_LLM_MODEL;
   const strategyService = strategyLlmServiceForModel(strategyModel);
   const strategyServiceLabel = LLM_SERVICE_LABELS[strategyService];
   const selectedStrategyRow = keys.find((row) => row.service === strategyService);

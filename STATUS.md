@@ -23,6 +23,29 @@ type-clean for the change, and the new migration suite + existing
 `@jaywedgeworth22/congress-trading-shared` git dep is inaccessible to the bot
 token (404); the `verify` CI gate runs the authoritative trio on push. See
 `docs/rollouts/2026-06-30-codex-autofix-account-scoped-models.md`.
+## 2026-06-30 - Alpaca broker-held exit guard and order lifecycle clarity
+Branch `codex/alpaca-held-order-guard`. Diagnosed the KO approval failure:
+Alpaca rejected a 17-share KO sell with HTTP 403 / `40310000` because the account
+held 29 KO shares and all 29 were already reserved by an open broker-held
+bracket sell leg from the prior KO buy order (`2a6ae4c7-c7d3-450c-a9c0-7a9a6a9099e5`).
+The strategy path checked sell quantity against broker position quantity but did
+not subtract open sell/cover orders. Added a shared broker-held exit availability
+guard that blocks duplicate sell/cover proposals before broker submission in both
+autonomous and manual approval paths, with a normal blocked decision reason
+instead of an order-placement-uncertain alert.
+
+Also clarified broker order lifecycle: accepted broker orders now display as
+`Submitted` / `Working` until broker state or fill reconciliation says executed;
+Alpaca Paper pending broker orders are reconciled on the scheduler like live
+broker orders; pending broker-paper fills no longer count in paper P&L/portfolio
+projection until filled; and broker-backed limit/stop-limit orders trigger a
+deduped `limit_order_stale` alert after `policy.staleLimitOrderMinutes`
+(default 15). Verification: `npm ci`,
+`npx vitest run test/broker-held-orders.test.ts`,
+targeted 5-file Vitest run (63 tests), `npm run lint` (0 errors, 256 existing
+warnings), `npx tsc --noEmit`, `npm test` (163 files / 1568 tests), and
+`npm run build` all pass.
+See `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
 
 ## 2026-06-30 - Strategy review diff clarity
 Branch `codex/strategy-review-diff`. Strategy Studio and the Strategy tab now
@@ -63,9 +86,14 @@ help buttons that work on hover, focus, and tap, and System Help has a Settings
 Glossary including the "Min lots for weight shift" guardrail. After rebasing
 onto the strategy LLM timeout diagnostics work, strategy-run LLM tests now seed
 a `local` user OpenAI key instead of depending on operator fallback env state.
+Follow-up model-picker refresh removes old curated OpenAI `gpt-4o`/`o1`/`o3`
+options, adds Claude to the strategy-review selector that was still missing it,
+centralizes Strategy/Assistant model lists, and updates DeepSeek to
+`deepseek-v4-flash` / `deepseek-v4-pro`.
 Verification: `npm test -- test/per-account-policy-isolation.test.ts`,
+`npm test -- test/llm-provider.test.ts test/chat-llm.test.ts test/llm-call.test.ts`,
 `npm test -- test/persistence-notification.test.ts`, `npm run lint`,
-`npx tsc --noEmit`, `npm test` (161 files / 1559 tests), and `npm run build`
+`npx tsc --noEmit`, `npm test` (164 files / 1571 tests), and `npm run build`
 all pass after `bash scripts/npm-ci-with-shared-deps.sh`. Branch preview is running at
 `http://localhost:4113` via PM2 process `trading-settings-help-overhaul`, and
 health/dashboard smoke checks returned 200. See

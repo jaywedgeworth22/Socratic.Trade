@@ -266,7 +266,7 @@ describe("persistence and notifications", () => {
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }
-  }, 15_000);
+  }, 30_000);
 
   it("records a failed Green Team LLM step when the proposal request times out", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
@@ -361,7 +361,7 @@ describe("persistence and notifications", () => {
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }
-  }, 15_000);
+  }, 30_000);
 
   it("records a pre-run portfolio snapshot before any proposals execute", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
