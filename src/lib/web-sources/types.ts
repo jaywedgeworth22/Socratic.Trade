@@ -14,7 +14,10 @@ import type { TechnicalDirection } from "../types";
 //   3. Persisted. Datasets live in the SQLite `settings` KV via setInternalSetting,
 //      so a scrape survives a server restart and is reused until the next refresh.
 
-/** A single normalized congressional (or other "smart money") trade disclosure. */
+/** A single normalized congressional (or other "smart money") trade disclosure.
+ *  This is App B's internal representation. The shared package's `CongressTransaction`
+ *  type (in @jaywedgeworth22/congress-trading-shared) is the cross-app wire format used
+ *  by App A's API. See `coerceCongressTrade()` in congress.ts for the conversion. */
 export interface CongressTrade {
   symbol: string; // normalized ticker (uppercase, no class suffix)
   member: string; // e.g. "John Boozman"
@@ -28,7 +31,10 @@ export interface CongressTrade {
   source: string; // adapter id that produced this record
 }
 
-/** Per-symbol aggregate of recent congressional trading (the overlay the scan reads). */
+/** Per-symbol aggregate of recent congressional trading (the overlay the scan reads).
+ *  This is App B-internal — the shared package (@jaywedgeworth22/congress-trading-shared)
+ *  does not define a signal aggregate; it provides the raw `CongressTransaction` row type
+ *  and analytics types (TickerLeader, ConvictionTicker, etc.) consumed by the analytics overlay. */
 export interface CongressSignal {
   /** Net directional vote within the window: distinct-buy members minus distinct-sell members. */
   netSignal: number;

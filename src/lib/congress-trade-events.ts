@@ -4,6 +4,12 @@
 // by id, and routes the payload into App B's existing persisted web-source datasets so the market
 // scan's getSymbolWebSignals() overlay serves them with no other changes. Fully self-guarded.
 
+import {
+  type CongressEvent,
+  type CongressEventType,
+  CongressEventSchema,
+  parseSafe,
+} from "@jaywedgeworth22/congress-trading-shared";
 import { coerceCongressTrade, upsertCongressTrades } from "./web-sources/congress";
 import {
   coerceInsiderFiling,
@@ -13,18 +19,7 @@ import {
 } from "./web-sources/sec";
 import type { CongressTrade } from "./web-sources/types";
 
-export type CongressEventType = "congress.trade" | "insider.update" | "ref.upsert" | "price.eod" | "spx.eod";
-
-export interface CongressEvent {
-  type: CongressEventType | string;
-  id?: string;
-  // Monotonic per-stream sequence (forward-compat). Gap RECOVERY today is handled by the SSE client's
-  // Last-Event-ID resume (replays missed events on reconnect) + id-dedupe; explicit seq-gap detection
-  // with an automatic re-pull is deferred until App A's read endpoints are live. See docs/push-to-app-b.md.
-  seq?: number;
-  emittedAt?: string;
-  data?: unknown;
-}
+export type { CongressEventType, CongressEvent };
 
 export interface ApplyResult {
   ok: boolean;
@@ -73,11 +68,17 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
     if (!event || typeof event !== "object" || typeof event.type !== "string") {
       return { ok: false, applied: 0, reason: "invalid-event" };
     }
-    const type = event.type;
+    // Validate event shape before processing.
+    const validated = parseSafe(CongressEventSchema, event);
+    if (!validated) {
+      console.warn("[congress-events] event validation failed, using raw event");
+    }
+    const ev = validated ?? event;
+    const type = ev.type;
     if (typeof event.id === "string" && event.id && !markSeen(event.id)) {
       return { ok: true, type, applied: 0, duplicate: true };
     }
-    const data = asRecord(event.data);
+    const data = asRecord(ev.data);
 
     if (type === "congress.trade") {
       const rawTrades = Array.isArray(data?.trades) ? (data!.trades as unknown[]) : [];

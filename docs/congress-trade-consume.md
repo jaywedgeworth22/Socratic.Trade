@@ -7,6 +7,10 @@ App A (congress.trade) is the system-of-record for congressional disclosures and
 consumes App A so it spends the shared FMP quota once and can retire its own scrapers. Three independent,
 flag-gated paths:
 
+**Shared contract package (2026-06-30):** read-side App A/B types, API path constants, and runtime Zod
+schemas are imported from `@jaywedgeworth22/congress-trading-shared`. Local aliases remain only for
+backward-compatible App B naming.
+
 ## 1. Cache-aside market reads (`CONGRESS_TRADE_READS_ENABLED`)
 `src/lib/congress-trade-client.ts` reads App A's public endpoints (`/api/market/bundle|ref|refs|prices|spx`).
 Wired as the **first tier** of `fetchDailyOHLC` (`src/lib/history.ts`): App B reuses App A's EOD closes

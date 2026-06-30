@@ -492,18 +492,20 @@ function AccountMenu({
   }
 
   const avatar = (
-    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-xs font-semibold text-accent lg:h-9 lg:w-9">
-      {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt=""
-          referrerPolicy="no-referrer"
-          className="h-full w-full object-cover"
-          onError={() => setImageFailed(true)}
-        />
-      ) : (
-        userInitials(user)
-      )}
+    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center lg:h-9 lg:w-9">
+      <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-line bg-accent/15 text-xs font-semibold text-accent">
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          userInitials(user)
+        )}
+      </span>
       {pendingCount > 0 && (
         <span
           aria-hidden="true"
