@@ -35,6 +35,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "kill_switch",
   "price_alert",
   "proposal_withdrawn",
+  "limit_order_stale",
   "provider_degraded"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
@@ -443,6 +444,11 @@ export interface TradingPolicy {
    * 5 days. Default 0 (every run).
    */
   proposalRevalidateCadenceHours?: number;
+  /**
+   * Alert when a broker-backed limit order remains working this many minutes after submission.
+   * 0 or undefined disables the stale-limit alert. Default 15.
+   */
+  staleLimitOrderMinutes?: number;
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;

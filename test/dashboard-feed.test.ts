@@ -353,6 +353,9 @@ describe("dashboard feed helpers", () => {
     expect(tradeGroup!.status).toBe("pending_order");
     expect(tradeGroup!.detail).toContain("Accepted by broker; awaiting fill");
     expect(tradeGroup!.detail).toContain("Accepted");
+    const orderEvent = tradeGroup!.events.find((ev) => ev.id === "alpaca-order-vz");
+    expect(orderEvent?.title).toBe("Order Submitted: BUY VZ");
+    expect(orderEvent?.detail).toContain("Broker state: Accepted");
   });
 
   it("shows terminal broker reconciliation as a broker outcome", () => {
