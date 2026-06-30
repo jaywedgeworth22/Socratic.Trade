@@ -73,6 +73,17 @@ No change to the env-gated cross-provider override (`RED_TEAM_LLM_PROVIDER=anthr
 - Manual UI smoke against `npm run dev` — see PR walkthrough (Strategy Studio shows the
   Anthropic optgroup; selecting `claude-opus-4-8` persists for Green and Red).
 
+## Follow-up (same PR) — OpenAI option cleanup
+
+- Removed the "OpenAI (Real)" optgroup (`gpt-4o-mini`, `gpt-4o`, `o1-mini`, `o3-mini`,
+  `o1`) from both the Green and Red Team selects, and relabeled "OpenAI (Simulated)" →
+  "OpenAI" (the `gpt-5.4-*`/`gpt-5.5` models aren't simulated). Dropped those five ids from
+  `STRATEGY_MODEL_IDS`. The "Custom Model ID..." free-text entry still accepts any model id
+  (its seed value `gpt-4o-mini` is just an out-of-list trigger for the text field), so no
+  model is actually unreachable — only the curated dropdown was trimmed. Verified in-UI that
+  both selects now show a single "OpenAI" group with `gpt-5.4-nano`/`gpt-5.4-mini`/`gpt-5.4`/
+  `gpt-5.5` and the other provider groups intact.
+
 ## Follow-ups
 
 - OpenAI strict `json_schema` enforces the output shape server-side; Anthropic forced
@@ -83,3 +94,26 @@ No change to the env-gated cross-provider override (`RED_TEAM_LLM_PROVIDER=anthr
 - `summarizeOpenAiRequest` telemetry reports an Anthropic body's `systemChars` as 0
   (the system prompt is a top-level field, not a message role). Cosmetic only; the call
   still traces model/endpoint/transport correctly.
+
+## 2026-06-30 PR #253 Review Follow-up
+
+### Summary
+- Kept `next-env.d.ts` on the production build-generated `./.next/types/routes.d.ts` import so `npm run build` does not dirty the worktree.
+- Fixed the Green/Red "Custom Model ID..." path after trimming the OpenAI dropdown: selecting Custom now seeds `gpt-4o-mini`, an out-of-list id, so the free-text input appears and removed curated models remain reachable.
+
+### Why
+- The branch had committed the dev-server route-types path, which production builds rewrite.
+- The Custom handler was seeding `gpt-5.4-mini`, still a curated option, so the custom-input condition stayed false.
+
+### Files
+- `app/dashboard-client.tsx`
+- `next-env.d.ts`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/rollouts/2026-06-29-claude-green-red-team.md`
+
+### Verification
+- `npm ci` - passed in the temporary PR worktree.
+- `npm run lint` - passed with 0 errors and 257 existing warnings.
+- `npx tsc --noEmit` - passed cleanly.
+- `npm run build` - passed; post-build `git status --short` showed only the intended branch changes, with `next-env.d.ts` kept on `./.next/types/routes.d.ts`.
