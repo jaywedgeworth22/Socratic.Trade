@@ -31,7 +31,7 @@ The successful localhost path persists because the token is stored server-side u
 - `npm run lint` - passed with 0 errors / 254 existing warnings.
 - `npx tsc --noEmit` - passed.
 - `npm test` - 165 files / 1,578 tests passed.
-- `npm run build` - passed. First build attempt failed because the temporary symlinked `node_modules` used for diagnostics points outside the worktree and Turbopack rejects that; rerunning with a real copied dependency tree passed.
+- `npm run build` - passed on the final merged base with the repo's webpack build path. Earlier build attempts exposed two host/worktree issues: Turbopack rejected the temporary symlinked `node_modules`, then the real copied dependency tree hit host `ENOSPC`; after merging the production build hotfix, clearing `.next`, and using webpack with the symlinked dependency tree, the build passed.
 
 ## Follow-ups
 
