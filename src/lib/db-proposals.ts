@@ -145,12 +145,32 @@ export function getProposal(id: string, userId: string = "local"):
   };
 }
 
-export function updateProposalStatus(id: string, status: string, orderId?: string, review?: ReviewedOrder, estimatedNotional?: number, userId: string = "local", refId?: string, errorMessage?: string): void {
+export function updateProposalStatus(
+  id: string,
+  status: string,
+  orderId?: string,
+  review?: ReviewedOrder,
+  estimatedNotional?: number,
+  userId: string = "local",
+  refId?: string,
+  errorMessage?: string,
+  decision?: PolicyDecision
+): void {
   getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message) WHERE id = ? AND user_id = ?"
+      "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message), decision = COALESCE(?, decision) WHERE id = ? AND user_id = ?"
     )
-    .run(status, orderId ?? null, review ? JSON.stringify(review) : null, estimatedNotional ?? null, refId ?? null, errorMessage ?? null, id, userId);
+    .run(
+      status,
+      orderId ?? null,
+      review ? JSON.stringify(review) : null,
+      estimatedNotional ?? null,
+      refId ?? null,
+      errorMessage ?? null,
+      decision ? JSON.stringify(decision) : null,
+      id,
+      userId
+    );
 }
 
 /**

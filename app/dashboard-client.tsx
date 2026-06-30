@@ -2386,6 +2386,7 @@ function decisionLedgerItems(snapshot: DashboardSnapshot): DecisionLedgerItem[] 
 function decisionLedgerReasons(item: DecisionLedgerItem): string[] {
   if (item.reasons.length > 0) return item.reasons;
   if (item.status === "rejected") return ["Rejected manually."];
+  if (item.status === "blocked") return ["Blocked by policy."];
   if (item.status === "expired") return ["Expired before approval."];
   if (item.status === "withdrawn") return ["Withdrawn after revalidation."];
   return [];
