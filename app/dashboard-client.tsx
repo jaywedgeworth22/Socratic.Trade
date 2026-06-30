@@ -196,6 +196,7 @@ type ExecutionBannerMode = "full" | "compact" | "hidden";
 const HIDE_TEST_ACCOUNT_KEY = "hide-test-account";
 const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
 const FEED_TAB_KEY = "dashboard-feed-tab";
+const STRATEGY_TUNING_STORAGE_KEY = "strategy-tuning-proposal";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
 const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets";
 const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
@@ -290,6 +291,34 @@ function readStoredFeedTab(): FeedTab {
     return isFeedTab(saved) ? saved : "activity";
   } catch {
     return "activity";
+  }
+}
+
+function isStrategyTuningProposal(value: unknown): value is StrategyTuningProposal {
+  if (!value || typeof value !== "object") return false;
+  const proposal = value as Partial<StrategyTuningProposal>;
+  return (
+    typeof proposal.summary === "string" &&
+    typeof proposal.rationale === "string" &&
+    typeof proposal.marketContext === "string" &&
+    typeof proposal.performanceReadout === "string" &&
+    proposal.proposedPatch !== null &&
+    typeof proposal.proposedPatch === "object" &&
+    Array.isArray(proposal.cautions) &&
+    typeof proposal.confidenceScore === "number" &&
+    (proposal.generatedBy === "llm" || proposal.generatedBy === "local_rules")
+  );
+}
+
+function readStoredStrategyTuning(): StrategyTuningProposal | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = window.localStorage.getItem(STRATEGY_TUNING_STORAGE_KEY);
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as unknown;
+    return isStrategyTuningProposal(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 }
 
@@ -994,7 +1023,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   }
 
   const [newProfileName, setNewProfileName] = useState("");
-  const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(null);
+  const [strategyTuning, setStrategyTuning] = useState<StrategyTuningProposal | null>(() => readStoredStrategyTuning());
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1014,6 +1043,18 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       /* ignore storage failures */
     }
   }, [feedTab]);
+
+  useEffect(() => {
+    try {
+      if (strategyTuning) {
+        localStorage.setItem(STRATEGY_TUNING_STORAGE_KEY, JSON.stringify(strategyTuning));
+      } else {
+        localStorage.removeItem(STRATEGY_TUNING_STORAGE_KEY);
+      }
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [strategyTuning]);
 
   // Fallback poll — now a safety net (2 min) behind the SSE live-push below, not the primary
   // refresh path. Covers missed events, SSE-unsupported browsers, and dropped streams.
@@ -1395,6 +1436,12 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       ...(patch.prompt ? { strategyPrompt: patch.prompt } : {})
     });
     toast.success("Strategy tuning changes applied.");
+  }
+
+  function discardStrategyTuning() {
+    setStrategyTuning(null);
+    setTuningError("");
+    toast.info("Strategy review discarded.");
   }
 
   const policy = snapshot.policy;
@@ -1795,6 +1842,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 tuningError={tuningError}
                 strategyTuning={strategyTuning}
                 applyStrategyTuning={applyStrategyTuning}
+                discardStrategyTuning={discardStrategyTuning}
               />
             )}
           </div>
@@ -1883,6 +1931,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           tuningError={tuningError}
           strategyTuning={strategyTuning}
           applyStrategyTuning={applyStrategyTuning}
+          discardStrategyTuning={discardStrategyTuning}
         />
       </Modal>
 
@@ -3454,7 +3503,8 @@ function StrategyView({
   tuningBusy,
   tuningError,
   strategyTuning,
-  applyStrategyTuning
+  applyStrategyTuning,
+  discardStrategyTuning
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -3471,6 +3521,7 @@ function StrategyView({
   tuningError: string;
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
+  discardStrategyTuning: () => void;
 }) {
   // Copy-to-account: pick a target account to apply the selected saved strategy to (PR 2).
   const [copyTarget, setCopyTarget] = useState("");
@@ -3669,7 +3720,7 @@ function StrategyView({
             </div>
           </div>
           {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
-          {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
+          {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
         </div>
       </Card>
     </div>
@@ -3774,12 +3825,14 @@ function TuningCard({
   proposal,
   currentPolicy,
   currentPrompt,
-  onApply
+  onApply,
+  onDiscard
 }: {
   proposal: StrategyTuningProposal;
   currentPolicy: TradingPolicy;
   currentPrompt: string;
   onApply: () => void;
+  onDiscard: () => void;
 }) {
   const reviewDisplay = buildStrategyReviewDisplay(proposal, { policy: currentPolicy, strategyPrompt: currentPrompt });
   const hasReturnedChanges = Boolean(reviewDisplay.promptChange) || reviewDisplay.allChanges.length > 0;
@@ -3829,7 +3882,10 @@ function TuningCard({
           {proposal.cautions.map((c) => <Chip key={c} tone="warn">{c}</Chip>)}
         </div>
       )}
-      <Button variant="primary" disabled={!reviewDisplay.hasEffectiveChanges} onClick={onApply}><CheckCircle size={15} /> Apply reviewed changes</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" disabled={!reviewDisplay.hasEffectiveChanges} onClick={onApply}><CheckCircle size={15} /> Apply reviewed changes</Button>
+        <Button variant="ghost" onClick={onDiscard}><X size={15} /> Discard review</Button>
+      </div>
     </div>
   );
 }
@@ -4239,7 +4295,8 @@ function StrategyStudio({
   tuningBusy,
   tuningError,
   strategyTuning,
-  applyStrategyTuning
+  applyStrategyTuning,
+  discardStrategyTuning
 }: {
   snapshot: DashboardSnapshot;
   policy: TradingPolicy;
@@ -4251,6 +4308,7 @@ function StrategyStudio({
   tuningError: string;
   strategyTuning: StrategyTuningProposal | null;
   applyStrategyTuning: () => void;
+  discardStrategyTuning: () => void;
 }) {
   const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
   useEffect(() => {
@@ -4378,7 +4436,7 @@ function StrategyStudio({
           </div>
           {tuningError && <p className="mt-3 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           <div className="mt-3">
-            {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
+            {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
           </div>
         </div>
       </div>
