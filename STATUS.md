@@ -13,8 +13,9 @@ returns ready for selected Test/local accounts even when the portfolio panel had
 transient display read error; broker-backed Paper/Brokerage accounts still block
 on account/portfolio read failures. Added a regression in
 `test/dashboard-agentic-fallback.test.ts`. Verification: `npm run lint` (0
-errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1539
+errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1540
 tests), and `npm run build` all pass.
+
 ## 2026-06-30 — Legacy notification events bridge to direct delivery
 Branch `codex/notification-direct-bridge`. Legacy `sendNotification(...)` events
 such as fills, blocks, pending approvals, kill-switches, run failures, and
