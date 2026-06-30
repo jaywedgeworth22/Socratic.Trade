@@ -1,5 +1,6 @@
 import type { EquityOrder, EquityPosition, FillEvent, NotificationEvent, PendingProposal, TradeProposal } from "./types";
 import { formatQuantity } from "./money";
+import { isActiveBrokerOrderState } from "./broker-held-orders";
 
 export interface SymbolMeta {
   companyName?: string;
@@ -477,7 +478,8 @@ function isTerminalBrokerState(state?: string): boolean {
 }
 
 function isPendingBrokerState(state?: string): boolean {
-  return Boolean(state && ["accepted", "accepted_for_bidding", "new", "pending_new", "pending_cancel", "pending_replace", "held", "queued", "done_for_day", "stopped", "calculated"].includes(state));
+  const normalized = String(state ?? "").trim().toLowerCase();
+  return isActiveBrokerOrderState(normalized) || ["done_for_day", "stopped", "calculated"].includes(normalized);
 }
 
 function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string): string {
@@ -499,6 +501,15 @@ function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string):
           ? `Broker reported ${readableBrokerState(order.state)}`
           : "Accepted by broker; awaiting fill";
   return `${prefix}: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${order.type}`;
+}
+
+function brokerOrderTitle(order: EquityOrder): string {
+  const side = order.side.toUpperCase();
+  const symbol = normalizeSymbol(order.symbol);
+  if (order.state === "filled") return `Order Filled: ${side} ${symbol}`;
+  if (order.state === "partially_filled") return `Order Partially Filled: ${side} ${symbol}`;
+  if (isTerminalBrokerState(order.state)) return `Order ${readableBrokerState(order.state)}: ${side} ${symbol}`;
+  return `Order Submitted: ${side} ${symbol}`;
 }
 
 import { formatNotificationDisplay } from "./dashboard-ui";
@@ -715,8 +726,8 @@ export function buildUnifiedFeed(input: {
       id: order.id,
       createdAt: order.createdAt,
       type: "order",
-      title: `Order Placed: ${order.side.toUpperCase()} ${order.symbol}`,
-      detail: `State: ${order.state} · Qty ${formattedFilled} / ${formattedTotal} · ${order.type}`,
+      title: brokerOrderTitle(order),
+      detail: `Broker state: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${order.type}`,
       status: order.state,
       raw: order
     };
@@ -810,6 +821,14 @@ export function buildUnifiedFeed(input: {
         } else {
           status = hasFill.status ?? "pending_order";
         }
+      } else if (order?.state === "filled") {
+        status = "filled";
+      } else if (order?.state === "partially_filled") {
+        status = "partially_filled";
+      } else if (isTerminalBrokerState(order?.state)) {
+        status = order!.state;
+      } else if (isPendingBrokerState(order?.state)) {
+        status = "pending_order";
       } else if (hasRejection) {
         status = "rejected";
       } else if (hasApproval) {
@@ -848,7 +867,7 @@ export function buildUnifiedFeed(input: {
       } else if (status === "pending_reconciliation") {
         const fillEv = events.find(ev => ev.type === "fill")!;
         detail = `Pending Broker Order: ${fillEv.detail}`;
-      } else if (hasFill && (status === "pending_order" || status === "partially_filled" || isTerminalBrokerState(status))) {
+      } else if ((hasFill || hasOrder) && (status === "pending_order" || status === "partially_filled" || isTerminalBrokerState(status))) {
         detail = brokerOrderDetail(order, hasFill?.status);
       } else if (status === "rejected") {
         detail = "Rejected manually";

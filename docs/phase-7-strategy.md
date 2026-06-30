@@ -132,6 +132,37 @@ whole-share bracket feasibility use the intended entry price (`limitPrice` /
 `stopPrice` / market anchor fallback) so a below-market limit order does not
 make a fresh proposal look as though it already gained versus its market anchor.
 
+### C.3 Broker-Held Exit Availability
+
+Before any broker-backed sell or cover reaches order placement, the strategy
+subtracts active broker-held exit orders from the current position quantity. This
+guards against duplicate exits when a prior bracket/OCO leg, stop, take-profit,
+or pending manual sell already reserves the same shares at the broker. If the
+requested exit exceeds the remaining broker-available quantity, the proposal is
+blocked with a normal policy-style reason instead of being sent to the broker and
+surfacing as an uncertain placement failure.
+
+The guard is intentionally pre-submit and fail-closed: it does not silently clamp
+the exit quantity. The user must cancel or replace the existing broker order if a
+different exit is desired.
+
+### C.4 Broker Order Lifecycle and Stale Limit Alerts
+
+Broker-backed order acceptance is not execution. The app keeps the existing
+proposal status value `placed` for compatibility, but user-facing surfaces render
+that state as `Submitted` / `Working` until either the broker order state or fill
+reconciliation confirms execution. `filled` fill events remain the accounting
+truth for P&L and portfolio projection. Broker-paper pending reconciliation rows
+are excluded from paper accounting until a broker fill is observed; legacy
+Test/local simulated fills remain accounting-valid.
+
+The scheduler reconciles pending broker fills for both `broker/paper` and
+`broker/live` accounts. It also checks broker-backed limit and stop-limit orders
+against `policy.staleLimitOrderMinutes` (default 15, 0 disables). A working order
+older than the threshold emits one deduped `limit_order_stale` audit/notification
+per order and threshold, so the operator can decide whether to cancel, reprice,
+or intentionally replace it with a market order.
+
 ### D. Token Efficiency & Asynchronous Post-Mortems
 Feeding dozens of raw rationales, P&L lines, and redundant daily news into the trading prompt wastes massive amounts of tokens and degrades LLM reasoning. To optimize this:
 

@@ -38,6 +38,35 @@ describe("calculatePnl", () => {
     expect(pnl.closedLots.length).toBe(1);
   });
 
+  it("does not account for broker-paper fills until the broker reports execution", async () => {
+    const { insertFillEvent } = await import("../src/lib/db");
+    const pending = fill({
+      id: "bp-pending",
+      accountNumber: "BROKER_PAPER_PENDING",
+      source: "paper",
+      executionMode: "broker/paper",
+      brokerOrderId: "alpaca-pending-1",
+      status: "pending_reconciliation",
+      side: "buy",
+      quantity: 5,
+      price: 100,
+      notional: 500
+    });
+
+    const pnl = calculatePnl([pending], { AAPL: 110 });
+    expect(pnl.openLots).toHaveLength(0);
+    expect(pnl.unrealized).toBe(0);
+
+    insertFillEvent(pending);
+    const projection = getPaperPortfolioProjection({
+      accountNumber: "BROKER_PAPER_PENDING",
+      startingCash: 1000,
+      currentPrices: { AAPL: 110 }
+    });
+    expect(projection.portfolio.cash).toBeCloseTo(1000);
+    expect(projection.positions).toHaveLength(0);
+  });
+
   it("projects Paper fills from a standalone starting balance and marks to live prices", async () => {
     const { insertFillEvent } = await import("../src/lib/db");
     // Standalone paper account: only paper fills count, starting from startingCash.

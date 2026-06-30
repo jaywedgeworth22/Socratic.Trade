@@ -12,7 +12,9 @@ import { runProviderTierCheckIfDue } from "./provider-tier";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
+import { deriveExecutionState } from "./execution-mode";
 import { reconcilePendingFills, runStrategyOnce } from "./strategy";
+import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
@@ -232,6 +234,14 @@ async function tick(): Promise<void> {
           schedule.nextRunAt = null;
           continue;
         }
+        const executionState = deriveExecutionState(policy, account);
+        const brokerGateway = executionState.submitsBrokerOrders ? getBrokerGateway(policy, userId) : undefined;
+
+        if (brokerGateway) {
+          void brokerGateway.getEquityOrders(policy.accountNumber)
+            .then((orders) => notifyStaleLimitOrders({ userId, policy, orders }))
+            .catch((err) => console.error("[scheduler] stale-limit-order alert error:", err));
+        }
 
         const protectiveState =
           policy.systemState === "active" ||
@@ -248,12 +258,12 @@ async function tick(): Promise<void> {
             .finally(() => stopMonitorInFlight.delete(key));
         }
 
-        // Reconcile pending live fills every tick (independent of the strategy cadence) so a broker
-        // order that returned non-filled — common on Robinhood, which has no realtime fill stream —
-        // doesn't sit pending_reconciliation (invisible to P&L/exposure) until the next, up-to-60-min,
-        // strategy run. No-op for Test/paper (no live fills) and gated to broker-backed accounts.
-        if (!policy.paperMode) {
-          void reconcilePendingFills(getBrokerGateway(policy, userId), policy.accountNumber, userId)
+        // Reconcile pending broker fills every tick (independent of the strategy cadence) so a broker
+        // order that returned non-filled — common on Robinhood and limit orders — doesn't sit
+        // pending_reconciliation until the next strategy run. Applies to broker/paper and broker/live;
+        // Test/local has no broker order lifecycle.
+        if (brokerGateway) {
+          void reconcilePendingFills(brokerGateway, policy.accountNumber, userId)
             .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
         }
 
