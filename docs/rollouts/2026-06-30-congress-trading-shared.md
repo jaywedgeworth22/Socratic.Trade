@@ -33,7 +33,7 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 ## Decisions
 
 - Pin the app dependency to shared-package commit `220677a3fb768c9e378404736e8f1f8c933220e1` until the package is published or a versioned release process is active.
-- Keep private repo access narrow: set the shared repo's Actions access to `user`, and pass GitHub auth only as ephemeral `GIT_CONFIG_*` environment for `npm ci`.
+- Keep private repo access narrow: set the shared repo's Actions access to `user`; CI/smoke rewrite npm's SSH-style git URL to HTTPS and rely on the `actions/checkout` auth header, while deploy adds an ephemeral token extraheader because it runs `npm ci` inside the production worktree.
 - Remove unrelated PR drift from the app branch: page-title copy changes, `scripts/deploy.sh`, and the auto-deploy `AGENTS.md` block do not belong to this integration.
 
 ## Verification
@@ -45,7 +45,7 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 - Shared package: `npm run publish:dry`
 - App: `npm install --package-lock-only`
 - App: workflow YAML parse check with Ruby `YAML.load_file`
-- App: clean install using the same ephemeral private-git auth pattern as CI/deploy: `npm ci`
+- App: clean install using the deploy-style ephemeral private-git auth pattern: `npm ci`
 - App: `npm run lint` - passed with the existing warning backlog and 0 errors
 - App: `npx tsc --noEmit` - passed
 - App: `npm test` - 159 files / 1537 tests passed
