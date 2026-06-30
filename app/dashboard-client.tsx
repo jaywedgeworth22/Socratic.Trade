@@ -68,6 +68,7 @@ import {
   sentimentTitle
 } from "@/lib/dashboard-ui";
 import type { EnrichedPosition } from "@/lib/dashboard-ui";
+import { buildStrategyReviewDisplay, type StrategyReviewChange } from "@/lib/strategy-review-display";
 import {
   INDEX_UNIVERSES,
   SUPPORTED_INDEX_UNIVERSES,
@@ -3557,7 +3558,7 @@ function StrategyView({
         />
         <div className="p-4 pt-3">
           {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
-          {strategyTuning ? <TuningCard proposal={strategyTuning} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
+          {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
         </div>
       </Card>
     </div>
@@ -3658,8 +3659,19 @@ function EditableParam({
   );
 }
 
-function TuningCard({ proposal, onApply }: { proposal: StrategyTuningProposal; onApply: () => void }) {
-  const items = summarizeTuningPatch(proposal);
+function TuningCard({
+  proposal,
+  currentPolicy,
+  currentPrompt,
+  onApply
+}: {
+  proposal: StrategyTuningProposal;
+  currentPolicy: TradingPolicy;
+  currentPrompt: string;
+  onApply: () => void;
+}) {
+  const reviewDisplay = buildStrategyReviewDisplay(proposal, { policy: currentPolicy, strategyPrompt: currentPrompt });
+  const hasReturnedChanges = Boolean(reviewDisplay.promptChange) || reviewDisplay.allChanges.length > 0;
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
@@ -3668,21 +3680,75 @@ function TuningCard({ proposal, onApply }: { proposal: StrategyTuningProposal; o
       </div>
       <p className="text-sm font-medium text-fg">{proposal.summary}</p>
       <p className="text-[13px] text-muted">{proposal.rationale}</p>
-      {items.length > 0 ? (
-        <ul className="space-y-1 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg p-3 text-[13px] text-muted">
-          {items.map((i) => (
-            <li key={i} className="flex gap-2"><ChevronRight size={14} className="mt-0.5 shrink-0 text-accent" />{i}</li>
-          ))}
-        </ul>
+      {hasReturnedChanges ? (
+        <div className="space-y-2">
+          {reviewDisplay.promptChange && (
+            <details open className="group rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-fg">
+                <span className="flex min-w-0 items-center gap-2">
+                  <ChevronRight size={14} className="shrink-0 text-accent transition-transform group-open:rotate-90" />
+                  <span>Prompt replacement</span>
+                </span>
+                {!reviewDisplay.promptChange.changed && <span className="shrink-0 text-xs font-medium text-faint">No value change</span>}
+              </summary>
+              <div className="grid gap-2 border-t border-line p-3 lg:grid-cols-2">
+                <div className="min-w-0">
+                  <div className="mb-1 text-[11px] font-medium uppercase text-faint">Current prompt</div>
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-bg/70 p-3 font-mono text-[12px] leading-relaxed text-muted">
+                    {reviewDisplay.promptChange.current}
+                  </pre>
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-1 text-[11px] font-medium uppercase text-faint">Will replace with</div>
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-accent/30 bg-accent/5 p-3 font-mono text-[12px] leading-relaxed text-fg">
+                    {reviewDisplay.promptChange.proposed}
+                  </pre>
+                </div>
+              </div>
+            </details>
+          )}
+          <TuningChangeGroup title="Strategy Studio values" changes={reviewDisplay.studioChanges} />
+          <TuningChangeGroup title="Risk and automation settings" changes={reviewDisplay.riskChanges} />
+        </div>
       ) : (
-        <p className="text-[13px] text-faint">No concrete patch fields returned.</p>
+        <p className="text-[13px] text-faint">No prompt or setting changes returned.</p>
       )}
       {proposal.cautions.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {proposal.cautions.map((c) => <Chip key={c} tone="warn">{c}</Chip>)}
         </div>
       )}
-      <Button variant="primary" disabled={items.length === 0} onClick={onApply}><CheckCircle size={15} /> Apply reviewed changes</Button>
+      <Button variant="primary" disabled={!reviewDisplay.hasEffectiveChanges} onClick={onApply}><CheckCircle size={15} /> Apply reviewed changes</Button>
+    </div>
+  );
+}
+
+function TuningChangeGroup({ title, changes }: { title: string; changes: StrategyReviewChange[] }) {
+  if (changes.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg p-3">
+      <div className="mb-2 text-[11px] font-semibold uppercase text-faint">{title}</div>
+      <ul className="space-y-2">
+        {changes.map((change) => (
+          <li key={change.id} className="grid gap-2 rounded-md border border-line/80 bg-bg/40 p-2.5 text-[13px] sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 font-medium text-fg">
+                <span>{change.label}</span>
+                {!change.changed && <span className="rounded-full border border-line px-1.5 py-0.5 text-[10px] uppercase text-faint">No change</span>}
+              </div>
+              <div className="mt-0.5 text-[11px] text-faint">{change.location}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[11px] uppercase text-faint">Current</div>
+              <div className="break-words tnum text-muted">{change.current}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[11px] uppercase text-faint">Proposed</div>
+              <div className="break-words tnum font-medium text-fg">{change.proposed}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -4117,7 +4183,7 @@ function StrategyStudio({
           </div>
         </div>
         {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
-        {strategyTuning ? <TuningCard proposal={strategyTuning} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
+        {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
       </div>
     </div>
   );
@@ -5754,26 +5820,6 @@ function compare(left: unknown, right: unknown, dir: SortDir): number {
   const order = dir === "asc" ? 1 : -1;
   if (typeof left === "string" || typeof right === "string") return String(left ?? "").localeCompare(String(right ?? "")) * order;
   return (Number(left ?? 0) - Number(right ?? 0)) * order;
-}
-
-function summarizeTuningPatch(proposal: StrategyTuningProposal): string[] {
-  const patch = proposal.proposedPatch;
-  const items: string[] = [];
-  if (patch.prompt) items.push("Prompt rewrite proposed");
-  for (const [key, value] of Object.entries(patch.scoringWeights ?? {})) items.push(`Weight ${labelize(key)} → ${formatPatchValue(value)}`);
-  const policy = patch.policy ?? {};
-  for (const [key, value] of Object.entries(policy)) {
-    if (key === "riskRules" || value === undefined) continue;
-    items.push(`${labelize(key)} → ${formatPatchValue(value)}`);
-  }
-  for (const [key, value] of Object.entries(policy.riskRules ?? {})) items.push(`${labelize(key)} → ${formatPatchValue(value)}`);
-  return items;
-}
-
-function formatPatchValue(value: unknown): string {
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  if (typeof value === "boolean") return value ? "on" : "off";
-  return String(value);
 }
 
 function labelize(value: string): string {
