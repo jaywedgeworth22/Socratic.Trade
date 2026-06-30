@@ -100,6 +100,7 @@ export function accountReadinessForSnapshot(input: {
   const accountNumber = policy.accountNumber ?? activeAccount?.accountNumber;
   const broker = activeAccount?.broker ?? policy.activeBroker;
   const brokerName = brokerDisplayName(broker);
+  const isLocalTestMode = policy.paperMode || broker === "test";
 
   if (!accountNumber) {
     return {
@@ -122,7 +123,7 @@ export function accountReadinessForSnapshot(input: {
     };
   }
 
-  const robinhoodIssue = broker === "robinhood" ? robinhoodMcpHealthIssue(input.robinhoodMcpHealth) : undefined;
+  const robinhoodIssue = !isLocalTestMode && broker === "robinhood" ? robinhoodMcpHealthIssue(input.robinhoodMcpHealth) : undefined;
   if (robinhoodIssue) {
     return {
       ok: false,
@@ -134,7 +135,7 @@ export function accountReadinessForSnapshot(input: {
     };
   }
 
-  const requiresBrokerReadiness = !policy.paperMode && broker !== "test";
+  const requiresBrokerReadiness = !isLocalTestMode;
   if (requiresBrokerReadiness) {
     if (input.brokerAccountReadError) {
       return {
@@ -171,6 +172,16 @@ export function accountReadinessForSnapshot(input: {
     }
   }
 
+  if (isLocalTestMode) {
+    return {
+      ok: true,
+      detail: `Selected Test account ${accountNumber}.`,
+      accountNumber,
+      connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+      broker
+    };
+  }
+
   if (input.portfolioReadError) {
     return {
       ok: false,
@@ -184,7 +195,7 @@ export function accountReadinessForSnapshot(input: {
 
   return {
     ok: true,
-    detail: broker === "test"
+    detail: isLocalTestMode
       ? `Selected Test account ${accountNumber}.`
       : `Selected ${brokerName} account ${accountNumber} is available for execution.`,
     accountNumber,

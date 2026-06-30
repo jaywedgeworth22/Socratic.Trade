@@ -144,4 +144,22 @@ describe("accountReadinessForSnapshot", () => {
     expect(readiness.ok).toBe(true);
     expect(readiness.detail).toContain("Selected Test account");
   });
+
+  it("does not block the local Test account on portfolio display read errors", () => {
+    const readiness = accountReadinessForSnapshot({
+      policy: policy({ paperMode: true, activeBroker: "test", accountNumber: "TEST", connectedAccountId: "test-1" }),
+      activeAccount: connectedAccount({
+        id: "test-1",
+        broker: "test",
+        accountNumber: "TEST",
+        label: "Test"
+      }),
+      liveAccounts: [],
+      portfolioReadError: "Real-time quote for symbol XYZ is unavailable."
+    });
+
+    expect(readiness.ok).toBe(true);
+    expect(readiness.reason).toBeUndefined();
+    expect(readiness.detail).toContain("Selected Test account");
+  });
 });
