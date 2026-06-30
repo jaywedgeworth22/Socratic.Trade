@@ -49,6 +49,12 @@ policy blobs before applying the current user-level overlay in `getPolicy` and
 inactive account row or get written back on a later account update. Verification
 planned/running on this branch; see `docs/rollouts/2026-06-29-tiered-settings.md`.
 
+## 2026-06-30 — Browser tab title correction
+Branch `codex/browser-title`. Root metadata and the welcome route now set the
+document title to exactly `Trading Dashboard`; the welcome route uses an
+absolute title so the root template cannot render `Trading Dashboard · Trading
+Dashboard`. See `docs/rollouts/2026-06-30-browser-title.md`.
+
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
 integration. Agentic Trading now depends on
