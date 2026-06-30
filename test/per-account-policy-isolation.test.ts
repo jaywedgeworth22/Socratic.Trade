@@ -191,6 +191,60 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(JSON.parse(row.policy).redTeamLlmModel).toBeUndefined();
   });
 
+  it("migrates legacy model choices to every account before clearing user policy", async () => {
+    const db = await import("../src/lib/db");
+    const u = `legacy-migrate-${randomUUID()}`;
+    const active = `legacy-active-${randomUUID()}`;
+    const other = `legacy-other-${randomUUID()}`;
+    const untouched = `legacy-untouched-${randomUUID()}`;
+
+    db.upsertConnectedAccount({ id: active, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-A", label: "Active", isActive: true });
+    db.upsertConnectedAccount({ id: other, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-O", label: "Other", isActive: false });
+    db.upsertConnectedAccount({ id: untouched, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-U", label: "Untouched", isActive: false });
+
+    db.setUserSetting(u, "policy", {
+      llmModel: "grok-4.3",
+      redTeamLlmModel: "claude-opus-4-8",
+      llmReasoningEffort: "high"
+    });
+
+    const stalePolicy = { ...db.getPolicy(u, active) };
+    delete stalePolicy.llmModel;
+    delete stalePolicy.redTeamLlmModel;
+    delete stalePolicy.llmReasoningEffort;
+    db.getDb()
+      .prepare(
+        `INSERT OR REPLACE INTO account_strategy_state
+           (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        u,
+        other,
+        JSON.stringify(stalePolicy),
+        "Prompt",
+        JSON.stringify(stalePolicy.scoringWeights),
+        stalePolicy.systemState,
+        null,
+        new Date().toISOString()
+      );
+
+    db.setPolicy({ ...db.getPolicy(u, active), maxOrderNotional: 1234 }, u, active);
+
+    const userPolicy = db.getUserSetting<Record<string, unknown>>(u, "policy", {});
+    expect(userPolicy.llmModel).toBeUndefined();
+    expect(userPolicy.redTeamLlmModel).toBeUndefined();
+    expect(userPolicy.llmReasoningEffort).toBeUndefined();
+
+    expect(db.getPolicy(u, other).llmModel).toBe("grok-4.3");
+    expect(db.getPolicy(u, other).redTeamLlmModel).toBe("claude-opus-4-8");
+    expect(db.getPolicy(u, other).llmReasoningEffort).toBe("high");
+
+    expect(db.getPolicy(u, untouched).llmModel).toBe("grok-4.3");
+    expect(db.getPolicy(u, untouched).redTeamLlmModel).toBe("claude-opus-4-8");
+    expect(db.getPolicy(u, untouched).llmReasoningEffort).toBe("high");
+  });
+
   it("counterfactual learning watermark is isolated per account", async () => {
     const db = await import("../src/lib/db");
     const u = `wmuser-${randomUUID()}`;

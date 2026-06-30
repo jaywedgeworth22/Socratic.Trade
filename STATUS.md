@@ -4,6 +4,22 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Production merge sweep for pending settings and order lifecycle work
+Branch `codex/prod-merge-sweep-20260630`. Built a production integration branch
+from `origin/main`, folded in the still-unmerged Settings scope/help overhaul
+and Settings review-action polish, and reconciled with the Alpaca
+broker-held/order-lifecycle branch after it landed on `main` as PR #268. Review
+blockers fixed in this sweep: broker-filled orders with only
+`pending_reconciliation` local fills stay in `pending_order`/Working state
+instead of assuming a local `filled` event exists, and legacy Strategy Studio
+model choices migrate into every connected account before the global
+`user_settings.policy` row is stripped to true user-level fields. Also removed
+two stray historical conflict-marker lines from `STATUS.md`. Verification so far:
+`npx vitest run test/dashboard-feed.test.ts test/per-account-policy-isolation.test.ts`
+passes (2 files / 26 tests). Full lint, typecheck, test, and build gate is next
+before PR/production deployment. See
+`docs/rollouts/2026-06-30-prod-merge-sweep.md`.
+
 ## 2026-06-30 - Alpaca broker-held exit guard and order lifecycle clarity
 Branch `codex/alpaca-held-order-guard`. Diagnosed the KO approval failure:
 Alpaca rejected a 17-share KO sell with HTTP 403 / `40310000` because the account
@@ -1021,9 +1037,6 @@ worked as the default push). (3) **Ops (not code):** added Twilio to Infisical �
 available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · all 6 `/model-logos/*.svg` serve
 200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
 for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
->>>>>>> origin/main
-
->>>>>>> origin/main
 ## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
 Branch `feat/deepseek-ntfy-price-tiers` (throwaway worktree `~/apps/trading-ag13`). (1) **DeepSeek** =
 6th provider (chat + strategy), same OpenAI-compatible wiring as gemini/mistral: db-api-keys

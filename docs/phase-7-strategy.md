@@ -155,6 +155,9 @@ reconciliation confirms execution. `filled` fill events remain the accounting
 truth for P&L and portfolio projection. Broker-paper pending reconciliation rows
 are excluded from paper accounting until a broker fill is observed; legacy
 Test/local simulated fills remain accounting-valid.
+If the broker reports an order as filled before the local fill row reconciles,
+the UI still treats the group as Working/pending reconciliation. Local `filled`
+events remain the accounting and completed-trade truth.
 
 The scheduler reconciles pending broker fills for both `broker/paper` and
 `broker/live` accounts. It also checks broker-backed limit and stop-limit orders

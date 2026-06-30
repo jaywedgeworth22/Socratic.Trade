@@ -493,7 +493,9 @@ function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string):
   const formattedFilled = formatQuantity(order.filledQuantity, normalizeSymbol(order.symbol));
   const formattedTotal = formatQuantity(order.quantity, normalizeSymbol(order.symbol));
   const prefix =
-    order.state === "filled"
+    fillStatus === "pending_reconciliation" && order.state === "filled"
+      ? "Filled by broker; awaiting local reconciliation"
+      : order.state === "filled"
       ? "Filled by broker"
       : order.state === "partially_filled"
         ? "Partially filled by broker"
@@ -810,6 +812,8 @@ export function buildUnifiedFeed(input: {
       if (hasFill) {
         if (hasFill.status === "filled") {
           status = "filled";
+        } else if (hasFill.status === "pending_reconciliation") {
+          status = "pending_order";
         } else if (order?.state === "filled") {
           status = "filled";
         } else if (order?.state === "partially_filled") {

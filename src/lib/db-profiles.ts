@@ -89,14 +89,20 @@ function readLegacyStrategyModelFields(userId: string): Partial<TradingPolicy> {
 }
 
 function withLegacyStrategyModelSeed(userId: string, policy: Partial<TradingPolicy>): Partial<TradingPolicy> {
-  if (Object.prototype.hasOwnProperty.call(policy, "llmModel")) return policy;
-  return { ...readLegacyStrategyModelFields(userId), ...policy };
+  return missingLegacyStrategySeed(userId, policy).policy;
 }
 
-/** Write only the user-level fields of a policy to user_settings.policy. */
-function writeUserPolicyFields(userId: string, policy: TradingPolicy): void {
-  const userFields = pickUserFields(policy);
-  setUserSetting(userId, "policy", userFields);
+function missingLegacyStrategySeed(userId: string, policy: Partial<TradingPolicy>): { policy: Partial<TradingPolicy>; changed: boolean } {
+  const legacy = readLegacyStrategyModelFields(userId);
+  let changed = false;
+  const next: Partial<TradingPolicy> = { ...policy };
+  for (const key of LEGACY_STRATEGY_MODEL_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(legacy, key) && !Object.prototype.hasOwnProperty.call(next, key)) {
+      (next as Record<string, unknown>)[key as string] = legacy[key];
+      changed = true;
+    }
+  }
+  return { policy: next, changed };
 }
 
 // ── Internal raw-row type ──────────────────────────────────────────────────────
@@ -222,6 +228,19 @@ function writeAccountStrategyState(
     );
 }
 
+function updateAccountStrategyPolicy(
+  userId: string,
+  connectedAccountId: string,
+  policy: TradingPolicy,
+  scoringWeights: ScoringWeights
+): void {
+  getDb()
+    .prepare(
+      "UPDATE account_strategy_state SET policy = ?, scoring_weights = ?, system_state = ?, updated_at = ? WHERE user_id = ? AND connected_account_id = ?"
+    )
+    .run(JSON.stringify(policy), JSON.stringify(scoringWeights), policy.systemState, new Date().toISOString(), userId, connectedAccountId);
+}
+
 /**
  * Mirror the user's new effective policy/prompt into the ACTIVE account's live state.
  * Called by every effective-policy writer so account_strategy_state never goes stale.
@@ -237,6 +256,47 @@ function mirrorPolicyToActiveAccount(
   const account = getActiveConnectedAccount(userId);
   if (!account) return;
   writeAccountStrategyState(userId, account.id, { policy, prompt, scoringWeights, derivedFromProfileId });
+}
+
+function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
+  const legacy = readLegacyStrategyModelFields(userId);
+  if (LEGACY_STRATEGY_MODEL_FIELDS.every((key) => !Object.prototype.hasOwnProperty.call(legacy, key))) return;
+
+  const accounts = listConnectedAccounts(userId);
+  if (accounts.length === 0) return;
+
+  const activeId = getActiveConnectedAccount(userId)?.id;
+  for (const account of accounts) {
+    const state = getAccountStrategyStateRow(userId, account.id);
+    if (state) {
+      const stored = stripUserFields(JSON.parse(state.policy) as Partial<TradingPolicy>);
+      const seeded = missingLegacyStrategySeed(userId, stored);
+      if (!seeded.changed) continue;
+      const scoringWeights = normalizeScoringWeights(
+        (state.scoring_weights ? JSON.parse(state.scoring_weights) : seeded.policy.scoringWeights ?? {}) as Partial<ScoringWeights>
+      );
+      updateAccountStrategyPolicy(userId, account.id, mergePolicy({ ...seeded.policy, scoringWeights }), scoringWeights);
+      continue;
+    }
+
+    let policy = getBasePolicy(userId);
+    if (account.id !== activeId && policy.systemState === "active") {
+      policy = { ...policy, systemState: "halted" };
+    }
+    writeAccountStrategyState(userId, account.id, {
+      policy,
+      prompt: getStrategyPrompt(userId, account.id),
+      scoringWeights: policy.scoringWeights,
+      derivedFromProfileId: policy.activeProfileId ?? null
+    });
+  }
+}
+
+/** Write only the user-level fields of a policy to user_settings.policy. */
+function writeUserPolicyFields(userId: string, policy: TradingPolicy): void {
+  migrateLegacyStrategyModelFieldsToAccounts(userId);
+  const userFields = pickUserFields(policy);
+  setUserSetting(userId, "policy", userFields);
 }
 
 /** The user-level base policy (active library profile, else legacy user_settings). */
@@ -278,7 +338,11 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
       const scoringWeights = normalizeScoringWeights(
         (state.scoring_weights ? JSON.parse(state.scoring_weights) : stored.scoringWeights ?? {}) as Partial<ScoringWeights>
       );
-      policy = mergePolicy({ ...withLegacyStrategyModelSeed(userId, stripUserFields(stored)), scoringWeights });
+      const seeded = missingLegacyStrategySeed(userId, stripUserFields(stored));
+      policy = mergePolicy({ ...seeded.policy, scoringWeights });
+      if (seeded.changed) {
+        updateAccountStrategyPolicy(userId, account.id, policy, scoringWeights);
+      }
     } else {
       policy = getBasePolicy(userId);
       const activeId = getActiveConnectedAccount(userId)?.id;

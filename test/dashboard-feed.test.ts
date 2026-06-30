@@ -358,6 +358,64 @@ describe("dashboard feed helpers", () => {
     expect(orderEvent?.detail).toContain("Broker state: Accepted");
   });
 
+  it("keeps broker-filled orders working until the fill row reconciles", () => {
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "a1",
+          createdAt: "2026-06-15T22:00:00.000Z",
+          kind: "proposal_approved",
+          payload: {
+            proposalId: "p-filled-pending",
+            result: "placed",
+            orderId: "alpaca-order-filled-pending",
+            brokerState: "filled",
+            fillStatus: "pending_reconciliation"
+          }
+        }
+      ],
+      notifications: [],
+      fills: [
+        {
+          id: "f-filled-pending",
+          proposalId: "p-filled-pending",
+          runId: "run-filled-pending",
+          accountNumber: "APCA-PAPER",
+          source: "paper",
+          executionMode: "broker/paper",
+          symbol: "VZ",
+          side: "buy",
+          quantity: 3,
+          price: 41.25,
+          notional: 123.75,
+          status: "pending_reconciliation",
+          brokerOrderId: "alpaca-order-filled-pending",
+          filledAt: "2026-06-15T22:00:01.000Z"
+        }
+      ],
+      orders: [
+        {
+          id: "alpaca-order-filled-pending",
+          symbol: "VZ",
+          side: "buy",
+          type: "market",
+          state: "filled",
+          quantity: 3,
+          filledQuantity: 3,
+          createdAt: "2026-06-15T22:00:00.000Z"
+        }
+      ],
+      symbolMetaBySymbol: { VZ: { companyName: "Verizon Communications Inc." } },
+      getProposalById: () => ({ proposal: proposal({ symbol: "VZ", side: "buy" }) })
+    });
+
+    const tradeGroup = feed.find(g => g.proposalId === "p-filled-pending");
+    expect(tradeGroup).toBeDefined();
+    expect(tradeGroup!.status).toBe("pending_order");
+    expect(tradeGroup!.detail).toContain("Filled by broker; awaiting local reconciliation");
+    expect(tradeGroup!.events.some((ev) => ev.type === "fill" && ev.status === "filled")).toBe(false);
+  });
+
   it("shows terminal broker reconciliation as a broker outcome", () => {
     const feed = buildUnifiedFeed({
       audit: [],

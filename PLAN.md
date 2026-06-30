@@ -5,6 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`codex/prod-merge-sweep-20260630`): production merge sweep -
+> integrates the pending Settings scope/help overhaul, Settings review-action
+> polish, and the now-landed Alpaca broker-held/order-lifecycle work into one
+> deployment path. The sweep fixes two review blockers before PR: broker-filled
+> orders with only pending local reconciliation remain Working instead of
+> dereferencing a nonexistent filled event, and legacy Strategy Studio model
+> choices are migrated into every connected account before global user policy is
+> reduced to true user-level fields. No roadmap change; see
+> `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
+>
 > 2026-06-30 (`codex/strategy-llm-timeout-diagnostics`): strategy LLM timeout
 > diagnostics - production run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` failed
 > during the Green Team `gpt-5.5` high-reasoning request before any Red Team,
