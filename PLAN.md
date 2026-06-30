@@ -36,6 +36,11 @@ filling the missing pieces.
 > shared install helper plus read-only deploy key for npm's private git dependency.
 > No roadmap change; see
 > `docs/rollouts/2026-06-30-congress-trading-shared.md`.
+>
+> 2026-06-30 (`codex/browser-title`): browser tab title correction —
+> root and welcome metadata now emit the document title `Trading Dashboard`
+> exactly. No roadmap change; see
+> `docs/rollouts/2026-06-30-browser-title.md`.
 
 > 2026-06-29 (`antigravity/multi-agent-optimizations`): multi-agent optimizations —
 > implemented a set of 18 system optimizations and UX improvements spanning DB indexing,
