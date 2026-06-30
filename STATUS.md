@@ -46,6 +46,11 @@ events. Verification: `npx vitest run test/policy-notification-events.test.ts`,
 `npm run lint` (0 errors, 256 existing warnings), `npx tsc --noEmit`, `npm test`
 (160 files / 1539 tests), and `npm run build` all pass. See
 `docs/rollouts/2026-06-30-provider-degraded-notification-setting.md`.
+## 2026-06-30 — Browser tab title correction
+Branch `codex/browser-title`. Root metadata and the welcome route now set the
+document title to exactly `Trading Dashboard`; the welcome route uses an
+absolute title so the root template cannot render `Trading Dashboard · Trading
+Dashboard`. See `docs/rollouts/2026-06-30-browser-title.md`.
 
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
