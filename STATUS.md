@@ -11,6 +11,7 @@ types path, and by making Green/Red "Custom Model ID..." seed `gpt-4o-mini`,
 which is intentionally outside the curated `STRATEGY_MODEL_IDS` list so the
 free-text input is reachable. Verification planned/running on this branch; see
 `docs/rollouts/2026-06-29-claude-green-red-team.md`.
+
 ## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
 Branch `feat/tiered-settings`. Resolved the remaining review blocker by
 stripping user-level policy fields out of legacy/stale `account_strategy_state`
