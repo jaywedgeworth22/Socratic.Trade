@@ -9,7 +9,7 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { llmFetch, isReasoningModel } from "../llm-request";
+import { DEFAULT_OPENAI_MODEL, llmFetch, isReasoningModel } from "../llm-request";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -442,7 +442,7 @@ async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
  * injectable-transport approach as AnthropicLLM so it is fully testable offline.
  *
  * Tool calling follows the OpenAI function-calling protocol (tools/tool_calls).
- * CHAT_LLM_MODEL defaults to gpt-4o-mini when CHAT_LLM=openai.
+ * CHAT_LLM_MODEL defaults to the app's current OpenAI default when CHAT_LLM=openai.
  */
 export class OpenAILLM implements ChatLLM {
   constructor(
@@ -473,7 +473,7 @@ export class OpenAILLM implements ChatLLM {
     messages.push({ role: "user", content: message });
 
     // Convert ChatLLM ToolSchema → OpenAI function-calling format.
-    // deepseek-reasoner does not support function calling per DeepSeek docs.
+    // The legacy deepseek-reasoner alias did not support function calling; current v4 models do.
     const supportsTools = !/^deepseek-reasoner/i.test(this.model);
     const oaiTools =
       supportsTools && tools && tools.length
@@ -645,7 +645,7 @@ export function getLLM(userId?: string, opts: { transport?: Transport; openAITra
     const { key, source, keyRef } = resolveLlmCredential("openai", userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-      return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", opts.openAITransport ?? defaultOpenAITransport, usage);
+      return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? DEFAULT_OPENAI_MODEL, opts.openAITransport ?? defaultOpenAITransport, usage);
     }
   }
   return new MockLLM();

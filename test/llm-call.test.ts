@@ -30,7 +30,7 @@ describe("buildLlmRequestBody", () => {
   it("DeepSeek chat-completions: downgrades a schema to bare json_object", () => {
     const body = buildLlmRequestBody(
       { provider: "deepseek", transport: "chat-completions" },
-      { model: "deepseek-chat", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
+      { model: "deepseek-v4-flash", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(body.response_format).toEqual({ type: "json_object" });
   });

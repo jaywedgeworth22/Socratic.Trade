@@ -213,8 +213,101 @@ const MIGRATIONS: Migration[] = [
       // 7. Composite index for matured skipped counterfactuals sorting
       database.exec("CREATE INDEX IF NOT EXISTS idx_skipped_counterfactuals_user_account_status_return ON skipped_candidate_counterfactuals (user_id, connected_account_id, status, return_pct DESC, updated_at DESC)");
     }
+  },
+  {
+    version: 7,
+    name: "account_scoped_strategy_models_backfill",
+    up: (database) => backfillAccountScopedStrategyModels(database)
   }
 ];
+
+/**
+ * ONE-TIME migration (v7): PR #267 moved llmModel/redTeamLlmModel/llmReasoningEffort
+ * from user-level (user_settings.policy) to account-level (account_strategy_state.policy).
+ * Before that change there was exactly ONE user-level value per user, so every existing
+ * account must inherit that single value. Backfill it into each account row — OVERWRITING
+ * any value a row picked up from earlier lazy seeding, which may be stale (e.g. a model the
+ * user has since cleared globally) — then strip the fields from user_settings.policy so the
+ * runtime seed/overlay can't resurrect a cleared model. Without this, the first per-account
+ * save rewrites user_settings without the model fields and any not-yet-saved account loses
+ * its seed (the two cases chatgpt-codex-connector flagged on PR #267). Exported for unit
+ * testing; the versioned-migration guard runs it exactly once at runtime.
+ */
+export function backfillAccountScopedStrategyModels(database: Database.Database): void {
+  const MODEL_FIELDS = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];
+  const userPolicyRows = database
+    .prepare("SELECT user_id, value FROM user_settings WHERE key = 'policy'")
+    .all() as Array<{ user_id: string; value: string }>;
+
+  const selectStateRows = database.prepare(
+    "SELECT connected_account_id, policy FROM account_strategy_state WHERE user_id = ?"
+  );
+  const updateState = database.prepare(
+    "UPDATE account_strategy_state SET policy = ? WHERE user_id = ? AND connected_account_id = ?"
+  );
+  const updateUserPolicy = database.prepare(
+    "UPDATE user_settings SET value = ? WHERE user_id = ? AND key = 'policy'"
+  );
+
+  for (const row of userPolicyRows) {
+    let userPolicy: Record<string, unknown>;
+    try {
+      userPolicy = JSON.parse(row.value) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!userPolicy || typeof userPolicy !== "object") continue;
+
+    // The single legacy user-level value for each model field. Absent => the user had
+    // no override and the effective value was the compiled default; rows must then drop
+    // any stale copy so mergePolicy falls back to that same default.
+    const legacy: Record<string, unknown> = {};
+    let hadAny = false;
+    for (const f of MODEL_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(userPolicy, f)) {
+        legacy[f] = userPolicy[f];
+        hadAny = true;
+      }
+    }
+
+    const stateRows = selectStateRows.all(row.user_id) as Array<{
+      connected_account_id: string;
+      policy: string;
+    }>;
+
+    for (const sr of stateRows) {
+      let accountPolicy: Record<string, unknown>;
+      try {
+        accountPolicy = JSON.parse(sr.policy) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (!accountPolicy || typeof accountPolicy !== "object") continue;
+      let changed = false;
+      for (const f of MODEL_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(legacy, f)) {
+          if (accountPolicy[f] !== legacy[f]) {
+            accountPolicy[f] = legacy[f];
+            changed = true;
+          }
+        } else if (Object.prototype.hasOwnProperty.call(accountPolicy, f)) {
+          delete accountPolicy[f];
+          changed = true;
+        }
+      }
+      if (changed) {
+        updateState.run(JSON.stringify(accountPolicy), row.user_id, sr.connected_account_id);
+      }
+    }
+
+    // Strip the now-account-scoped model fields from user_settings.policy so the
+    // legacy seed (readLegacyStrategyModelFields) becomes a permanent no-op.
+    if (hadAny) {
+      for (const f of MODEL_FIELDS) delete userPolicy[f];
+      updateUserPolicy.run(JSON.stringify(userPolicy), row.user_id);
+    }
+  }
+}
 
 /**
  * Apply migrations whose version exceeds the DB's user_version, in ascending order,

@@ -1,5 +1,7 @@
 "use client";
 
+import { HelpCircle } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "./cn";
 
 /* ── Button ──────────────────────────────────────────────────────────────── */
@@ -263,16 +265,85 @@ export function Field({
   className
 }: {
   label: string;
-  hint?: string;
+  hint?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
+  const descriptionId = useId();
   return (
     <label className={cn("block space-y-1.5", className)}>
-      <span className="block text-xs font-medium text-muted">{label}</span>
+      <span className="flex items-center gap-1.5 text-xs font-medium text-muted">
+        <span>{label}</span>
+        {hint && <HelpTip label={label} id={descriptionId}>{hint}</HelpTip>}
+      </span>
       {children}
-      {hint && <span className="block text-xs text-faint">{hint}</span>}
     </label>
+  );
+}
+
+function HelpTip({
+  label,
+  id,
+  children
+}: {
+  label: string;
+  id: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <span
+      ref={ref}
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        aria-label={`Help for ${label}`}
+        aria-expanded={open}
+        aria-describedby={open ? id : undefined}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+        className="inline-flex h-6 w-6 touch-manipulation items-center justify-center rounded-md text-faint transition-colors hover:bg-surface-2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] max-sm:h-8 max-sm:w-8"
+      >
+        <HelpCircle size={13} aria-hidden="true" />
+      </button>
+      {open && (
+        <span
+          id={id}
+          role="tooltip"
+          className="absolute left-0 top-full z-[1200] mt-1 w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface px-3 py-2 text-left text-xs font-normal leading-relaxed text-muted shadow-[var(--shadow-lg)]"
+        >
+          {children}
+        </span>
+      )}
+    </span>
   );
 }
 

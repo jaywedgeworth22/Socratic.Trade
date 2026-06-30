@@ -12,6 +12,7 @@ import {
 } from "@/lib/chat/llm";
 import { resolveLlmCredential } from "@/lib/db";
 import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
+import { DEFAULT_OPENAI_MODEL } from "@/lib/llm-request";
 import { NextResponse } from "next/server";
 
 /** The explicit offline path: the deterministic MockLLM, intentionally keyless. Anything else is a real
@@ -49,7 +50,7 @@ function usageOpts(userId: string, source: "user" | "operator" | "none", keyRef?
 function llmFromProvider(hint: string | undefined, userId: string) {
   if (hint === "openai") {
     const { key, source, keyRef } = resolveLlmCredential("openai", userId);
-    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? "gpt-4o-mini", undefined, usageOpts(userId, source, keyRef));
+    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? DEFAULT_OPENAI_MODEL, undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "anthropic") {
     const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);

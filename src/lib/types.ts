@@ -396,7 +396,7 @@ export interface TradingPolicy {
   strategyAuthority: StrategyAuthority;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
-  /** Per-user LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
+  /** Account strategy LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
    *  fallback. This is the Green Team / Bull proposer model. */
   llmModel?: string;
   /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */

@@ -131,16 +131,25 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getPolicy(u, keep).maxOrderNotional).toBe(500);
   });
 
-  it("cleared user-level fields do not resurrect from stale account rows", async () => {
+  it("strategy model choices are account-scoped with a one-time legacy user seed", async () => {
     const db = await import("../src/lib/db");
-    const u = `tiereduser-${randomUUID()}`;
-    const active = `tiered-active-${randomUUID()}`;
-    const other = `tiered-other-${randomUUID()}`;
+    const u = `modeluser-${randomUUID()}`;
+    const active = `model-active-${randomUUID()}`;
+    const other = `model-other-${randomUUID()}`;
 
     db.upsertConnectedAccount({ id: active, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-A", label: "Active", isActive: true });
     db.upsertConnectedAccount({ id: other, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-O", label: "Other", isActive: false });
 
-    const stalePolicy = { ...db.getPolicy(u, other), redTeamLlmModel: "grok-4.3" };
+    db.setUserSetting(u, "policy", {
+      llmModel: "grok-4.3",
+      redTeamLlmModel: "claude-opus-4-8",
+      llmReasoningEffort: "high"
+    });
+
+    const stalePolicy = { ...db.getPolicy(u, other) };
+    delete stalePolicy.llmModel;
+    delete stalePolicy.redTeamLlmModel;
+    delete stalePolicy.llmReasoningEffort;
     db.getDb()
       .prepare(
         `INSERT OR REPLACE INTO account_strategy_state
@@ -158,15 +167,27 @@ describe("per-account policy isolation (PR 1)", () => {
         new Date().toISOString()
       );
 
-    db.setPolicy({ ...db.getPolicy(u, active), redTeamLlmModel: undefined }, u, active);
+    expect(db.getPolicy(u, other).llmModel).toBe("grok-4.3");
+    expect(db.getPolicy(u, other).redTeamLlmModel).toBe("claude-opus-4-8");
+    expect(db.getPolicy(u, other).llmReasoningEffort).toBe("high");
 
+    db.setPolicy({ ...db.getPolicy(u, active), llmModel: "gpt-5.5", redTeamLlmModel: "gpt-5.4" }, u, active);
+    db.setPolicy({ ...db.getPolicy(u, other), llmModel: "gemini-2.5-flash", redTeamLlmModel: undefined }, u, other);
+
+    expect(db.getPolicy(u, active).llmModel).toBe("gpt-5.5");
+    expect(db.getPolicy(u, active).redTeamLlmModel).toBe("gpt-5.4");
+    expect(db.getPolicy(u, other).llmModel).toBe("gemini-2.5-flash");
     expect(db.getPolicy(u, other).redTeamLlmModel).toBeUndefined();
-    expect(db.peekPolicy(u, other).redTeamLlmModel).toBeUndefined();
 
-    db.setPolicy({ ...db.getPolicy(u, other), maxOrderNotional: 777 }, u, other);
+    const userPolicy = db.getUserSetting<Record<string, unknown>>(u, "policy", {});
+    expect(userPolicy.llmModel).toBeUndefined();
+    expect(userPolicy.redTeamLlmModel).toBeUndefined();
+    expect(userPolicy.llmReasoningEffort).toBeUndefined();
+
     const row = db.getDb()
       .prepare("SELECT policy FROM account_strategy_state WHERE user_id = ? AND connected_account_id = ?")
       .get(u, other) as { policy: string };
+    expect(JSON.parse(row.policy).llmModel).toBe("gemini-2.5-flash");
     expect(JSON.parse(row.policy).redTeamLlmModel).toBeUndefined();
   });
 
