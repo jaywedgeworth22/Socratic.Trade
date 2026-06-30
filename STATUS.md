@@ -14,10 +14,9 @@ blockers fixed in this sweep: broker-filled orders with only
 instead of assuming a local `filled` event exists, and legacy Strategy Studio
 model choices migrate into every connected account before the global
 `user_settings.policy` row is stripped to true user-level fields. Also removed
-two stray historical conflict-marker lines from `STATUS.md`. Verification so far:
-`npx vitest run test/dashboard-feed.test.ts test/per-account-policy-isolation.test.ts`
-passes (2 files / 26 tests). Full lint, typecheck, test, and build gate is next
-before PR/production deployment. See
+two stray historical conflict-marker lines from `STATUS.md`. Verification:
+`npm run lint` (0 errors, 255 existing warnings), `npx tsc --noEmit`,
+`npm test` (163 files / 1570 tests), and `npm run build` all pass. See
 `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
 
 ## 2026-06-30 - Alpaca broker-held exit guard and order lifecycle clarity

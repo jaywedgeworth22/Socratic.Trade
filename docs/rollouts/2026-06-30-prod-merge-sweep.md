@@ -40,17 +40,12 @@ before deployment.
 ## Verification
 
 - `npx vitest run test/dashboard-feed.test.ts test/per-account-policy-isolation.test.ts` - pass, 2 files / 26 tests.
-
-Full gate pending before PR/deploy:
-
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
+- `npm run lint` - pass, 0 errors / 255 existing warnings.
+- `npx tsc --noEmit` - pass.
+- `npm test` - pass, 163 files / 1570 tests.
+- `npm run build` - pass.
 
 ## Follow-ups
 
-- Merge latest `origin/main` into this branch before PR because PR #268 landed
-  while this sweep was in progress.
 - Open a ready PR, arm auto-merge, wait for required CI, and verify production
   after the deploy workflow updates `trading.jays.services`.
