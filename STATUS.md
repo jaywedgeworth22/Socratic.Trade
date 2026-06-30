@@ -12,6 +12,13 @@ key+secret pairs before a tenant connected account suppresses that fallback.
 Trading credential resolution remains per-user/fail-closed. Verification:
 `npm test -- test/key-resolution-tiering.test.ts` and `npx tsc --noEmit`.
 See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
+## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
+Branch `feat/tiered-settings`. Resolved the remaining review blocker by
+stripping user-level policy fields out of legacy/stale `account_strategy_state`
+policy blobs before applying the current user-level overlay in `getPolicy` and
+`peekPolicy`. Cleared fields like `redTeamLlmModel` no longer resurrect from an
+inactive account row or get written back on a later account update. Verification
+planned/running on this branch; see `docs/rollouts/2026-06-29-tiered-settings.md`.
 
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
@@ -76,6 +83,22 @@ audit rows (`strategy_run`, `recoverable_issue`, skips, policy violations). Midd
 via `x-ops-token` / `Authorization: Bearer`. Set the token on prod, then agents can curl
 `https://trading.jays.services/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
 Secrets wired: `OPS_DIAGNOSTIC_TOKEN` in Cursor Cloud + Infisical prod (owner 2026-06-29). Still needed: merge PR #249, deploy to `trading-live`, `pm2 restart trading` (reload Infisical), new Cloud Agent session, then `npm run ops:snapshot`. Multi-account Alpaca broker fix still pending.
+## 2026-06-29 — Tiered settings (Cursor / feat/tiered-settings)
+Three-phase settings architecture improvement:
+1. **Auto-restart toggle** — per-user `autoResumeOnBoot` replaces the blunt
+   `AUTONOMY_RESUME_ON_BOOT=1` env var; stored in `user_settings`, toggled in
+   Settings UI, checked in `reconcileAutonomyOnBoot()` per-user.
+2. **Settings UI split** — top-level User/Account segmented control; User tier
+   shows Connections/Display/Notifications/Data + auto-resume; Account tier
+   shows Operate/Safety/Tax/Tuning + account picker dropdown.
+3. **Persistence write-path refactor** — `setPolicy` now writes user-level fields
+   (`llmModel`, `redTeamLlmModel`, `notificationSettings`, scan limits) to
+   `user_settings.policy` and account-level fields to `account_strategy_state`;
+   `getPolicy` overlays user fields on top of account fields. Backward-compatible
+   for users without connected accounts (falls back to full policy in user_settings).
+Verification: `npx tsc --noEmit` clean, `npm test` 158/1533, `npm run build` clean.
+See `docs/rollouts/2026-06-29-tiered-settings.md`.
+
 ## 2026-06-29 — Claude is a first-class Green/Red Team model (Cursor / cursor/claude-green-red-team-f06c)
 Claude (Anthropic) is now selectable for BOTH the Green Team (Bull proposer) and Red Team
 (Bear reviewer) in Strategy Studio, not just the Assistant chat. Added an

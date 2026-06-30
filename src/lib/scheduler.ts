@@ -6,7 +6,7 @@
 
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
-import { audit, getActiveConnectedAccount, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
+import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { expireStalePendingProposals } from "./proposal-revalidation";
@@ -53,9 +53,13 @@ const stopMonitorInFlight: Set<string> =
 /**
  * Boot-time autonomy interlock. A persisted `systemState === "active"` must NOT silently resume
  * live/paper order placement after an unattended restart, crash-loop, or DB restore. Unless an
- * operator explicitly opts in with AUTONOMY_RESUME_ON_BOOT=1, every user left "active" is reverted
- * to "halted" on boot (audited), forcing a human to re-arm autonomy deliberately. "close_only" and
- * "liquidating" are left untouched (they are themselves human-/breaker-set safe states).
+ * operator explicitly opts in (AUTONOMY_RESUME_ON_BOOT=1 env var OR per-user `autoResumeOnBoot`
+ * setting), every user left "active" is reverted to "halted" on boot (audited), forcing a human
+ * to re-arm autonomy deliberately. "close_only" and "liquidating" are left untouched (they are
+ * themselves human-/breaker-set safe states).
+ *
+ * The env var is a global override — when set, ALL users resume regardless of their per-user
+ * toggle. When not set, each user's `autoResumeOnBoot` setting controls their own accounts.
  */
 export function reconcileAutonomyOnBoot(): void {
   if (process.env.AUTONOMY_RESUME_ON_BOOT === "1") {
@@ -63,6 +67,12 @@ export function reconcileAutonomyOnBoot(): void {
     return;
   }
   for (const userId of listUsers()) {
+    // Per-user autoResumeOnBoot setting (default false) — the individual opt-in replaces
+    // the old global env var. Each user independently decides whether their accounts resume.
+    if (getAutoResumeOnBoot(userId)) {
+      console.log(`[scheduler] user ${userId} has autoResumeOnBoot enabled — persisted 'active' autonomy will resume`);
+      continue;
+    }
     // Reconcile EVERY connected account, not just the active one — a non-active account left
     // "active" would otherwise auto-resume the moment the multi-account scheduler iterates it.
     // A user with no connected accounts still has a base policy (accountId undefined), so reconcile
@@ -74,8 +84,8 @@ export function reconcileAutonomyOnBoot(): void {
         const policy = getPolicy(userId, accountId);
         if (policy.systemState === "active") {
           setPolicy({ ...policy, systemState: "halted" }, userId, accountId);
-          audit("autonomy_halted_on_boot", { from: "active", to: "halted", reason: "AUTONOMY_RESUME_ON_BOOT not set" }, userId, accountId);
-          console.warn(`[scheduler] autonomy was 'active' for ${userId}/${accountId ?? "(base)"} at boot; reverted to 'halted' (set AUTONOMY_RESUME_ON_BOOT=1 to auto-resume).`);
+          audit("autonomy_halted_on_boot", { from: "active", to: "halted", reason: "autoResumeOnBoot not enabled" }, userId, accountId);
+          console.warn(`[scheduler] autonomy was 'active' for ${userId}/${accountId ?? "(base)"} at boot; reverted to 'halted' (enable autoResumeOnBoot in Settings to auto-resume).`);
         }
       } catch (err) {
         console.error(`[scheduler] boot autonomy reconcile failed for ${userId}/${accountId ?? "(base)"}:`, err);

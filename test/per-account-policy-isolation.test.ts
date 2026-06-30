@@ -131,6 +131,45 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getPolicy(u, keep).maxOrderNotional).toBe(500);
   });
 
+  it("cleared user-level fields do not resurrect from stale account rows", async () => {
+    const db = await import("../src/lib/db");
+    const u = `tiereduser-${randomUUID()}`;
+    const active = `tiered-active-${randomUUID()}`;
+    const other = `tiered-other-${randomUUID()}`;
+
+    db.upsertConnectedAccount({ id: active, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-A", label: "Active", isActive: true });
+    db.upsertConnectedAccount({ id: other, userId: u, broker: "alpaca", environment: "paper", accountNumber: "PA-O", label: "Other", isActive: false });
+
+    const stalePolicy = { ...db.getPolicy(u, other), redTeamLlmModel: "grok-4.3" };
+    db.getDb()
+      .prepare(
+        `INSERT OR REPLACE INTO account_strategy_state
+           (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        u,
+        other,
+        JSON.stringify(stalePolicy),
+        "Prompt",
+        JSON.stringify(stalePolicy.scoringWeights),
+        stalePolicy.systemState,
+        null,
+        new Date().toISOString()
+      );
+
+    db.setPolicy({ ...db.getPolicy(u, active), redTeamLlmModel: undefined }, u, active);
+
+    expect(db.getPolicy(u, other).redTeamLlmModel).toBeUndefined();
+    expect(db.peekPolicy(u, other).redTeamLlmModel).toBeUndefined();
+
+    db.setPolicy({ ...db.getPolicy(u, other), maxOrderNotional: 777 }, u, other);
+    const row = db.getDb()
+      .prepare("SELECT policy FROM account_strategy_state WHERE user_id = ? AND connected_account_id = ?")
+      .get(u, other) as { policy: string };
+    expect(JSON.parse(row.policy).redTeamLlmModel).toBeUndefined();
+  });
+
   it("counterfactual learning watermark is isolated per account", async () => {
     const db = await import("../src/lib/db");
     const u = `wmuser-${randomUUID()}`;
