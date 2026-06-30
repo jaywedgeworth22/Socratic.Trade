@@ -31,11 +31,18 @@ filling the missing pieces.
 > Custom because the selector now seeds an out-of-list model id, and
 > `next-env.d.ts` is kept on the build-generated route-types path. No roadmap
 > change; see `docs/rollouts/2026-06-29-claude-green-red-team.md`.
+>
 > 2026-06-30 (`feat/tiered-settings` / PR #252): tiered settings review fix —
 > stale user-level policy fields in legacy account rows are stripped before the
 > user-level overlay, so cleared fields like `redTeamLlmModel` cannot reappear
 > from inactive account state. No roadmap change; see
 > `docs/rollouts/2026-06-29-tiered-settings.md`.
+
+> 2026-06-30 (`codex/provider-degraded-checkbox`): Provider Degraded
+> notification setting - Settings now saves the `provider_degraded` event because
+> policy API validation uses the shared notification-event runtime list instead
+> of a stale local allowlist. No roadmap change; see
+> `docs/rollouts/2026-06-30-provider-degraded-notification-setting.md`.
 
 > 2026-06-29 (`agent/antigravity`): sticky top bar & slide-over offsets —
 > made the dashboard top bar sticky and offset the SlideOver components (Activity Log, etc.)
