@@ -115,15 +115,21 @@ Proposals stay in the approval queue until a human approves or rejects them, so 
 ### C.2 Opening Size and Broker Bracket Practicality
 
 The LLM advises proposal size, but deterministic sizing remains authoritative.
-`limits.maxOrderNotional` in the prompt is the effective cap after combining
-absolute and percent-of-NAV policy settings; hidden stale values must not bind
-behind the user's visible risk control. For Alpaca REST/MCP native brackets, a
-dollar order needs enough notional to represent at least one whole share at the
-reference price. If the advised notional is below that threshold and policy
-capacity allows it, the deterministic pass raises the order to one-share
-notional and records the reason. If the cap does not allow a full share, the
-proposal may remain a fractional dollar order, but native Alpaca bracket legs
-are skipped so the broker is not asked for an impossible sub-share bracket.
+`limits.maxOrderNotional` in the prompt is the absolute cap after combining
+absolute and percent-of-NAV policy settings; `limits.preferredMaxOrderNotional`
+is the normal opening-size target after reserving a 5% execution buffer below
+that cap. Hidden stale values must not bind behind the user's visible risk
+control, and proposals should not sit exactly on the hard policy tripwire. The
+policy gate also enforces this opening-order buffer, so a `$4.99` max order cap
+allows a preferred opening size up to `$4.74`; larger orders are blocked with a
+reason telling the user to reduce size or raise the policy cap. For Alpaca
+REST/MCP native brackets, a dollar order needs enough notional to represent at
+least one whole share at the reference price. If the advised notional is below
+that threshold and policy capacity allows it, the deterministic pass raises the
+order to one-share notional and records the reason. If the cap does not allow a
+full share, the proposal may remain a fractional dollar order, but native Alpaca
+bracket legs are skipped so the broker is not asked for an impossible sub-share
+bracket.
 
 As of 2026-06-28, `TradeProposal.referencePrice` is explicitly the decision-time
 market quote used for entry-drift checks and proposal/counterfactual performance
@@ -204,7 +210,10 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   final `strategy_run` audit. Raw abort strings are translated into
   provider/model-specific guidance (for example, Green Team `gpt-5.5` high
   reasoning timing out after the shared 60s cap), while Red Team transport
-  failures fallback to Bull proposals with an auditable reason.
+  failures fallback to Bull proposals with an auditable reason. Interactive
+  strategy runs keep the 60s cap: `gpt-5.5` with high reasoning is rejected in
+  Settings and stale stored configs are clamped to medium effort at request
+  build time.
 - **Context trimming** — large allowlists (e.g. full S&P 500) are sent as a
   compact note instead of every ticker; `recentOrders` is slimmed to 8 records;
   the Bear/critique agent receives only the candidates under review rather than

@@ -47,6 +47,17 @@ export interface PolicyContext {
  * broker.
  */
 export const MARGIN_MINIMUM_EQUITY = 2_000;
+export const OPENING_ORDER_HEADROOM_PCT = 5;
+
+function dollars(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+export function applyOpeningOrderHeadroom(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  if (value <= 0) return 0;
+  return Math.floor(value * (100 - OPENING_ORDER_HEADROOM_PCT)) / 100;
+}
 
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
@@ -202,6 +213,17 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   );
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
+  }
+  const headroomMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
+  if (
+    isOpening &&
+    Number.isFinite(effectiveMaxOrderNotional) &&
+    Number.isFinite(headroomMaxOrderNotional) &&
+    estimatedNotional > headroomMaxOrderNotional
+  ) {
+    reasons.push(
+      `Order of ${dollars(estimatedNotional)} leaves less than ${OPENING_ORDER_HEADROOM_PCT}% buffer below the ${dollars(effectiveMaxOrderNotional)} maximum order limit; reduce to ${dollars(headroomMaxOrderNotional)} or raise the policy cap.`
+    );
   }
   // Market-impact (ADV) ceiling: reject an opening order whose notional exceeds maxOrderPctOfAdv % of
   // the name's recent daily $-volume (price × volume from the scan; the app ingests no historical

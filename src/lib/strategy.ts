@@ -29,7 +29,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
+import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
@@ -53,7 +53,7 @@ import {
   recordPortfolioSnapshot
 } from "./performance";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
-import { allowedSymbolsForPolicy, betaScaledStopPct, evaluateTradeProposal } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal, OPENING_ORDER_HEADROOM_PCT } from "./policy";
 import { atr, atrStopPct } from "./indicators";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
@@ -1160,13 +1160,18 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
       : Math.max(floor, Math.min(ceiling, multiplier));
   
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
+  const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(policy, portfolio));
+  const openingSizingCap = Math.min(openingCapacity.cap, policyHeadroomCap);
+  const openingSizingReason = Number.isFinite(policyHeadroomCap) && policyHeadroomCap < openingCapacity.cap
+    ? `per-order cap, with 5% execution buffer`
+    : openingCapacity.reason;
   let effectiveOpeningCap = openingCapacity.cap;
   const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
   const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * boundedMultiplier);
   const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
   let targetNotional = advisedNotional && advisedNotional > 0
-    ? Math.min(Math.floor(advisedNotional), openingCapacity.cap)
-    : fallbackNotional;
+    ? Math.min(Math.floor(advisedNotional), openingSizingCap)
+    : Math.min(fallbackNotional, openingSizingCap);
 
   // Market-impact (ADV) cap: keep the order from sizing into a name far past what the tape can
   // absorb. ADV is approximated by the latest scan daily $-volume (price × volume) since the app
@@ -1206,7 +1211,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     : "";
   const advisedSizeNote = advisedNotional && advisedNotional > 0
     ? targetNotional < Math.floor(advisedNotional)
-      ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; risk controls limited it to ${formatWholeDollars(targetNotional)}${openingCapacity.reason ? ` (${openingCapacity.reason})` : ""}.`
+      ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; risk controls limited it to ${formatWholeDollars(targetNotional)}${openingSizingReason ? ` (${openingSizingReason})` : ""}.`
       : targetNotional > Math.ceil(advisedNotional)
         ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; raised to ${formatWholeDollars(targetNotional)} for broker/order constraints.`
         : `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; preserved within risk limits.`
@@ -1309,6 +1314,15 @@ function openingRiskCapacity(
   return { cap: limitingCap.value, reason: limitingCap.reason };
 }
 
+function openingPolicyNotionalCap(policy: TradingPolicy, portfolio: Portfolio): number {
+  return Math.min(
+    policy.maxOrderNotional ?? Infinity,
+    policy.maxOrderPctOfNav != null && policy.maxOrderPctOfNav > 0 && portfolio.totalMarketValue > 0
+      ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue
+      : Infinity
+  );
+}
+
 function sectorForSizing(symbol: string, positions: EquityPosition[], marketScan?: MarketScan): string | undefined {
   return (
     positions.find((position) => normalizeSymbol(position.symbol) === symbol)?.sector ??
@@ -1325,6 +1339,7 @@ function sectorCapPctForSizing(policy: TradingPolicy, sector: string): number | 
 }
 
 function formatWholeDollars(value: number): string {
+  if (Math.abs(value) < 100 && !Number.isInteger(value)) return `$${value.toFixed(2)}`;
   return `$${Math.round(value).toLocaleString("en-US")}`;
 }
 
@@ -1896,7 +1911,7 @@ async function proposeTrades(input: {
     `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
     `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
     `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
-    "You must choose the advised size for each proposal. `limits.maxOrderNotional` is the effective per-order cap after absolute/% settings; remaining notional/order counts are hard caps, not target sizes. Do not default every BUY to the max or to a flat setting-derived amount. For buys, set `dollarAmount` to the amount you actually advise based on risk/reward, conviction, liquidity, diversification, and account context; it may be well below the cap, but when native Alpaca brackets are enabled it must be large enough to buy at least one whole share unless you intentionally want the backend to skip broker-held brackets. For sells/trims, set an explicit `quantity` or `dollarAmount` that reflects whether you advise a partial trim, risk-reduction sale, profit-taking sale, or full exit.",
+    `You must choose the advised size for each proposal. \`limits.maxOrderNotional\` is the absolute per-order cap after absolute/% settings; \`limits.preferredMaxOrderNotional\` leaves a ${OPENING_ORDER_HEADROOM_PCT}% execution buffer and is the highest opening size you should normally propose. Remaining notional/order counts are hard caps, not target sizes. Do not default every BUY to the max or to a flat setting-derived amount. For buys, set \`dollarAmount\` to the amount you actually advise based on risk/reward, conviction, liquidity, diversification, and account context; it may be well below the cap, but when native Alpaca brackets are enabled it must be large enough to buy at least one whole share unless you intentionally want the backend to skip broker-held brackets. For sells/trims, set an explicit \`quantity\` or \`dollarAmount\` that reflects whether you advise a partial trim, risk-reduction sale, profit-taking sale, or full exit.`,
     "",
     "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, pb (price/book), shortFloat (% of float sold short), beta, range52w (0=at 52-week low, 100=at 52-week high), secRelStr (today's % move minus its sector's average — positive = outperforming its sector, a relative-strength tell), newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
     "Backend-derived ratios (computed by us, not invented — present only when their inputs exist): peg = P/E ÷ EPS-growth% (<1 cheap for its growth, >2 pricey; absent for unprofitable or no-growth names); earnYld = earnings yield % = EPS÷price (use this instead of P/E when pe is missing — a negative earnYld means the company is losing money); roe = return-on-equity % (capital efficiency; higher is better, negative = losing money on equity); payout = dividend payout ratio % (>100 = paying out more than it earns, dividend at risk); dollarVolM = daily $ volume in millions (liquidity — prefer names that can absorb the order size without slippage; thin names warrant smaller size or limit orders); spreadBps = bid-ask spread in basis points (execution cost; wide spreads argue for limit orders); grahamNumber = Graham intrinsic-value estimate ($) and marginOfSafety = % the price sits below (positive) or above (negative) it — a value cushion for defensive names; pctFromHigh = % from the 52-week high (0 = at the high/breakout zone, deeply negative = a big pullback); rr52w = reward:risk to the 52-week band (>1 = more upside room to the high than downside to the low). Use these as quantitative cross-checks on valuation, quality, income safety, tradability, and entry timing.",
@@ -1953,6 +1968,7 @@ async function proposeTrades(input: {
       ? (input.policy.maxOrderPctOfNav / 100) * input.portfolio.totalMarketValue
       : Infinity
   );
+  const preferredMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
   const userContent = {
     currentDate: new Date().toISOString(),
     executionMode,
@@ -1964,7 +1980,8 @@ async function proposeTrades(input: {
     allowedSymbols: allowedSymbolsForPrompt,
     marketScan: compactMarketScanForPrompt(input.marketScan),
     limits: {
-      maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Math.floor(effectiveMaxOrderNotional) : undefined,
+      maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Number(effectiveMaxOrderNotional.toFixed(2)) : undefined,
+      preferredMaxOrderNotional: Number.isFinite(preferredMaxOrderNotional) ? Number(preferredMaxOrderNotional.toFixed(2)) : undefined,
       maxOrderPctOfNav: input.policy.maxOrderPctOfNav,
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
@@ -2041,6 +2058,7 @@ async function proposeTrades(input: {
     }
   };
 
+  const bullReasoningEffort = interactiveStrategyReasoningEffort(model, input.policy.llmReasoningEffort);
   const body = buildLlmRequestBody(
     { provider, transport },
     {
@@ -2049,7 +2067,7 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(userContent),
       schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-      reasoningEffort: input.policy.llmReasoningEffort
+      reasoningEffort: bullReasoningEffort
     }
   );
 
@@ -2258,6 +2276,7 @@ async function proposeTrades(input: {
     return { proposals: bullProposals, llmSteps };
   }
 
+  const bearReasoningEffort = interactiveStrategyReasoningEffort(bearModel, input.policy.llmReasoningEffort);
   const bearBody = buildLlmRequestBody(
     { provider: bearProvider, transport: bearTransport },
     {
@@ -2266,7 +2285,7 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(bearUserContent),
       schema: { name: "bear_proposals", schema: bearSchema, description: "The proposals that survive Red-Team review." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique,
-      reasoningEffort: input.policy.llmReasoningEffort
+      reasoningEffort: bearReasoningEffort
     }
   );
 

@@ -199,6 +199,22 @@ describe("conviction-size cap", () => {
     expect(sized.rationale).toContain("LLM advised $499; preserved within risk limits.");
   });
 
+  it("keeps LLM-advised opening sizes below the hard policy cap with execution headroom", async () => {
+    const account = "CAP-LLM-HEADROOM";
+    const sized = applyDeterministicSizing(
+      { ...buyProposal(95), dollarAmount: 5 },
+      { ...policyFor(account), maxOrderNotional: 4.99, maxDailyNotional: 100 },
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(sized.dollarAmount).toBe(4.74);
+    expect(sized.rationale).toContain("risk controls limited it");
+    expect(sized.rationale).toContain("5% execution buffer");
+  });
+
   it("preserves a larger explicit LLM-advised notional when hard caps allow it", async () => {
     const account = "CAP-LLM-B";
     const sized = applyDeterministicSizing(

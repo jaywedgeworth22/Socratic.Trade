@@ -112,6 +112,12 @@ export async function POST(request: Request) {
   if (body.dryRun) {
     return NextResponse.json({ dryRun: true, decision, estimatedNotional, proposal });
   }
+  if (!decision.approved) {
+    return NextResponse.json(
+      { error: "POLICY_BLOCKED", reasons: decision.reasons, decision, estimatedNotional, proposal },
+      { status: 409 }
+    );
+  }
 
   // Commit: idempotent on the synthetic runId so one draft can't mint duplicate proposed rows.
   const runId = `chat:${body.draft.draft_id}`;
