@@ -24,6 +24,11 @@ the next dashboard reload showed it unchecked again.
 - `npx tsc --noEmit` - passed.
 - `npm test` - 160 files / 1539 tests passed.
 - `npm run build` - passed; Next production build completed successfully.
+- `bash scripts/land.sh` - first post-merge attempt passed `tsc` but hit two
+  `test/persistence-notification.test.ts` full-suite failures; immediate targeted rerun
+  `npx vitest run test/persistence-notification.test.ts` passed 17/17. Second `land.sh`
+  run passed `tsc`, `npm test` (160 files / 1539 tests), and `npm run build`, then pushed
+  `codex/provider-degraded-checkbox` and opened PR #259.
 
 ## Follow-ups
 - None for this checkbox bug.
