@@ -31,9 +31,9 @@ delayed-quotes suffix.
 ## Verification
 
 - `npm test -- dashboard-ui` - pass
-- Post-merge `npm run lint` - pass, 0 errors / 256 existing warnings
+- Post-PR-267-merge `npm run lint` - pass, 0 errors / 255 existing warnings
 - `npx tsc --noEmit` - pass
-- `npm test` - pass, 163 files / 1569 tests
+- `npm test` - pass, 164 files / 1572 tests
 - `npm run build` - pass
 
 ## Follow-ups

@@ -11,10 +11,11 @@ subtitles now use one shared source-list formatter that aliases `congress`,
 `Congress.Trade` label and folds `yahoo-finance-delayed-quotes` into
 `Yahoo Finance`. This is a display/provenance cleanup only; provider execution
 and historical scan rows are unchanged. Verification: focused
-`npm test -- dashboard-ui`, then post-merge `npm run lint` (0 errors, 256
-existing warnings), `npx tsc --noEmit`, `npm test` (163 files / 1569 tests),
-and `npm run build` pass. See
+`npm test -- dashboard-ui`, then after merging PR #267 into the branch:
+`npm run lint` (0 errors, 255 existing warnings), `npx tsc --noEmit`,
+`npm test` (164 files / 1572 tests), and `npm run build` pass. See
 `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+
 ## 2026-06-30 - PR #267 codex-autofix: account-scoped model migration
 Branch `codex/settings-help-overhaul`. Addressed the two P2 review threads from
 chatgpt-codex-connector on PR #267. Both flagged that moving
