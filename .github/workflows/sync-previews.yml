@@ -16,6 +16,7 @@ jobs:
       contents: read
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Sync beta and per-agent previews
