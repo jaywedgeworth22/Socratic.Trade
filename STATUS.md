@@ -48,6 +48,21 @@ registration is complete. Verification: lint clean with existing warnings,
 typecheck clean, targeted notification test clean, full `npm test` 1539/1539
 clean, and production build clean. See
 `docs/rollouts/2026-06-30-notification-direct-bridge.md`.
+## 2026-06-30 - Robinhood quote params, audit readability, and Settings polish
+Branch `codex/audit-log-strategy-ui`. Diagnosed the 2026-06-30 01:33 test-account
+strategy run: Robinhood MCP rejected `get_equity_quotes` because the app sent an
+unsupported `account_number` argument to a tool that accepts only `symbols`.
+Fixed the quote call and added a regression. Strategy runs now emit `llm_step`
+audit rows with provider/model/transport/key-source context, and the Activity/Audit
+feeds render strategy diagnostics in plain text with full-line hover titles instead
+of clipped JSON while preserving serialized payload fallback text for generic
+audit rows without compact summary fields. The dashboard scopes audit/run history to the selected account
+while including user-wide system rows in account views. Settings keeps the working
+User vs Account split but uses a clearer scope header, account picker, tabs, and
+notification/model polish. Verification: `npm run lint` (0 errors, existing
+warnings), `npx tsc --noEmit`, `npm test` (159 files / 1539 tests), and
+`npm run build` all pass. See
+`docs/rollouts/2026-06-30-audit-log-strategy-ui.md`.
 
 ## 2026-06-30 — PR #253 review-thread fix: custom model path + next-env
 Branch `cursor/trim-openai-strategy-options-f06c`. Resolved review blockers by

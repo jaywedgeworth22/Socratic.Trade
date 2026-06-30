@@ -10,8 +10,11 @@ export interface AuditFeedItem {
   createdAt: string;
   title: string;
   detail: string;
+  fullText: string;
   symbol?: string;
   companyName?: string;
+  connectedAccountId?: string;
+  accountLabel?: string;
 }
 
 interface SourceAuditEvent {
@@ -19,6 +22,7 @@ interface SourceAuditEvent {
   createdAt: string;
   kind: string;
   payload: unknown;
+  connectedAccountId?: string;
 }
 
 export interface StrategyDecisionLike {
@@ -68,9 +72,11 @@ export function buildSymbolMetaBySymbol(input: {
 export function buildAuditFeed(input: {
   audit: SourceAuditEvent[];
   symbolMetaBySymbol?: Record<string, SymbolMeta>;
+  accountLabelById?: Record<string, string>;
   getProposalById?: (proposalId: string) => { proposal: TradeProposal } | undefined;
 }): AuditFeedItem[] {
   const symbolMetaBySymbol = input.symbolMetaBySymbol ?? {};
+  const accountLabelById = input.accountLabelById ?? {};
 
   return input.audit.map((event) => {
     const payload = asRecord(event.payload);
@@ -89,8 +95,11 @@ export function buildAuditFeed(input: {
       createdAt: event.createdAt,
       title: feed.title,
       detail: feed.detail,
+      fullText: feed.fullText ?? feed.detail,
       symbol,
-      companyName
+      companyName,
+      connectedAccountId: event.connectedAccountId,
+      accountLabel: event.connectedAccountId ? accountLabelById[event.connectedAccountId] : undefined
     };
   });
 }
@@ -99,11 +108,30 @@ function formatAuditEvent(
   kind: string,
   payload: Record<string, unknown>,
   context: { symbol?: string; side?: "buy" | "sell"; companyName?: string }
-): { title: string; detail: string } {
+): { title: string; detail: string; fullText?: string } {
   if (kind === "strategy_run") {
+    const llm = formatLlmSteps(payload.llmSteps);
+    const summary = stringValue(payload.summary) ?? "No summary";
     return {
       title: payload.status === "failed" ? "Strategy run failed" : "Strategy run completed",
-      detail: shortText(stringValue(payload.summary) ?? "No summary")
+      detail: joinDetail([summary, llm]) ?? summary
+    };
+  }
+
+  if (kind === "llm_step") {
+    const label = stringValue(payload.label) ?? "LLM step";
+    const status = stringValue(payload.status) ?? "completed";
+    const provider = stringValue(payload.provider);
+    const model = stringValue(payload.model);
+    const proposalCount = numberValue(payload.proposalCount);
+    const reason = stringValue(payload.reason);
+    return {
+      title: `${label} ${status}`,
+      detail: joinDetail([
+        model && provider ? `${model} via ${capitalize(provider)}` : model ?? provider,
+        proposalCount !== undefined ? `${proposalCount} proposal${proposalCount === 1 ? "" : "s"}` : undefined,
+        reason
+      ]) ?? "Model step recorded"
     };
   }
 
@@ -208,19 +236,80 @@ function formatAuditEvent(
     const source = stringValue(payload.source) ?? "system";
     const operation = stringValue(payload.operation) ?? "operation";
     const repeats = numberValue(payload.suppressedSinceLastAudit);
+    const message = plainRecoverableMessage(stringValue(payload.message) ?? operation);
     return {
       title: `${capitalize(source)} issue`,
       detail: joinDetail([
-        shortText(stringValue(payload.message) ?? operation),
-        stringValue(payload.fallback) ? `Fallback: ${shortText(stringValue(payload.fallback) ?? "")}` : undefined,
+        message,
+        stringValue(payload.fallback) ? `Fallback: ${stringValue(payload.fallback) ?? ""}` : undefined,
         repeats && repeats > 0 ? `${repeats} repeat${repeats === 1 ? "" : "s"} suppressed` : undefined
       ]) ?? operation
     };
   }
 
+  if (kind === "candidates_considered") {
+    const chosen = Array.isArray(payload.chosen) ? payload.chosen : [];
+    const skipped = Array.isArray(payload.topSkipped) ? payload.topSkipped : [];
+    const skippedSymbols = skipped
+      .map((item) => asRecord(item))
+      .map((item) => {
+        const symbol = stringValue(item.symbol);
+        const score = numberValue(item.score);
+        return symbol ? `${symbol}${score !== undefined ? ` ${Math.round(score)}` : ""}` : undefined;
+      })
+      .filter(Boolean)
+      .slice(0, 8)
+      .join(", ");
+    return {
+      title: "Candidates considered",
+      detail: joinDetail([
+        `Chosen ${chosen.length}`,
+        skipped.length > 0 ? `Top skipped: ${skippedSymbols || `${skipped.length} candidates`}` : "No skipped candidates",
+        formatLlmSteps(payload.llmSteps)
+      ]) ?? "No candidates recorded"
+    };
+  }
+
+  if (kind === "signal_snapshot") {
+    const signals = Array.isArray(payload.signals) ? payload.signals : [];
+    const chosen = signals.filter((item) => asRecord(item).chosen === true).length;
+    const asOf = stringValue(payload.asOf);
+    return {
+      title: "Signal snapshot",
+      detail: joinDetail([
+        `${signals.length} candidate signal${signals.length === 1 ? "" : "s"}`,
+        chosen > 0 ? `${chosen} chosen` : "0 chosen",
+        asOf ? `as of ${asOf}` : undefined
+      ]) ?? "Signal evidence captured"
+    };
+  }
+
+  if (kind === "rationale_diversity") {
+    const count = numberValue(payload.count) ?? 0;
+    const mean = numberValue(payload.meanPairwiseSimilarity);
+    return {
+      title: "Rationale diversity",
+      detail: joinDetail([
+        `${count} rationale${count === 1 ? "" : "s"} analyzed`,
+        mean !== undefined ? `mean similarity ${mean.toFixed(2)}` : undefined,
+        formatLlmSteps(payload.llmSteps)
+      ]) ?? "Rationale check recorded"
+    };
+  }
+
+  if (kind.startsWith("run_skipped_")) {
+    return {
+      title: "Strategy run skipped",
+      detail: genericAuditDetail(payload) ?? humanizeKind(kind)
+    };
+  }
+
+  const serializedPayload = serializeAuditPayload(payload);
+  const detail = genericAuditDetail(payload) ?? serializedPayload ?? "Event recorded";
   return {
     title: humanizeKind(kind),
-    detail: shortText(JSON.stringify(payload))
+    detail,
+    fullText: serializedPayload ?? detail
   };
 }
 
@@ -284,7 +373,7 @@ function capitalize(value: string): string {
 }
 
 function shortText(value: string): string {
-  return value.length > 90 ? `${value.slice(0, 87)}...` : value;
+  return value;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -316,6 +405,66 @@ function trimCurrency(value: number): string {
 function joinDetail(parts: Array<string | undefined>): string | undefined {
   const filtered = parts.filter(Boolean);
   return filtered.length > 0 ? filtered.join(" · ") : undefined;
+}
+
+function genericAuditDetail(payload: Record<string, unknown>): string | undefined {
+  const details = asRecord(payload.details);
+  const symbol = stringValue(payload.symbol) ?? stringValue(details.symbol);
+  const side = stringValue(payload.side);
+  const status = stringValue(payload.status);
+  const operation = stringValue(payload.operation);
+  const reason = stringValue(payload.reason);
+  const summary = stringValue(payload.summary);
+  const message = stringValue(payload.message);
+  const error = stringValue(payload.error);
+  const orderId = stringValue(payload.orderId);
+  const runId = stringValue(payload.runId);
+  const count = numberValue(payload.count) ?? numberValue(payload.recordCount) ?? numberValue(payload.candidateCount);
+  return joinDetail([
+    reason,
+    summary,
+    message,
+    error,
+    operation,
+    symbol ? [side, symbol].filter(Boolean).join(" ") : side,
+    status ? `Status: ${status}` : undefined,
+    orderId ? `Order ${orderId}` : undefined,
+    count !== undefined ? `Count ${count}` : undefined,
+    runId ? `Run ${runId}` : undefined
+  ]);
+}
+
+function serializeAuditPayload(payload: Record<string, unknown>): string | undefined {
+  if (Object.keys(payload).length === 0) return undefined;
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+function plainRecoverableMessage(message: string): string {
+  if (/unexpected additional properties/i.test(message) && /validating/i.test(message)) {
+    return "Robinhood rejected the quote request parameters.";
+  }
+  return message;
+}
+
+function formatLlmSteps(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const parts = value
+    .map((item) => {
+      const step = asRecord(item);
+      const label = stringValue(step.label) ?? stringValue(step.step) ?? "LLM";
+      const model = stringValue(step.model);
+      const provider = stringValue(step.provider);
+      const status = stringValue(step.status);
+      if (!model && !provider) return undefined;
+      const modelPart = model && provider ? `${model}/${provider}` : model ?? provider;
+      return `${label}: ${modelPart}${status && status !== "completed" ? ` (${status})` : ""}`;
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 function readableBrokerState(state?: string): string {
@@ -364,6 +513,7 @@ export interface UnifiedActivitySubEvent {
   type: "audit" | "notification" | "fill" | "order";
   title: string;
   detail: string;
+  fullText?: string;
   status?: string;
   error?: string;
   raw?: unknown;
@@ -379,9 +529,12 @@ export interface UnifiedActivityGroup {
   companyName?: string;
   title: string;
   detail: string;
+  fullText?: string;
   status: string;
   tags: string[];
   events: UnifiedActivitySubEvent[];
+  connectedAccountId?: string;
+  accountLabel?: string;
 }
 
 export function buildUnifiedFeed(input: {
@@ -390,9 +543,11 @@ export function buildUnifiedFeed(input: {
   fills: FillEvent[];
   orders: EquityOrder[];
   symbolMetaBySymbol: Record<string, SymbolMeta>;
+  accountLabelById?: Record<string, string>;
   getProposalById?: (proposalId: string) => { proposal: TradeProposal } | undefined;
 }): UnifiedActivityGroup[] {
   const symbolMetaBySymbol = input.symbolMetaBySymbol ?? {};
+  const accountLabelById = input.accountLabelById ?? {};
   const proposalIdByOrderId: Record<string, string> = {};
 
   // Build mapping of order_id to proposal_id from fills
@@ -424,6 +579,7 @@ export function buildUnifiedFeed(input: {
   const proposalIdByGroupId = new Map<string, string>();
   const symbolByGroupId = new Map<string, string>();
   const sideByGroupId = new Map<string, "buy" | "sell" | undefined>();
+  const accountIdByGroupId = new Map<string, string>();
 
   // Helper to extract symbol and side from a proposal lookup
   const lookupProposalInfo = (proposalId: string) => {
@@ -466,6 +622,7 @@ export function buildUnifiedFeed(input: {
       type: "audit",
       title: feed.title,
       detail: feed.detail,
+      fullText: feed.fullText ?? feed.detail,
       raw: { kind: event.kind }
     };
 
@@ -475,6 +632,7 @@ export function buildUnifiedFeed(input: {
     }
     if (symbol) symbolByGroupId.set(groupId, symbol);
     if (side) sideByGroupId.set(groupId, side);
+    if (event.connectedAccountId) accountIdByGroupId.set(groupId, event.connectedAccountId);
 
     addSubEvent(groupId, subEvent);
   }
@@ -585,6 +743,8 @@ export function buildUnifiedFeed(input: {
     const symbol = symbolByGroupId.get(groupId);
     const side = sideByGroupId.get(groupId);
     const companyName = symbol ? symbolMetaBySymbol[symbol]?.companyName : undefined;
+    const connectedAccountId = accountIdByGroupId.get(groupId);
+    const accountLabel = connectedAccountId ? accountLabelById[connectedAccountId] : undefined;
 
     const tagsSet = new Set<string>();
     for (const ev of events) {
@@ -740,9 +900,12 @@ export function buildUnifiedFeed(input: {
       companyName,
       title,
       detail,
+      fullText: detail,
       status,
       tags: tagsList,
-      events
+      events,
+      connectedAccountId,
+      accountLabel
     });
   }
 

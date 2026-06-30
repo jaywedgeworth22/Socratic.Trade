@@ -5,10 +5,25 @@ import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPending
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
 
-export function listAudit(limit = 100, userId: string = "local"): Array<{ id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string }> {
-  const rows = getDb()
-    .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
-    .all(userId, limit) as Array<{ id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string }>;
+export function listAudit(
+  limit = 100,
+  userId: string = "local",
+  connectedAccountId?: string,
+  includeUserWide = false
+): Array<{ id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string }> {
+  const rows = (connectedAccountId
+    ? getDb()
+      .prepare(
+        `SELECT id, connected_account_id, created_at, kind, payload
+         FROM audit_events
+         WHERE user_id = ? AND (connected_account_id = ?${includeUserWide ? " OR connected_account_id IS NULL" : ""})
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(userId, connectedAccountId, limit)
+    : getDb()
+      .prepare("SELECT id, connected_account_id, created_at, kind, payload FROM audit_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit)) as Array<{ id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string }>;
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.created_at,

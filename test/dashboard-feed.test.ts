@@ -115,6 +115,25 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.detail).toContain("2 repeats suppressed");
   });
 
+  it("preserves generic audit payload details when no compact field is available", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "a-generic",
+          createdAt: "2026-06-15T00:04:00.000Z",
+          kind: "notify.prefs.set",
+          payload: {
+            channels: ["push", "email"]
+          }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("notify.prefs.set");
+    expect(feed[0]?.detail).toBe('{"channels":["push","email"]}');
+    expect(feed[0]?.fullText).toBe('{"channels":["push","email"]}');
+  });
+
   it("formats notification panel rows with action title and skipped-webhook detail", () => {
     const item = formatNotificationDisplay(
       {

@@ -73,6 +73,52 @@ describe("robinhood mcp transport", () => {
     });
   });
 
+  it("calls the Robinhood quote tool with only the symbols argument", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    const calls: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      calls.push(request);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            structuredContent: {
+              data: {
+                quotes: [
+                  { symbol: "AAPL", price: "200" },
+                  { symbol: "MSFT", last_trade_price: "450" }
+                ]
+              },
+              guide: "ok"
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    const quotes = await getRobinhoodGateway("user-a").getEquityQuotes("RH-ACCOUNT", ["aapl", "msft"]);
+
+    expect(quotes.AAPL?.price).toBe(200);
+    expect(quotes.MSFT?.price).toBe(450);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "tools/call",
+      params: {
+        name: "get_equity_quotes",
+        arguments: { symbols: ["AAPL", "MSFT"] }
+      }
+    });
+    const firstCall = calls[0] as { params: { arguments: Record<string, unknown> } };
+    expect(firstCall.params.arguments).not.toHaveProperty("account_number");
+  });
+
   it("reports missing auth without calling the MCP server", async () => {
     vi.stubEnv("ROBINHOOD_ADAPTER", "mcp");
     const fetchMock = vi.fn();

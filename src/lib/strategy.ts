@@ -86,6 +86,18 @@ const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
 type RunnablePolicy = TradingPolicy & { accountNumber: string };
 
+export interface StrategyLlmStep {
+  step: "bull" | "bear";
+  label: string;
+  provider: string;
+  model: string;
+  transport: string;
+  keySource: "operator" | "user";
+  status: "completed" | "skipped" | "fallback";
+  proposalCount?: number;
+  reason?: string;
+}
+
 export interface StrategyResult {
   runId: string;
   status: "completed" | "failed";
@@ -93,6 +105,7 @@ export interface StrategyResult {
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
+  llmSteps?: StrategyLlmStep[];
   /** Advisory only — rationale-diversity check result (improvement-program item #8). Never affects proposal generation or selection. */
   rationaleDiversity?: RationaleDiversity;
 }
@@ -368,8 +381,10 @@ export async function runStrategyOnce(
     }
 
     let llmProposals: TradeProposal[] = [];
+    let llmSteps: StrategyLlmStep[] = [];
     if (!skipLlmDueToScoreThreshold) {
-      llmProposals = await proposeTrades({
+      const proposed = await proposeTrades({
+        runId,
         userId,
         policyAllowlist: allowedSymbols,
         prompt: getStrategyPrompt(userId),
@@ -384,6 +399,8 @@ export async function runStrategyOnce(
         ragContext,
         learnedContext
       });
+      llmProposals = proposed.proposals;
+      llmSteps = proposed.llmSteps;
     }
 
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
@@ -723,6 +740,7 @@ export async function runStrategyOnce(
     // only), so post-mortems can compare like-for-like without re-deriving the scan.
     audit("candidates_considered", {
       runId,
+      llmSteps,
       chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
       topSkipped: skippedEvidence
     }, userId);
@@ -759,7 +777,7 @@ export async function runStrategyOnce(
       .join(" ");
 
     // Persist diversity result as an advisory audit event (no schema migration needed).
-    audit("rationale_diversity", { runId, ...rationaleDiversity }, userId);
+    audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId);
     finishStrategyRun(runId, "completed", summary, userId);
     if (!executionState.usesLocalSimulation) {
       recordPortfolioSnapshot({
@@ -788,7 +806,7 @@ export async function runStrategyOnce(
         positions: paperProjection.positions
       });
     }
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, rationaleDiversity };
+    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection
     generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
@@ -1634,7 +1652,13 @@ const HOLDING_HORIZON_GUIDE: Record<string, string> = {
     "Holding horizon = LONG-TERM (months to years). Prioritize durable quality/value and secular trends; ignore short-term noise; strongly prefer holding winners past the 1-year mark for long-term tax treatment; trade infrequently."
 };
 
+interface ProposeTradesResult {
+  proposals: TradeProposal[];
+  llmSteps: StrategyLlmStep[];
+}
+
 async function proposeTrades(input: {
+  runId: string;
   userId: string;
   policyAllowlist: string[];
   prompt: string;
@@ -1648,7 +1672,7 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
-}): Promise<TradeProposal[]> {
+}): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
   // We deliberately do NOT fabricate a rule-based stub here: a strategy session is an LLM-driven action,
@@ -1880,6 +1904,12 @@ async function proposeTrades(input: {
   };
 
   const model = resolvedModel;
+  const llmSteps: StrategyLlmStep[] = [];
+
+  const recordStep = (step: StrategyLlmStep) => {
+    llmSteps.push(step);
+    audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
+  };
 
   const schema = {
     type: "object",
@@ -1995,6 +2025,16 @@ async function proposeTrades(input: {
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
+  recordStep({
+    step: "bull",
+    label: "Green Team proposal",
+    provider,
+    model,
+    transport,
+    keySource: llmKeySource,
+    status: "completed",
+    proposalCount: rawBullProposals.length
+  });
 
   // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
   // See deterministicBearFilter for the three rules (no-phantom-exit, momentum overextension
@@ -2108,7 +2148,18 @@ async function proposeTrades(input: {
   } = resolveLlmEndpoint(input.policy, input.userId, "https://api.openai.com/v1/responses", "red");
   if (!bearKey) {
     console.warn("Bear Agent skipped because the Red Team LLM key is not configured; falling back to Bull proposals");
-    return bullProposals;
+    recordStep({
+      step: "bear",
+      label: "Red Team review",
+      provider: bearProvider,
+      model: bearModel,
+      transport: bearTransport,
+      keySource: bearKeySource,
+      status: "skipped",
+      proposalCount: bullProposals.length,
+      reason: "Red Team LLM key is not configured; Bull proposals carried forward."
+    });
+    return { proposals: bullProposals, llmSteps };
   }
 
   const bearBody = buildLlmRequestBody(
@@ -2178,13 +2229,35 @@ async function proposeTrades(input: {
   );
 
   if (bearResult.fallbackToBull) {
-    return bullProposals;
+    recordStep({
+      step: "bear",
+      label: "Red Team review",
+      provider: bearProvider,
+      model: bearModel,
+      transport: bearTransport,
+      keySource: bearKeySource,
+      status: "fallback",
+      proposalCount: bullProposals.length,
+      reason: "Red Team review was unavailable or unparseable; Bull proposals carried forward."
+    });
+    return { proposals: bullProposals, llmSteps };
   }
 
-  return sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
+  const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
+  recordStep({
+    step: "bear",
+    label: "Red Team review",
+    provider: bearProvider,
+    model: bearModel,
+    transport: bearTransport,
+    keySource: bearKeySource,
+    status: "completed",
+    proposalCount: bearProposals.length
+  });
+  return { proposals: bearProposals, llmSteps };
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {

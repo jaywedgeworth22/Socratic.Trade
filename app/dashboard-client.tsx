@@ -1789,7 +1789,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         onClose={() => setSettingsOpen(false)}
         title="Settings"
         icon={<SettingsIcon size={18} />}
-        size="lg"
+        size="xl"
         headerAction={
           <div className="flex items-center gap-2 max-sm:gap-1">
             {snapshot.currentUser?.isAdmin && (
@@ -3712,6 +3712,15 @@ function readableActivityTag(tag: string): string {
   return tag;
 }
 
+function DetailLine({ text, className }: { text: string; className?: string }) {
+  const detail = readableJsonDetail(text);
+  return (
+    <div className={cn("min-w-0 truncate whitespace-nowrap", className)} title={detail}>
+      {detail}
+    </div>
+  );
+}
+
 function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
   const feed = snapshot.unifiedFeed ?? [];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -3736,10 +3745,11 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-faint">
                   <span>{new Date(group.updatedAt).toLocaleString()}</span>
+                  {group.accountLabel && <span>{group.accountLabel}</span>}
                   {group.companyName && <span>({group.companyName})</span>}
                 </div>
                 <div className="mt-0.5 text-sm">{renderActionTitle(group.title)}</div>
-                <div className="mt-0.5 text-[13px] text-muted">{readableJsonDetail(group.detail)}</div>
+                <DetailLine text={group.fullText ?? group.detail} className="mt-0.5 text-[13px] text-muted" />
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {Array.from(new Set(group.tags.map(readableActivityTag))).map((t) => (
                     <span key={t} className="rounded bg-surface-3/50 backdrop-blur-md px-1.5 py-0.5 text-[10px] font-semibold uppercase text-faint">{t}</span>
@@ -3760,9 +3770,9 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                 {group.events.map((ev) => (
                   <div key={ev.id} className="flex gap-2 text-[12px]">
                     <span className="w-24 shrink-0 text-faint">{new Date(ev.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <div>{renderActionTitle(ev.title)}</div>
-                      <div className="text-[11px] text-faint">{readableJsonDetail(ev.detail)}</div>
+                      <DetailLine text={ev.fullText ?? ev.detail} className="text-[11px] text-faint" />
                     </div>
                   </div>
                 ))}
@@ -3871,9 +3881,9 @@ function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
         <div key={item.id} className="rounded-lg border border-line/60 bg-surface-2/40 px-3 py-2">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-[11px] text-faint">{new Date(item.createdAt).toLocaleString()}{item.symbol && ` · ${item.symbol}`}{item.companyName && ` (${item.companyName})`}</div>
+              <div className="text-[11px] text-faint">{new Date(item.createdAt).toLocaleString()}{item.accountLabel && ` · ${item.accountLabel}`}{item.symbol && ` · ${item.symbol}`}{item.companyName && ` (${item.companyName})`}</div>
               <div className="mt-0.5 text-sm text-fg">{item.title}</div>
-              {item.detail && <div className="mt-0.5 text-[12px] text-muted">{item.detail}</div>}
+              {item.detail && <DetailLine text={item.fullText ?? item.detail} className="mt-0.5 text-[12px] text-muted" />}
             </div>
           </div>
         </div>
@@ -4259,6 +4269,12 @@ function SettingsContent({
   const scanCandidateLimit = normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit);
   const scanOutlierReserve = normalizeMarketScanOutlierReserve(policy.marketScanOutlierReserve, scanCandidateLimit);
   const scanOutlierMax = Math.min(MAX_MARKET_SCAN_OUTLIER_RESERVE, scanCandidateLimit);
+  const settingsScopeTitle = settingsTier === "user" ? "User Settings" : "Account Settings";
+  const settingsScopeDetail = settingsTier === "user"
+    ? "Connections, display, notifications, and data defaults."
+    : activeAccount
+      ? `${activeAccount.label} · ${activeAccount.broker}`
+      : "Operate, safety, tax, and tuning for the selected account.";
 
   function addAllowlist() {
     if (draft.trim() === "") return;
@@ -4310,105 +4326,118 @@ function SettingsContent({
   return (
     <>
       <div className="min-h-[60vh] space-y-4">
-        {/* ── Tier selector ── */}
-        <div className="overflow-x-auto overscroll-x-contain">
-          <Segmented<"user" | "account">
-            value={settingsTier}
-            onChange={(v) => {
-              setSettingsTier(v);
-              setSection(v === "user" ? "connections" : "operate");
-            }}
-            options={[
-              { value: "user", label: "User Settings" },
-              { value: "account", label: "Account Settings" }
-            ]}
-          />
-        </div>
-
-        {/* ── Account picker (account tier only) ── */}
-        {settingsTier === "account" && (() => {
-          const accounts = (snapshot.connectedAccounts ?? []).filter((a) => a.broker !== "test" || a.id === snapshot.policy.connectedAccountId);
-          return (
-            <div className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/45 px-3 py-2.5">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-                <Wallet size={14} />
+        <div className="space-y-2 rounded-lg border border-line bg-surface/55 p-2.5 shadow-[var(--shadow)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                {settingsTier === "user" ? <SettingsIcon size={15} /> : <Wallet size={15} />}
               </span>
-              <span className="text-sm font-medium text-fg">Editing:</span>
-              {accounts.length > 0 ? (
-                <select
-                  className="h-8 max-w-[14rem] rounded-lg border border-line bg-surface/50 px-2 text-sm text-fg outline-none focus:border-accent"
-                  value={activeAccount?.id ?? ""}
-                  onChange={async (e) => {
-                    const id = e.target.value;
-                    if (id) {
-                      try {
-                        await onChangeAccount(id);
-                      } catch {
-                        toast.error("Account switch failed.");
-                      }
-                    }
-                  }}
-                >
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.label}</option>
-                  ))}
-                </select>
-              ) : (
-                <span className="text-xs text-muted">No accounts connected</span>
-              )}
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-fg">{settingsScopeTitle}</div>
+                <div className="truncate text-xs text-faint" title={settingsScopeDetail}>{settingsScopeDetail}</div>
+              </div>
             </div>
-          );
-        })()}
+            <div className="overflow-x-auto overscroll-x-contain">
+              <Segmented<"user" | "account">
+                value={settingsTier}
+                onChange={(v) => {
+                  setSettingsTier(v);
+                  setSection(v === "user" ? "connections" : "operate");
+                }}
+                className="w-max min-w-full bg-bg/60 p-1 sm:min-w-0"
+                buttonClassName="h-8 flex-1 px-3 text-[13px] sm:min-w-36"
+                options={[
+                  { value: "user", label: "User" },
+                  { value: "account", label: "Account" }
+                ]}
+              />
+            </div>
+          </div>
 
-        {/* ── Auto-resume (user tier only) ── */}
-        {settingsTier === "user" && (
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2.5">
-            <span>
-              <span className="block text-sm font-medium text-fg">Resume strategy on server restart</span>
-              <span className="block text-xs text-faint">
-                When enabled, accounts left in &ldquo;active&rdquo; state will auto-resume on server boot. When off (default), every restart requires manually re-arming autonomy.
+          {settingsTier === "account" && (() => {
+            const accounts = (snapshot.connectedAccounts ?? []).filter((a) => a.broker !== "test" || a.id === snapshot.policy.connectedAccountId);
+            return (
+              <div className="flex flex-col gap-2 rounded-lg border border-line/70 bg-bg/35 px-3 py-2.5 sm:flex-row sm:items-center">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                  <Wallet size={14} />
+                </span>
+                <span className="text-sm font-medium text-fg">Editing</span>
+                {accounts.length > 0 ? (
+                  <select
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface/70 px-2 text-sm text-fg outline-none focus:border-accent focus:ring-1 focus:ring-accent sm:max-w-xs"
+                    value={activeAccount?.id ?? ""}
+                    onChange={async (e) => {
+                      const id = e.target.value;
+                      if (id) {
+                        try {
+                          await onChangeAccount(id);
+                        } catch {
+                          toast.error("Account switch failed.");
+                        }
+                      }
+                    }}
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-xs text-muted">No accounts connected</span>
+                )}
+              </div>
+            );
+          })()}
+
+          {settingsTier === "user" && (
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-line/70 bg-bg/35 px-3 py-2.5 max-sm:flex-col max-sm:items-start">
+              <span className="min-w-0 leading-snug">
+                <span className="block text-sm font-medium text-fg">Resume strategy on server restart</span>
+                <span className="block text-xs text-faint">
+                  When enabled, accounts left in &ldquo;active&rdquo; state will auto-resume on server boot. When off (default), every restart requires manually re-arming autonomy.
+                </span>
               </span>
-            </span>
-            <Switch
-              checked={snapshot.autoResumeOnBoot}
-              onChange={async (v) => {
-                try {
-                  const res = await fetch("/api/settings/auto-resume", {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ enabled: v })
-                  });
-                  if (!res.ok) throw new Error("Failed to save setting");
-                  await load({ quiet: true });
-                } catch {
-                  toast.error("Could not save auto-resume setting.");
-                }
-              }}
-            />
-          </label>
-        )}
+              <Switch
+                checked={snapshot.autoResumeOnBoot}
+                onChange={async (v) => {
+                  try {
+                    const res = await fetch("/api/settings/auto-resume", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ enabled: v })
+                    });
+                    if (!res.ok) throw new Error("Failed to save setting");
+                    await load({ quiet: true });
+                  } catch {
+                    toast.error("Could not save auto-resume setting.");
+                  }
+                }}
+              />
+            </label>
+          )}
 
-        {/* ── Section tabs ── */}
-        <div className="overflow-x-auto overscroll-x-contain">
-          <Tabs
-            value={section}
-            onChange={(v) => setSection(v as SettingsSection)}
-            tabs={
-              settingsTier === "user"
-                ? [
-                    { id: "connections", label: "Connections" },
-                    { id: "display", label: "Display" },
-                    { id: "notifications", label: "Notifications" },
-                    { id: "data", label: "Data" }
-                  ]
-                : [
-                    { id: "operate", label: "Operate" },
-                    { id: "risk", label: "Safety" },
-                    { id: "tax", label: "Tax" },
-                    { id: "tuning", label: "Tuning" }
-                  ]
-            }
-          />
+          <div className="overflow-x-auto overscroll-x-contain">
+            <Tabs
+              value={section}
+              onChange={(v) => setSection(v as SettingsSection)}
+              className="w-max min-w-full border-line/70 bg-bg/45 p-0.5 sm:min-w-0"
+              tabClassName="max-sm:flex-1 max-sm:px-2"
+              tabs={
+                settingsTier === "user"
+                  ? [
+                      { id: "connections", label: "Connections" },
+                      { id: "display", label: "Display" },
+                      { id: "notifications", label: "Notifications" },
+                      { id: "data", label: "Data" }
+                    ]
+                  : [
+                      { id: "operate", label: "Operate" },
+                      { id: "risk", label: "Safety" },
+                      { id: "tax", label: "Tax" },
+                      { id: "tuning", label: "Tuning" }
+                    ]
+              }
+            />
+          </div>
         </div>
 
         {settingsTier === "account" && <>
@@ -4773,8 +4802,11 @@ function SettingsContent({
         {section === "connections" && (
           <div className="space-y-4">
             <div className="rounded-lg border border-line bg-surface-2/45 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
+              <div className="flex flex-wrap items-start gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                  <BrainCircuit size={15} />
+                </span>
+                <div className="min-w-0">
                   <div className="text-sm font-semibold text-fg">Strategy Models</div>
                   <p className="mt-1 text-[13px] text-muted">
                     Green: <span className="font-medium text-fg">{policy.llmModel ?? "gpt-5.4-mini"}</span>
@@ -4785,7 +4817,7 @@ function SettingsContent({
                   </p>
                   <p className="mt-1 text-xs text-faint">Edit Green/Red Team behavior in Strategy Studio. Provider keys are saved below.</p>
                 </div>
-                <Button size="sm" variant="ghost" onClick={openStrategyStudio}>
+                <Button size="sm" variant="ghost" className="sm:ml-auto" onClick={openStrategyStudio}>
                   <BrainCircuit size={13} /> Open Strategy Studio
                 </Button>
               </div>
@@ -5122,13 +5154,14 @@ function SettingsContent({
           </Field>
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "provider_degraded"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
-                  <label key={eventType} className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
+                  <label key={eventType} className="flex min-h-10 items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">
                     <input
                       type="checkbox"
+                      className="accent-[var(--accent)]"
                       checked={enabled}
                       onChange={(e) => {
                         const events = e.target.checked

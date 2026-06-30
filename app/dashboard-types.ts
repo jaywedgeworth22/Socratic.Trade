@@ -28,6 +28,7 @@ export interface AuditEvent {
   createdAt: string;
   kind: string;
   payload: unknown;
+  connectedAccountId?: string;
 }
 
 export interface StrategyDecision {

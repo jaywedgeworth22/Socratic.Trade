@@ -901,6 +901,7 @@ export interface StrategyRunRow {
   finishedAt?: string;
   status: "running" | "completed" | "failed";
   summary?: string;
+  connectedAccountId?: string;
   placedCount: number;
   paperCount: number;
   blockedCount: number;

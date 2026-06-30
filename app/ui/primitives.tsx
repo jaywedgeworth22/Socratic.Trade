@@ -171,14 +171,18 @@ export function Switch({
 export function Segmented<T extends string>({
   value,
   onChange,
-  options
+  options,
+  className,
+  buttonClassName
 }: {
   value: T;
   onChange: (v: T) => void;
   options: Array<{ value: T; label: string; tone?: Tone; title?: string }>;
+  className?: string;
+  buttonClassName?: string;
 }) {
   return (
-    <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5">
+    <div className={cn("inline-flex items-center rounded-lg border border-line bg-surface p-0.5", className)}>
       {options.map((opt) => {
         const active = value === opt.value;
         const activeTone =
@@ -191,7 +195,8 @@ export function Segmented<T extends string>({
             onClick={() => onChange(opt.value)}
             className={cn(
               "rounded-md px-3 py-1 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-              active ? activeTone : "text-muted hover:text-fg"
+              active ? activeTone : "text-muted hover:text-fg",
+              buttonClassName
             )}
           >
             {opt.label}
@@ -206,14 +211,18 @@ export function Segmented<T extends string>({
 export function Tabs<T extends string>({
   value,
   onChange,
-  tabs
+  tabs,
+  className,
+  tabClassName
 }: {
   value: T;
   onChange: (v: T) => void;
   tabs: Array<{ id: T; label: string }>;
+  className?: string;
+  tabClassName?: string;
 }) {
   return (
-    <div role="tablist" className="inline-flex items-center gap-1 rounded-xl border border-line bg-surface p-1">
+    <div role="tablist" className={cn("inline-flex items-center gap-1 rounded-xl border border-line bg-surface p-1", className)}>
       {tabs.map((tab, index) => {
         const active = value === tab.id;
         return (
@@ -234,7 +243,8 @@ export function Tabs<T extends string>({
             }}
             className={cn(
               "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors touch-manipulation max-sm:min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-              active ? "bg-surface-3 text-fg shadow-sm" : "text-muted hover:text-fg"
+              active ? "bg-surface-3 text-fg shadow-sm" : "text-muted hover:text-fg",
+              tabClassName
             )}
           >
             {tab.label}

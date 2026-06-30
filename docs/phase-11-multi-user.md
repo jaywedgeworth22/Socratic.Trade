@@ -37,6 +37,11 @@ allowed users map to isolated hashed user IDs only when present in
 - Strategy-run audit lookups for Latest Decisions and Strategy Tuning are scoped
   by `connectedAccountId`, matching the per-account run lock/state model so a
   stale failure from one account does not appear under another selected account.
+- Dashboard Activity/Audit feeds and run history now follow the selected
+  connected account as the default view, while retaining user-wide/system audit
+  rows in account views for context. Rows display the account label when present,
+  so the operator stream stays unified without hiding which account generated a
+  strategy or broker event.
 - Robinhood MCP now has a hardened Streamable HTTP path: the adapter defaults to
   Robinhood's official Trading MCP endpoint, sends `Accept: application/json,
   text/event-stream` plus `MCP-Protocol-Version`, parses both JSON and SSE `data:`

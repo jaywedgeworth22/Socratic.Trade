@@ -251,13 +251,14 @@ export function getLastStrategyRunStartedAt(userId: string = "local", connectedA
   return row?.last ?? null;
 }
 
-export function listStrategyRuns(limit = 20, userId: string = "local"): StrategyRunRow[] {
+export function listStrategyRuns(limit = 20, userId: string = "local", connectedAccountId?: string): StrategyRunRow[] {
   type RawRow = {
     id: string;
     started_at: string;
     finished_at: string | null;
     status: string;
     summary: string | null;
+    connected_account_id: string | null;
     placed_count: number;
     paper_count: number;
     blocked_count: number;
@@ -265,14 +266,13 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
     total_count: number;
   };
 
-  const rows = getDb()
-    .prepare(
-      `SELECT
+  const selectSql = `SELECT
         sr.id,
         sr.started_at,
         sr.finished_at,
         sr.status,
         sr.summary,
+        sr.connected_account_id,
         COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
         COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
         COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
@@ -280,12 +280,13 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
         COUNT(tp.id)                                        AS total_count
        FROM strategy_runs sr
        LEFT JOIN trade_proposals tp ON tp.run_id = sr.id
-       WHERE sr.user_id = ?
+       WHERE sr.user_id = ?${connectedAccountId ? " AND sr.connected_account_id = ?" : ""}
        GROUP BY sr.id
        ORDER BY sr.started_at DESC
-       LIMIT ?`
-    )
-    .all(userId, limit) as RawRow[];
+       LIMIT ?`;
+  const rows = getDb()
+    .prepare(selectSql)
+    .all(...(connectedAccountId ? [userId, connectedAccountId, limit] : [userId, limit])) as RawRow[];
 
   return rows.map((r) => ({
     id: r.id,
@@ -293,6 +294,7 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
     finishedAt: r.finished_at ?? undefined,
     status: r.status as StrategyRunRow["status"],
     summary: r.summary ?? undefined,
+    connectedAccountId: r.connected_account_id ?? undefined,
     placedCount: r.placed_count,
     paperCount: r.paper_count,
     blockedCount: r.blocked_count,
