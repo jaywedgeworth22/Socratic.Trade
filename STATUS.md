@@ -4,6 +4,14 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 — PR #253 review-thread fix: custom model path + next-env
+Branch `cursor/trim-openai-strategy-options-f06c`. Resolved review blockers by
+keeping `next-env.d.ts` on the production build-generated `.next/types` route
+types path, and by making Green/Red "Custom Model ID..." seed `gpt-4o-mini`,
+which is intentionally outside the curated `STRATEGY_MODEL_IDS` list so the
+free-text input is reachable. Verification planned/running on this branch; see
+`docs/rollouts/2026-06-29-claude-green-red-team.md`.
+
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
 integration. Agentic Trading now depends on

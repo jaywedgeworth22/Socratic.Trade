@@ -149,6 +149,7 @@ const STRATEGY_MODEL_IDS = [
   "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest",
   "deepseek-chat", "deepseek-reasoner"
 ];
+const CUSTOM_STRATEGY_MODEL_SEED = "gpt-4o-mini";
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
 type SettingsSection = "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
 type AccountDeletionPreview = {
@@ -3940,7 +3941,7 @@ function StrategyStudio({
               <div className="space-y-2">
                 <select className={inputClass} value={STRATEGY_MODEL_IDS.includes(policy.llmModel ?? "gpt-5.4-mini") ? (policy.llmModel ?? "gpt-5.4-mini") : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
-                    updatePolicy({ llmModel: "gpt-5.4-mini" });
+                    updatePolicy({ llmModel: CUSTOM_STRATEGY_MODEL_SEED });
                   } else {
                     updatePolicy({ llmModel: e.target.value });
                   }
@@ -3991,7 +3992,7 @@ function StrategyStudio({
               <div className="space-y-2">
                 <select className={inputClass} value={!policy.redTeamLlmModel ? "" : STRATEGY_MODEL_IDS.includes(policy.redTeamLlmModel) ? policy.redTeamLlmModel : "custom"} onChange={(e) => {
                   if (e.target.value === "custom") {
-                    updatePolicy({ redTeamLlmModel: "gpt-5.4-mini" });
+                    updatePolicy({ redTeamLlmModel: CUSTOM_STRATEGY_MODEL_SEED });
                   } else {
                     updatePolicy({ redTeamLlmModel: e.target.value || undefined });
                   }

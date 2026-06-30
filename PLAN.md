@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`cursor/trim-openai-strategy-options-f06c` / PR #253):
+> custom model selector review fix — trimmed OpenAI options remain reachable via
+> Custom because the selector now seeds an out-of-list model id, and
+> `next-env.d.ts` is kept on the build-generated route-types path. No roadmap
+> change; see `docs/rollouts/2026-06-29-claude-green-red-team.md`.
+
 > 2026-06-29 (`agent/antigravity`): sticky top bar & slide-over offsets —
 > made the dashboard top bar sticky and offset the SlideOver components (Activity Log, etc.)
 > so they slide in below the top bar instead of overlapping or rendering behind it.

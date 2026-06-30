@@ -94,3 +94,26 @@ No change to the env-gated cross-provider override (`RED_TEAM_LLM_PROVIDER=anthr
 - `summarizeOpenAiRequest` telemetry reports an Anthropic body's `systemChars` as 0
   (the system prompt is a top-level field, not a message role). Cosmetic only; the call
   still traces model/endpoint/transport correctly.
+
+## 2026-06-30 PR #253 Review Follow-up
+
+### Summary
+- Kept `next-env.d.ts` on the production build-generated `./.next/types/routes.d.ts` import so `npm run build` does not dirty the worktree.
+- Fixed the Green/Red "Custom Model ID..." path after trimming the OpenAI dropdown: selecting Custom now seeds `gpt-4o-mini`, an out-of-list id, so the free-text input appears and removed curated models remain reachable.
+
+### Why
+- The branch had committed the dev-server route-types path, which production builds rewrite.
+- The Custom handler was seeding `gpt-5.4-mini`, still a curated option, so the custom-input condition stayed false.
+
+### Files
+- `app/dashboard-client.tsx`
+- `next-env.d.ts`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/rollouts/2026-06-29-claude-green-red-team.md`
+
+### Verification
+- `npm ci` - passed in the temporary PR worktree.
+- `npm run lint` - passed with 0 errors and 257 existing warnings.
+- `npx tsc --noEmit` - passed cleanly.
+- `npm run build` - passed; post-build `git status --short` showed only the intended branch changes, with `next-env.d.ts` kept on `./.next/types/routes.d.ts`.
