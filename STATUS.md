@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Policy route export build fix
+Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270
+failed during `npm run build` because Next 16 route validation rejected
+`app/api/policy/route.ts` exporting `stripNullsDeep` in addition to route
+handlers/config. Moved the helper to `src/lib/policy-null-stripping.ts` and
+updated its unit test to import from the library module, leaving the route with
+only valid route exports. Antigravity strategy-review/test-quote fallback work
+has since landed on `origin/main` as PR #274 and is included via the merged base;
+this branch's own diff is limited to the policy route export fix. Verification
+passed: `npm run lint`, `npx tsc --noEmit`, `npm test`, and `npm run build`; the
+first build retry hit host
+`ENOSPC`, then passed after clearing generated/cache output. See
+`docs/rollouts/2026-06-30-policy-route-export-fix.md`.
+
 ## 2026-06-30 - Production merge sweep for pending settings, source labels, and order lifecycle work
 Branch `codex/prod-merge-sweep-20260630`. Built a production integration branch
 from `origin/main`, folded in the still-unmerged Settings scope/help overhaul
