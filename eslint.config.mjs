@@ -21,6 +21,7 @@ export default [
     // Generated / vendored / data output that should not be linted.
     ignores: [
       ".next/**",
+      "**/.next/**",
       "out/**",
       "build/**",
       "coverage/**",
@@ -28,6 +29,11 @@ export default [
       "test-results/**",
       "next-env.d.ts",
       "data/**",
+      ".claude/**",
+      ".agents/**",
+      ".tools/**",
+      "**/worktrees/**",
+      "scratch/**",
     ],
   },
   {

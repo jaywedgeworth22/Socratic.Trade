@@ -4,6 +4,19 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 — PR #237 review-thread fix: Alpaca shared market-data fallback
+Branch `fix/merge-pr-205`. Resolved review blockers by making
+`resolveAlpacaMarketData` fall back to the operator/local connected Alpaca
+account for read-only shared/background snapshot market data, scanning alternate
+connected Alpaca accounts before falling back, while preserving a tenant's
+key-only Alpaca credential for the news tier when no shared fallback is
+configured, and preserving operator key-only connected credentials for shared
+news enrichment. Trading credential resolution remains per-user/fail-closed.
+Also updated `eslint.config.mjs` ignores list to skip `.claude/`, `.agents/`, `.tools/`,
+`**/worktrees/**`, and `scratch/` folders to prevent local verification linting errors.
+Verification: `npm test`, `npx tsc --noEmit`, and `npm run lint`.
+See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md` and
+`docs/rollouts/2026-06-30-ci-worktree-eslint-ignores.md`.
 ## 2026-06-30 — Legacy notification events bridge to direct delivery
 Branch `codex/notification-direct-bridge`. Legacy `sendNotification(...)` events
 such as fills, blocks, pending approvals, kill-switches, run failures, and
@@ -370,6 +383,13 @@ no disliked wording. `npx tsc --noEmit`, `npm test` (153 files / 1,485 tests),
 and `npm run build` are green. See
 `docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
 
+## 2026-06-28 — Fix: Robinhood MCP OAuth Dynamic Re-registration on Hostname Change
+Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Robinhood OAuth Dynamic Registration:** fixed a redirection error page on `robinhood.com/oauth/error` ("Uh oh! Something's gone wrong") when reconnecting a Robinhood account in a different workspace preview environment (e.g. `antigravity.jays.services`) than where the client was originally registered (e.g. `trading.jays.services`). Dynamically registered OAuth client configurations now store and enforce the `redirectUri` they were created with. If the requested `redirectUri` differs from the cached registration, `getOrRegisterClient` dynamically registers a new client for the current environment.
+Verify: tsc ✓ · 1446/1446 ✓ · build ✓. See `docs/rollouts/2026-06-28-robinhood-mcp-oauth-dynamic-reregistration.md`.
+
+## 2026-06-27 — Fix: Alpaca key fallback + FMP premium warnings
+Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Alpaca key resolution:** updated `resolveAlpacaMarketData` to look up credentials in the `connected_accounts` table before falling back to `user_api_keys` / env. This resolves the persistent HTTP 401 unauthorized failures for the user-scoped `alpaca-news` and `alpaca-snapshot` data enrichment providers by using their actual configured broker keys. (2) **FMP warnings:** disabled health logging on optional/premium endpoints (`insider-trading`, `senate-trading`, `price-target-consensus`) returning HTTP 403 on standard tiers, preventing false-positive yellow warning dots on the dashboard connections health status page.
+Verify: tsc ✓ · 1255/1255 ✓ · build ✓. See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
 ## 2026-06-27 — Congress.Trade PIT readiness markers fail closed
 Branch `codex/congress-pit-readiness-gate`. Follow-up to App A PR #96: the App B
 Congress score evaluator now honors App A response-level `validationReadiness`
@@ -865,6 +885,7 @@ worked as the default push). (3) **Ops (not code):** added Twilio to Infisical �
 available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · all 6 `/model-logos/*.svg` serve
 200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
 for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
+>>>>>>> origin/main
 
 >>>>>>> origin/main
 ## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
