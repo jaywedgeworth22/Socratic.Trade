@@ -1,4 +1,5 @@
 import type { CongressAnalytics, CongressSignal } from "./web-sources";
+export { WINDOW_PRESETS } from "@jaywedgeworth22/congress-trading-shared";
 
 export type CongressScoreDirection = "BUY" | "SELL" | "NEUTRAL";
 
