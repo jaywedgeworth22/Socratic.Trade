@@ -1,7 +1,7 @@
 /**
  * Recursively delete keys whose value is `null` from a policy object (in place), so a client clearing an
- * optional field (sent as `null` to survive JSON) becomes an absent key, meaning the guard is off/default.
- * Skips arrays (for example permittedOrderTypes and enabledEvents never carry intentional nulls).
+ * optional field (sent as `null` to survive JSON) becomes an ABSENT key: the guard is off / default.
+ * Skips arrays, which never carry intentional nulls for current policy fields.
  */
 export function stripNullsDeep(obj: Record<string, unknown>): void {
   for (const key of Object.keys(obj)) {
