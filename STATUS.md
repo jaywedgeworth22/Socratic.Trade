@@ -4,6 +4,26 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - PR #267 codex-autofix: account-scoped model migration
+Branch `codex/settings-help-overhaul`. Addressed the two P2 review threads from
+chatgpt-codex-connector on PR #267. Both flagged that moving
+`llmModel`/`redTeamLlmModel`/`llmReasoningEffort` from user-level to
+account-scoped relied on a transient runtime seed: (1) the first per-account save
+rewrites `user_settings.policy` without the model fields, stranding not-yet-saved
+accounts on defaults; (2) a stale model a row picked up from earlier lazy seeding
+could resurrect a value the user has since cleared globally. Fixed with a
+one-time versioned migration (v7, `backfillAccountScopedStrategyModels`) that
+backfills the single legacy user-level value into every `account_strategy_state`
+row (overwriting stale row copies; dropping fields the user never overrode) then
+strips them from `user_settings.policy`. Added
+`test/account-scoped-models-migration.test.ts`. Verification: `npx tsc --noEmit`
+type-clean for the change, and the new migration suite + existing
+`test/per-account-policy-isolation.test.ts` pass (13 tests). NOTE: full
+`npm test`/`npm run build` could not run in the autofix env because the private
+`@jaywedgeworth22/congress-trading-shared` git dep is inaccessible to the bot
+token (404); the `verify` CI gate runs the authoritative trio on push. See
+`docs/rollouts/2026-06-30-codex-autofix-account-scoped-models.md`.
+
 ## 2026-06-30 - Strategy review diff clarity
 Branch `codex/strategy-review-diff`. Strategy Studio and the Strategy tab now
 render LLM tuning proposals as explicit before/after review data: prompt changes
