@@ -1,7 +1,9 @@
-import { audit, getPolicy, insertNotificationEvent } from "./db";
+import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent } from "./db";
+import { notify } from "./notify";
 import type { NotificationEvent, NotificationEventType, TradingPolicy } from "./types";
 
 type Fetcher = typeof fetch;
+const DIRECT_NOTIFY_ALREADY_SENT = new Set<NotificationEventType>(["price_alert", "provider_degraded"]);
 
 export async function sendNotification(
   input: {
@@ -19,6 +21,8 @@ export async function sendNotification(
   if (!settings.enabledEvents.includes(input.type)) {
     return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
   }
+
+  await sendDirectNotification(input, userId, { skipWebhook: !!webhookUrl });
 
   if (!webhookUrl) {
     return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId, policy.connectedAccountId);
@@ -54,6 +58,83 @@ export async function sendNotification(
     clearTimeout(timeout);
     return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId, policy.connectedAccountId);
   }
+}
+
+async function sendDirectNotification(
+  input: { type: NotificationEventType; title: string; payload: unknown },
+  userId: string,
+  options: { skipWebhook?: boolean } = {}
+): Promise<void> {
+  if (DIRECT_NOTIFY_ALREADY_SENT.has(input.type)) return;
+  try {
+    const prefs = options.skipWebhook
+      ? (() => {
+          const current = getNotifyPrefs(userId);
+          return { ...current, channels: current.channels.filter((channel) => channel !== "webhook") };
+        })()
+      : undefined;
+    await notify(
+      userId,
+      {
+        title: input.title,
+        body: directNotificationBody(input),
+        kind: input.type,
+        data: input.payload
+      },
+      prefs ? { prefs } : {}
+    );
+  } catch (error) {
+    audit(
+      "notify.bridge.error",
+      {
+        userId,
+        type: input.type,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      userId
+    );
+  }
+}
+
+function directNotificationBody(input: { type: NotificationEventType; title: string; payload: unknown }): string {
+  const { type } = input;
+  const payload = asRecord(input.payload);
+  switch (type) {
+    case "fill": {
+      const fill = asRecord(payload.fill);
+      if (!fill) return input.title;
+      const side = fill.side ? String(fill.side).toUpperCase() : "ORDER";
+      const status = fill.status ? ` ${String(fill.status)}` : "";
+      const quantity = fill.quantity != null ? ` ${fill.quantity}` : "";
+      const symbol = fill.symbol ? ` ${fill.symbol}` : "";
+      const notional = Number.isFinite(Number(fill.notional)) ? ` ($${Number(fill.notional).toFixed(2)})` : "";
+      return `${side}${quantity}${symbol}${status}${notional}`.trim();
+    }
+    case "block": {
+      const decision = asRecord(payload.decision);
+      const rawReasons = Array.isArray(decision?.reasons) ? decision.reasons : payload.reason ? [payload.reason] : [];
+      const reasons = rawReasons.map(String);
+      return reasons.length > 0 ? reasons.join("\n") : input.title;
+    }
+    case "pending_approval": {
+      const proposal = asRecord(payload.proposal);
+      if (!proposal) return input.title;
+      const side = proposal.side ? String(proposal.side).toUpperCase() : "ORDER";
+      const symbol = proposal.symbol ? ` ${proposal.symbol}` : "";
+      return `Approval needed for ${side}${symbol}`.trim();
+    }
+    case "kill_switch":
+    case "run_failed":
+      return String(payload.summary ?? input.title);
+    case "proposal_withdrawn":
+      return String(payload.reason ?? input.title);
+    default:
+      return input.title;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function formatDiscordPayload(input: {
