@@ -206,6 +206,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   ensureTestAccount(userId);
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
+  const connectedAccounts = listConnectedAccounts(userId);
+  const accountLabelById = Object.fromEntries(connectedAccounts.map((account) => [account.id, account.label || account.broker]));
   const gateway = getBrokerGateway(policy, userId);
   let accounts: BrokerageAccount[] = [];
   let brokerAccountReadError: string | undefined;
@@ -236,7 +238,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const liveAccountNumbers = new Set(liveAccounts.map((account) => account.accountNumber));
   let storedBackfillCount = 0;
   let selectedAccountWasBackfilled = false;
-  for (const connected of listConnectedAccounts(userId)) {
+  for (const connected of connectedAccounts) {
     if (!connected.accountNumber || liveAccountNumbers.has(connected.accountNumber)) continue;
     storedBackfillCount += 1;
     if (connected.id === policy.connectedAccountId || connected.accountNumber === policy.accountNumber) {
@@ -371,7 +373,9 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;
-  const audit = listAudit(100, userId);
+  const audit = policy.connectedAccountId
+    ? listAudit(100, userId, policy.connectedAccountId, true)
+    : listAudit(100, userId);
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,
     livePositions: positions,
@@ -383,6 +387,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const auditFeed = buildAuditFeed({
     audit,
     symbolMetaBySymbol,
+    accountLabelById,
     getProposalById: (proposalId) => {
       const proposal = getProposal(proposalId, userId);
       return proposal ? { proposal: proposal.proposal } : undefined;
@@ -443,6 +448,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     fills: accountNumber ? listFillEvents(accountNumber, undefined, 500, userId) : [],
     orders,
     symbolMetaBySymbol,
+    accountLabelById,
     getProposalById: (proposalId) => {
       const proposal = getProposal(proposalId, userId);
       return proposal ? { proposal: proposal.proposal } : undefined;
@@ -452,7 +458,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     id: event.id,
     createdAt: event.createdAt,
     kind: event.kind,
-    payload: null
+    payload: null,
+    connectedAccountId: event.connectedAccountId
   }));
 
   return {
@@ -483,10 +490,10 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     audit: clientAudit,
     auditFeed,
     unifiedFeed,
-    connectedAccounts: listConnectedAccounts(userId),
+    connectedAccounts,
     latestStrategyRun,
     dailyStats,
-    strategyRuns: listStrategyRuns(15, userId),
+    strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
     pendingProposals: pendingProposalsWithPerf,
     recentProposals: recentProposalsWithPerf,
     performance,

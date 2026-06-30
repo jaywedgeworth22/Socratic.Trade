@@ -12,6 +12,12 @@ filling the missing pieces.
 > `notification_events` feed and avoiding duplicate direct webhook posts when a
 > policy webhook is configured. No roadmap change; see
 > `docs/rollouts/2026-06-30-notification-direct-bridge.md`.
+> 2026-06-30 (`codex/audit-log-strategy-ui`): Robinhood MCP quote params,
+> LLM-audited strategy steps, account-filtered Activity/Audit feeds, and Settings
+> split polish. The 01:33 test-account run failed to get Robinhood quotes because
+> `get_equity_quotes` was called with unsupported `account_number`; the call now
+> sends only `symbols`, with a regression test. No roadmap change; see
+> `docs/rollouts/2026-06-30-audit-log-strategy-ui.md`.
 
 > 2026-06-30 (`cursor/trim-openai-strategy-options-f06c` / PR #253):
 > custom model selector review fix — trimmed OpenAI options remain reachable via

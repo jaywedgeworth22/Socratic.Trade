@@ -32,6 +32,14 @@
 > use the fixed slide-over header for logo/ticker/company/sector/price, close-only
 > history renders as a line chart, and Macro header helper copy lives inside the
 > same padded header block as the title.
+>
+> 2026-06-30: Activity/Audit feed diagnostics now favor plain-language summaries
+> over raw JSON for strategy runs, signal snapshots, candidate skips, rationale
+> diversity, and recoverable issues. Rows keep the detail to one line but set a
+> full hover title so long text is inspectable without opening developer tools.
+> Strategy LLM steps are shown with label/model/provider/status, and Settings uses
+> a clearer User/Account scope header, account picker, tab shell, and denser
+> notification/model controls.
 
 
 This phase restructures the dashboard from a long vertical page into a
@@ -117,6 +125,9 @@ As of 2026-06-27, recoverable broker/data fallbacks that would otherwise only
 hit `console.warn` write throttled `recoverable_issue` audit rows and render in
 Activity. This keeps resilience for transient broker/provider misses while
 leaving a visible trail for later correction.
+As of 2026-06-30, Robinhood quote-parameter validation errors are summarized as
+plain broker-request issues in Activity instead of exposing schema-validator JSON
+as the primary text.
 
 ## Accessibility
 
