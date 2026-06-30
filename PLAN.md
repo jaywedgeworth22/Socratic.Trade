@@ -5,6 +5,11 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`codex/test-account-readiness`): Test/local readiness no longer
+> blocks Start on dashboard portfolio display read errors. Broker-backed
+> Paper/Brokerage modes still require account and portfolio reads. No roadmap
+> change; see `docs/rollouts/2026-06-30-test-account-readiness.md`.
+>
 > 2026-06-30 (`cursor/trim-openai-strategy-options-f06c` / PR #253):
 > custom model selector review fix — trimmed OpenAI options remain reachable via
 > Custom because the selector now seeds an out-of-list model id, and

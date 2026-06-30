@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Test account readiness ignores local portfolio display errors
+Branch `codex/test-account-readiness`. Fixed the Test/local Start blocker where a
+recoverable dashboard portfolio read issue produced `Test account data check
+failed. Open Accounts and reconnect or fix credentials.` Test/local mode does not
+submit broker orders or depend on broker credentials, so account readiness now
+returns ready for selected Test/local accounts even when the portfolio panel had a
+transient display read error; broker-backed Paper/Brokerage accounts still block
+on account/portfolio read failures. Added a regression in
+`test/dashboard-agentic-fallback.test.ts`. Verification: `npm run lint` (0
+errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1539
+tests), and `npm run build` all pass.
+
 ## 2026-06-30 — PR #253 review-thread fix: custom model path + next-env
 Branch `cursor/trim-openai-strategy-options-f06c`. Resolved review blockers by
 keeping `next-env.d.ts` on the production build-generated `.next/types` route
