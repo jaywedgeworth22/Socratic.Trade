@@ -1161,11 +1161,25 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
   const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(policy, portfolio));
-  const openingSizingCap = Math.min(openingCapacity.cap, policyHeadroomCap);
+  const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
+  // When marketable-limit entries are enabled, this deterministic dollar market order is later
+  // converted to a whole-share LIMIT priced through the quote (ask×(1+bufferBps)); that conversion can
+  // push the realized notional slightly above a dollar-routed size. Reserve that buffer in the cap now
+  // so deterministic sizing never produces an order the later policy review rejects for exceeding the
+  // per-order headroom. Only shrinks the cap when the flag is on, so dollar-routed sizing is
+  // unchanged otherwise. (Review: PR #278.)
+  const marketableLimitBufferFactor =
+    policy.marketableLimitEntries === true && (policy.permittedOrderTypes?.includes("limit") ?? true)
+      ? 1 + (policy.tuning?.marketableLimitBufferBps ?? 15) / 10_000
+      : 1;
+  const openingSizingCap = marketableLimitBufferFactor > 1 ? Math.floor(rawOpeningCap / marketableLimitBufferFactor) : rawOpeningCap;
   const openingSizingReason = Number.isFinite(policyHeadroomCap) && policyHeadroomCap < openingCapacity.cap
     ? `per-order cap, with 5% execution buffer`
     : openingCapacity.reason;
-  let effectiveOpeningCap = openingCapacity.cap;
+  // The bracket-minimum raise below must respect the SAME buffered/per-order cap, not the raw risk
+  // capacity — otherwise a one-share bracket raise can lift the order above the headroom cap and the
+  // later policy review rejects it instead of skipping the broker bracket. (Review: PR #278.)
+  let effectiveOpeningCap = openingSizingCap;
   const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
   const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * boundedMultiplier);
   const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
@@ -1199,7 +1213,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
       bracketMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(minNotional)} so Alpaca can place a native whole-share bracket at the reference price.`;
       targetNotional = minNotional;
     } else {
-      bracketMinNote = `\n\n[Sizing] Native Alpaca bracket requires about ${formatWholeDollars(minNotional)} for one whole share at the reference price, but risk capacity is ${formatWholeDollars(effectiveOpeningCap)}; broker bracket will be skipped for this sub-share order.`;
+      bracketMinNote = `\n\n[Sizing] Native Alpaca bracket requires about ${formatWholeDollars(minNotional)} for one whole share at the reference price, but available opening capacity is ${formatWholeDollars(effectiveOpeningCap)}; broker bracket will be skipped for this sub-share order.`;
     }
   }
 

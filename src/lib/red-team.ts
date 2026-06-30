@@ -1,7 +1,7 @@
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
@@ -119,7 +119,11 @@ Respond with a JSON object containing:
       schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's accept/reject verdict." },
       openAiJsonObject: true,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate,
-      reasoningEffort: policy.llmReasoningEffort
+      // Route the required Red Team debate through the SAME interactive-reasoning clamp as the
+      // Green/Bear proposal steps (strategy.ts). Without this, a stored gpt-5.5/high config sends
+      // high reasoning on the debate call and can hit the very timeout/run-lock this guardrail exists
+      // to prevent. (Review: PR #278.)
+      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort)
     }
   );
 

@@ -67,6 +67,31 @@ order over the cap.
   Deleted this worktree's generated `.next` only, reran `npm run build`, and it
   passed.
 
+## Review follow-up (2026-06-30, Claude)
+
+Addressed the three Codex P2 review threads on PR #278:
+
+- **Clamp high reasoning on the required Red Team debate** — `red-team.ts` built its
+  debate request with `policy.llmReasoningEffort` directly, bypassing the
+  `interactiveStrategyReasoningEffort` clamp the Green/Bear steps use. A stored
+  `gpt-5.5`/`high` config could therefore still send `high` reasoning on the debate
+  call and hit the exact timeout/run-lock this PR exists to prevent. Now routes the
+  debate's `reasoningEffort` through the same clamp (`src/lib/red-team.ts`).
+- **Apply the per-order/headroom cap to bracket-minimum raises** — `applyDeterministicSizing`
+  raised one-share Alpaca brackets against the unbuffered `openingCapacity.cap`, so a
+  raise could exceed the 5% headroom cap and the later policy review rejected the
+  proposal instead of skipping the broker bracket. `effectiveOpeningCap` now starts at
+  the buffered `openingSizingCap` (`src/lib/strategy.ts`).
+- **Reserve the marketable-limit buffer before sizing** — when `marketableLimitEntries`
+  is enabled, the dollar market order is later converted to a whole-share limit priced
+  through the quote (`ask × (1 + bufferBps)`); that could push realized notional past
+  the cap computed pre-conversion. Sizing now divides the cap by the marketable-limit
+  buffer factor (only when the flag is on, so dollar-routed sizing is unchanged).
+
+Verification: `npx tsc --noEmit` pass; targeted Vitest (antigravity-cheap-wins,
+llm-request, conviction-size-cap, policy, chat-draft-policy, policy-notification-events)
+6 files / 78 tests pass. Full `verify` CI (tsc → test → build) gates the merge.
+
 ## Follow-ups
 
 - Consider a per-context timeout knob only if a future queued/background strategy
