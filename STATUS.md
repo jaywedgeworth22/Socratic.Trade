@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Market Scan source label cleanup
+Branch `codex/market-scan-source-labels`. Latest Decisions and Market Scan source
+subtitles now use one shared source-list formatter that aliases `congress`,
+`congress.trade`, and repeated Congress.Trade segments to a single
+`Congress.Trade` label and folds `yahoo-finance-delayed-quotes` into
+`Yahoo Finance`. This is a display/provenance cleanup only; provider execution
+and historical scan rows are unchanged. Verification: focused
+`npm test -- dashboard-ui`, `npm run lint` (0 errors, 256 existing warnings),
+`npx tsc --noEmit`, `npm test` (161 files / 1560 tests), and `npm run build`
+pass. See `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+
 ## 2026-06-30 - Strategy review diff clarity
 Branch `codex/strategy-review-diff`. Strategy Studio and the Strategy tab now
 render LLM tuning proposals as explicit before/after review data: prompt changes

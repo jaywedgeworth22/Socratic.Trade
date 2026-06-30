@@ -210,7 +210,10 @@ across panels, feeds, popovers, or status chips.
   notable web/technical signals may replace lower-ranked plain candidates inside
   that cap. The Market Scan tab header includes a gauge button that opens
   Settings directly to this Data section, and the scan subtitle shows returned
-  candidates against the active cap.
+  candidates against the active cap. Source subtitles are formatted through the
+  shared dashboard helper so aliased providers dedupe before display, including
+  `congress`/`congress.trade` to `Congress.Trade` and delayed Yahoo variants to
+  `Yahoo Finance`.
 - Settings → Connections owns provider/API keys and connection status context.
   Editable Green/Red Team model behavior belongs in Strategy Studio; Connections
   may show a read-only model summary and a link to Studio.

@@ -67,6 +67,12 @@ shared cache fill arrives for the same symbol before `MARKET_DATA_PENDING_TTL_MS
 expires, prior requesters refresh from cache without spending another user's key.
 Private user-key fills do not fulfill other users' pending misses.
 
+**Source-list presentation (2026-06-30):** dashboard source subtitles normalize
+known aliases at display time before deduping labels. Historical scan strings can
+contain both `congress` and `congress.trade`, or both `yahoo-finance` and
+`yahoo-finance-delayed-quotes`; Latest Decisions and Market Scan show those as a
+single `Congress.Trade` and `Yahoo Finance` label respectively.
+
 **Massive VWAP surface (2026-06-19):** when Massive grouped daily bars are
 available, `/api/scan` merges source-provided `vw` into scan rows as
 `MarketQuote.vwap` / `MarketQuoteSummary.vwap`, attributes it as
