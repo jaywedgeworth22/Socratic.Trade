@@ -22,7 +22,6 @@ export default [
     ignores: [
       ".next/**",
       "**/.next/**",
-      "**/worktrees/**",
       "out/**",
       "build/**",
       "coverage/**",
@@ -30,6 +29,11 @@ export default [
       "test-results/**",
       "next-env.d.ts",
       "data/**",
+      ".claude/**",
+      ".agents/**",
+      ".tools/**",
+      "**/worktrees/**",
+      "scratch/**",
     ],
   },
   {
