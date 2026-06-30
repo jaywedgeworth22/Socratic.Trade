@@ -19,7 +19,8 @@ import {
   normalizeMarketScanCandidateLimit,
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
-import type { NotificationEventType, TradingPolicy, IndexUniverse } from "@/lib/types";
+import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
+import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -231,5 +232,5 @@ function normalizeSectorCaps(value: unknown): Record<string, number> {
 }
 
 function isNotificationEvent(value: unknown): value is NotificationEventType {
-  return ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn"].includes(String(value));
+  return NOTIFICATION_EVENT_TYPES.includes(value as NotificationEventType);
 }

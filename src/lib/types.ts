@@ -27,7 +27,17 @@ export type LlmReasoningEffort = "low" | "medium" | "high";
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
 export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
-export type NotificationEventType = "fill" | "block" | "run_failed" | "pending_approval" | "kill_switch" | "price_alert" | "proposal_withdrawn" | "provider_degraded";
+export const NOTIFICATION_EVENT_TYPES = [
+  "fill",
+  "block",
+  "run_failed",
+  "pending_approval",
+  "kill_switch",
+  "price_alert",
+  "proposal_withdrawn",
+  "provider_degraded"
+] as const;
+export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
 export type PriceAlertStatus = "armed" | "triggered";
 
