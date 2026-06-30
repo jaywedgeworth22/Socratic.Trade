@@ -1,3 +1,4 @@
+import { NOTIFICATION_EVENT_TYPES } from "./types";
 import type { NotificationSettings, RiskRules, ScoringWeights, TaxSettings, TradingPolicy } from "./types";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT, DEFAULT_MARKET_SCAN_OUTLIER_RESERVE } from "./scan-settings";
 
@@ -28,7 +29,7 @@ export const DEFAULT_RISK_RULES: RiskRules = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   webhookUrl: "",
-  enabledEvents: ["fill", "block", "run_failed", "pending_approval", "kill_switch", "price_alert", "proposal_withdrawn", "provider_degraded"]
+  enabledEvents: [...NOTIFICATION_EVENT_TYPES]
 };
 
 export const DEFAULT_POLICY: TradingPolicy = {

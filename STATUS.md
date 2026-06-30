@@ -51,6 +51,7 @@ types path, and by making Green/Red "Custom Model ID..." seed `gpt-4o-mini`,
 which is intentionally outside the curated `STRATEGY_MODEL_IDS` list so the
 free-text input is reachable. Verification planned/running on this branch; see
 `docs/rollouts/2026-06-29-claude-green-red-team.md`.
+
 ## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
 Branch `feat/tiered-settings`. Resolved the remaining review blocker by
 stripping user-level policy fields out of legacy/stale `account_strategy_state`
@@ -59,6 +60,17 @@ policy blobs before applying the current user-level overlay in `getPolicy` and
 inactive account row or get written back on a later account update. Verification
 planned/running on this branch; see `docs/rollouts/2026-06-29-tiered-settings.md`.
 
+## 2026-06-30 - Provider Degraded notification checkbox fix
+Branch `codex/provider-degraded-checkbox`. Fixed the Settings -> Notifications
+`provider_degraded` checkbox snapping back off after selection: the policy API was
+filtering `enabledEvents` through a stale hard-coded runtime list that omitted
+`provider_degraded`. Notification event validation now uses the shared runtime
+event list from `src/lib/types.ts`, defaults derive from the same list, and a
+route regression test covers saving `provider_degraded` while rejecting unknown
+events. Verification: `npx vitest run test/policy-notification-events.test.ts`,
+`npm run lint` (0 errors, 256 existing warnings), `npx tsc --noEmit`, `npm test`
+(160 files / 1539 tests), and `npm run build` all pass. See
+`docs/rollouts/2026-06-30-provider-degraded-notification-setting.md`.
 ## 2026-06-30 — Browser tab title correction
 Branch `codex/browser-title`. Root metadata and the welcome route now set the
 document title to exactly `Trading Dashboard`; the welcome route uses an
