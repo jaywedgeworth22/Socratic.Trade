@@ -304,9 +304,12 @@ function formatAuditEvent(
     };
   }
 
+  const serializedPayload = serializeAuditPayload(payload);
+  const detail = genericAuditDetail(payload) ?? serializedPayload ?? "Event recorded";
   return {
     title: humanizeKind(kind),
-    detail: genericAuditDetail(payload) ?? "Event recorded"
+    detail,
+    fullText: serializedPayload ?? detail
   };
 }
 
@@ -429,6 +432,15 @@ function genericAuditDetail(payload: Record<string, unknown>): string | undefine
     count !== undefined ? `Count ${count}` : undefined,
     runId ? `Run ${runId}` : undefined
   ]);
+}
+
+function serializeAuditPayload(payload: Record<string, unknown>): string | undefined {
+  if (Object.keys(payload).length === 0) return undefined;
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return undefined;
+  }
 }
 
 function plainRecoverableMessage(message: string): string {

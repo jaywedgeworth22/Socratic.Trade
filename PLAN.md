@@ -32,7 +32,8 @@ filling the missing pieces.
 > LLM-audited strategy steps, account-filtered Activity/Audit feeds, and Settings
 > split polish. The 01:33 test-account run failed to get Robinhood quotes because
 > `get_equity_quotes` was called with unsupported `account_number`; the call now
-> sends only `symbols`, with a regression test. No roadmap change; see
+> sends only `symbols`, with a regression test. Generic audit rows preserve JSON
+> fallback details when no compact summary field exists. No roadmap change; see
 > `docs/rollouts/2026-06-30-audit-log-strategy-ui.md`.
 
 >

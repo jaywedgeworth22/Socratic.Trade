@@ -55,7 +55,8 @@ unsupported `account_number` argument to a tool that accepts only `symbols`.
 Fixed the quote call and added a regression. Strategy runs now emit `llm_step`
 audit rows with provider/model/transport/key-source context, and the Activity/Audit
 feeds render strategy diagnostics in plain text with full-line hover titles instead
-of clipped JSON. The dashboard scopes audit/run history to the selected account
+of clipped JSON while preserving serialized payload fallback text for generic
+audit rows without compact summary fields. The dashboard scopes audit/run history to the selected account
 while including user-wide system rows in account views. Settings keeps the working
 User vs Account split but uses a clearer scope header, account picker, tabs, and
 notification/model polish. Verification: `npm run lint` (0 errors, existing

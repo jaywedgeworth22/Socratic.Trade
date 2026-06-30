@@ -6,6 +6,7 @@
 - Added a regression proving `get_equity_quotes` is called with only `symbols`.
 - Added strategy LLM step audit rows for Bull/Green and Bear/Red model calls, including provider, model, transport, key source, status, and proposal count.
 - Reworked Activity/Audit formatting so strategy diagnostics render as short plain-language summaries with full hover text instead of clipped raw JSON.
+- Preserved serialized payload fallback text for generic audit kinds that do not have a compact summary field, keeping rows like notification preference updates diagnosable instead of rendering only `Event recorded`.
 - Scoped dashboard audit/run history to the selected connected account while retaining user-wide/system audit rows in account views.
 - Polished the Settings modal split between User and Account scope with a clearer header, account picker, tabs, auto-resume row, model card, and notification grid.
 
@@ -48,6 +49,9 @@ global settings and scheduler events.
 - `npx tsc --noEmit` - passed.
 - `npm test` - passed, 159 files / 1539 tests.
 - `npm run build` - passed. Next emitted the existing middleware-to-proxy deprecation warning.
+- `npm test -- test/dashboard-feed.test.ts -t "preserves generic audit payload details when no compact field is available"` - passed after the final Codex review-thread fix.
+- `npm test -- test/dashboard-feed.test.ts` - passed, 14 tests.
+- `npx tsc --noEmit --pretty false` - passed after the final Codex review-thread fix.
 
 ## Follow-ups
 
