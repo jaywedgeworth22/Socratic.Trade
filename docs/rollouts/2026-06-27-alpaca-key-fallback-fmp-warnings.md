@@ -28,6 +28,7 @@ The following commands were run in the worktree root:
 - Required connected-account and stored-user Alpaca market-data credentials to include both key and secret before they suppress the operator fallback, preserving the real-time snapshot tier when a tenant only has an OAuth/API-key-only row.
 - Preserved key-only tenant Alpaca credentials as the final user fallback when no complete shared/operator credential exists, so the Alpaca news tier can still use bearer-token auth.
 - Scanned ranked alternate connected Alpaca accounts before falling back when the preferred connected account is key-only.
+- Preserved key-only operator/local connected Alpaca credentials for shared background/tenant news enrichment when no complete shared credential exists.
 - Left trading resolution unchanged: `resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant")` still fails closed instead of borrowing the operator's account.
 
 ### Why
@@ -42,9 +43,9 @@ The following commands were run in the worktree root:
 
 ### Verification
 - `npm ci` - passed in the temporary PR worktree.
-- `npm test -- test/key-resolution-tiering.test.ts` - passed, 19 tests after the alternate-connected-account scan follow-up.
-- `npx tsc --noEmit` - passed cleanly after the alternate-connected-account scan follow-up.
-- `npm run lint` - passed with 0 errors and 256 existing warnings.
+- `npm test -- test/key-resolution-tiering.test.ts` - passed, 20 tests after the operator key-only shared-news follow-up.
+- `npx tsc --noEmit` - passed cleanly after the operator key-only shared-news follow-up.
+- `npm run lint` - passed with 0 errors and 256 existing warnings after the operator key-only shared-news follow-up.
 
 ### Follow-ups
 - Full PR verify/smoke/gitleaks will rerun on GitHub after this branch is pushed.

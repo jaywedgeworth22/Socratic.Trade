@@ -10,7 +10,8 @@ Branch `fix/merge-pr-205`. Resolved review blockers by making
 account for read-only shared/background snapshot market data, scanning alternate
 connected Alpaca accounts before falling back, while preserving a tenant's
 key-only Alpaca credential for the news tier when no shared fallback is
-configured. Trading credential resolution remains per-user/fail-closed.
+configured, and preserving operator key-only connected credentials for shared
+news enrichment. Trading credential resolution remains per-user/fail-closed.
 Verification: `npm test -- test/key-resolution-tiering.test.ts`,
 `npx tsc --noEmit`, and `npm run lint`.
 See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.

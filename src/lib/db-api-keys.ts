@@ -398,11 +398,13 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
 
   const localConnected = resolveConnectedAlpacaMarketData(LOCAL_USER);
   if (localConnected) return { ...localConnected, source: "env" };
+  const localConnectedKeyOnly = resolveConnectedAlpacaMarketData(LOCAL_USER, false);
 
   const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
   const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
   if (opKey && opSecret) return { apiKey: opKey, secretKey: opSecret, source: "env" };
   if (userKeyOnly) return userKeyOnly;
+  if (localConnectedKeyOnly) return { ...localConnectedKeyOnly, source: "env" };
   if (opKey) return { apiKey: opKey, source: "env" };
   return { source: "none" };
 }

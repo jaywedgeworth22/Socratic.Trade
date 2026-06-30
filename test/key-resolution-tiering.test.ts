@@ -370,6 +370,31 @@ describe("Alpaca market-data credential (shared data, per-user trading)", () => 
     });
   });
 
+  it("preserves an operator key-only connected Alpaca credential for shared news enrichment", async () => {
+    const { resolveAlpacaMarketData, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: "local-oauth-only",
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-LOCAL",
+      label: "Operator OAuth",
+      apiKey: "local-oauth-token",
+      isActive: true
+    });
+
+    expect(resolveAlpacaMarketData()).toMatchObject({
+      apiKey: "local-oauth-token",
+      source: "env"
+    });
+    expect(resolveAlpacaMarketData().secretKey).toBeUndefined();
+    expect(resolveAlpacaMarketData("u_tenant")).toMatchObject({
+      apiKey: "local-oauth-token",
+      source: "env"
+    });
+  });
+
   it("trading resolution is unaffected — a tenant never gets the operator's Alpaca key to trade", async () => {
     vi.stubEnv("ALPACA_PAPER_API_KEY", "op-alpaca-key");
     const { resolveApiKeyWithSource } = await import("../src/lib/db");
