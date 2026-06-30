@@ -402,9 +402,9 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
 
   const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
   const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
+  if (userKeyOnly) return userKeyOnly;
   if (localConnectedKeyOnly) return { ...localConnectedKeyOnly, source: "env" };
   if (opKey && opSecret) return { apiKey: opKey, secretKey: opSecret, source: "env" };
-  if (userKeyOnly) return userKeyOnly;
   if (opKey) return { apiKey: opKey, source: "env" };
   return { source: "none" };
 }

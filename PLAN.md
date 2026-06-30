@@ -15,7 +15,8 @@ filling the missing pieces.
 > connected Alpaca account when a tenant has no complete Alpaca market-data
 > credential, keeps REST market data off `alpaca-mcp` execution rows, prefers
 > current connected operator key-only credentials before stale stored/env keys,
-> and preserves FMP health logging for non-403 optional endpoint failures. Also
+> preserves tenant key-only credentials before operator key-only fallbacks, and
+> preserves FMP health logging for non-403 optional endpoint failures. Also
 > ignores hidden worktree and build directories in ESLint config to prevent local
 > linting errors. Trading resolution remains per-user/fail-closed.
 > No roadmap change; see `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`

@@ -31,6 +31,7 @@ The following commands were run in the worktree root:
 - Preserved key-only operator/local connected Alpaca credentials for shared background/tenant news enrichment when no complete shared credential exists.
 - Kept Alpaca REST market-data resolution scoped to `alpaca` connected accounts, excluding `alpaca-mcp` broker rows that belong to MCP execution.
 - Preferred current operator connected key-only Alpaca credentials before older stored/env operator keys when no complete connected credential exists.
+- Preserved tenant key-only Alpaca credentials before operator key-only fallbacks, so a tenant bearer-token-style credential is not masked by the shared operator news fallback.
 - Preserved FMP health logging for optional endpoint failures while suppressing only expected premium `403` rows from optional endpoints.
 - Left trading resolution unchanged: `resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant")` still fails closed instead of borrowing the operator's account.
 
@@ -48,10 +49,11 @@ The following commands were run in the worktree root:
 
 ### Verification
 - `npm ci` - passed in the temporary PR worktree.
-- `npm test -- test/key-resolution-tiering.test.ts` - passed, 22 tests after the FMP health and Alpaca MCP follow-ups.
+- `npm test -- test/key-resolution-tiering.test.ts` - passed, 23 tests after the final Codex review-thread fix.
 - `npm test -- test/data-providers.test.ts` - passed, 57 tests after the FMP health follow-up.
-- `npx tsc --noEmit` - passed cleanly after the FMP health and Alpaca MCP follow-ups.
+- `npx tsc --noEmit --pretty false` - passed cleanly after the final Codex review-thread fix.
 - `npm run lint` - passed with 0 errors and 256 existing warnings after the FMP health and Alpaca MCP follow-ups.
+- `npm test -- test/key-resolution-tiering.test.ts -t "preserves a tenant key-only Alpaca credential over an operator key-only connected account"` - passed after the final Codex review-thread fix.
 
 ### Follow-ups
 - Full PR verify/smoke/gitleaks will rerun on GitHub after this branch is pushed.

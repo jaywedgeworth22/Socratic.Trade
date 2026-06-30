@@ -338,6 +338,37 @@ describe("Alpaca market-data credential (shared data, per-user trading)", () => 
     expect(resolveAlpacaMarketData("u_tenant").secretKey).toBeUndefined();
   });
 
+  it("preserves a tenant key-only Alpaca credential over an operator key-only connected account", async () => {
+    const { resolveAlpacaMarketData, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: "tenant-oauth-only",
+      userId: "u_tenant",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-TENANT",
+      label: "Tenant OAuth",
+      apiKey: "tenant-oauth-token",
+      isActive: true
+    });
+    upsertConnectedAccount({
+      id: "local-oauth-only",
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-LOCAL",
+      label: "Operator OAuth",
+      apiKey: "local-oauth-token",
+      isActive: true
+    });
+
+    expect(resolveAlpacaMarketData("u_tenant")).toMatchObject({
+      apiKey: "tenant-oauth-token",
+      source: "user"
+    });
+    expect(resolveAlpacaMarketData("u_tenant").secretKey).toBeUndefined();
+  });
+
   it("checks another connected Alpaca account before falling back from a key-only preferred account", async () => {
     const { resolveAlpacaMarketData, upsertConnectedAccount } = await import("../src/lib/db");
 
