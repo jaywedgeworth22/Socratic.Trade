@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`codex/strategy-llm-timeout-diagnostics`): strategy LLM timeout
+> diagnostics - production run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` failed
+> during the Green Team `gpt-5.5` high-reasoning request before any Red Team,
+> proposal, broker, or notification work. Runs now audit LLM step start/failure
+> rows, preserve failed step context in the final strategy audit, and surface
+> provider/model-specific timeout guidance. Red Team transport failures fallback
+> to Bull proposals with an auditable reason. No roadmap change; see
+> `docs/rollouts/2026-06-30-strategy-llm-timeout-diagnostics.md`.
+>
 > 2026-06-30 (`codex/test-account-readiness`): Test/local readiness no longer
 > blocks Start on dashboard portfolio display read errors. Broker-backed
 > Paper/Brokerage modes still require account and portfolio reads. No roadmap

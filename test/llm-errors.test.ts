@@ -3,7 +3,7 @@
  * Pure function; no DB/network.
  */
 import { describe, expect, it } from "vitest";
-import { humanizeLlmError, providerFromText, providerLabel } from "../src/lib/llm-errors";
+import { humanizeLlmError, humanizeLlmTransportError, providerFromText, providerLabel } from "../src/lib/llm-errors";
 
 describe("providerLabel / providerFromText", () => {
   it("maps internal provider ids to display names", () => {
@@ -62,5 +62,16 @@ describe("humanizeLlmError", () => {
   it("handles empty input gracefully", () => {
     expect(humanizeLlmError("")).toContain("the LLM");
     expect(humanizeLlmError(null)).toContain("the LLM");
+  });
+
+  it("adds step/model context for transport timeouts", () => {
+    const msg = humanizeLlmTransportError(new Error("The operation was aborted due to timeout"), {
+      provider: "openai",
+      model: "gpt-5.5",
+      stepLabel: "Green Team proposal",
+      timeoutMs: 60_000
+    });
+
+    expect(msg).toBe("Green Team proposal timed out after 60s using OpenAI gpt-5.5. Lower reasoning effort, choose a faster model, or retry.");
   });
 });

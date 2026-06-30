@@ -4,6 +4,24 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Strategy LLM timeout diagnostics
+Branch `codex/strategy-llm-timeout-diagnostics`. Diagnosed the production notice
+`Strategy run failed - The operation was aborted due to timeout` at
+`2026-06-30T14:35:47Z`: run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` started at
+`14:34:33Z`, had no `llm_step` completion row, and failed before Red Team,
+proposal validation, broker placement, or notifications. The immediately prior
+policy switched the Green Team to `gpt-5.5` with `high` reasoning and Red Team to
+`claude-opus-4-8`; the next manual run completed, so this was an individual
+Green Team timeout rather than a persistent outage. Strategy runs now audit
+`llm_step` start/failure rows, preserve failed Green Team step context in the
+final `strategy_run` audit, and replace raw abort text with
+provider/model-specific guidance. Red Team transport failures now fallback to
+Bull proposals with an auditable reason instead of escaping as opaque run
+failures. Verification: `npm run lint` (0 errors, existing warnings),
+`npx tsc --noEmit`, `npm test` (160 files / 1557 tests), and `npm run build`
+all pass.
+See `docs/rollouts/2026-06-30-strategy-llm-timeout-diagnostics.md`.
+
 ## 2026-06-30 - Test account readiness ignores local portfolio display errors
 Branch `codex/test-account-readiness`. Fixed the Test/local Start blocker where a
 recoverable dashboard portfolio read issue produced `Test account data check

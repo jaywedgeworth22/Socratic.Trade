@@ -78,3 +78,31 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   // Unrecognized — surface the raw provider text (single-line, trimmed) rather than hide it.
   return text ? `${provider} error: ${text.replace(/\s+/g, " ").slice(0, 240)}` : `${provider} request failed (HTTP ${status}).`;
 }
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return error === undefined || error === null ? "" : String(error);
+}
+
+function isTimeoutLike(raw: string): boolean {
+  return /\b(timeout|timed out|aborted|aborterror)\b/i.test(raw);
+}
+
+export function humanizeLlmTransportError(
+  error: unknown,
+  opts: { provider?: string; model?: string; stepLabel?: string; timeoutMs?: number } = {}
+): string {
+  const provider = providerLabel(opts.provider);
+  const model = opts.model?.trim();
+  const modelPart = model ? ` ${model}` : "";
+  const step = opts.stepLabel?.trim() || "LLM request";
+  const raw = errorText(error);
+
+  if (isTimeoutLike(raw)) {
+    const timeoutPart = opts.timeoutMs && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? ` after ${Math.round(opts.timeoutMs / 1000)}s` : "";
+    return `${step} timed out${timeoutPart} using ${provider}${modelPart}. Lower reasoning effort, choose a faster model, or retry.`;
+  }
+
+  return `${step} failed using ${provider}${modelPart}: ${humanizeLlmError(raw, { provider: opts.provider })}`;
+}
