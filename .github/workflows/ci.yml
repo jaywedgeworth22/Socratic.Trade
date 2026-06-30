@@ -44,7 +44,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm ci
+      - name: Install dependencies
+        shell: bash
+        env:
+          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
+        run: bash scripts/npm-ci-with-shared-deps.sh
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test

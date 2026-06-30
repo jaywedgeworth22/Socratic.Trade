@@ -19,7 +19,27 @@
 //   GET /api/market/spx?from=&to=         -> { closes }
 //   GET /api/transactions?since=&ticker=&member=&chamber=&type=&limit=
 
-import type { CongressClose, CongressPrice, CongressRef } from "./congress-share";
+import type {
+  TransactionsPage,
+  TransactionsQuery,
+  FundamentalRow,
+  AnalystRow,
+  TickerLeader,
+  ClusterBuy,
+  MemberLeader,
+  MemberPerformance,
+  ConvictionTicker,
+  BacktestHorizon,
+  TickerBacktest,
+  CommitteeConflict,
+  PriceClose,
+  PriceSeries,
+} from "@jaywedgeworth22/congress-trading-shared";
+import {
+  API_PATHS,
+  TransactionsPageSchema,
+} from "@jaywedgeworth22/congress-trading-shared";
+import type { CongressRef } from "./congress-share";
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { logApiHealth } from "./db-health";
@@ -30,33 +50,23 @@ const MAX_REFS_PER_REQUEST = 500;
 
 export interface AppABundle {
   ref: CongressRef | null;
-  prices: CongressPrice | null;
-  spx: CongressClose[];
+  prices: PriceSeries | null;
+  spx: PriceClose[];
 }
 
-export interface AppATransactionsPage {
-  transactions: unknown[]; // raw App A rows — normalized by the congress integration
-  cursor?: string | number; // App A returns a numeric cursor_seq
-  count?: number;
-  total?: number;
-  limit?: number;
-  premium?: boolean;
-  gated?: boolean;
-  freeWindowDays?: number;
-}
-
-export interface AppATransactionsQuery {
-  since?: string;
-  /** Rolling-window bounds (YYYY-MM-DD). `from` is essential: the feed is oldest-first, so without it
-   *  a recent-window pull would have to page through all historical rows to reach today's disclosures. */
-  from?: string;
-  to?: string;
-  ticker?: string;
-  member?: string;
-  chamber?: string;
-  type?: string;
-  limit?: number;
-}
+// Re-export shared types under the names congress-trade-client consumers expect.
+export type AppATransactionsPage = TransactionsPage;
+export type AppATransactionsQuery = TransactionsQuery;
+export type AppAFundamental = FundamentalRow & { source?: string | null; updatedAt?: string };
+export type AppAAnalyst = AnalystRow & { analystCount?: number | null; source?: string | null; updatedAt?: string };
+export type AppATickerLeader = TickerLeader;
+export type AppAClusterRow = ClusterBuy;
+export type AppAMemberRow = MemberLeader;
+export type AppAMemberPerformance = MemberPerformance;
+export type AppAConvictionTicker = ConvictionTicker;
+export type AppABacktestHorizon = BacktestHorizon;
+export type AppATickerBacktest = TickerBacktest;
+export type AppAConflict = CommitteeConflict;
 
 function baseUrl(): string {
   return (process.env.CONGRESS_TRADE_BASE_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
@@ -134,8 +144,8 @@ export async function getAppABundle(ticker: string, opts?: { from?: string; to?:
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
-  const json = await getJson<{ ref?: CongressRef | null; prices?: CongressPrice | null; spx?: CongressClose[] }>(
-    `/api/market/bundle/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+  const json = await getJson<{ ref?: CongressRef | null; prices?: PriceSeries | null; spx?: PriceClose[] }>(
+    `${API_PATHS.MARKET_BUNDLE}/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
     readToken()
   );
   if (!json) return null;
@@ -146,7 +156,7 @@ export async function getAppARef(ticker: string): Promise<CongressRef | null> {
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
-  const json = await getJson<{ ref?: CongressRef | null }>(`/api/market/ref/${encodeURIComponent(sym)}`, readToken());
+  const json = await getJson<{ ref?: CongressRef | null }>(`${API_PATHS.MARKET_REF}/${encodeURIComponent(sym)}`, readToken());
   return json?.ref ?? null;
 }
 
@@ -154,56 +164,22 @@ export async function getAppARefs(tickers: string[]): Promise<CongressRef[]> {
   if (!congressReadsEnabled()) return [];
   const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean))).slice(0, MAX_REFS_PER_REQUEST);
   if (syms.length === 0) return [];
-  const json = await getJson<{ refs?: CongressRef[] }>(`/api/market/refs?tickers=${encodeURIComponent(syms.join(","))}`, readToken());
+  const json = await getJson<{ refs?: CongressRef[] }>(`${API_PATHS.MARKET_REFS}?tickers=${encodeURIComponent(syms.join(","))}`, readToken());
   return Array.isArray(json?.refs) ? json!.refs : [];
 }
 
-export async function getAppAPrices(ticker: string, opts?: { from?: string; to?: string }): Promise<CongressPrice | null> {
+export async function getAppAPrices(ticker: string, opts?: { from?: string; to?: string }): Promise<PriceSeries | null> {
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
-  const json = await getJson<CongressPrice>(`/api/market/prices/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`, readToken());
+  const json = await getJson<PriceSeries>(`${API_PATHS.MARKET_PRICES}/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`, readToken());
   return json && Array.isArray(json.closes) ? json : null;
 }
 
-export async function getAppASpx(opts?: { from?: string; to?: string }): Promise<CongressClose[]> {
+export async function getAppASpx(opts?: { from?: string; to?: string }): Promise<PriceClose[]> {
   if (!congressReadsEnabled()) return [];
-  const json = await getJson<{ closes?: CongressClose[] }>(`/api/market/spx${dateRangeQuery(opts)}`, readToken());
+  const json = await getJson<{ closes?: PriceClose[] }>(`${API_PATHS.MARKET_SPX}${dateRangeQuery(opts)}`, readToken());
   return Array.isArray(json?.closes) ? json!.closes : [];
-}
-
-/** One cached fundamentals row from App A (rows are date-ascending; newest last). */
-export interface AppAFundamental {
-  date: string;
-  peRatio: number | null;
-  eps: number | null;
-  beta: number | null;
-  dividendYield: number | null;
-  week52High: number | null;
-  week52Low: number | null;
-  fcfYield: number | null;
-  debtToEquity: number | null;
-  epsGrowth: number | null;
-  source: string | null;
-  updatedAt: string;
-}
-
-/** One cached analyst-consensus row from App A (date-ascending; newest last). */
-export interface AppAAnalyst {
-  date: string;
-  rating: string | null;
-  targetMean: number | null;
-  targetHigh: number | null;
-  targetLow: number | null;
-  targetMedian: number | null;
-  analystCount: number | null;
-  strongBuy: number | null;
-  buy: number | null;
-  hold: number | null;
-  sell: number | null;
-  strongSell: number | null;
-  source: string | null;
-  updatedAt: string;
 }
 
 /** Read App A's cached fundamentals (P/E, EPS, beta, 52w, FCF, debt/equity…) so App B
@@ -213,7 +189,7 @@ export async function getAppAFundamentals(ticker: string, opts?: { from?: string
   const sym = normalizeSymbol(ticker);
   if (!sym) return [];
   const json = await getJson<{ rows?: AppAFundamental[] }>(
-    `/api/market/fundamentals/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+    `${API_PATHS.MARKET_FUNDAMENTALS}/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
     readToken()
   );
   return Array.isArray(json?.rows) ? json!.rows : [];
@@ -225,7 +201,7 @@ export async function getAppAAnalyst(ticker: string, opts?: { from?: string; to?
   const sym = normalizeSymbol(ticker);
   if (!sym) return [];
   const json = await getJson<{ rows?: AppAAnalyst[] }>(
-    `/api/market/analyst/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
+    `${API_PATHS.MARKET_ANALYST}/${encodeURIComponent(sym)}${dateRangeQuery(opts)}`,
     readToken()
   );
   return Array.isArray(json?.rows) ? json!.rows : [];
@@ -246,8 +222,14 @@ export async function getAppATransactions(query: AppATransactionsQuery = {}): Pr
   const qs = params.toString();
   // The /api/transactions feed is fully public (no gating) — page forward with `cursor` and stop at
   // the rolling window. Sends the optional read token only if App A later gates it.
-  const json = await getJson<AppATransactionsPage>(`/api/transactions${qs ? `?${qs}` : ""}`, readToken());
+  const json = await getJson<TransactionsPage>(`${API_PATHS.TRANSACTIONS}${qs ? `?${qs}` : ""}`, readToken());
   if (!json || !Array.isArray(json.transactions)) return null;
+  // Validate response shape at runtime.
+  const parsed = TransactionsPageSchema.safeParse(json);
+  if (!parsed.success) {
+    console.warn("[congress-trade-client] transactions page validation failed:", parsed.error.flatten());
+    // Fall through: return the unvalidated response; the data is still usable.
+  }
   return json;
 }
 
@@ -259,43 +241,6 @@ export async function getAppATransactions(query: AppATransactionsQuery = {}): Pr
 /** Whether App B reads App A's congressional analytics overlay. */
 export function congressAnalyticsEnabled(): boolean {
   return flagOn(process.env.CONGRESS_ANALYTICS_ENABLED);
-}
-
-export interface AppATickerLeader {
-  ticker: string;
-  name?: string;
-  tradeCount?: number;
-  buyCount?: number;
-  sellCount?: number;
-  memberCount?: number;
-  estVolumeUsd?: number;
-  estNetFlowUsd?: number;
-  netSentiment?: number;
-}
-
-/** A cluster-buy row. topMembers carry App A's `fullName` (not memberName). */
-export interface AppAClusterRow {
-  ticker?: string;
-  name?: string;
-  txType?: string;
-  memberCount?: number;
-  tradeCount?: number;
-  estVolumeUsd?: number;
-  topMembers?: Array<{ filerId?: string; fullName?: string; memberName?: string; name?: string; tradeCount?: number }>;
-  [k: string]: unknown;
-}
-
-/** A member-leaderboard row. App A exposes activity numerics (no realized-performance metric yet). */
-export interface AppAMemberRow {
-  filerId?: string;
-  fullName?: string;
-  memberName?: string;
-  name?: string;
-  tradeCount?: number;
-  estVolumeUsd?: number;
-  estNetFlowUsd?: number;
-  netSentiment?: number;
-  [k: string]: unknown;
 }
 
 function analyticsQuery(opts: { window?: string; limit?: number; chamber?: string; party?: string }): string {
@@ -310,37 +255,28 @@ function analyticsQuery(opts: { window?: string; limit?: number; chamber?: strin
 
 export async function getAppATickerLeaderboard(opts: { window?: string; limit?: number } = {}): Promise<AppATickerLeader[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ tickers?: AppATickerLeader[] }>(`/api/analytics/ticker-leaderboard${analyticsQuery(opts)}`, readToken());
+  const json = await getJson<{ tickers?: AppATickerLeader[] }>(`${API_PATHS.ANALYTICS_TICKER_LEADERBOARD}${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.tickers) ? json!.tickers : [];
 }
 
 export async function getAppAClusterBuys(opts: { window?: string; limit?: number } = {}): Promise<AppAClusterRow[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ clusters?: AppAClusterRow[] }>(`/api/analytics/cluster-buys${analyticsQuery(opts)}`, readToken());
+  const json = await getJson<{ clusters?: AppAClusterRow[] }>(`${API_PATHS.ANALYTICS_CLUSTER_BUYS}${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.clusters) ? json!.clusters : [];
 }
 
 export async function getAppAMemberLeaderboard(opts: { window?: string; limit?: number } = {}): Promise<AppAMemberRow[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ members?: AppAMemberRow[] }>(`/api/analytics/member-leaderboard${analyticsQuery(opts)}`, readToken());
+  const json = await getJson<{ members?: AppAMemberRow[] }>(`${API_PATHS.ANALYTICS_MEMBER_LEADERBOARD}${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.members) ? json!.members : [];
 }
 
-/** Per-member realized performance (return / win-rate / alpha vs S&P). `scoredCount`=0 → all nulls. */
-export interface AppAMemberPerformance {
-  tradeCount?: number;
-  scoredCount?: number;
-  winRate?: number | null;
-  medianReturn?: number | null;
-  medianExcess?: number | null; // median return in excess of S&P (alpha)
-  avgReturn?: number | null;
-  avgExcess?: number | null; // average alpha vs S&P
-}
-
+/** Per-member realized performance (return / win-rate / alpha vs S&P). `scoredCount`=0 → all nulls.
+ *  Now a type alias for MemberPerformance from the shared package. */
 export async function getAppAMemberPerformance(filerId: string): Promise<AppAMemberPerformance | null> {
   if (!congressAnalyticsEnabled() || !filerId) return null;
   const json = await getJson<{ performance?: AppAMemberPerformance }>(
-    `/api/analytics/member/${encodeURIComponent(filerId)}/performance`,
+    `${API_PATHS.ANALYTICS_MEMBER_PERFORMANCE}/${encodeURIComponent(filerId)}/performance`,
     readToken()
   );
   return json?.performance ?? null;
@@ -351,7 +287,7 @@ export async function getAppAMemberPerformance(filerId: string): Promise<AppAMem
  * which OHLCBar permits). Suitable for close-series consumers (technical/returns); a price chart
  * fed from these renders a line, not candles. Ascending by date.
  */
-export function appAClosesToBars(closes: CongressClose[] | null | undefined): OHLCBar[] {
+export function appAClosesToBars(closes: PriceClose[] | null | undefined): OHLCBar[] {
   if (!closes || closes.length === 0) return [];
   return closes
     .filter((c) => c && typeof c.close === "number" && Number.isFinite(c.close) && typeof c.date === "string")
@@ -364,32 +300,20 @@ export function appAClosesToBars(closes: CongressClose[] | null | undefined): OH
 }
 
 // ── New analytics endpoints (App A PR #77/79/80) ───────────────────────────────
+// AppAConvictionTicker → type alias for ConvictionTicker from shared package.
+// AppABacktestHorizon → type alias for BacktestHorizon from shared package.
+// AppATickerBacktest → type alias for TickerBacktest from shared package.
+// AppAConflict → type alias for CommitteeConflict from shared package.
 
 /**
  * Per-ticker composite conviction score (0–100). Direction-aware: a high score on a SELL ticker
  * means strong bearish conviction. `convictionScore` is `null` (not 0) when the signal is too thin
  * (resolved-side trades < 3) so callers can distinguish "no signal" from "bearish".
  */
-export interface AppAConvictionTicker {
-  ticker: string;
-  name?: string;
-  /** 0–100 composite, or null when signal is too thin (< 3 resolved-side trades). */
-  convictionScore: number | null;
-  direction: "BUY" | "SELL" | null;
-  /** true while realized-skill coverage is sparse (score uses activity heuristics only). */
-  fallback?: boolean;
-  memberCount?: number;
-  tradeCount?: number;
-  directionalMembers?: number;
-  directionalTrades?: number;
-  netSentiment?: number;
-  estNetFlowUsd?: number;
-  parties?: Record<string, number>;
-}
 
 export async function getAppAConviction(opts: { window?: string; limit?: number } = {}): Promise<AppAConvictionTicker[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ tickers?: AppAConvictionTicker[] }>(`/api/analytics/conviction${analyticsQuery(opts)}`, readToken());
+  const json = await getJson<{ tickers?: AppAConvictionTicker[] }>(`${API_PATHS.ANALYTICS_CONVICTION}${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.tickers) ? json!.tickers : [];
 }
 
@@ -398,24 +322,6 @@ export async function getAppAConviction(opts: { window?: string; limit?: number 
  * `n` is the number of buy events with full forward price history; horizons with n < 5 report null stats.
  * Returns are fractions: 0.18 = +18%. `winRate` = share beating the S&P (excess > 0).
  */
-export interface AppABacktestHorizon {
-  days: number;
-  tradeCount: number;
-  n: number;
-  medianReturn: number | null;
-  avgReturn: number | null;
-  winRate: number | null;
-  medianExcess: number | null;
-  avgExcess: number | null;
-}
-
-export interface AppATickerBacktest {
-  ticker: string;
-  txType: string;
-  totalBuyEvents: number;
-  pricedDays: number;
-  horizons: AppABacktestHorizon[];
-}
 
 export async function getAppATickerBacktest(
   ticker: string,
@@ -430,7 +336,7 @@ export async function getAppATickerBacktest(
   if (opts.filerId) p.set("filerId", opts.filerId);
   const qs = p.toString();
   const json = await getJson<AppATickerBacktest>(
-    `/api/analytics/ticker/${encodeURIComponent(sym)}/backtest${qs ? `?${qs}` : ""}`,
+    `${API_PATHS.ANALYTICS_TICKER_BACKTEST}/${encodeURIComponent(sym)}/backtest${qs ? `?${qs}` : ""}`,
     readToken()
   );
   return json?.horizons?.length ? json : null;
@@ -441,24 +347,11 @@ export async function getAppATickerBacktest(
  * overseeing the traded stock's GICS sector). Educational/observational — not an accusation
  * of wrongdoing. ETFs (no single sector) are not flagged.
  */
-export interface AppAConflict {
-  id: string;
-  ticker: string;
-  sector: string;
-  txType: string;
-  txDate: string;
-  filerId: string;
-  memberName: string;
-  chamber: string;
-  partyBucket: string;
-  viaCommittees: string[];
-  estAmountUsd: number;
-}
 
 export async function getAppAConflicts(
   opts: { window?: string; limit?: number; chamber?: string; party?: string } = {}
 ): Promise<AppAConflict[]> {
   if (!congressAnalyticsEnabled()) return [];
-  const json = await getJson<{ conflicts?: AppAConflict[] }>(`/api/analytics/conflicts${analyticsQuery(opts)}`, readToken());
+  const json = await getJson<{ conflicts?: AppAConflict[] }>(`${API_PATHS.ANALYTICS_CONFLICTS}${analyticsQuery(opts)}`, readToken());
   return Array.isArray(json?.conflicts) ? json!.conflicts : [];
 }

@@ -67,7 +67,7 @@ maybe_install_deps() {
   local before="$1"
   if ! git diff --quiet "$before" HEAD -- package.json package-lock.json; then
     log "dependency files changed; running npm ci in $(pwd)"
-    npm ci
+    bash scripts/npm-ci-with-shared-deps.sh
   fi
 }
 

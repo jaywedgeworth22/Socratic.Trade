@@ -16,6 +16,7 @@
 // CONGRESS_TRADE_TOKEN is set AND CONGRESS_SHARE_ENABLED is on. The admin route can trigger a
 // manual run with just the token. The token is a server-only secret — never exposed to the browser.
 
+import { API_PATHS, APP_B_ORIGIN_TAG, type PriceClose, type PriceSeries, type InsiderRow, type ShortVolumeRow, type FundamentalRow, type AnalystRow, SharePayloadSchema } from "@jaywedgeworth22/congress-trading-shared";
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
@@ -24,8 +25,6 @@ import { fetchGroupedDailyBarsRange } from "./market-signals/massive-s3";
 import { normalizeSymbol } from "./money";
 import type { MarketQuote, MarketScan } from "./types";
 import { getFinraDataset, getInsiderDataset, getInsiderSignals, getShortVolumeSignals } from "./web-sources";
-
-const IMPORT_PATH = "/api/admin/securities/import";
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 30_000; // App A upserts + recomputes per-trade perf anchors per call — give it room
 const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
@@ -34,8 +33,9 @@ const LAST_DAILY_RUN_KEY = "congress-share:lastDailyRunDate";
  * Origin tag stamped on every outbound payload so the counterpart's receiver can recognize App B's
  * own rows and never echo them back into our store (the no-echo-loop guard). Our OWN inbound receiver
  * (POST /api/admin/securities/import) skips any payload carrying this origin. See docs/congress-trade-app-b-reply.md §1.3.
+ * Re-exported from @jaywedgeworth22/congress-trading-shared as APP_B_ORIGIN_TAG.
  */
-export const APP_B_ORIGIN = "app-b";
+export const APP_B_ORIGIN = APP_B_ORIGIN_TAG;
 
 // Per-POST sizing. The endpoint accepts up to ~2,000 tickers / ~20,000 closes, but App A's per-call
 // work (row upserts + per-trade performance recompute) made big chunks blow the timeout in prod, so we
@@ -108,6 +108,8 @@ function refTtlMs(): number {
 }
 
 // ── Payload types (mirror App A's import contract; we send subsets we have) ─────
+// Many individual row types now come from @jaywedgeworth22/congress-trading-shared.
+// CongressRef stays local because it uses optional (?) fields rather than T|null.
 
 export type CongressAssetClass = "equity" | "etf" | "adr" | "fund" | "other";
 
@@ -132,81 +134,22 @@ export interface CongressRef {
   sicDescription?: string;
 }
 
-export interface CongressClose {
-  date: string; // YYYY-MM-DD
-  close: number;
-  volume?: number; // App A's price path now carries volume; open/high/low stay App B-only
-}
-
-export interface CongressPrice {
-  ticker: string;
-  closes: CongressClose[];
-  currentPrice?: number;
-  currentPriceDate?: string;
-}
-
-/** SEC Form-4 insider row in App A's import shape (highest-fit dataset App B shares). */
-export interface CongressInsider {
-  ticker: string;
-  date: string; // YYYY-MM-DD (most recent filing)
-  sentiment: number; // 0–100 net-buy skew
-  buyFilings: number;
-  sellFilings: number;
-  buyShares: number;
-  sellShares: number;
-  owners: string[];
-}
-
-/** FINRA daily short-volume row in App A's import shape. */
-export interface CongressShortVol {
-  ticker: string;
-  date: string; // YYYY-MM-DD (as-of)
-  ratio: number; // % of the day's volume that was short
-  elevated: boolean;
-}
-
-/** Fundamentals row in App A's import shape (PR #46). Keyed by ticker+date; missing → null on A. */
-export interface CongressFundamental {
-  ticker: string;
-  date: string; // YYYY-MM-DD (as-of)
-  peRatio?: number;
-  eps?: number;
-  beta?: number;
-  dividendYield?: number;
-  week52High?: number;
-  week52Low?: number;
-  fcfYield?: number;
-  debtToEquity?: number;
-  epsGrowth?: number;
-}
-
-/**
- * Analyst-consensus row in App A's import shape (PR #46). Numeric price targets ride `null` unless the
- * opt-in FMP price-target provider (FMP_PRICE_TARGETS_ENABLED) is on — then they're filled from the scan.
- */
-export interface CongressAnalyst {
-  ticker: string;
-  date: string; // YYYY-MM-DD (as-of)
-  rating?: string; // blended consensus label
-  strongBuy?: number;
-  buy?: number;
-  hold?: number;
-  sell?: number;
-  strongSell?: number;
-  targetMean?: number;
-  targetHigh?: number;
-  targetLow?: number;
-  targetMedian?: number;
-}
+// Re-export shared types under the names congress-share consumers expect.
+export type CongressClose = PriceClose;
+export type CongressPrice = PriceSeries;
+export type CongressInsider = InsiderRow;
+export type CongressShortVol = ShortVolumeRow;
+export type CongressFundamental = FundamentalRow;
+export type CongressAnalyst = AnalystRow;
 
 export interface CongressSharePayload {
   refs?: CongressRef[];
-  spx?: CongressClose[];
-  prices?: CongressPrice[];
-  insider?: CongressInsider[];
-  shortVolume?: CongressShortVol[];
-  fundamentals?: CongressFundamental[];
-  analyst?: CongressAnalyst[];
+  spx?: PriceClose[];
+  prices?: PriceSeries[];
+  insider?: InsiderRow[];
+  shortVolume?: ShortVolumeRow[];
+  fundamentals?: FundamentalRow[];
+  analyst?: AnalystRow[];
   /** Provenance tag (defaults to APP_B_ORIGIN on send). Lets a receiver skip rows it originated. */
   origin?: string;
 }
@@ -430,13 +373,21 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
-  const url = `${congressTradeBaseUrl()}${IMPORT_PATH}`;
+  // Validate payload shape before sending (log but don't block — CongressRef uses optional
+  // fields while SecurityRef expects T|null; a mismatch here is expected and non-fatal).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const validation = SharePayloadSchema.safeParse(payload as any);
+  if (!validation.success) {
+    console.warn("[congress-share] payload validation warnings:", validation.error.flatten().fieldErrors);
+  }
+
+  const url = `${congressTradeBaseUrl()}${API_PATHS.ADMIN_SECURITIES_IMPORT}`;
   const timeoutMs = Number(process.env.CONGRESS_SHARE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // Stamp our origin so the counterpart never echoes our own rows back to us (no-echo-loop guard).
-    const body = { ...payload, origin: payload.origin ?? APP_B_ORIGIN };
+    const body = { ...payload, origin: payload.origin ?? APP_B_ORIGIN_TAG };
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
