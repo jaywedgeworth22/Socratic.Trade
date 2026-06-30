@@ -11,9 +11,10 @@ subtitles now use one shared source-list formatter that aliases `congress`,
 `Congress.Trade` label and folds `yahoo-finance-delayed-quotes` into
 `Yahoo Finance`. This is a display/provenance cleanup only; provider execution
 and historical scan rows are unchanged. Verification: focused
-`npm test -- dashboard-ui`, `npm run lint` (0 errors, 256 existing warnings),
-`npx tsc --noEmit`, `npm test` (161 files / 1560 tests), and `npm run build`
-pass. See `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+`npm test -- dashboard-ui`, then post-merge `npm run lint` (0 errors, 256
+existing warnings), `npx tsc --noEmit`, `npm test` (163 files / 1569 tests),
+and `npm run build` pass. See
+`docs/rollouts/2026-06-30-market-scan-source-labels.md`.
 ## 2026-06-30 - Alpaca broker-held exit guard and order lifecycle clarity
 Branch `codex/alpaca-held-order-guard`. Diagnosed the KO approval failure:
 Alpaca rejected a 17-share KO sell with HTTP 403 / `40310000` because the account
