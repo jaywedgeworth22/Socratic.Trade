@@ -20,3 +20,29 @@ The following commands were run in the worktree root:
 1. `npx tsc --noEmit` - passed cleanly
 2. `npm test` - all 1255 tests passed cleanly (including the new credential-resolution tests)
 3. `npm run build` - compiled Next.js output and generated static/dynamic routing without errors
+
+## 2026-06-30 PR #237 Review Follow-up
+
+### Summary
+- Resolved the remaining PR review blocker by extending `resolveAlpacaMarketData` to use the operator/local connected Alpaca account as the shared read-only fallback for no-user/background scans and tenants without complete Alpaca market-data credentials.
+- Required connected-account and stored-user Alpaca market-data credentials to include both key and secret before they suppress the operator fallback, preserving the real-time snapshot tier when a tenant only has an OAuth/API-key-only row.
+- Left trading resolution unchanged: `resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant")` still fails closed instead of borrowing the operator's account.
+
+### Why
+- The earlier fix checked only the requested user's connected accounts. Background scans and tenants without their own complete Alpaca credentials could still fall through to stale `local` user_api_keys/env values, keeping `alpaca-snapshot` and `alpaca-news` broken when the valid operator key lived only in `connected_accounts`.
+
+### Files
+- `src/lib/db-api-keys.ts`
+- `test/key-resolution-tiering.test.ts`
+- `STATUS.md`
+- `PLAN.md`
+- `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`
+
+### Verification
+- `npm ci` - passed in the temporary PR worktree.
+- `npm test -- test/key-resolution-tiering.test.ts` - passed, 17 tests.
+- `npx tsc --noEmit` - passed cleanly.
+- `npm run lint` - passed with 0 errors and 257 existing warnings.
+
+### Follow-ups
+- Full PR verify/smoke/gitleaks will rerun on GitHub after this branch is pushed.

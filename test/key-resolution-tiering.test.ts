@@ -257,6 +257,66 @@ describe("Alpaca market-data credential (shared data, per-user trading)", () => 
     });
   });
 
+  it("uses the operator connected Alpaca account for shared background and tenant market data", async () => {
+    const { resolveAlpacaMarketData, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: "local-alpaca",
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-LOCAL",
+      label: "Operator Paper",
+      apiKey: "local-connected-key",
+      apiSecret: "local-connected-secret",
+      isActive: true
+    });
+
+    expect(resolveAlpacaMarketData()).toMatchObject({
+      apiKey: "local-connected-key",
+      secretKey: "local-connected-secret",
+      source: "env"
+    });
+    expect(resolveAlpacaMarketData("u_tenant")).toMatchObject({
+      apiKey: "local-connected-key",
+      secretKey: "local-connected-secret",
+      source: "env"
+    });
+  });
+
+  it("falls through incomplete tenant Alpaca credentials to the operator shared account", async () => {
+    const { resolveAlpacaMarketData, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: "tenant-oauth-only",
+      userId: "u_tenant",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-TENANT",
+      label: "Tenant OAuth",
+      apiKey: "tenant-oauth-token",
+      isActive: true
+    });
+
+    upsertConnectedAccount({
+      id: "local-alpaca",
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA-LOCAL",
+      label: "Operator Paper",
+      apiKey: "local-connected-key",
+      apiSecret: "local-connected-secret",
+      isActive: true
+    });
+
+    expect(resolveAlpacaMarketData("u_tenant")).toMatchObject({
+      apiKey: "local-connected-key",
+      secretKey: "local-connected-secret",
+      source: "env"
+    });
+  });
+
   it("trading resolution is unaffected — a tenant never gets the operator's Alpaca key to trade", async () => {
     vi.stubEnv("ALPACA_PAPER_API_KEY", "op-alpaca-key");
     const { resolveApiKeyWithSource } = await import("../src/lib/db");

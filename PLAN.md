@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`fix/merge-pr-205` / PR #237): Alpaca shared market-data fallback —
+> review-thread follow-up now lets shared/background scans use the operator's
+> connected Alpaca account when a tenant has no complete Alpaca market-data
+> credential. Trading resolution remains per-user/fail-closed. No roadmap
+> change; see
+> `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
+
 > 2026-06-29 (`agent/antigravity`): sticky top bar & slide-over offsets —
 > made the dashboard top bar sticky and offset the SlideOver components (Activity Log, etc.)
 > so they slide in below the top bar instead of overlapping or rendering behind it.

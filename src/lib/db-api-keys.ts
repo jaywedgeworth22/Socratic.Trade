@@ -339,6 +339,19 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   return resolveApiKeyWithSource(service, userId).key;
 }
 
+function resolveConnectedAlpacaMarketData(userId: string): { apiKey: string; secretKey: string } | undefined {
+  const alpacaAccs = listConnectedAccounts(userId).filter((a) => a.broker === "alpaca" || a.broker === "alpaca-mcp");
+  if (alpacaAccs.length === 0) return undefined;
+
+  const preferred =
+    alpacaAccs.find((a) => a.isActive) ||
+    alpacaAccs.find((a) => a.environment === "live") ||
+    alpacaAccs[0];
+  const detailed = getConnectedAccount(preferred.id, userId);
+  if (!detailed?.apiKey || !detailed.apiSecret) return undefined;
+  return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret };
+}
+
 /**
  * Resolve Alpaca credentials for MARKET DATA (snapshots/news) — NOT trading. A user with their own
  * Alpaca key gets their individual data (private/pooled, source "user"); otherwise the operator's
@@ -352,22 +365,17 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
  */
 export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
   if (userId) {
-    const allAccs = listConnectedAccounts(userId);
-    const alpacaAccs = allAccs.filter((a) => a.broker === "alpaca" || a.broker === "alpaca-mcp");
-    if (alpacaAccs.length > 0) {
-      const preferred =
-        alpacaAccs.find((a) => a.isActive) ||
-        alpacaAccs.find((a) => a.environment === "live") ||
-        alpacaAccs[0];
-      const detailed = getConnectedAccount(preferred.id, userId);
-      if (detailed && detailed.apiKey) {
-        return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret, source: "user" };
-      }
-    }
+    const connected = resolveConnectedAlpacaMarketData(userId);
+    if (connected) return { ...connected, source: "user" };
 
     const own = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey;
-    if (own) return { apiKey: own, secretKey: getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey, source: "user" };
+    const ownSecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey;
+    if (own && ownSecret) return { apiKey: own, secretKey: ownSecret, source: "user" };
   }
+
+  const localConnected = resolveConnectedAlpacaMarketData(LOCAL_USER);
+  if (localConnected) return { ...localConnected, source: "env" };
+
   const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
   const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
   if (opKey) return { apiKey: opKey, secretKey: opSecret, source: "env" };
