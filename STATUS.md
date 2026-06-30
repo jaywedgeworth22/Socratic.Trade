@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Test account readiness ignores local portfolio display errors
+Branch `codex/test-account-readiness`. Fixed the Test/local Start blocker where a
+recoverable dashboard portfolio read issue produced `Test account data check
+failed. Open Accounts and reconnect or fix credentials.` Test/local mode does not
+submit broker orders or depend on broker credentials, so account readiness now
+returns ready for selected Test/local accounts even when the portfolio panel had a
+transient display read error; broker-backed Paper/Brokerage accounts still block
+on account/portfolio read failures. Added a regression in
+`test/dashboard-agentic-fallback.test.ts`. Verification: `npm run lint` (0
+errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1547
+tests), and `npm run build` all pass.
+
 ## 2026-06-30 — PR #237 review-thread fix: Alpaca shared market-data fallback
 Branch `fix/merge-pr-205`. Resolved review blockers by making
 `resolveAlpacaMarketData` fall back to the operator/local connected Alpaca
