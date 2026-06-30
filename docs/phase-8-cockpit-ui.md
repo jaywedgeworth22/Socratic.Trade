@@ -91,6 +91,11 @@ policy, risk, or scoring weights until a human clicks `Apply Reviewed Changes`.
 This is intentional: automatically rewriting the trading strategy without a
 review gate is unsafe for an agentic trading tool.
 
+Review proposals render as before/after data. Prompt patches show the current
+prompt and the exact replacement prompt. Scoring-weight changes are grouped as
+Strategy Studio values; risk and automation policy changes are grouped separately
+with current value, proposed value, and the settings area where the value lives.
+
 ## Strategy Tuning API
 
 `POST /api/strategy/tune` gathers:

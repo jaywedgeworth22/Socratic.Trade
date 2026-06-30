@@ -24,9 +24,21 @@ deduped `limit_order_stale` alert after `policy.staleLimitOrderMinutes`
 (default 15). Verification: `npm ci`,
 `npx vitest run test/broker-held-orders.test.ts`,
 targeted 5-file Vitest run (63 tests), `npm run lint` (0 errors, 256 existing
-warnings), `npx tsc --noEmit`, `npm test` (162 files / 1566 tests), and
+warnings), `npx tsc --noEmit`, `npm test` (163 files / 1568 tests), and
 `npm run build` all pass.
 See `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
+
+## 2026-06-30 - Strategy review diff clarity
+Branch `codex/strategy-review-diff`. Strategy Studio and the Strategy tab now
+render LLM tuning proposals as explicit before/after review data: prompt changes
+show the current prompt and exact replacement text, scoring-weight changes stay
+grouped under Strategy Studio values, and risk/automation policy changes show
+current and proposed values plus their settings location. The LLM tuning prompt
+also stops encouraging user-facing "set scoringWeights to null" phrasing below
+the closed-lot gate. Verification: `npm run lint` (0 errors, 256 existing
+warnings), `npx tsc --noEmit`, `npm test` (161 files / 1557 tests), and
+`npm run build` pass. See
+`docs/rollouts/2026-06-30-strategy-review-diff.md`.
 
 ## 2026-06-30 - Strategy LLM timeout diagnostics
 Branch `codex/strategy-llm-timeout-diagnostics`. Diagnosed the production notice

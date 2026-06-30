@@ -64,7 +64,7 @@ and accounting facts.
 - `npx vitest run test/broker-held-orders.test.ts test/stale-limit-orders.test.ts test/dashboard-feed.test.ts test/performance.test.ts test/policy-notification-events.test.ts` - passed, 5 files / 63 tests.
 - `npm run lint` - passed with 0 errors and 256 existing warnings.
 - `npx tsc --noEmit` - passed.
-- `npm test` - passed, 162 files / 1566 tests.
+- `npm test` - passed, 163 files / 1568 tests after merging `origin/main`.
 - `npm run build` - passed.
 - `rg -n "source === \"paper\"|pending_reconciliation|executionMode === \"test/local\"|filled" src/lib/performance.ts test -g '*.ts'` - typo run with an unquoted shell glob failed under zsh during exploration; no files changed.
 
