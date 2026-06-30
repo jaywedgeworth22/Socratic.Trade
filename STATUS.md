@@ -12,6 +12,18 @@ policy blobs before applying the current user-level overlay in `getPolicy` and
 inactive account row or get written back on a later account update. Verification
 planned/running on this branch; see `docs/rollouts/2026-06-29-tiered-settings.md`.
 
+## 2026-06-30 - Provider Degraded notification checkbox fix
+Branch `codex/provider-degraded-checkbox`. Fixed the Settings -> Notifications
+`provider_degraded` checkbox snapping back off after selection: the policy API was
+filtering `enabledEvents` through a stale hard-coded runtime list that omitted
+`provider_degraded`. Notification event validation now uses the shared runtime
+event list from `src/lib/types.ts`, defaults derive from the same list, and a
+route regression test covers saving `provider_degraded` while rejecting unknown
+events. Verification: `npx vitest run test/policy-notification-events.test.ts`,
+`npm run lint` (0 errors, 256 existing warnings), `npx tsc --noEmit`, `npm test`
+(160 files / 1539 tests), and `npm run build` all pass. See
+`docs/rollouts/2026-06-30-provider-degraded-notification-setting.md`.
+
 ## 2026-06-30 — Congress.Trade shared contract package integration
 Branch `fix/page-title` / PR #251 was repaired into the actual shared-contract
 integration. Agentic Trading now depends on
