@@ -5,12 +5,13 @@ human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
 ## 2026-06-30 — PR #237 review-thread fix: Alpaca shared market-data fallback
-Branch `fix/merge-pr-205`. Resolved the remaining review blocker by making
+Branch `fix/merge-pr-205`. Resolved review blockers by making
 `resolveAlpacaMarketData` fall back to the operator/local connected Alpaca
-account for read-only shared/background market data, and by requiring complete
-key+secret pairs before a tenant connected account suppresses that fallback.
-Trading credential resolution remains per-user/fail-closed. Verification:
-`npm test -- test/key-resolution-tiering.test.ts` and `npx tsc --noEmit`.
+account for read-only shared/background snapshot market data while preserving a
+tenant's key-only Alpaca credential for the news tier when no shared fallback is
+configured. Trading credential resolution remains per-user/fail-closed.
+Verification: `npm test -- test/key-resolution-tiering.test.ts`,
+`npx tsc --noEmit`, and `npm run lint`.
 See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
 ## 2026-06-30 — PR #252 review-thread fix: stale user-tier policy fields
 Branch `feat/tiered-settings`. Resolved the remaining review blocker by

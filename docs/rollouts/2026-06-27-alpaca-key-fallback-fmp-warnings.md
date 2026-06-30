@@ -26,6 +26,7 @@ The following commands were run in the worktree root:
 ### Summary
 - Resolved the remaining PR review blocker by extending `resolveAlpacaMarketData` to use the operator/local connected Alpaca account as the shared read-only fallback for no-user/background scans and tenants without complete Alpaca market-data credentials.
 - Required connected-account and stored-user Alpaca market-data credentials to include both key and secret before they suppress the operator fallback, preserving the real-time snapshot tier when a tenant only has an OAuth/API-key-only row.
+- Preserved key-only tenant Alpaca credentials as the final user fallback when no complete shared/operator credential exists, so the Alpaca news tier can still use bearer-token auth.
 - Left trading resolution unchanged: `resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant")` still fails closed instead of borrowing the operator's account.
 
 ### Why
@@ -40,9 +41,9 @@ The following commands were run in the worktree root:
 
 ### Verification
 - `npm ci` - passed in the temporary PR worktree.
-- `npm test -- test/key-resolution-tiering.test.ts` - passed, 17 tests.
+- `npm test -- test/key-resolution-tiering.test.ts` - passed, 18 tests after the key-only credential preservation follow-up.
 - `npx tsc --noEmit` - passed cleanly.
-- `npm run lint` - passed with 0 errors and 257 existing warnings.
+- `npm run lint` - passed with 0 errors and 256 existing warnings.
 
 ### Follow-ups
 - Full PR verify/smoke/gitleaks will rerun on GitHub after this branch is pushed.

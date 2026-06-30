@@ -339,7 +339,7 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   return resolveApiKeyWithSource(service, userId).key;
 }
 
-function resolveConnectedAlpacaMarketData(userId: string): { apiKey: string; secretKey: string } | undefined {
+function resolveConnectedAlpacaMarketData(userId: string, requireSecret = true): { apiKey: string; secretKey?: string } | undefined {
   const alpacaAccs = listConnectedAccounts(userId).filter((a) => a.broker === "alpaca" || a.broker === "alpaca-mcp");
   if (alpacaAccs.length === 0) return undefined;
 
@@ -348,7 +348,7 @@ function resolveConnectedAlpacaMarketData(userId: string): { apiKey: string; sec
     alpacaAccs.find((a) => a.environment === "live") ||
     alpacaAccs[0];
   const detailed = getConnectedAccount(preferred.id, userId);
-  if (!detailed?.apiKey || !detailed.apiSecret) return undefined;
+  if (!detailed?.apiKey || (requireSecret && !detailed.apiSecret)) return undefined;
   return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret };
 }
 
@@ -364,13 +364,19 @@ function resolveConnectedAlpacaMarketData(userId: string): { apiKey: string; sec
  * This helper exposes the operator's key only for read-only market-data endpoints.
  */
 export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
+  let userKeyOnly: { apiKey: string; secretKey?: string; source: ApiKeySource } | undefined;
+
   if (userId) {
     const connected = resolveConnectedAlpacaMarketData(userId);
     if (connected) return { ...connected, source: "user" };
 
+    const connectedKeyOnly = resolveConnectedAlpacaMarketData(userId, false);
+    if (connectedKeyOnly) userKeyOnly = { ...connectedKeyOnly, source: "user" };
+
     const own = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey;
     const ownSecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey;
     if (own && ownSecret) return { apiKey: own, secretKey: ownSecret, source: "user" };
+    if (own && !userKeyOnly) userKeyOnly = { apiKey: own, source: "user" };
   }
 
   const localConnected = resolveConnectedAlpacaMarketData(LOCAL_USER);
@@ -378,7 +384,9 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
 
   const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
   const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
-  if (opKey) return { apiKey: opKey, secretKey: opSecret, source: "env" };
+  if (opKey && opSecret) return { apiKey: opKey, secretKey: opSecret, source: "env" };
+  if (userKeyOnly) return userKeyOnly;
+  if (opKey) return { apiKey: opKey, source: "env" };
   return { source: "none" };
 }
 
