@@ -15,5 +15,12 @@
 - `docs/rollouts/2026-06-30-antigravity-strategy-review-localstorage.md` — this rollout note.
 
 ## Verification
-- `npm test` — ran all 161 test files (1,561 tests), all passed successfully.
-- Verified that local simulated/test accounts load positions without crashing even if Yahoo Finance quote fetching fails/degrades.
+- `bash scripts/npm-ci-with-shared-deps.sh` — installed dependencies for the fresh Codex merge worktree.
+- `npm run lint` — passed with 0 errors and 254 existing warnings.
+- `npx tsc --noEmit` — passed.
+- `npm test` — passed, 165 files / 1,577 tests.
+- `npm run build` — passed; only the existing Next middleware deprecation warning was emitted.
+
+## Coordination
+- Merged via Codex-owned branch `codex/merge-antigravity-20260630` in `/Users/jay/.codex/worktrees/merge-antigravity-20260630/Agentic Trading`.
+- Other Antigravity/Gemini branches (`debug-source-connection-status`, `resolve-prod-merge-prs`) were reviewed read-only and not merged because their unique code paths are already superseded on current `origin/main`, while their raw branch diffs would revert/delete newer production work.
