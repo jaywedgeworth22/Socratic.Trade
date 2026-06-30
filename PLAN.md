@@ -5,6 +5,23 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`codex/prod-merge-sweep-20260630`): production merge sweep -
+> integrates the pending Settings scope/help overhaul, Settings review-action
+> polish, Market Scan source-label cleanup, and the now-landed Alpaca
+> broker-held/order-lifecycle work into one deployment path. The sweep fixes two
+> review blockers before PR: broker-filled
+> orders with only pending local reconciliation remain Working instead of
+> dereferencing a nonexistent filled event, and legacy Strategy Studio model
+> choices are migrated into every connected account before global user policy is
+> reduced to true user-level fields. No roadmap change; see
+> `docs/rollouts/2026-06-30-prod-merge-sweep.md`.
+> 2026-06-30 (`codex/market-scan-source-labels`): Latest Decisions and Market
+> Scan source subtitles now share alias-aware source-list formatting, so
+> `congress`, `congress.trade`, and repeated Congress.Trade segments display
+> once as `Congress.Trade`, and `yahoo-finance-delayed-quotes` displays as
+> `Yahoo Finance`. No roadmap change; see
+> `docs/rollouts/2026-06-30-market-scan-source-labels.md`.
+>
 > 2026-06-30 (`codex/strategy-llm-timeout-diagnostics`): strategy LLM timeout
 > diagnostics - production run `64016e66-bb6d-4efc-bb23-2d11b7d054c5` failed
 > during the Green Team `gpt-5.5` high-reasoning request before any Red Team,
@@ -20,6 +37,7 @@ filling the missing pieces.
 > choices plus reasoning effort are account-scoped strategy fields with a legacy
 > user-level seed, and compact field help plus a System Help Settings Glossary
 > explain advanced knobs like "Min lots for weight shift" without long tab
+> footers. No roadmap change; see
 > footers. Follow-up refresh centralizes the Strategy/Assistant model catalog,
 > adds Claude to the strategy-review picker, removes old curated OpenAI
 > `gpt-4o`/`o1`/`o3` options, and switches DeepSeek curated choices to
@@ -34,8 +52,16 @@ filling the missing pieces.
 > branch also clarifies broker order lifecycle display (`Submitted`/`Working`
 > until filled), reconciles broker-paper pending fills on the scheduler, excludes
 > pending broker-paper fills from paper P&L/projections, and adds a configurable
-> stale limit-order alert (`staleLimitOrderMinutes`, default 15). No roadmap
+> stale limit-order alert (`staleLimitOrderMinutes`, default 15). Stale working
+> limit orders can now be intentionally replaced from Activity by canceling,
+> re-checking broker state, and submitting the remaining quantity as a market
+> order; live Brokerage replacement requires typed confirmation. No roadmap
 > change; see `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
+> 2026-06-30 (`codex/settings-review-polish`): Settings/Strategy Studio polish
+> moved LLM Strategy Review controls into an advisory panel instead of a
+> header/corner action, unified the strategy-review model picker across review
+> surfaces, and tightened Settings scope/account-selector spacing. No roadmap
+> change; see `docs/rollouts/2026-06-30-settings-review-polish.md`.
 >
 > 2026-06-30 (`codex/test-account-readiness`): Test/local readiness no longer
 > blocks Start on dashboard portfolio display read errors. Broker-backed

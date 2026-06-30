@@ -4,6 +4,36 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Production merge sweep for pending settings, source labels, and order lifecycle work
+Branch `codex/prod-merge-sweep-20260630`. Built a production integration branch
+from `origin/main`, folded in the still-unmerged Settings scope/help overhaul
+and Settings review-action polish, reconciled with the Alpaca
+broker-held/order-lifecycle branch after it landed on `main` as PR #268, and
+folded in Market Scan source-label cleanup PR #269. Review blockers fixed in
+this sweep: broker-filled orders with only
+`pending_reconciliation` local fills stay in `pending_order`/Working state
+instead of assuming a local `filled` event exists, and legacy Strategy Studio
+model choices migrate into every connected account before the global
+`user_settings.policy` row is stripped to true user-level fields. Also removed
+two stray historical conflict-marker lines from `STATUS.md`. Verification:
+`npm run lint` (0 errors, 255 existing warnings), `npx tsc --noEmit`,
+`npm test` (164 files / 1574 tests), and `npm run build` all pass. PR #271 is
+not included because its diff reintroduced inline model lists/settings churn and
+a simulated `$100` quote fallback outside `NODE_ENV=test`; revisit as a scoped
+review-persistence-only patch. See
+`docs/rollouts/2026-06-30-prod-merge-sweep.md`.
+
+## 2026-06-30 - Market Scan source label cleanup
+Branch `codex/market-scan-source-labels`. Latest Decisions and Market Scan source
+subtitles now use one shared source-list formatter that aliases `congress`,
+`congress.trade`, and repeated Congress.Trade segments to a single
+`Congress.Trade` label and folds `yahoo-finance-delayed-quotes` into
+`Yahoo Finance`. This is a display/provenance cleanup only; provider execution
+and historical scan rows are unchanged. Verification: focused
+`npm test -- dashboard-ui`, then post-merge `npm run lint` (0 errors, 256
+existing warnings), `npx tsc --noEmit`, `npm test` (163 files / 1569 tests),
+and `npm run build` pass. See
+`docs/rollouts/2026-06-30-market-scan-source-labels.md`.
 ## 2026-06-30 - PR #267 codex-autofix: account-scoped model migration
 Branch `codex/settings-help-overhaul`. Addressed the two P2 review threads from
 chatgpt-codex-connector on PR #267. Both flagged that moving
@@ -40,11 +70,17 @@ Alpaca Paper pending broker orders are reconciled on the scheduler like live
 broker orders; pending broker-paper fills no longer count in paper P&L/portfolio
 projection until filled; and broker-backed limit/stop-limit orders trigger a
 deduped `limit_order_stale` alert after `policy.staleLimitOrderMinutes`
-(default 15). Verification: `npm ci`,
+(default 15). Stale working limit orders now expose a guarded Activity action to
+cancel the stale limit, re-read broker state, and submit the remaining quantity
+as a market order; live Brokerage replacement requires typed
+`REPLACE LIVE <SYMBOL>` confirmation before the cancel is sent. Verification:
+`npm ci`,
 `npx vitest run test/broker-held-orders.test.ts`,
-targeted 5-file Vitest run (63 tests), `npm run lint` (0 errors, 256 existing
-warnings), `npx tsc --noEmit`, `npm test` (163 files / 1568 tests), and
-`npm run build` all pass.
+targeted 5-file Vitest run (63 tests), `npx vitest run
+test/order-replacement.test.ts` (3 tests), targeted 3-file Vitest run (11
+tests), targeted persistence rerun (2 tests), `npm run lint` (0 errors,
+254 existing warnings), `npx tsc --noEmit`,
+`npm test` (165 files / 1574 tests), and `npm run build` all pass.
 See `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
 
 ## 2026-06-30 - Strategy review diff clarity
@@ -86,6 +122,9 @@ help buttons that work on hover, focus, and tap, and System Help has a Settings
 Glossary including the "Min lots for weight shift" guardrail. After rebasing
 onto the strategy LLM timeout diagnostics work, strategy-run LLM tests now seed
 a `local` user OpenAI key instead of depending on operator fallback env state.
+Verification: `npm test -- test/per-account-policy-isolation.test.ts`,
+`npm test -- test/persistence-notification.test.ts`, `npm run lint`,
+`npx tsc --noEmit`, `npm test` (161 files / 1559 tests), and `npm run build`
 Follow-up model-picker refresh removes old curated OpenAI `gpt-4o`/`o1`/`o3`
 options, adds Claude to the strategy-review selector that was still missing it,
 centralizes Strategy/Assistant model lists, and updates DeepSeek to
@@ -98,6 +137,18 @@ all pass after `bash scripts/npm-ci-with-shared-deps.sh`. Branch preview is runn
 `http://localhost:4113` via PM2 process `trading-settings-help-overhaul`, and
 health/dashboard smoke checks returned 200. See
 `docs/rollouts/2026-06-30-settings-scope-help-overhaul.md`.
+## 2026-06-30 - Settings review-action polish
+Branch `codex/settings-review-polish`. Moved the LLM Strategy Review action out
+of the header/corner action pattern in both the Strategy tab and Strategy Studio,
+placing it in a left-aligned advisory panel so it no longer reads like an OK,
+Save, or submit button for surrounding settings. The review model picker is now
+shared between both surfaces, includes the newer provider/model families, and
+shows a current custom model instead of rendering blank. The Settings scope
+header/account picker also got spacing and alignment polish; the auto-resume row
+is now an explicit whole-row switch with hover, active, and focus affordance
+instead of a silent label-click area. Verification: `npm run lint` (0 errors,
+existing 256 warnings), `npx tsc --noEmit`, `npm test` (160 files / 1555 tests),
+and `npm run build` all pass. See `docs/rollouts/2026-06-30-settings-review-polish.md`.
 
 ## 2026-06-30 - Test account readiness ignores local portfolio display errors
 Branch `codex/test-account-readiness`. Fixed the Test/local Start blocker where a
@@ -1033,9 +1084,6 @@ worked as the default push). (3) **Ops (not code):** added Twilio to Infisical �
 available in the signed-in UI. Verify: tsc ✓ · 1254/1254 ✓ · build ✓ · all 6 `/model-logos/*.svg` serve
 200 image/svg+xml · dashboard 200. Follow-up: operator confirm SMS end-to-end (Send test); logo picker
 for Strategy Studio. See `docs/rollouts/2026-06-26-provider-logos-ntfy-recommended.md`.
->>>>>>> origin/main
-
->>>>>>> origin/main
 ## 2026-06-26 — DeepSeek provider + custom model picker (logos + price tiers) + ntfy guidance
 Branch `feat/deepseek-ntfy-price-tiers` (throwaway worktree `~/apps/trading-ag13`). (1) **DeepSeek** =
 6th provider (chat + strategy), same OpenAI-compatible wiring as gemini/mistral: db-api-keys

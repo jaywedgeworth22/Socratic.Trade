@@ -83,13 +83,15 @@ It includes:
 - Green Team proposal model, Red Team review model, and reasoning-effort controls
 - slider/field controls for high-impact strategy and risk options
 - scoring weight controls
-- LLM strategy review button
+- left-aligned LLM strategy review panel with a shared model picker
 - manual apply flow for suggested strategy/policy changes
 
 LLM-generated strategy updates are advisory only. They do not mutate prompt,
 policy, risk, or scoring weights until a human clicks `Apply Reviewed Changes`.
 This is intentional: automatically rewriting the trading strategy without a
 review gate is unsafe for an agentic trading tool.
+The review action should stay visually separate from modal/header submit
+patterns; it generates a proposal and is not itself a save/OK action.
 
 Review proposals render as before/after data. Prompt patches show the current
 prompt and the exact replacement prompt. Scoring-weight changes are grouped as
@@ -210,10 +212,19 @@ across panels, feeds, popovers, or status chips.
   notable web/technical signals may replace lower-ranked plain candidates inside
   that cap. The Market Scan tab header includes a gauge button that opens
   Settings directly to this Data section, and the scan subtitle shows returned
-  candidates against the active cap.
+  candidates against the active cap. Source subtitles are formatted through the
+  shared dashboard helper so aliased providers dedupe before display, including
+  `congress`/`congress.trade` to `Congress.Trade` and delayed Yahoo variants to
+  `Yahoo Finance`.
 - Settings → Connections owns provider/API keys and connection status context.
   Editable Green/Red Team model behavior belongs in Strategy Studio; Connections
   may show a read-only model summary and a link to Studio.
+- Settings uses an explicit User/Account scope header with the account selector
+  below it when Account scope is active. Review/tuning proposal actions should
+  remain in Strategy Studio rather than appearing as bottom-right settings
+  confirmation controls.
+- Whole-row switches in Settings must look clickable: use hover/active/focus
+  affordance when the entire row toggles a setting.
 - The command-bar `Mode:` selector is approval mode, not run state. `Propose
   Mode` stages orders for approval; `Autonomous Mode` may execute while the
   system is running. Start/Stop controls whether scheduled/autonomous runs can

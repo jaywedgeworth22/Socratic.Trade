@@ -12,6 +12,13 @@ executed, broker-paper pending fills do not count in paper P&L/projection until
 filled, and broker-backed limit or stop-limit orders can alert after a
 customizable threshold (`staleLimitOrderMinutes`, default 15 minutes).
 
+Added guarded market replacement for stale working limit orders. Activity now
+shows a `Market replace` action only after the order crosses the stale threshold;
+the server cancels the original, re-reads broker state, and submits a market
+order for only the remaining quantity once the original order is no longer
+active. Live Brokerage replacement requires typed `REPLACE LIVE <SYMBOL>`
+confirmation before the cancel request is sent.
+
 ## Why
 
 Production KO approval failed on Alpaca Paper with:
@@ -37,11 +44,13 @@ and accounting facts.
 ## Files
 
 - `app/api/policy/route.ts`
+- `app/api/orders/replace-market/route.ts`
 - `app/dashboard-client.tsx`
 - `src/lib/broker-held-orders.ts`
 - `src/lib/dashboard-feed.ts`
 - `src/lib/defaults.ts`
 - `src/lib/notifications.ts`
+- `src/lib/order-replacement.ts`
 - `src/lib/performance.ts`
 - `src/lib/scheduler.ts`
 - `src/lib/stale-limit-orders.ts`
@@ -49,6 +58,7 @@ and accounting facts.
 - `src/lib/types.ts`
 - `test/broker-held-orders.test.ts`
 - `test/dashboard-feed.test.ts`
+- `test/order-replacement.test.ts`
 - `test/performance.test.ts`
 - `test/policy-notification-events.test.ts`
 - `test/stale-limit-orders.test.ts`
@@ -62,9 +72,12 @@ and accounting facts.
 - `npm ci` - passed.
 - `npx vitest run test/broker-held-orders.test.ts` - passed, 6 tests.
 - `npx vitest run test/broker-held-orders.test.ts test/stale-limit-orders.test.ts test/dashboard-feed.test.ts test/performance.test.ts test/policy-notification-events.test.ts` - passed, 5 files / 63 tests.
-- `npm run lint` - passed with 0 errors and 256 existing warnings.
+- `npx vitest run test/order-replacement.test.ts` - passed, 1 file / 3 tests.
+- `npx vitest run test/order-replacement.test.ts test/stale-limit-orders.test.ts test/broker-held-orders.test.ts` - passed, 3 files / 11 tests.
+- `npx vitest run test/persistence-notification.test.ts -t "writes one strategy_run audit event from runStrategyOnce|records a failed Green Team LLM step when the proposal request times out"` - passed. The prior full `npm test` attempt failed only on those two timeout-sensitive tests (1 file failed, 163 passed; 1569 tests passed).
+- `npm run lint` - passed with 0 errors and 254 existing warnings.
 - `npx tsc --noEmit` - passed.
-- `npm test` - passed, 163 files / 1568 tests after merging `origin/main`.
+- `npm test` - passed, 165 files / 1574 tests.
 - `npm run build` - passed.
 - `rg -n "source === \"paper\"|pending_reconciliation|executionMode === \"test/local\"|filled" src/lib/performance.ts test -g '*.ts'` - typo run with an unquoted shell glob failed under zsh during exploration; no files changed.
 
@@ -73,7 +86,3 @@ and accounting facts.
 - Consider parsing broker-native available/held position fields if Alpaca or
   another broker exposes them consistently. The current guard uses the existing
   portable position + open-order data already available through `BrokerGateway`.
-- Consider a separate, explicitly confirmed cancel-and-market-replace flow. This
-  patch alerts and clarifies status but does not add a one-click market
-  replacement because that path can touch live capital and needs its own
-  confirmation guard.

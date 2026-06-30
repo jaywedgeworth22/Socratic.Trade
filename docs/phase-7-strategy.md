@@ -155,6 +155,9 @@ reconciliation confirms execution. `filled` fill events remain the accounting
 truth for P&L and portfolio projection. Broker-paper pending reconciliation rows
 are excluded from paper accounting until a broker fill is observed; legacy
 Test/local simulated fills remain accounting-valid.
+If the broker reports an order as filled before the local fill row reconciles,
+the UI still treats the group as Working/pending reconciliation. Local `filled`
+events remain the accounting and completed-trade truth.
 
 The scheduler reconciles pending broker fills for both `broker/paper` and
 `broker/live` accounts. It also checks broker-backed limit and stop-limit orders
@@ -162,6 +165,14 @@ against `policy.staleLimitOrderMinutes` (default 15, 0 disables). A working orde
 older than the threshold emits one deduped `limit_order_stale` audit/notification
 per order and threshold, so the operator can decide whether to cancel, reprice,
 or intentionally replace it with a market order.
+
+Activity exposes a guarded `Market replace` action for stale working limit and
+stop-limit orders. The server cancels the original order, waits briefly, re-reads
+broker order state, and submits a market order only for the remaining quantity
+once the original is no longer active. For `broker/live`, the operator must type
+`REPLACE LIVE <SYMBOL>` and the confirmation must match the selected account,
+order id, execution mode, and remaining quantity before the cancel request is
+sent.
 
 ### D. Token Efficiency & Asynchronous Post-Mortems
 Feeding dozens of raw rationales, P&L lines, and redundant daily news into the trading prompt wastes massive amounts of tokens and degrades LLM reasoning. To optimize this:

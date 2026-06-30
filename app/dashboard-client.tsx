@@ -59,6 +59,7 @@ import {
 import {
   companyTitle,
   enrichPositionsForDisplay,
+  formatSourceList,
   formatNotificationDisplay,
   formatShareQuantity,
   friendlySource,
@@ -90,6 +91,7 @@ import {
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
 import type {
+  EquityOrder,
   EquityPosition,
   ExecutionMode,
   IndexUniverse,
@@ -165,6 +167,13 @@ const ACCOUNT_SETTINGS_SECTIONS = new Set<SettingsSection>(["strategy", "operate
 function settingsTierForSection(section: SettingsSection): SettingsTier {
   return ACCOUNT_SETTINGS_SECTIONS.has(section) ? "account" : "user";
 }
+
+type MarketReplaceCandidate = {
+  order: EquityOrder;
+  ageMinutes: number;
+  thresholdMinutes: number;
+  remainingQuantity: number;
+};
 type AccountDeletionPreview = {
   userId: string;
   email?: string;
@@ -191,6 +200,27 @@ const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
 const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets";
 const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
 const LOCAL_OPERATOR_DELETE_PHRASE = "DELETE LOCAL OPERATOR ACCOUNT";
+const DEFAULT_STALE_LIMIT_ORDER_MINUTES = 15;
+const MARKET_REPLACE_ORDER_TYPES = new Set(["limit", "stop_limit"]);
+const MARKET_REPLACE_ACTIVE_ORDER_STATES = new Set([
+  "accepted",
+  "accepted_for_bidding",
+  "confirmed",
+  "held",
+  "new",
+  "open",
+  "partially_filled",
+  "pending_cancel",
+  "pending_new",
+  "pending_replace",
+  "queued",
+  "submitted",
+  "suspended",
+  "unconfirmed",
+  "done_for_day",
+  "stopped",
+  "calculated"
+]);
 type RobinhoodMcpHealth = {
   adapter?: "mcp";
   ok: boolean;
@@ -858,6 +888,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
     estimatedNotional?: number;
     accountNumber?: string;
   } | null>(null);
+  const [replaceMarketOrder, setReplaceMarketOrder] = useState<MarketReplaceCandidate | null>(null);
+  const [replaceMarketText, setReplaceMarketText] = useState("");
   const [drilldownSymbol, setDrilldownSymbol] = useState<MarketQuote | null>(null);
   // A live market scan used solely to resolve a symbol → full quote when a ticker is
   // clicked anywhere outside Market Scan. The persisted `latestStrategyRun.marketScan`
@@ -1211,6 +1243,55 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
       typedText: `APPROVE LIVE ${pending.symbol.trim().toUpperCase()}`
     };
     void submitProposalApproval(pending.proposalId, confirmationPayload);
+  }
+
+  async function submitMarketReplace() {
+    const pending = replaceMarketOrder;
+    if (!pending) return;
+    const live = executionState.mode === "broker/live";
+    const expectedText = marketReplaceText(pending.order.symbol);
+    if (live && replaceMarketText.trim().toUpperCase() !== expectedText) {
+      toast.error("Typed confirmation does not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/orders/replace-market", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orderId: pending.order.id,
+          liveConfirmation: live
+            ? {
+                orderId: pending.order.id,
+                accountNumber: snapshot.policy.accountNumber,
+                executionMode: executionState.mode,
+                remainingQuantity: pending.remainingQuantity,
+                typedText: replaceMarketText
+              }
+            : undefined
+        })
+      });
+      if (!response.ok) throw await responseError(response, "Market replacement failed");
+      const body = (await response.json()) as { status: string; replacementOrderId?: string; brokerState?: string; remainingQuantity?: number };
+      setReplaceMarketOrder(null);
+      setReplaceMarketText("");
+      if (body.status === "already_filled") {
+        toast.info("Original order already filled; no market replacement was placed.");
+      } else {
+        toast.success("Market replacement submitted.", {
+          description: [
+            body.replacementOrderId ? `Order ${body.replacementOrderId}.` : undefined,
+            body.brokerState ? `Broker state: ${readableOrderState(body.brokerState)}.` : undefined
+          ].filter(Boolean).join(" ")
+        });
+      }
+      await load({ quiet: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Market replacement failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function rejectProposal(proposalId: string) {
@@ -1742,7 +1823,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           />
         </div>
         <div className="px-4 pb-4">
-          {feedTab === "activity" && <ActivityFeed snapshot={snapshot} />}
+          {feedTab === "activity" && (
+            <ActivityFeed
+              snapshot={snapshot}
+              onReplaceMarket={(candidate) => {
+                setReplaceMarketOrder(candidate);
+                setReplaceMarketText("");
+              }}
+            />
+          )}
           {feedTab === "runs" && <RunHistory snapshot={snapshot} />}
           {feedTab === "notifications" && <NotificationsList snapshot={snapshot} />}
           {feedTab === "audit" && <AuditLog snapshot={snapshot} />}
@@ -1903,6 +1992,20 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         price={liveConfirmation?.price}
         estimatedNotional={liveConfirmation?.estimatedNotional}
         accountNumber={liveConfirmation?.accountNumber}
+      />
+
+      <MarketReplaceModal
+        candidate={replaceMarketOrder}
+        live={executionState.mode === "broker/live"}
+        accountNumber={snapshot.policy.accountNumber}
+        typedText={replaceMarketText}
+        onTypedText={setReplaceMarketText}
+        busy={busy}
+        onClose={() => {
+          setReplaceMarketOrder(null);
+          setReplaceMarketText("");
+        }}
+        onConfirm={submitMarketReplace}
       />
     </div>
   );
@@ -2244,7 +2347,7 @@ function DecisionView({
             recentDecisionItems.length > 0
               ? `${Math.min(recentDecisionItems.length, 100)} recent proposal decisions`
               : decision?.marketScan
-                ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSources(decision.marketScan.source)}`
+                ? `${decision.marketScan.scannedSymbols} symbols scanned · ${formatSourceList(decision.marketScan.source)}`
                 : "Run the strategy to generate a decision"
           }
           icon={<Sparkles size={16} />}
@@ -2549,11 +2652,7 @@ function vwapTitle(q: MarketQuote): string | undefined {
 }
 
 function formatScanSources(sourceString: string): string {
-  const sources = formatSources(sourceString)
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part && !/^live$/i.test(part) && !/^(none|unknown|-)$/i.test(part));
-  return Array.from(new Set(sources)).join(", ");
+  return formatSourceList(sourceString);
 }
 
 const SCAN_COLUMNS: ScanColumn[] = [
@@ -3537,22 +3636,38 @@ function StrategyView({
           title="LLM Strategy Review"
           subtitle="Advisory — review past performance & suggest tuning"
           icon={<Sparkles size={16} />}
-          actions={
-            <div className="flex items-center gap-2">
-              <select
-                className={cn(inputClass, "w-44 text-[12px] py-1 h-8 bg-surface-3 border-line")}
-                value={tuningModel}
-                onChange={(e) => setTuningModel(e.target.value)}
-              >
-                {renderCuratedModelOptions(false)}
-              </select>
-              <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
-                <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review"}
-              </Button>
-            </div>
-          }
+
         />
-        <div className="p-4 pt-3">
+        <div className="space-y-3 p-4 pt-3">
+          <div className="rounded-lg border border-line bg-bg/55 px-3 py-3">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                <Zap size={15} />
+              </span>
+              <div className="min-w-0 flex-1 space-y-3">
+                <div>
+                  <div className="text-sm font-semibold text-fg">Generate a tuning proposal</div>
+                  <p className="mt-0.5 text-xs text-faint">Creates an advisory review below. Nothing changes until you apply reviewed changes.</p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <StrategyTuningModelSelect
+                    value={tuningModel}
+                    onChange={setTuningModel}
+                    className="w-full sm:w-60"
+                  />
+                  <Button
+                    size="sm"
+                    variant="accentSoft"
+                    className="w-full sm:w-auto"
+                    onClick={() => requestStrategyTuning(tuningModel)}
+                    disabled={tuningBusy}
+                  >
+                    <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
           {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">No review yet. Run a review to get suggested prompt, scoring, and risk changes (you apply them manually).</p>}
         </div>
@@ -3784,7 +3899,7 @@ function DetailLine({ text, className }: { text: string; className?: string }) {
   );
 }
 
-function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
+function ActivityFeed({ snapshot, onReplaceMarket }: { snapshot: DashboardSnapshot; onReplaceMarket?: (candidate: MarketReplaceCandidate) => void }) {
   const feed = snapshot.unifiedFeed ?? [];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Activity Yet" />;
@@ -3802,6 +3917,7 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
                 : "border-l-line";
         const hasSub = group.events && group.events.length > 1;
         const open = !!expanded[group.id];
+        const replaceCandidate = onReplaceMarket ? staleLimitReplaceCandidate(group, snapshot.policy) : null;
         return (
           <div key={group.id} className={cn("rounded-r-lg border-l-[3px] border-b border-line bg-surface-2/40 pl-3", accent)}>
             <div className="flex items-start justify-between gap-2 py-2 pr-2">
@@ -3821,6 +3937,18 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
                 <Chip tone={statusTone(group.status)}>{displayStatus(group.status)}</Chip>
+                {replaceCandidate && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    title="Cancel this stale limit order and submit the remaining quantity as a market order."
+                    onClick={() => onReplaceMarket?.(replaceCandidate)}
+                  >
+                    <RefreshCw size={13} />
+                    Market replace
+                  </Button>
+                )}
                 {hasSub && (
                   <button onClick={() => setExpanded((e) => ({ ...e, [group.id]: !e[group.id] }))} className="text-[11px] text-muted hover:text-fg">
                     {open ? "Hide" : `+${group.events.length}`}
@@ -3846,6 +3974,150 @@ function ActivityFeed({ snapshot }: { snapshot: DashboardSnapshot }) {
       })}
     </div>
   );
+}
+
+function MarketReplaceModal({
+  candidate,
+  live,
+  accountNumber,
+  typedText,
+  onTypedText,
+  busy,
+  onClose,
+  onConfirm
+}: {
+  candidate: MarketReplaceCandidate | null;
+  live: boolean;
+  accountNumber?: string;
+  typedText: string;
+  onTypedText: (value: string) => void;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!candidate) return null;
+  const order = candidate.order;
+  const expectedText = marketReplaceText(order.symbol);
+  const remaining = formatShareQuantity(candidate.remainingQuantity);
+  const typedMatches = typedText.trim().toUpperCase() === expectedText;
+  const confirmDisabled = busy || (live && !typedMatches);
+  const orderKind = String(order.type).replace(/_/g, "-");
+
+  return (
+    <Modal
+      open={true}
+      onClose={onClose}
+      title="Replace stale limit order"
+      subtitle={`${order.side.toUpperCase()} ${order.symbol} (${remaining} remaining)`}
+      icon={<RefreshCw size={18} />}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="button" variant={live ? "danger" : "primary"} onClick={onConfirm} disabled={confirmDisabled}>
+            Submit market order
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        <div className="rounded-lg border border-line bg-surface-2/50 p-3">
+          <div className="grid gap-2 text-[13px] sm:grid-cols-2">
+            <div>
+              <div className="text-[11px] font-semibold uppercase text-faint">Order</div>
+              <div className="mt-0.5 text-fg">{order.side.toUpperCase()} {order.symbol} {orderKind}</div>
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold uppercase text-faint">State</div>
+              <div className="mt-0.5 text-fg">{readableOrderState(order.state)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold uppercase text-faint">Remaining</div>
+              <div className="mt-0.5 text-fg">{remaining}</div>
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold uppercase text-faint">Age</div>
+              <div className="mt-0.5 text-fg">{candidate.ageMinutes} min (limit {candidate.thresholdMinutes} min)</div>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-muted">
+          This cancels the working {orderKind} order, re-checks the broker, then submits only the remaining quantity as a market order.
+        </p>
+
+        {live ? (
+          <div className="space-y-2">
+            <label className="text-[12px] font-semibold uppercase text-faint" htmlFor="market-replace-confirmation">
+              Live Brokerage confirmation
+            </label>
+            <input
+              id="market-replace-confirmation"
+              className={inputClass}
+              value={typedText}
+              onChange={(event) => onTypedText(event.target.value)}
+              placeholder={expectedText}
+              autoComplete="off"
+            />
+            <p className="text-xs text-faint">
+              Type <span className="font-mono text-fg">{expectedText}</span> for {accountNumber ?? "the selected live account"}.
+            </p>
+          </div>
+        ) : (
+          <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-muted">
+            Paper replacement uses broker paper execution and will stay Working until the broker reports a fill.
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function marketReplaceText(symbol: string): string {
+  return `REPLACE LIVE ${symbol.trim().toUpperCase()}`;
+}
+
+function staleLimitReplaceCandidate(group: UnifiedActivityGroup, policy: TradingPolicy): MarketReplaceCandidate | null {
+  const thresholdMinutes = staleLimitOrderThresholdMinutes(policy);
+  if (thresholdMinutes <= 0) return null;
+  const nowMs = Date.now();
+
+  const candidates = group.events
+    .filter((event) => event.type === "order")
+    .map((event) => equityOrderFromRaw(event.raw))
+    .filter((order): order is EquityOrder => !!order)
+    .flatMap((order) => {
+      if (!MARKET_REPLACE_ORDER_TYPES.has(String(order.type ?? "").toLowerCase())) return [];
+      if (!MARKET_REPLACE_ACTIVE_ORDER_STATES.has(String(order.state ?? "").trim().toLowerCase())) return [];
+      const createdMs = Date.parse(order.createdAt);
+      if (!Number.isFinite(createdMs) || createdMs > nowMs) return [];
+      const remainingQuantity = remainingOrderQuantity(order);
+      if (remainingQuantity <= 0) return [];
+      const ageMinutes = Math.floor((nowMs - createdMs) / 60_000);
+      if (ageMinutes < thresholdMinutes) return [];
+      return [{ order, ageMinutes, thresholdMinutes, remainingQuantity }];
+    });
+
+  candidates.sort((a, b) => b.ageMinutes - a.ageMinutes);
+  return candidates[0] ?? null;
+}
+
+function staleLimitOrderThresholdMinutes(policy: Pick<TradingPolicy, "staleLimitOrderMinutes">): number {
+  const value = policy.staleLimitOrderMinutes ?? DEFAULT_STALE_LIMIT_ORDER_MINUTES;
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function equityOrderFromRaw(raw: unknown): EquityOrder | null {
+  if (!raw || typeof raw !== "object") return null;
+  const order = raw as Partial<EquityOrder>;
+  if (typeof order.id !== "string" || typeof order.symbol !== "string" || typeof order.state !== "string") return null;
+  if (typeof order.createdAt !== "string") return null;
+  return order as EquityOrder;
+}
+
+function remainingOrderQuantity(order: EquityOrder): number {
+  const quantity = order.quantity ?? 0;
+  const filled = order.filledQuantity ?? 0;
+  return Math.max(quantity - filled, 0);
 }
 
 function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
@@ -4076,28 +4348,65 @@ function StrategyStudio({
       </div>
 
       <div className="lg:col-span-2">
-        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h4 className="text-sm font-semibold text-fg">LLM Strategy Review</h4>
-            <p className="text-xs text-faint">Reviews performance, scan context, macro & current prompt. Advisory — apply is manual.</p>
+        <div className="rounded-lg border border-line bg-surface-2/45 p-3">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+              <Sparkles size={15} />
+            </span>
+            <div className="min-w-0 flex-1 space-y-3">
+              <div>
+                <h4 className="text-sm font-semibold text-fg">LLM Strategy Review</h4>
+                <p className="mt-0.5 text-xs text-faint">Reviews performance, scan context, macro, and current prompt. Advisory only.</p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <StrategyTuningModelSelect
+                  value={tuningModel}
+                  onChange={setTuningModel}
+                  className="w-full sm:w-60"
+                />
+                <Button
+                  size="sm"
+                  variant="accentSoft"
+                  className="w-full sm:w-auto"
+                  onClick={() => requestStrategyTuning(tuningModel)}
+                  disabled={tuningBusy}
+                >
+                  <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}
+                </Button>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              className={cn(inputClass, "w-44 text-[12px] py-1 h-8 bg-surface-3 border-line")}
-              value={tuningModel}
-              onChange={(e) => setTuningModel(e.target.value)}
-            >
-              {renderCuratedModelOptions(false)}
-            </select>
-            <Button size="sm" onClick={() => requestStrategyTuning(tuningModel)} disabled={tuningBusy}>
-              <Zap size={14} /> {tuningBusy ? "Reviewing…" : "Review strategy"}
-            </Button>
+          {tuningError && <p className="mt-3 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
+          <div className="mt-3">
+            {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
           </div>
         </div>
-        {tuningError && <p className="mb-2 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
-        {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
       </div>
     </div>
+  );
+}
+
+function StrategyTuningModelSelect({
+  value,
+  onChange,
+  className
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  return (
+    <select
+      aria-label="Strategy review model"
+      className={cn(inputClass, "h-8 border-line bg-surface-3 py-1 text-[12px]", className)}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {value && !STRATEGY_MODEL_IDS.includes(value) && (
+        <option value={value}>{value} (current custom)</option>
+      )}
+      {renderCuratedModelOptions(false)}
+    </select>
   );
 }
 
@@ -4305,13 +4614,27 @@ function SettingsContent({
     updatePolicy({ paperMode: true });
   }
 
+  async function setAutoResumeOnBoot(enabled: boolean) {
+    try {
+      const res = await fetch("/api/settings/auto-resume", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled })
+      });
+      if (!res.ok) throw new Error("Failed to save setting");
+      await load({ quiet: true });
+    } catch {
+      toast.error("Could not save auto-resume setting.");
+    }
+  }
+
   return (
     <>
       <div className="min-h-[60vh] space-y-4">
-        <div className="space-y-2 rounded-lg border border-line bg-surface/55 p-2.5 shadow-[var(--shadow)]">
+        <div className="space-y-3 rounded-lg border border-line bg-surface/60 p-3 shadow-[var(--shadow)]">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
                 {settingsTier === "user" ? <SettingsIcon size={15} /> : <Wallet size={15} />}
               </span>
               <div className="min-w-0">
@@ -4319,7 +4642,7 @@ function SettingsContent({
                 <div className="truncate text-xs text-faint" title={settingsScopeDetail}>{settingsScopeDetail}</div>
               </div>
             </div>
-            <div className="overflow-x-auto overscroll-x-contain">
+            <div className="overflow-x-auto overscroll-x-contain sm:shrink-0">
               <Segmented<"user" | "account">
                 value={settingsTier}
                 onChange={(v) => {
@@ -4339,14 +4662,16 @@ function SettingsContent({
           {settingsTier === "account" && (() => {
             const accounts = (snapshot.connectedAccounts ?? []).filter((a) => a.broker !== "test" || a.id === snapshot.policy.connectedAccountId);
             return (
-              <div className="flex flex-col gap-2 rounded-lg border border-line/70 bg-bg/35 px-3 py-2.5 sm:flex-row sm:items-center">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-                  <Wallet size={14} />
-                </span>
-                <span className="text-sm font-medium text-fg">Editing</span>
+              <div className="flex flex-col gap-2 rounded-lg border border-line/70 bg-bg/35 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                    <Wallet size={14} />
+                  </span>
+                  <span className="text-sm font-medium text-fg">Account</span>
+                </div>
                 {accounts.length > 0 ? (
                   <select
-                    className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface/70 px-2 text-sm text-fg outline-none focus:border-accent focus:ring-1 focus:ring-accent sm:max-w-xs"
+                    className="h-9 w-full min-w-0 rounded-lg border border-line bg-surface/70 px-2 text-sm text-fg outline-none focus:border-accent focus:ring-1 focus:ring-accent sm:max-w-xs"
                     value={activeAccount?.id ?? ""}
                     onChange={async (e) => {
                       const id = e.target.value;
@@ -4371,30 +4696,39 @@ function SettingsContent({
           })()}
 
           {settingsTier === "user" && (
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-line/70 bg-bg/35 px-3 py-2.5 max-sm:flex-col max-sm:items-start">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={snapshot.autoResumeOnBoot}
+              onClick={() => void setAutoResumeOnBoot(!snapshot.autoResumeOnBoot)}
+              className={cn(
+                "group flex w-full cursor-pointer select-none items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 max-sm:flex-col max-sm:items-start",
+                snapshot.autoResumeOnBoot
+                  ? "border-accent/45 bg-accent/10 hover:bg-accent/15 active:bg-accent/20"
+                  : "border-line/70 bg-bg/35 hover:border-accent/45 hover:bg-accent/8 active:bg-accent/12"
+              )}
+            >
               <span className="min-w-0 leading-snug">
-                <span className="block text-sm font-medium text-fg">Resume strategy on server restart</span>
-                <span className="block text-xs text-faint">
+                <span className={cn("block text-sm font-medium transition-colors", snapshot.autoResumeOnBoot ? "text-accent" : "text-fg group-hover:text-accent")}>Resume strategy on server restart</span>
+                <span className="block text-xs text-faint transition-colors group-hover:text-muted">
                   When enabled, accounts left in &ldquo;active&rdquo; state will auto-resume on server boot. When off (default), every restart requires manually re-arming autonomy.
                 </span>
               </span>
-              <Switch
-                checked={snapshot.autoResumeOnBoot}
-                onChange={async (v) => {
-                  try {
-                    const res = await fetch("/api/settings/auto-resume", {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ enabled: v })
-                    });
-                    if (!res.ok) throw new Error("Failed to save setting");
-                    await load({ quiet: true });
-                  } catch {
-                    toast.error("Could not save auto-resume setting.");
-                  }
-                }}
-              />
-            </label>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+                  snapshot.autoResumeOnBoot ? "bg-accent" : "bg-surface-3 group-hover:bg-surface-2"
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                    snapshot.autoResumeOnBoot ? "translate-x-6" : "translate-x-1"
+                  )}
+                />
+              </span>
+            </button>
           )}
 
           <div className="overflow-x-auto overscroll-x-contain">
@@ -5721,31 +6055,6 @@ function parseSectorCaps(value: string): Record<string, number> {
 
 function normalizeSymbols(values: string[]): string[] {
   return Array.from(new Set(values.map((v) => v.trim().toUpperCase()).filter((v) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(v))));
-}
-
-function formatSources(sourceString: string): string {
-  if (!sourceString) return "";
-  return sourceString
-    .split("+")
-    .map((part) => {
-      switch (part.trim().toLowerCase()) {
-        case "nasdaq-delayed-screener":
-          return "NASDAQ";
-        case "finnhub":
-          return "Finnhub";
-        case "yahoo-finance":
-          return "Yahoo";
-        case "fmp":
-          return "FMP";
-        case "alpha-vantage":
-          return "Alpha Vantage";
-        case "massive-vwap":
-          return "Massive VWAP";
-        default:
-          return part.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-      }
-    })
-    .join(", ");
 }
 
 function renderActionTitle(title: string) {
