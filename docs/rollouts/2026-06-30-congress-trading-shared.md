@@ -13,8 +13,12 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 - `.github/workflows/ci.yml`
 - `.github/workflows/e2e.yml`
 - `.github/workflows/deploy.yml`
+- `.github/workflows/sync-previews.yml`
 - `package.json`
 - `package-lock.json`
+- `scripts/cloud-setup.sh`
+- `scripts/npm-ci-with-shared-deps.sh`
+- `scripts/sync-preview-lanes.sh`
 - `src/lib/congress-score.ts`
 - `src/lib/congress-share.ts`
 - `src/lib/congress-shared-aliases.ts`
@@ -33,7 +37,7 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 ## Decisions
 
 - Pin the app dependency to shared-package commit `220677a3fb768c9e378404736e8f1f8c933220e1` until the package is published or a versioned release process is active.
-- Keep private repo access narrow: set the shared repo's Actions access to `user` and add a read-only deploy key (`agentic-trading dependency read key`) on the shared repo. Agentic Trading stores the matching private key as the Actions secret `CONGRESS_TRADING_SHARED_DEPLOY_KEY`; CI/smoke/deploy load it only for the `npm ci` process.
+- Keep private repo access narrow: set the shared repo's Actions access to `user` and add read-only deploy keys on the shared repo. Agentic Trading stores matching private keys as the Actions and Dependabot secret `CONGRESS_TRADING_SHARED_DEPLOY_KEY`; install entrypoints use `scripts/npm-ci-with-shared-deps.sh` so CI/smoke/deploy/cloud setup/preview sync load the key only for the `npm ci` process.
 - Remove unrelated PR drift from the app branch: page-title copy changes, `scripts/deploy.sh`, and the auto-deploy `AGENTS.md` block do not belong to this integration.
 
 ## Verification
@@ -45,6 +49,8 @@ The two apps were carrying overlapping TypeScript contracts for the same cross-a
 - Shared package: `npm run publish:dry`
 - App: `npm install --package-lock-only`
 - App: workflow YAML parse check with Ruby `YAML.load_file`
+- App: `bash -n scripts/npm-ci-with-shared-deps.sh scripts/cloud-setup.sh scripts/sync-preview-lanes.sh`
+- App: touched install-script ASCII check with Perl (`scripts/cloud-setup.sh`, `scripts/npm-ci-with-shared-deps.sh`, `scripts/sync-preview-lanes.sh`)
 - App: clean install using the deploy-key private-git auth pattern: `npm ci`
 - App: `npm run lint` - passed with the existing warning backlog and 0 errors
 - App: `npx tsc --noEmit` - passed

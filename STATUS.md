@@ -11,8 +11,10 @@ integration. Agentic Trading now depends on
 `220677a`, imports the shared App A/B types, constants, and Zod schemas across the
 Congress.Trade read/share/event paths, and validates transactions, share payloads,
 and inbound events at runtime. The private shared repo's Actions access was set
-to `user`; CI/e2e/deploy `npm ci` steps now rewrite npm's `git+ssh` lockfile URL
-through a read-only deploy key stored as `CONGRESS_TRADING_SHARED_DEPLOY_KEY`.
+to `user`; CI/e2e/deploy/cloud setup/preview-sync `npm ci` paths now use
+`scripts/npm-ci-with-shared-deps.sh` to load a read-only deploy key stored as
+`CONGRESS_TRADING_SHARED_DEPLOY_KEY`. The same read-only access is also stored as
+a Dependabot secret so trusted Dependabot PRs can run the required verify gate.
 Companion shared-package PR:
 jaywedgeworth22/congress-trading-shared#1. See
 `docs/rollouts/2026-06-30-congress-trading-shared.md`.

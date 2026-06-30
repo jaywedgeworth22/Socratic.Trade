@@ -68,15 +68,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Install dependencies (lockfile-exact)"
-          if [ -n "${CONGRESS_TRADING_SHARED_DEPLOY_KEY:-}" ]; then
-            key_file="${RUNNER_TEMP:-/tmp}/congress_trading_shared_deploy_key"
-            mkdir -p "$(dirname "$key_file")" "$HOME/.ssh"
-            printf '%s\n' "$CONGRESS_TRADING_SHARED_DEPLOY_KEY" > "$key_file"
-            chmod 600 "$key_file"
-            ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
-            export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-          fi
-          npm ci
+          bash scripts/npm-ci-with-shared-deps.sh
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"

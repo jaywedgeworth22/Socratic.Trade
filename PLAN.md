@@ -14,7 +14,8 @@ filling the missing pieces.
 > App A/B wire types, API path constants, and Zod schemas are now imported from
 > `@jaywedgeworth22/congress-trading-shared` instead of being duplicated locally.
 > The package is pinned to shared commit `220677a`; CI/deploy install steps use a
-> read-only deploy key for npm's private git dependency. No roadmap change; see
+> shared install helper plus read-only deploy key for npm's private git dependency.
+> No roadmap change; see
 > `docs/rollouts/2026-06-30-congress-trading-shared.md`.
 
 > 2026-06-29 (`antigravity/multi-agent-optimizations`): multi-agent optimizations —
