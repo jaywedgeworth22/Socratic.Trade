@@ -12,9 +12,11 @@ connected Alpaca accounts before falling back, while preserving a tenant's
 key-only Alpaca credential for the news tier when no shared fallback is
 configured, and preserving operator key-only connected credentials for shared
 news enrichment. Trading credential resolution remains per-user/fail-closed.
-Verification: `npm test -- test/key-resolution-tiering.test.ts`,
-`npx tsc --noEmit`, and `npm run lint`.
-See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md`.
+Also updated `eslint.config.mjs` ignores list to skip `.claude/`, `.agents/`, `.tools/`,
+`**/worktrees/**`, and `scratch/` folders to prevent local verification linting errors.
+Verification: `npm test`, `npx tsc --noEmit`, and `npm run lint`.
+See `docs/rollouts/2026-06-27-alpaca-key-fallback-fmp-warnings.md` and
+`docs/rollouts/2026-06-30-ci-worktree-eslint-ignores.md`.
 ## 2026-06-30 — Legacy notification events bridge to direct delivery
 Branch `codex/notification-direct-bridge`. Legacy `sendNotification(...)` events
 such as fills, blocks, pending approvals, kill-switches, run failures, and
