@@ -15,6 +15,20 @@ on account/portfolio read failures. Added a regression in
 `test/dashboard-agentic-fallback.test.ts`. Verification: `npm run lint` (0
 errors, 256 existing warnings), `npx tsc --noEmit`, `npm test` (159 files / 1539
 tests), and `npm run build` all pass.
+## 2026-06-30 — Legacy notification events bridge to direct delivery
+Branch `codex/notification-direct-bridge`. Legacy `sendNotification(...)` events
+such as fills, blocks, pending approvals, kill-switches, run failures, and
+proposal withdrawals now also fan out through the direct notification dispatcher
+(`notify.ts`) after passing the existing policy enabled-event gate. Price alerts
+and provider-tier notices are skipped in the bridge because those flows already
+call `notify(...)` directly. If a legacy policy webhook is configured, the bridge
+removes the direct webhook channel for that send to avoid duplicate webhook
+posts while still sending email/push/SMS. Production notification prefs were
+also set to push + email; SMS remains disabled until Twilio A2P 10DLC sender
+registration is complete. Verification: lint clean with existing warnings,
+typecheck clean, targeted notification test clean, full `npm test` 1539/1539
+clean, and production build clean. See
+`docs/rollouts/2026-06-30-notification-direct-bridge.md`.
 
 ## 2026-06-30 — PR #253 review-thread fix: custom model path + next-env
 Branch `cursor/trim-openai-strategy-options-f06c`. Resolved review blockers by
