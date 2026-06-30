@@ -52,7 +52,10 @@ filling the missing pieces.
 > branch also clarifies broker order lifecycle display (`Submitted`/`Working`
 > until filled), reconciles broker-paper pending fills on the scheduler, excludes
 > pending broker-paper fills from paper P&L/projections, and adds a configurable
-> stale limit-order alert (`staleLimitOrderMinutes`, default 15). No roadmap
+> stale limit-order alert (`staleLimitOrderMinutes`, default 15). Stale working
+> limit orders can now be intentionally replaced from Activity by canceling,
+> re-checking broker state, and submitting the remaining quantity as a market
+> order; live Brokerage replacement requires typed confirmation. No roadmap
 > change; see `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
 > 2026-06-30 (`codex/settings-review-polish`): Settings/Strategy Studio polish
 > moved LLM Strategy Review controls into an advisory panel instead of a

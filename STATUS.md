@@ -70,11 +70,17 @@ Alpaca Paper pending broker orders are reconciled on the scheduler like live
 broker orders; pending broker-paper fills no longer count in paper P&L/portfolio
 projection until filled; and broker-backed limit/stop-limit orders trigger a
 deduped `limit_order_stale` alert after `policy.staleLimitOrderMinutes`
-(default 15). Verification: `npm ci`,
+(default 15). Stale working limit orders now expose a guarded Activity action to
+cancel the stale limit, re-read broker state, and submit the remaining quantity
+as a market order; live Brokerage replacement requires typed
+`REPLACE LIVE <SYMBOL>` confirmation before the cancel is sent. Verification:
+`npm ci`,
 `npx vitest run test/broker-held-orders.test.ts`,
-targeted 5-file Vitest run (63 tests), `npm run lint` (0 errors, 256 existing
-warnings), `npx tsc --noEmit`, `npm test` (163 files / 1568 tests), and
-`npm run build` all pass.
+targeted 5-file Vitest run (63 tests), `npx vitest run
+test/order-replacement.test.ts` (3 tests), targeted 3-file Vitest run (11
+tests), targeted persistence rerun (2 tests), `npm run lint` (0 errors,
+254 existing warnings), `npx tsc --noEmit`,
+`npm test` (165 files / 1574 tests), and `npm run build` all pass.
 See `docs/rollouts/2026-06-30-alpaca-held-order-guard.md`.
 
 ## 2026-06-30 - Strategy review diff clarity
