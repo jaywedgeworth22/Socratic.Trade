@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // Item 1 (Chat A): the inline Bear (Red Team) review MUST fail closed. When the Bear call errors,
@@ -34,6 +34,14 @@ beforeAll(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+// Each parametrized case shares this file's DB. Clear prior proposals so a "proposed" AAPL from a
+// previous case can't (a) trigger a pending-proposal revalidation LLM call or (b) get AAPL de-duped
+// out of the next case's scan — both of which would make the run produce zero proposals.
+beforeEach(async () => {
+  const { getDb } = await import("../src/lib/db");
+  getDb().exec("DELETE FROM trade_proposals;");
 });
 
 const BULL_PROPOSAL = {
@@ -81,22 +89,26 @@ function bullOk(): Response {
   });
 }
 
-// First OpenAI call (Bull) succeeds with a buy; the second (Bear) fails per `bearFailure`.
+// Route by request BODY (not call order, which extra calls like revalidation could shift): the Bear
+// request carries the "Bear Agent" system prompt / "bear_proposals" schema and fails per `bearFailure`;
+// every other Green-Team/revalidation call gets a valid single-buy proposal set.
 function stubFetchBearFailure(bearFailure: "http429" | "throw" | "malformed"): void {
-  let openAiCalls = 0;
-  vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+  vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
     if (href.includes("api.openai.com")) {
-      openAiCalls += 1;
-      if (openAiCalls === 1) return bullOk();
-      if (bearFailure === "http429") return new Response("rate limited", { status: 429 });
-      if (bearFailure === "malformed") {
-        return new Response(JSON.stringify({ output_text: "```\nnot valid json {{{" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
+      const body = String(init?.body ?? "");
+      const isBear = body.includes("Bear Agent") || body.includes("bear_proposals");
+      if (isBear) {
+        if (bearFailure === "http429") return new Response("rate limited", { status: 429 });
+        if (bearFailure === "malformed") {
+          return new Response(JSON.stringify({ output_text: "```\nnot valid json {{{" }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        throw new Error("The operation was aborted due to timeout");
       }
-      throw new Error("The operation was aborted due to timeout");
+      return bullOk();
     }
     if (href.includes("nasdaq.com")) return nasdaqResponse();
     return new Response("not found", { status: 404 });
@@ -151,7 +163,7 @@ describe("inline Bear red-team fail-closed (Chat A item 1)", () => {
   it.each(["http429", "throw", "malformed"] as const)(
     "routes Bull proposals to human review (never auto-executes) when the Bear call fails (%s) in decide mode",
     async (bearFailure) => {
-      process.env.OPENAI_API_KEY = "test-openai-key";
+      vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
       stubFetchBearFailure(bearFailure);
       await setupBrokerPaperDecide(`Bear ${bearFailure}`);
       const { runStrategyOnce } = await import("../src/lib/strategy");
@@ -182,7 +194,7 @@ describe("inline Bear red-team fail-closed (Chat A item 1)", () => {
   );
 
   it("does NOT flag bearReviewUnavailable when the Bear call succeeds", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
       // Both the Bull and the surviving-Bear response are valid proposal JSON.

@@ -410,6 +410,14 @@ export interface TradingPolicy {
   llmModel?: string;
   /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
   redTeamLlmModel?: string;
+  /**
+   * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
+   * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
+   * SAME request against each model in order; the first success serves the run. The failover is
+   * recorded loudly — a `strategy_llm_failover` audit per hop, plus the served model/provider and a
+   * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
+   */
+  llmFallbackModels?: string[];
   /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */

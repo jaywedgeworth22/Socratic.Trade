@@ -71,7 +71,7 @@ function nasdaqRows(): Response {
 }
 
 async function runCollapse(gateOn: boolean) {
-  process.env.OPENAI_API_KEY = "test-openai-key";
+  vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
     const href = String(url);
     // Both the Bull and the surviving-Bear response return the two identical-rationale buys.

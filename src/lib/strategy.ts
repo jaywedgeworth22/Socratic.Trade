@@ -29,7 +29,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
@@ -2173,6 +2173,41 @@ async function proposeTrades(input: {
     }
   );
 
+  // Cross-provider FAILOVER chain (Chat A item 4): primary first, then each policy.llmFallbackModels
+  // entry that has a credential. Empty list => primary only (default; byte-identical behavior). On a
+  // TRANSIENT failure (HTTP 429/5xx or timeout) the SAME request is re-issued against the next model.
+  const bullAttempts = [
+    { url, provider, model, transport, key: openaiKey, keySource: llmKeySource, keyRef: llmKeyRef, body }
+  ];
+  for (const fallbackModel of (input.policy.llmFallbackModels ?? []).map((m) => m.trim()).filter(Boolean)) {
+    const ep = resolveLlmEndpoint({ ...input.policy, llmModel: fallbackModel }, input.userId);
+    if (!ep.key) continue; // No credential for this provider's model — skip it rather than fail.
+    bullAttempts.push({
+      url: ep.url,
+      provider: ep.provider,
+      model: ep.model,
+      transport: ep.transport,
+      key: ep.key,
+      keySource: ep.keySource,
+      keyRef: ep.keyRef,
+      body: buildLlmRequestBody(
+        { provider: ep.provider, transport: ep.transport },
+        {
+          model: ep.model,
+          systemPrompt,
+          userContent: JSON.stringify(userContent),
+          schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
+          maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort)
+        }
+      )
+    });
+  }
+  // Which endpoint actually served the run (starts as the primary; updated on failover).
+  let bullServedProvider = provider;
+  let bullServedModel = model;
+  let bullFailoverNote: string | undefined;
+
   const bullStepBase = {
     step: "bull" as const,
     label: "Green Team proposal",
@@ -2206,35 +2241,64 @@ async function proposeTrades(input: {
         })
       },
       async () => {
-        const response = await llmFetch(url, {
-          method: "POST",
-          headers: llmAuthHeaders({ provider, key: openaiKey }),
-          body: JSON.stringify(body)
-        });
+        let lastError: unknown;
+        for (let i = 0; i < bullAttempts.length; i++) {
+          const attempt = bullAttempts[i];
+          const isLast = i === bullAttempts.length - 1;
+          const next = bullAttempts[i + 1];
+          try {
+            const response = await llmFetch(attempt.url, {
+              method: "POST",
+              headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
+              body: JSON.stringify(attempt.body)
+            });
 
-        if (!response.ok) {
-          const detail = await response.text();
-          throw new Error(humanizeLlmError(detail, { provider, status: response.status }));
-        }
-        const payload = await response.json();
-        recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
-        const text = extractLlmText(payload);
-        const truncated = detectLlmTruncation(payload);
+            if (!response.ok) {
+              const detail = await response.text();
+              if (!isLast && isRetryableLlmStatus(response.status)) {
+                lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
+                console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
+                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId);
+                continue;
+              }
+              throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
+            }
+            const payload = await response.json();
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, ...extractLlmUsage(payload) });
+            if (i > 0) {
+              bullServedProvider = attempt.provider;
+              bullServedModel = attempt.model;
+              bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${bullAttempts.length}).`;
+            }
+            const text = extractLlmText(payload);
+            const truncated = detectLlmTruncation(payload);
 
-        if (!text) {
-          throw new Error("Empty response returned from LLM API.");
-        }
+            if (!text) {
+              throw new Error("Empty response returned from LLM API.");
+            }
 
-        try {
-          const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
-          return { text, proposals: parsed.proposals ?? [], truncated };
-        } catch (error) {
-          // A truncated/malformed model response must not crash the whole autonomous
-          // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
-          // record a DISTINCT truncation reason instead of a silent no-op (see below).
-          console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", error);
-          return { text, proposals: [] as TradeProposal[], truncated };
+            try {
+              const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
+              return { text, proposals: parsed.proposals ?? [], truncated };
+            } catch (parseError) {
+              // A truncated/malformed model response must not crash the whole autonomous
+              // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
+              // record a DISTINCT truncation reason instead of a silent no-op (see below).
+              console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
+              return { text, proposals: [] as TradeProposal[], truncated };
+            }
+          } catch (err) {
+            // Transient transport error / timeout → fail over to the next model when one remains.
+            if (!isLast && isRetryableLlmError(err)) {
+              lastError = err;
+              console.warn(`[Bull] ${attempt.model}/${attempt.provider} errored (${(err as { message?: string })?.message ?? String(err)}); failing over to ${next.model}/${next.provider}.`);
+              audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId);
+              continue;
+            }
+            throw err;
+          }
         }
+        throw lastError ?? new Error("All Green Team endpoints failed.");
       }
     );
   } catch (error) {
@@ -2262,11 +2326,16 @@ async function proposeTrades(input: {
       input.userId
     );
   }
+  // Record the served provider/model (may differ from the primary after failover) plus a clear reason
+  // combining any failover note and truncation note, so the run record shows exactly what happened.
+  const bullCompletedReason = [bullFailoverNote, bullTruncationReason].filter(Boolean).join(" ") || undefined;
   recordStep({
     ...bullStepBase,
+    provider: bullServedProvider,
+    model: bullServedModel,
     status: "completed",
     proposalCount: rawBullProposals.length,
-    ...(bullTruncationReason ? { reason: bullTruncationReason } : {})
+    ...(bullCompletedReason ? { reason: bullCompletedReason } : {})
   });
 
   // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
