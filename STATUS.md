@@ -106,6 +106,54 @@ Opus/Sonnet agents on disjoint file sets, then integrated + verified as one chan
   dep is unfetchable here (GH Packages 401) and agents clobbered the installed copy; rebuilt a faithful
   local stub in gitignored `node_modules` to run the full quartet — CI `verify` uses the real package.
   Rollout notes: `docs/rollouts/2026-07-01-{ux-ia-aesthetics,security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
+## 2026-07-01 — NAV_V2 PR #1: vocabulary relabels + scope-surfacing (first app code) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`. **First app-code step** of the redesign —
+executes PR #1 of `docs/settings-navigation-redesign/spec/08-delivery-plan-prs-and-tests.md`. **No flag**
+(pure clarifying copy on the current IA + surfacing the already-coded account/user tier split; no panel
+moved, no data path touched). Changes in `app/dashboard-client.tsx`: chrome kill button `Stop`→**`STOP`**
+with a never-sells tooltip (**handler byte-identical** — the real STOP/Flatten split is PR #9); feed tab
+`Notifications`→**`Alert history`**; settings sections `Display`→**`Appearance`**,
+`Notifications`→**`Alert delivery`**, `Data`→**`Data & Privacy`** (+ in-section `Alerts webhook`/`Send
+alerts for`); Help glossary + scope-detail copy updated. **Scope-surfacing:** each settings-section header
+now renders a **`THIS ACCOUNT`**/**`ALL ACCOUNTS`** `Chip` via `scopeTagForSection`. New module
+`app/settings-scope.ts` extracts `SettingsSection`/`settingsTierForSection` (unchanged) + adds
+`SCOPE_TAG_LABEL`/`scopeTagForSection` as the shared source of truth for the tag copy. New test
+`test/scope-tag-render.test.ts`. **Verify (this worktree, deps installed):** `tsc --noEmit` clean ·
+`lint` 0 errors · `npm test` 173 files / 1675 pass (+1 file/+4 tests) · `build` success. No existing test
+asserted a relabeled string. Reviewed adversarially via a 4-dimension Workflow. **Next:** PR #2
+(`DestinationTab` mapping + one-time localStorage shim, behind `NAV_V2`).
+See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+
+## 2026-07-01 — Settings & navigation redesign proposal (large-team, docs-only) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv`. **Docs-only; no app code changed** — a canonical
+proposal to fix the "Frankenstein" IA the owner called out (Strategy config in 5 places; duplicated
+"Tax"/"Notifications" labels; three un-named multi-account concepts). Produced by a large orchestrated
+workflow (`wf_000ecc50-7eb`: **48 agents, ~3.5M tokens**) running exactly the two-track method the owner
+asked for — one **informed** team + two **blind greenfield** teams (given only a layout-agnostic
+capability inventory, forbidden from reading the current UI) + one **pattern-led** team, then
+adjudication → adversarial red-team → concrete artifacts. Deliverable:
+`docs/settings-navigation-redesign.md` (diagnosis, canonical target design v2, 5 wireframes, field-level
+scope-tagged settings tree, full current→new migration table, 5-phase build plan, must-fix gaps, open
+questions) + a 10-file appendix corpus under `docs/settings-navigation-redesign/`. Convergent spine (all
+teams independently): **account = primary object**; nav collapses 7+4 tabs → **6 verb destinations**
+(Dashboard/Approvals/Scan/Strategy/Guardrails/Results) + off-rail Settings + Assistant overlay;
+**Strategy → one editable home** (Studio modal deleted, twin TuningCard `:3725/:4441` merged);
+**money-reality (Test/Paper/Live) and authority (Propose/Decide) are two orthogonal dials**; **settings
+split by scope first**; presets are **copy-on-bind**, scope validated **server-side on every write**.
+Design anchors were re-verified against `HEAD 0f6bf0a` inside the workflow (e.g. wash-sale enforced
+`policy.ts:311`; `test→paper` wash-sale leak `tax.ts:113`; `USER_LEVEL_POLICY_FIELDS`=3).
+**UPDATE (later 2026-07-01): owner approved the design and answered all 7 open questions**; a second
+workflow (`wf_598c6d71-77d`: 16 agents) built the full **implementation-ready spec** under
+`docs/settings-navigation-redesign/spec/` (11 sections + grounding + reconciliation; start at
+`spec/00-README.md`). Editor pass corrected key anchors (autonomy-reset primitive already exists at
+`scheduler.ts:66-97`; scheduler already fans out per-account; wash-sale real anchors `tax.ts:104/115/117`)
+and I made the open-item calls in `spec/00-README.md` (R1–R8). 3 forward-looking default-off fields folded
+into `spec/04`. Also built a **clickable prototype** (`docs/settings-navigation-redesign/prototype/index.html`,
+vanilla HTML, mock data) — verified via headless Chromium across Dashboard / Live Approvals / Guardrails /
+Settings / Fleet. **Still docs-only, no app code.** **Next:** delivery-plan **PR #1 (relabels +
+scope-surfacing)** on the owner's word. Complementary to
+`docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
+See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
 ## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
 Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
 merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three

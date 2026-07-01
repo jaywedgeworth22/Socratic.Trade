@@ -108,6 +108,12 @@ import type {
   ConnectedAccount
 } from "@/lib/types";
 import type { DashboardSnapshot, UnifiedActivityGroup } from "./dashboard-types";
+import {
+  scopeTagForSection,
+  settingsTierForSection,
+  type SettingsSection,
+  type SettingsTier
+} from "./settings-scope";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
@@ -163,14 +169,6 @@ function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode
   ));
 }
 type FeedTab = "activity" | "runs" | "notifications" | "audit";
-type SettingsSection = "strategy" | "operate" | "risk" | "connections" | "display" | "tax" | "tuning" | "notifications" | "data";
-type SettingsTier = "user" | "account";
-
-const ACCOUNT_SETTINGS_SECTIONS = new Set<SettingsSection>(["strategy", "operate", "risk", "tax", "tuning"]);
-
-function settingsTierForSection(section: SettingsSection): SettingsTier {
-  return ACCOUNT_SETTINGS_SECTIONS.has(section) ? "account" : "user";
-}
 
 type MarketReplaceCandidate = {
   order: EquityOrder;
@@ -1886,7 +1884,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               variant={policy.systemState === "halted" ? "primary" : "danger"}
               className="h-8 px-2 text-xs max-sm:min-w-11 lg:h-9 lg:px-3 lg:text-[13px]"
               aria-label={policy.systemState === "halted" ? "Start system" : "Stop system"}
-              title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
+              title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Halts new activity in one click. Always safe — never sells anything you hold."}
               onClick={() => {
                 if (policy.systemState === "halted" && enableBlockedReason) {
                   routeSetupBlocker(enableBlockedReason);
@@ -1895,8 +1893,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
                 setKillConfirm(true);
               }}
             >
-              {policy.systemState === "halted" ? <Play size={16} /> : <X size={16} />}{" "}
-              <span className="hidden sm:inline">{policy.systemState === "halted" ? "Start" : "Stop"}</span>
+              {policy.systemState === "halted" ? <Play size={15} /> : <X size={15} />}{" "}
+              <span className="hidden sm:inline">{policy.systemState === "halted" ? "Start" : "STOP"}</span>
             </Button>
           </div>
         </div>
@@ -1989,8 +1987,8 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         open={feedOpen}
         onClose={() => setFeedOpen(false)}
         title="Activity"
-        subtitle="Trading log, runs & notifications"
-        icon={<ActivityIcon size={20} />}
+        subtitle="Trading log, runs & alerts"
+        icon={<ActivityIcon size={18} />}
         width="max-w-2xl"
       >
         <div className="p-4">
@@ -2000,7 +1998,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             tabs={[
               { id: "activity", label: "Activity" },
               { id: "runs", label: "Runs" },
-              { id: "notifications", label: "Notifications" },
+              { id: "notifications", label: "Alert history" },
               { id: "audit", label: "Audit Log" }
             ]}
           />
@@ -4819,7 +4817,7 @@ function SettingsContent({
   const scanOutlierMax = Math.min(MAX_MARKET_SCAN_OUTLIER_RESERVE, scanCandidateLimit);
   const settingsScopeTitle = settingsTier === "user" ? "User Settings" : "Account Settings";
   const settingsScopeDetail = settingsTier === "user"
-    ? "Provider keys, display, notifications, and shared data."
+    ? "Provider keys, appearance, alert delivery, and shared data."
     : activeAccount
       ? `${activeAccount.label} · ${activeAccount.broker} strategy, operation, safety, tax, and tuning.`
       : "Strategy, operation, safety, tax, and tuning for the selected account.";
@@ -4895,7 +4893,15 @@ function SettingsContent({
                 {settingsTier === "user" ? <SettingsIcon size={16} /> : <Wallet size={16} />}
               </span>
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-fg">{settingsScopeTitle}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-fg">{settingsScopeTitle}</span>
+                  <Chip
+                    tone={settingsTierForSection(section) === "account" ? "accent" : "neutral"}
+                    className="tracking-wide"
+                  >
+                    {scopeTagForSection(section)}
+                  </Chip>
+                </div>
                 <div className="truncate text-xs text-faint" title={settingsScopeDetail}>{settingsScopeDetail}</div>
               </div>
             </div>
@@ -4998,9 +5004,9 @@ function SettingsContent({
                 settingsTier === "user"
                   ? [
                       { id: "connections", label: "Connections" },
-                      { id: "display", label: "Display" },
-                      { id: "notifications", label: "Notifications" },
-                      { id: "data", label: "Data" }
+                      { id: "display", label: "Appearance" },
+                      { id: "notifications", label: "Alert delivery" },
+                      { id: "data", label: "Data & Privacy" }
                     ]
                   : [
                       { id: "strategy", label: "Strategy" },
@@ -5694,11 +5700,11 @@ function SettingsContent({
 
       {section === "notifications" && (
         <div className="space-y-3">
-            <Field label="Notifications Webhook">
+            <Field label="Alerts webhook">
             <input className={inputClass} value={policy.notificationSettings.webhookUrl ?? ""} onChange={(e) => updatePolicy({ notificationSettings: { ...policy.notificationSettings, webhookUrl: e.target.value } })} placeholder="https://…" />
           </Field>
           <div>
-            <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
+            <span className="mb-1.5 block text-xs font-medium text-muted">Send alerts for</span>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "limit_order_stale", "provider_degraded", "budget_alert"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
@@ -7101,7 +7107,7 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
       {section === "settings" && (
         <div className="space-y-3 text-[13px] text-muted">
           <p>
-            Settings are split by scope. <strong>User Settings</strong> cover provider keys, display, notifications, and shared data preferences. <strong>Account Settings</strong> cover the selected account&apos;s strategy, universe, safety, tax treatment, and tuning behavior.
+            Settings are split by scope. <strong>User Settings</strong> (tagged <strong>ALL ACCOUNTS</strong>) cover provider keys, appearance, alert delivery, and shared data preferences. <strong>Account Settings</strong> (tagged <strong>THIS ACCOUNT</strong>) cover the selected account&apos;s strategy, universe, safety, tax treatment, and tuning behavior.
           </p>
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">

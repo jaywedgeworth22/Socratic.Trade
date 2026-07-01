@@ -55,6 +55,27 @@ filling the missing pieces.
 > `strategy.ts` god-module split and interval-scheduler budget wiring. Verify quartet
 > green locally (1720 tests); see `docs/rollouts/2026-07-01-{ux-ia-aesthetics,
 > security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
+> 2026-07-01 (`claude/settings-navigation-redesign-a3k1yv`): **settings & navigation IA
+> redesign proposal** (docs-only, no code). Large-team workflow (`wf_000ecc50-7eb`, 48
+> agents) using the owner-requested two-track method (one informed team + two blind
+> greenfield teams that never saw the current UI + one pattern-led team → adjudication →
+> red-team → artifacts). Canonical target: account = primary object; 7+4 tabs collapse to
+> 6 verb destinations + off-rail Settings + Assistant overlay; Strategy consolidates to one
+> editable home; money-reality vs authority split into two dials; settings split by scope
+> first; copy-on-bind presets; server-side write-time scope validation. Deliverable
+> `docs/settings-navigation-redesign.md` (+ appendix corpus). Complements — does not replace
+> — the settings-and-universe-overhaul field-completeness program. No roadmap phase changed.
+> **Owner approved the design + answered all 7 open questions (later 2026-07-01); a second workflow
+> (`wf_598c6d71-77d`, 16 agents) built the full implementation-ready spec under
+> `docs/settings-navigation-redesign/spec/`** (11 sections + grounding + reconciliation; start at
+> `spec/00-README.md`). Still docs-only. Next: clickable prototype, then delivery-plan PR #1 (relabels +
+> scope-surfacing). See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
+> **PR #1 landed (2026-07-01, `claude/settings-navigation-redesign-a3k1yv-mce45j`):** first app code —
+> vocabulary relabels (`Stop`→`STOP` w/ never-sells tooltip, handler unchanged; `Notifications`→`Alert
+> history`/`Alert delivery`; `Display`→`Appearance`; `Data`→`Data & Privacy`) + settings-header
+> `THIS ACCOUNT`/`ALL ACCOUNTS` scope tags. No flag, no data path. New `app/settings-scope.ts` (shared
+> scope-tag SSOT) + `test/scope-tag-render.test.ts`. tsc/lint/test/build green. Next: PR #2 (`DestinationTab`
+> mapping + localStorage shim behind `NAV_V2`). See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
 > 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
 > Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
 > (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
