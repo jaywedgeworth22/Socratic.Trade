@@ -63,6 +63,14 @@ export interface AccountDeletionBlockers {
   runningStrategyRuns: number;
   placingProposals: number;
   pendingReconciliationFills: number;
+  /**
+   * In-flight mobile commands (status 'queued'/'running'). `confirmAndDeleteAccount` sweeps the
+   * `mobile_commands` table, so a command already claimed by a worker (status 'running') could keep
+   * mutating policy/watchlists — or try to finish against a row that was just deleted — if we deleted
+   * mid-flight. Counted as a blocker so deletion waits until the command drains, matching the
+   * running-strategy-run / placing-proposal / pending-fill blockers.
+   */
+  activeMobileCommands: number;
 }
 
 export interface AccountDeletionPreview {
@@ -149,10 +157,14 @@ export function getAccountDeletionBlockers(userId: string): AccountDeletionBlock
          AND (source = 'live' OR execution_mode IN ('broker/paper', 'broker/live'))`
     )
     .get(userId) as { count: number };
+  const activeMobileCommands = db
+    .prepare("SELECT COUNT(*) AS count FROM mobile_commands WHERE user_id = ? AND status IN ('queued','running')")
+    .get(userId) as { count: number };
   return {
     runningStrategyRuns: runningStrategyRuns.count,
     placingProposals: placingProposals.count,
-    pendingReconciliationFills: pendingReconciliationFills.count
+    pendingReconciliationFills: pendingReconciliationFills.count,
+    activeMobileCommands: activeMobileCommands.count
   };
 }
 
@@ -252,7 +264,8 @@ export function confirmAndDeleteAccount(input: {
   }
 
   const blockers = getAccountDeletionBlockers(input.userId);
-  const blockerCount = blockers.runningStrategyRuns + blockers.placingProposals + blockers.pendingReconciliationFills;
+  const blockerCount =
+    blockers.runningStrategyRuns + blockers.placingProposals + blockers.pendingReconciliationFills + blockers.activeMobileCommands;
   if (blockerCount > 0) {
     throw Object.assign(new Error("Account deletion is blocked by in-flight trading activity."), { status: 409, blockers });
   }

@@ -183,7 +183,7 @@ type AccountDeletionPreview = {
   prepared: boolean;
   requestedAt?: string;
   connectedAccounts: Array<{ id: string; label: string; broker: string; environment: string; accountNumber?: string; isActive: boolean }>;
-  blockers: { runningStrategyRuns: number; placingProposals: number; pendingReconciliationFills: number };
+  blockers: { runningStrategyRuns: number; placingProposals: number; pendingReconciliationFills: number; activeMobileCommands: number };
   counts: Record<string, number>;
 };
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
@@ -6015,7 +6015,7 @@ function AccountDeletionModal({
             <AlertTriangle size={14} className="mr-1 inline" />
             Deletion is blocked until trading activity settles:
             {" "}
-            {preview.blockers.runningStrategyRuns} running strategy run(s), {preview.blockers.placingProposals} placing proposal(s), and {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation.
+            {preview.blockers.runningStrategyRuns} running strategy run(s), {preview.blockers.placingProposals} placing proposal(s), {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation, and {preview.blockers.activeMobileCommands} in-flight mobile command(s).
           </div>
         )}
 

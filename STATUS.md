@@ -4,6 +4,15 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Account deletion: block while a mobile command is in flight (Claude)
+On PR #293 (branch HEAD `e4ff311`). Codex P2 on my workstream-G change: `mobile_commands` was added to
+the deletion sweep but `getAccountDeletionBlockers()` didn't count in-flight commands, so a `running`
+command's worker could keep mutating policy/watchlists against a just-deleted row. Fix: added
+`activeMobileCommands` (count of `status IN ('queued','running')`) to the blockers, included it in the
+`confirmAndDeleteAccount` 409 gate, and surfaced it in the dashboard blocked-reason message. Test added
+(`account-deletion.test.ts`). Quartet green: tsc 0, lint 0 errors, **2056 tests**, build ok. (The
+complementary Codex P2 — RAG guard `connectedAccountId` — was fixed by the owner in `e4ff311`.)
+
 ## 2026-07-01 — Durable budget: Codex round on 42f0f23 (3 more fixes) (Claude)
 On PR #293. Third Codex pass (`42f0f23f45`) — all **fixed in code with tests** (real bugs, not design
 nuances): (4) over-budget `generateReflectionSummary` no longer skips the non-LLM excursion enrichment
