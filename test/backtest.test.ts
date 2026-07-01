@@ -9,7 +9,10 @@ import {
   splitWalkForward,
   adjustReturns,
   buildEquityCurve,
+  maxDrawdownOfCurve,
+  isPointInTimeForwardExit,
   MARKET_FACTORS,
+  type EquityCurvePoint,
   type FactorIC,
   type FactorObservation
 } from "../src/lib/backtest";
@@ -513,5 +516,92 @@ describe("deriveWeightsFromIC", () => {
     const qualifiedSum = MARKET_FACTORS.reduce((s, f) => s + (weights[f] ?? 0), 0);
     // All qualify, so total weight sum should equal DEFAULT sum.
     expect(qualifiedSum).toBeCloseTo(defaultSum, 5);
+  });
+});
+
+// ── P1-2: purged & embargoed walk-forward split ─────────────────────────────────────────────────
+describe("splitWalkForward — P1-2 purge (opt-in, default-off byte-identical)", () => {
+  const seven: FactorObservation[] = ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04", "2026-01-05", "2026-01-06", "2026-01-07"]
+    .map((d) => obs(d, "A", 0.01, { momentum: 1 }));
+
+  it("DEFAULT (no options): identical to the prior positional call — embargo only, no purge", () => {
+    // 7 dates × 0.7 = cut at 4 → train = first 4 dates; embargo horizonDays=2 → test drops the first 2 test buckets.
+    const legacy = splitWalkForward(seven, 0.7, 2);
+    const withEmptyOpts = splitWalkForward(seven, 0.7, 2, {});
+    expect(new Set(withEmptyOpts.train.map((o) => o.date))).toEqual(new Set(legacy.train.map((o) => o.date)));
+    expect(new Set(withEmptyOpts.test.map((o) => o.date))).toEqual(new Set(legacy.test.map((o) => o.date)));
+    // Train keeps the full first-4 prefix when purge is off.
+    expect(new Set(legacy.train.map((o) => o.date))).toEqual(new Set(["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"]));
+  });
+
+  it("PURGE on: drops the last `horizonDays` train-date buckets (the boundary-straddling rows)", () => {
+    const purged = splitWalkForward(seven, 0.7, 2, { purge: true });
+    // cutIdx=4, purge 2 → train = first 2 dates only; the boundary rows (dates 3 & 4) are purged.
+    expect(new Set(purged.train.map((o) => o.date))).toEqual(new Set(["2026-01-01", "2026-01-02"]));
+    // Test side is unchanged by the purge (still embargoed): dates 7 (indices 6) after testCut=4+2=6.
+    expect(new Set(purged.test.map((o) => o.date))).toEqual(new Set(["2026-01-07"]));
+  });
+
+  it("PURGE always keeps at least one train date even when horizonDays >= cutIdx", () => {
+    const purged = splitWalkForward(seven, 0.7, 10, { purge: true });
+    expect(purged.train.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ── P2-4: IC-weight shrinkage toward the default prior ───────────────────────────────────────────
+describe("deriveWeightsFromICs — P2-4 shrinkage (default λ=0 no-op)", () => {
+  const spikyICs: FactorIC[] = MARKET_FACTORS.map((factor, i) => ({ factor, ic: i === 0 ? 1 : 0.0, n: 30 }));
+
+  it("λ=0 (default) is byte-identical to the unshrunk vector", () => {
+    const unshrunk = deriveWeightsFromICs(spikyICs);
+    const zeroLambda = deriveWeightsFromICs(spikyICs, DEFAULT_SCORING_WEIGHTS, 0);
+    expect(zeroLambda).toEqual(unshrunk);
+    // A single high-IC factor gets ALL the weight without shrinkage.
+    expect(unshrunk[MARKET_FACTORS[0]]).toBeCloseTo(1, 6);
+  });
+
+  it("λ>0 pulls the vector toward the default prior and still sums to 1", () => {
+    const shrunk = deriveWeightsFromICs(spikyICs, DEFAULT_SCORING_WEIGHTS, 0.5);
+    // The spiked factor is damped below its unshrunk 1.0.
+    expect(shrunk[MARKET_FACTORS[0]]).toBeLessThan(1);
+    expect(shrunk[MARKET_FACTORS[0]]).toBeGreaterThan(0.5);
+    // Other factors gain some prior mass (were 0 unshrunk).
+    expect(shrunk[MARKET_FACTORS[1]]).toBeGreaterThan(0);
+    const sum = MARKET_FACTORS.reduce((s, f) => s + shrunk[f], 0);
+    expect(sum).toBeCloseTo(1, 6);
+  });
+
+  it("λ=1 equals the unshrunk vector (all weight on the IC estimate)", () => {
+    expect(deriveWeightsFromICs(spikyICs, DEFAULT_SCORING_WEIGHTS, 1)).toEqual(deriveWeightsFromICs(spikyICs));
+  });
+});
+
+// ── P2-5: max-drawdown helper ────────────────────────────────────────────────────────────────────
+describe("maxDrawdownOfCurve — P2-5", () => {
+  const pt = (cumulativeReturn: number): EquityCurvePoint => ({
+    date: "2026-01-01", nNames: 1, periodReturn: 0, benchmarkReturn: null, cumulativeReturn, benchmarkCumulativeReturn: null
+  });
+  it("0 for an empty or monotonically-rising curve", () => {
+    expect(maxDrawdownOfCurve([])).toBe(0);
+    expect(maxDrawdownOfCurve([pt(0), pt(0.1), pt(0.2)])).toBe(0);
+  });
+  it("captures the deepest peak-to-trough decline as a %", () => {
+    // Peak equity 1.2 (cum +0.2), trough 0.9 (cum −0.1) → dd = (1.2−0.9)/1.2 = 0.25 → 25%.
+    expect(maxDrawdownOfCurve([pt(0), pt(0.2), pt(-0.1), pt(0.05)])).toBeCloseTo(25, 6);
+  });
+});
+
+// ── P1-4a: HARD look-ahead invariant (CI-failing on leakage) ─────────────────────────────────────
+describe("isPointInTimeForwardExit — P1-4a leakage certification", () => {
+  it("a same-day exit is REJECTED as look-ahead", () => {
+    expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-05")).toBe(false);
+  });
+  it("an exit before the horizon target is REJECTED", () => {
+    // horizon 5 → target 2026-01-10; an exit at 2026-01-08 is too early.
+    expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-08")).toBe(false);
+  });
+  it("an exit at/after the horizon target AND strictly after the snapshot is ACCEPTED", () => {
+    expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-10")).toBe(true);
+    expect(isPointInTimeForwardExit("2026-01-05", 5, "2026-01-12")).toBe(true);
   });
 });

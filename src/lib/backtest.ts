@@ -134,6 +134,99 @@ export async function buildFactorObservations(
 }
 
 /**
+ * PURE (panel P1-4a — HARD look-ahead invariant). The exit bar a forward return is computed from MUST be
+ * strictly AFTER the snapshot date — specifically on/after `snapshotDate + horizonDays`, and never on the
+ * snapshot day itself. `selectExitClose` already enforces `bar.date >= targetBusinessDate(...)`; this exposes
+ * the boundary as a testable predicate so a leakage regression is a CI-failing unit assertion, not a comment.
+ * Returns true when `exitBarDate` is a valid point-in-time exit for `(snapshotDate, horizonDays)`.
+ */
+export function isPointInTimeForwardExit(snapshotDate: string, horizonDays: number, exitBarDate: string): boolean {
+  const target = targetBusinessDate(snapshotDate, horizonDays);
+  // The exit must be at/after the horizon target AND strictly after the snapshot day (a same-day bar is
+  // look-ahead: it uses information not available when the decision was recorded).
+  return exitBarDate >= target && exitBarDate > snapshotDate;
+}
+
+/** Survivorship / look-ahead certification report (panel P1-4b — SOFT diagnostic; gates NOTHING). */
+export interface ForwardResolutionCertification {
+  /** Total snapshotted (symbol, date) candidate pairs that had a usable refPrice + factor breakdown. */
+  totalCandidates: number;
+  /** How many of those resolved to a matured forward price (a point-in-time exit bar exists). */
+  resolvedForward: number;
+  /** resolvedForward / totalCandidates (0 when none). A SURVIVORSHIP PROXY — see `note`. */
+  forwardCoveragePct: number;
+  /** How many resolved-forward pairs also satisfy the strict point-in-time exit invariant (should equal all). */
+  pointInTimeExits: number;
+  /** True when every resolved exit satisfied the point-in-time invariant (no look-ahead detected). */
+  pointInTimeClean: boolean;
+  note: string;
+}
+
+/**
+ * IO (panel P1-4b). SOFT survivorship / look-ahead certification: reports the fraction of snapshotted
+ * candidates whose forward price is resolvable, plus a check that every resolved exit is point-in-time. This
+ * is a PROXY — it does NOT certify absence of survivorship bias (the `signal_snapshot` log may itself be
+ * survivor-only, e.g. a delisted name whose bars vanished simply drops out) — and it GATES NOTHING. Reuses
+ * the same `selectExitClose` + `targetBusinessDate` path as `buildFactorObservations`, so its resolution
+ * decision is identical to what actually feeds the learner.
+ */
+export async function certifyForwardResolution(
+  userId: string = "local",
+  options: BuildFactorObservationsOptions = {}
+): Promise<ForwardResolutionCertification> {
+  const now = options.now ?? Date.now();
+  const horizonDays = boundedInteger(options.horizonDays ?? DEFAULT_HORIZON_DAYS, 1, 252, DEFAULT_HORIZON_DAYS);
+  const auditLimit = boundedInteger(options.auditLimit ?? DEFAULT_AUDIT_LIMIT, 1, 5000, DEFAULT_AUDIT_LIMIT);
+  const fetchOHLC = options.fetchOHLC ?? fetchDailyOHLC;
+
+  const rows = listSignalSnapshotAuditAfter(userId, undefined, auditLimit);
+  const barsBySymbol = new Map<string, OHLCBar[] | null>();
+  let totalCandidates = 0;
+  let resolvedForward = 0;
+  let pointInTimeExits = 0;
+
+  for (const row of rows) {
+    const parsed = parseSnapshot(row);
+    if (!parsed) continue;
+    const { snapshotDate, signals } = parsed;
+    const targetDate = targetBusinessDate(snapshotDate, horizonDays);
+    for (const signal of signals) {
+      const symbol = normalizeSymbol(signal.symbol ?? "");
+      const refPrice = positiveNumber(signal.refPrice);
+      const subScores = extractSubScores(signal.factorBreakdown);
+      if (!symbol || !refPrice || !subScores) continue;
+      totalCandidates += 1;
+
+      let bars = barsBySymbol.get(symbol);
+      if (bars === undefined) {
+        bars = await fetchOHLC(symbol, now, userId);
+        barsBySymbol.set(symbol, bars);
+      }
+      // Find the exit bar's DATE (not just its close) so we can assert the point-in-time invariant.
+      const exitBar = bars
+        ? bars
+            .map((bar) => ({ date: toBusinessDay(bar.time), close: positiveNumber(bar.close) }))
+            .filter((bar): bar is { date: string; close: number } => Boolean(bar.date && bar.close))
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .find((bar) => bar.date >= targetDate)
+        : undefined;
+      if (!exitBar) continue;
+      resolvedForward += 1;
+      if (isPointInTimeForwardExit(snapshotDate, horizonDays, exitBar.date)) pointInTimeExits += 1;
+    }
+  }
+
+  return {
+    totalCandidates,
+    resolvedForward,
+    forwardCoveragePct: totalCandidates > 0 ? Number((resolvedForward / totalCandidates).toFixed(4)) : 0,
+    pointInTimeExits,
+    pointInTimeClean: resolvedForward === pointInTimeExits,
+    note: "SURVIVORSHIP PROXY — forwardCoveragePct measures resolvable forward prices, NOT absence of survivorship bias (the signal_snapshot log may itself be survivor-only). Diagnostic only; gates nothing."
+  };
+}
+
+/**
  * PURE. Cross-sectional Spearman rank IC between each factor sub-score and forward
  * return, computed PER snapshot date and then averaged across dates. Tie-aware:
  * ties share their average rank and the correlation is the Pearson correlation of
@@ -281,10 +374,16 @@ export function deriveWeightsFromIC(
  * 0, then normalize the positives to sum to 1. If every IC is ≤ 0 (no factor showed
  * positive predictive power), fall back to `fallbackWeights` (DEFAULT_SCORING_WEIGHTS)
  * unchanged. Date.now()-free.
+ *
+ * `shrinkage` (panel P2-4, default 0 = OFF → byte-identical): a λ in [0,1] that pulls the derived vector
+ * toward `DEFAULT_SCORING_WEIGHTS` — `w_final = λ·w_IC + (1−λ)·w_default` — normalized so the result still
+ * sums to 1. Damps a single high-IC factor on a thin fold. λ is clamped to [0,1]; the all-negative-IC
+ * fallback path is unaffected (it already returns the defaults). λ=0 short-circuits to the unshrunk vector.
  */
 export function deriveWeightsFromICs(
   ics: FactorIC[],
-  fallbackWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS
+  fallbackWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
+  shrinkage: number = 0
 ): ScoringWeights {
   const floored = new Map<MarketFactor, number>();
   let total = 0;
@@ -302,7 +401,24 @@ export function deriveWeightsFromICs(
   for (const factor of MARKET_FACTORS) {
     out[factor] = (floored.get(factor) ?? 0) / total;
   }
-  return out;
+
+  // P2-4: no shrinkage (λ<=0) → return the pure-IC vector unchanged (byte-identical default).
+  const lambda = Number.isFinite(shrinkage) ? Math.max(0, Math.min(1, shrinkage)) : 0;
+  if (lambda <= 0) return out;
+
+  // Blend toward a normalized default prior, then renormalize the mix so it sums to 1.
+  const defaultSum = MARKET_FACTORS.reduce((s, f) => s + (DEFAULT_SCORING_WEIGHTS[f] ?? 0), 0) || 1;
+  const shrunk = {} as ScoringWeights;
+  let mixTotal = 0;
+  for (const factor of MARKET_FACTORS) {
+    const prior = (DEFAULT_SCORING_WEIGHTS[factor] ?? 0) / defaultSum;
+    const blended = lambda * out[factor] + (1 - lambda) * prior;
+    shrunk[factor] = blended;
+    mixTotal += blended;
+  }
+  if (mixTotal <= 0) return out;
+  for (const factor of MARKET_FACTORS) shrunk[factor] = shrunk[factor] / mixTotal;
+  return shrunk;
 }
 
 // --- internal helpers (pure unless noted) -------------------------------------------
@@ -452,6 +568,16 @@ export interface OOSRunOptions extends BuildFactorObservationsOptions {
    * status quo a proposal would replace). When supplied, the result includes `oosICBaseline`.
    */
   baselineWeights?: ScoringWeights;
+  /**
+   * P1-2 (default false): apply the PURGE side of the purged-&-embargoed split — drop train-date buckets whose
+   * forward window overlaps the first test date. Off → embargo-only (byte-identical to today).
+   */
+  purgeEmbargo?: boolean;
+  /**
+   * P2-4 (default 0 = OFF): shrinkage λ pulling the data-derived `icWeights` toward `DEFAULT_SCORING_WEIGHTS`.
+   * Only affects the `icWeights`/`oosIC` report path; the candidate/baseline composite ICs are unchanged.
+   */
+  icWeightShrinkage?: number;
 }
 
 /** Full walk-forward OOS validation result. */
@@ -476,6 +602,14 @@ export interface OOSResult {
    */
   pairedICDiff?: PairedICDiffStats;
   /**
+   * P2-5: OOS max-drawdown (%) of a top-K equity curve built under `candidateWeights` / `baselineWeights`,
+   * on the SAME test fold + top-K + SPY inputs as the main curve. Present only when the respective weight
+   * vector is supplied. Lets the autonomous drawdown guard refuse a candidate that spikes drawdown vs the
+   * baseline. Distinct from `maxDrawdownPct`, which is off the data-derived `icWeights` curve.
+   */
+  candidateMaxDrawdownPct?: number;
+  baselineMaxDrawdownPct?: number;
+  /**
    * OOS IC information ratio (mean / sample-std of per-date ICs).
    * Values > 0.5 are conventionally considered evidence of a real signal.
    */
@@ -496,21 +630,46 @@ export interface OOSResult {
   note: string;
 }
 
+/** Extra split controls (panel P1-2). All default-preserving. */
+export interface SplitWalkForwardOptions {
+  /**
+   * PURGE (default false): additionally drop the LAST `horizonDays` train-date buckets — the train rows
+   * closest to the boundary whose forward-return window `[date, date+horizonDays]` overlaps the first test
+   * date and therefore share realized bars with the test fold (leakage that inflates OOS IC). Off by default →
+   * the split is byte-identical to today's embargo-only behavior. Applied in unique-snapshot-date terms, not
+   * calendar days, matching how the embargo already trims the test side.
+   */
+  purge?: boolean;
+}
+
 /**
  * PURE. Chronological walk-forward split: the first `trainFraction` of unique sorted snapshot
  * dates become the train set; the rest become the test set. Order within each group is preserved.
+ *
+ * `horizonDays` (default 0) EMBARGOES the first `horizonDays` test-date buckets after the boundary (they
+ * would share realized bars with the tail of the train fold). This embargo predates the P1-2 flag and is
+ * always applied. The optional `purge` (panel P1-2, default OFF) additionally removes the train-side rows
+ * whose forward window straddles the boundary — see `SplitWalkForwardOptions`. With `purge` unset the result
+ * is byte-identical to the prior two/three-argument behavior.
  */
 export function splitWalkForward(
   observations: FactorObservation[],
   trainFraction: number = 0.7,
-  horizonDays: number = 0
+  horizonDays: number = 0,
+  options: SplitWalkForwardOptions = {}
 ): { train: FactorObservation[]; test: FactorObservation[] } {
   const dates = [...new Set(observations.map((o) => o.date))].sort();
   if (dates.length < 2) return { train: observations, test: [] };
   const cutIdx = Math.max(1, Math.floor(dates.length * trainFraction));
-  const trainDates = new Set(dates.slice(0, cutIdx));
-  
-  // To avoid overlap leakage: remove dates from the test set that are within `horizonDays` after the training fold's end date.
+
+  // PURGE (P1-2, opt-in): the train rows whose forward-return window overlaps the first test date are the
+  // last `horizonDays` train-date buckets. Dropping them removes the train↔test bar-overlap leakage. At least
+  // one train date is always kept. Default OFF → trainDates spans the full [0, cutIdx) prefix as before.
+  const purgeCount = options.purge ? Math.max(0, Math.min(cutIdx - 1, horizonDays)) : 0;
+  const trainCutIdx = cutIdx - purgeCount;
+  const trainDates = new Set(dates.slice(0, trainCutIdx));
+
+  // EMBARGO (predates P1-2): remove the first `horizonDays` test-date buckets after the training fold's end.
   const testCutIdx = cutIdx + horizonDays;
   const testDates = new Set(dates.slice(testCutIdx));
 
@@ -727,6 +886,22 @@ export function buildEquityCurve(
 }
 
 /**
+ * PURE (panel P2-5). Max peak-to-trough drawdown (as a %) of an equity curve's cumulative-return path.
+ * Mirrors the inline calculation `runWalkForwardOOS` uses for the main curve. Returns 0 for an empty curve.
+ */
+export function maxDrawdownOfCurve(curve: EquityCurvePoint[]): number {
+  let peak = 1.0;
+  let maxDd = 0;
+  for (const pt of curve) {
+    const equity = 1 + pt.cumulativeReturn;
+    if (equity > peak) peak = equity;
+    const dd = (peak - equity) / peak;
+    if (dd > maxDd) maxDd = dd;
+  }
+  return maxDd * 100;
+}
+
+/**
  * NOT EXPORTED. Fetch SPY OHLC and compute forward returns for each supplied date.
  * Uses the same selectExitClose + targetBusinessDate logic as buildFactorObservations.
  * Returns an empty Map if SPY bars are unavailable.
@@ -826,11 +1001,14 @@ export async function runWalkForwardOOS(
   const uniqueDates = [...new Set(rawObservations.map((o) => o.date))].sort();
   if (uniqueDates.length < 4) return null;
 
-  const { train, test } = splitWalkForward(rawObservations, trainFraction, horizonDays);
+  // P1-2: the purge is opt-in via `purgeEmbargo`; the embargo (`horizonDays`) is always applied. Default OFF
+  // → byte-identical split. Fails safe: purging shrinks the train sample, which can only strip weights.
+  const { train, test } = splitWalkForward(rawObservations, trainFraction, horizonDays, { purge: options.purgeEmbargo ?? false });
   if (train.length === 0 || test.length === 0) return null;
 
   const trainICs = computeFactorICs(train);
-  const icWeights = deriveWeightsFromICs(trainICs);
+  // P2-4: optional shrinkage toward the default prior (default 0 = pure-IC vector, unchanged).
+  const icWeights = deriveWeightsFromICs(trainICs, DEFAULT_SCORING_WEIGHTS, options.icWeightShrinkage ?? 0);
 
   const adjustedTest = adjustReturns(test, { costRoundTripBps, taxRate });
 
@@ -856,6 +1034,15 @@ export async function runWalkForwardOOS(
   const spyReturnByDate = await buildSpyReturnMap(oosDates, horizonDays, now, fetchOHLC);
 
   const equityCurve = buildEquityCurve(adjustedTest, icWeights, spyReturnByDate, topK);
+
+  // P2-5: candidate/baseline OOS max-drawdown on the SAME fold + top-K + SPY inputs. Built only when the
+  // respective weight vector is supplied (autonomous path passes both). Reuses the pure buildEquityCurve.
+  const candidateMaxDrawdownPct = options.candidateWeights
+    ? maxDrawdownOfCurve(buildEquityCurve(adjustedTest, options.candidateWeights, spyReturnByDate, topK))
+    : undefined;
+  const baselineMaxDrawdownPct = options.baselineWeights
+    ? maxDrawdownOfCurve(buildEquityCurve(adjustedTest, options.baselineWeights, spyReturnByDate, topK))
+    : undefined;
 
   let annualizedReturn: number | null = null;
   let benchmarkAnnualizedReturn: number | null = null;
@@ -909,6 +1096,8 @@ export async function runWalkForwardOOS(
     oosICCandidate,
     oosICBaseline,
     pairedICDiff,
+    candidateMaxDrawdownPct,
+    baselineMaxDrawdownPct,
     equityCurve,
     annualizedReturn,
     benchmarkAnnualizedReturn,
