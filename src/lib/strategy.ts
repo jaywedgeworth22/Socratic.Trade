@@ -399,6 +399,10 @@ export async function runStrategyOnce(
     }
 
     let llmProposals: TradeProposal[] = [];
+    // FAIL-CLOSED signal from the inline Bear (Red Team): when its review could not run, these
+    // Bull proposals were NOT critiqued — route them to human review below instead of auto-executing.
+    let bearReviewUnavailable = false;
+    let bearReviewReason: string | undefined;
     if (!skipLlmDueToScoreThreshold) {
       const proposed = await proposeTrades({
         runId,
@@ -418,6 +422,8 @@ export async function runStrategyOnce(
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
+      bearReviewUnavailable = proposed.bearReviewUnavailable === true;
+      bearReviewReason = proposed.bearReviewReason;
     }
 
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
@@ -443,6 +449,19 @@ export async function runStrategyOnce(
     // auto-executing an un-reviewed high-conviction trade with real capital. The live placement
     // path below checks this set and downgrades these to status "proposed".
     const requiresHumanReview = new Set<TradeProposal>();
+    // Inline Bear review failed → FAIL CLOSED: every un-critiqued opening is routed to human
+    // review. In "propose" mode all proposals already require approval; in "decide" mode this is
+    // what stops a Bear timeout/429/malformed-JSON/missing-key from auto-executing unreviewed
+    // trades. (test/local simulation still auto-fills, matching the existing requiresHumanReview.)
+    if (bearReviewUnavailable) {
+      for (const p of sizedProposals) {
+        p.rationale += `\n\nInline Red Team (Bear) review was REQUIRED but unavailable (${bearReviewReason ?? "unknown error"}); routed to human approval.`;
+        requiresHumanReview.add(p);
+      }
+      if (sizedProposals.length > 0) {
+        audit("strategy_bear_review_routed_to_human", { runId, count: sizedProposals.length, reason: bearReviewReason, mode: policy.strategyAuthority }, userId);
+      }
+    }
     for (const proposal of sizedProposals) {
       if (shouldRunRedTeamDebate(proposal, policy)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
@@ -1808,6 +1827,14 @@ const HOLDING_HORIZON_GUIDE: Record<string, string> = {
 interface ProposeTradesResult {
   proposals: TradeProposal[];
   llmSteps: StrategyLlmStep[];
+  /**
+   * Set when the inline Bear (Red Team) review could NOT run — missing key, transport
+   * error/timeout, or an unparseable response. The caller FAILS CLOSED: in autonomous
+   * ("decide") mode these un-critiqued Bull proposals are routed to human review instead of
+   * auto-executed. Absent/false means the Bear review actually ran (approved-or-modified).
+   */
+  bearReviewUnavailable?: boolean;
+  bearReviewReason?: string;
 }
 
 async function proposeTrades(input: {
@@ -2314,8 +2341,18 @@ async function proposeTrades(input: {
     keyRef: bearKeyRef,
     transport: bearTransport
   } = resolveLlmEndpoint(input.policy, input.userId, "https://api.openai.com/v1/responses", "red");
-  if (!bearKey) {
-    console.warn("Bear Agent skipped because the Red Team LLM key is not configured; falling back to Bull proposals");
+
+  // Inline Bear (Red Team) review is REQUIRED. If it cannot run — missing key, transport
+  // error/timeout, or an unparseable response — we FAIL CLOSED: carry the Bull proposals but
+  // signal the caller (bearReviewUnavailable) to route them to human review in autonomous mode
+  // rather than silently auto-approving un-critiqued trades. Also emit a loud audit + notification.
+  const bearUnavailable = async (
+    reason: string,
+    status: "skipped" | "fallback"
+  ): Promise<ProposeTradesResult> => {
+    console.warn(
+      `[Bear] Red Team (inline) ${status}: ${reason} Routing ${bullProposals.length} Bull proposal(s) to human review (mode=${input.policy.strategyAuthority}).`
+    );
     recordStep({
       step: "bear",
       label: "Red Team review",
@@ -2323,11 +2360,43 @@ async function proposeTrades(input: {
       model: bearModel,
       transport: bearTransport,
       keySource: bearKeySource,
-      status: "skipped",
+      status,
       proposalCount: bullProposals.length,
-      reason: "Red Team LLM key is not configured; Bull proposals carried forward."
+      reason: `${reason} Proposals routed to human review.`
     });
-    return { proposals: bullProposals, llmSteps };
+    audit(
+      "strategy_bear_review_unavailable",
+      {
+        runId: input.runId,
+        reason,
+        status,
+        mode: input.policy.strategyAuthority,
+        proposalCount: bullProposals.length,
+        provider: bearProvider,
+        model: bearModel
+      },
+      input.userId
+    );
+    await sendNotification(
+      {
+        type: "provider_degraded",
+        title: "Red Team (inline Bear) review unavailable",
+        payload: {
+          runId: input.runId,
+          provider: bearProvider,
+          model: bearModel,
+          reason,
+          proposalCount: bullProposals.length,
+          routedToHumanReview: true
+        }
+      },
+      { policy: input.policy, userId: input.userId }
+    );
+    return { proposals: bullProposals, llmSteps, bearReviewUnavailable: true, bearReviewReason: reason };
+  };
+
+  if (!bearKey) {
+    return bearUnavailable("Red Team LLM key is not configured.", "skipped");
   }
 
   const bearReasoningEffort = interactiveStrategyReasoningEffort(bearModel, input.policy.llmReasoningEffort);
@@ -2408,24 +2477,12 @@ async function proposeTrades(input: {
       }
     );
   } catch (error) {
-    const reason = `${humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: LLM_TIMEOUT_MS })} Bull proposals carried forward.`;
-    recordStep({
-      ...bearStepBase,
-      status: "fallback",
-      proposalCount: bullProposals.length,
-      reason
-    });
-    return { proposals: bullProposals, llmSteps };
+    const reason = humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: LLM_TIMEOUT_MS });
+    return bearUnavailable(reason, "fallback");
   }
 
   if (bearResult.fallbackToBull) {
-    recordStep({
-      ...bearStepBase,
-      status: "fallback",
-      proposalCount: bullProposals.length,
-      reason: "Red Team review was unavailable or unparseable; Bull proposals carried forward."
-    });
-    return { proposals: bullProposals, llmSteps };
+    return bearUnavailable("Red Team review was unavailable or unparseable.", "fallback");
   }
 
   const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
