@@ -4,6 +4,63 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Learning-loop BROADER BACKLOG (P1 + P2), backend/API/tests only (Claude)
+Branch `agent/claude-backlog-b-learning-b` (off `origin/main` after #300 merged; base = #296 + #300 unified
+ledger / tuning-invariants / `pairedICDiffStats`). Implements the remaining P1 + P2 backlog from
+`docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON #300's helpers (no duplication). BACKEND /
+API / TESTS ONLY — no `app/` UI component edited (dashboard redesign owned by a parallel thread); the
+"admin ledger UI" item was SKIPPED per that constraint. Did NOT touch `red-team.ts` / inline-Bear.
+
+- **P1-1 dry-run/replay harness.** New `dryRunAutonomousWeightTuning()` + shared side-effect-free evaluator
+  `evaluateAutonomousWeightTuning()` (refactored out of `applyAutonomousWeightTuning`). Read-only admin route
+  `GET /api/admin/tuning-dry-run` (`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern) —
+  returns `{ wouldApply, before, after, clampedDeltas, oosICCandidate/Baseline, oosReadout, invariantViolations }`
+  with ZERO writes (test spies on `setPolicy`/ledger/audit).
+- **P1-2 purged & embargoed split.** `splitWalkForward` gained an opt-in `{ purge }` (4th arg); `runWalkForwardOOS`
+  gained `purgeEmbargo` (from `policy.tuning.oosPurgeEmbargo`). The embargo already existed; the PURGE (drop the
+  last `horizonDays` train-date buckets that straddle the boundary) is the new default-off addition. Flag off =
+  byte-identical.
+- **P1-3 shadow / forward-A-B ledger.** `policy.tuning.shadowWeightLedger` (default off): each autonomous-tuning
+  EVALUATION records a passive SHADOW row in #300's `learning_mutations` (trigger `auto_weight_shadow`, distinct
+  from the real-apply trigger so no revert restores it) capturing what the tuner WOULD have applied + OOS
+  readout — WITHOUT touching policy. Works whether or not `autoApplyWeights` is on.
+- **P1-4 survivorship & look-ahead certification.** HARD `isPointInTimeForwardExit()` predicate + CI-failing unit
+  test (same-day / pre-horizon exits rejected). SOFT `certifyForwardResolution()` IO diagnostic (forward-price
+  coverage proxy + point-in-time check), explicitly labeled a proxy that gates nothing.
+- **P2-1 / P2-2 missed-opportunity hit-rate.** `summarizeMissedOpportunities` gained `requireHitRate` (default
+  off): flags a recurring factor only when its benchmark-beating hit rate over ALL matured skipped rows (winners
+  AND losers), SHRUNK toward the overall skipped base rate, clears that base rate with a min denominator. P2-2:
+  the same benchmark-relative test classifies BOTH legs. `proposeStrategyTuning` widens the skipped fetch to 100
+  when on. Flag `policy.tuning.missedOpportunityRequireHitRate`.
+- **P2-3 signed/directional top-bucket congress gate.** `evaluateCongressScore` gained `requireTopBucketPositive`
+  (default off): the go/no-go additionally requires the TOP bucket's OWN excess return positive + a min-n floor,
+  so a spread carried by the (unused) short leg no longer promotes the long signal. Wired via
+  `policy.tuning.congressRequireTopBucketPositive` in the eval route + the new refresher.
+- **P2-4 IC-weight shrinkage.** `deriveWeightsFromICs(ics, fallback, λ)` blends toward `DEFAULT_SCORING_WEIGHTS`
+  (`w=λ·w_IC+(1−λ)·w_default`, renormalized); `runWalkForwardOOS` reads `policy.tuning.icWeightShrinkage` (default
+  0 = pure-IC, byte-identical).
+- **P2-5 turnover/drawdown guardrail.** `runWalkForwardOOS` now also returns `candidate/baselineMaxDrawdownPct`
+  (two extra equity curves via the pure `maxDrawdownOfCurve`). Autonomous gate blocks an apply whose candidate DD
+  exceeds baseline by >2pts, but only when `testDates ≥ 8`. Flag `policy.tuning.autoApplyDrawdownGuard`.
+- **P2-6 fixed-window OOS starvation guard.** `policy.tuning.minOosTestDates` raises the distinct-test-date floor
+  above the `AUTO_TUNE_MIN_TEST_DATES` env default (default 0 = env floor governs).
+- **P2-7 reproducibility/provenance.** Each real apply writes `audit('tuning_apply_provenance', …)` with fold
+  shape (train/test dates + observation counts), ICs/ICIR/paired-t, drawdowns, thresholds, and the flags in
+  effect.
+- **P2-8 congress go/no-go scheduled + cached + fixtured.** New `refreshCongressScoreVerdict()` cadence-callable
+  refresher moves the OHLC-backed eval off the scan hot path (the read-time cache already existed); honors P2-3.
+  Fixtured vitest (recorded snapshots + injected OHLC fetcher + fixed `placeboSeed`).
+- **Composed paired-t gate E2E** (#300 deferred): DB-backed test seeds 22 closed lots + mocks `runWalkForwardOOS`
+  to exercise the full `applyAutonomousWeightTuning` gate boolean (apply-on-pass / block-on-paired-t-fail).
+- **D-1 multiplicity** DEFERRED (documented): needs a per-account trial counter; no teeth until paired-t is on.
+  **P1-5 (calibration remap)** verified already shipped in #296 (`calibratedConviction` isotonic+shrunk) — skipped.
+  Admin **ledger UI** skipped (redesign thread owns UI; #300 route is API-only).
+
+All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quartet green in order:
+`npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276 grandfathered warnings) → `npm test` (195 files /
+1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
+`docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
+
 ## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
 Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
 merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three

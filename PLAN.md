@@ -5,6 +5,26 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`agent/claude-backlog-b-learning-b`): **Learning-loop BROADER BACKLOG (P1 + P2).**
+> Backend/API/tests-only pass on `docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON
+> #300's ledger / tuning-invariants / `pairedICDiffStats` (no duplication). P1: (P1-1) read-only
+> `dryRunAutonomousWeightTuning` + shared side-effect-free evaluator + `GET /api/admin/tuning-dry-run`;
+> (P1-2) opt-in purged-&-embargoed walk-forward split (`policy.tuning.oosPurgeEmbargo`, default-off
+> byte-identical); (P1-3) shadow / forward-A-B ledger (`shadowWeightLedger`) reusing #300's
+> `learning_mutations` with a distinct `auto_weight_shadow` trigger; (P1-4) HARD look-ahead unit test
+> (`isPointInTimeForwardExit`) + SOFT survivorship proxy (`certifyForwardResolution`). P2: (P2-1/2)
+> missed-opportunity HIT-RATE over winners+losers, shrunk to base rate, benchmark-parity both legs
+> (`missedOpportunityRequireHitRate`); (P2-3) signed top-bucket congress gate
+> (`congressRequireTopBucketPositive`); (P2-4) IC-weight shrinkage λ (`icWeightShrinkage`); (P2-5)
+> drawdown guard (`autoApplyDrawdownGuard`, candidate/baseline OOS drawdown curves); (P2-6) OOS
+> starvation floor (`minOosTestDates`); (P2-7) `tuning_apply_provenance` audit per apply; (P2-8)
+> `refreshCongressScoreVerdict` cadence refresher + fixtured test. Also the composed paired-t gate E2E
+> #300 deferred. D-1 (multiplicity) deferred with docs; P1-5 verified already-shipped in #296 (skip);
+> admin ledger UI skipped (redesign thread owns UI). Every knob default off/no-op with a per-flag
+> byte-identical proof; red-team/inline-Bear + `app/` UI untouched. Verify quartet green (tsc / lint
+> 0-err / 195 files 1977 tests / build). See `docs/rollouts/2026-07-01-learning-loop-backlog.md` +
+> `docs/phase-7-strategy.md` §3.E.8–E.15.
+>
 > 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
 > Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
 > (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +

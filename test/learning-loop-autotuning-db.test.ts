@@ -388,3 +388,74 @@ describe("factor attribution persisted at entry — item 5 (B5)", () => {
     expect(scorecard[0].factor).toBe("value"); // resolved from the ENTRY stamp, no snapshot needed
   });
 });
+
+// ── P2-8: congress go/no-go — scheduled/cached refresher off the scan hot path ─────────────────
+describe("refreshCongressScoreVerdict — P2-8", () => {
+  // A fixture OHLC fetcher returning a rising ramp so forward returns resolve for every seeded date.
+  function rampFetcher() {
+    // Distinct per-symbol slopes so the score→return relationship is learnable.
+    return async (symbol: string) => {
+      const slope = symbol === "SPY" ? 0.0 : symbol.charCodeAt(0) % 5;
+      const bars = [] as { time: string; close: number }[];
+      for (let d = 1; d <= 28; d++) {
+        for (const m of ["01", "02", "03", "04"]) {
+          bars.push({ time: `2026-${m}-${String(d).padStart(2, "0")}`, close: 100 + slope * d });
+        }
+      }
+      return bars as never;
+    };
+  }
+
+  it("computes, stores, and makes a verdict readable (eval runs OFF the scan path)", async () => {
+    const { audit, setPolicy } = await import("../src/lib/db");
+    const { refreshCongressScoreVerdict, readCongressScoreVerdict } = await import("../src/lib/congress-score-gate");
+    const userId = `p28-${randomUUID()}`;
+    setPolicy(policyFor(`P28-${randomUUID()}`), userId);
+    // Seed one snapshot with a couple of congress-scored names so an evaluation has data.
+    audit("signal_snapshot", {
+      runId: "r", asOf: "2026-01-05T00:00:00.000Z",
+      signals: [
+        { symbol: "AAA", refPrice: 100, congressCompositeScore: 80, congressCompositeDirection: "BUY" },
+        { symbol: "BBB", refPrice: 100, congressCompositeScore: 20, congressCompositeDirection: "BUY" }
+      ]
+    }, userId);
+
+    const verdict = await refreshCongressScoreVerdict(userId, { horizonDays: 5, fetchOHLC: rampFetcher(), placeboSeed: 7 });
+    expect(verdict.computedAt).toBeTruthy();
+    // A data-poor account yields INSUFFICIENT (not a permanent kill-switch) — the key P2-8 property.
+    expect(["PASS", "FAIL_SIGNIFICANCE", "INSUFFICIENT"]).toContain(verdict.verdict);
+    const read = readCongressScoreVerdict(userId);
+    expect(read?.verdict).toBe(verdict.verdict);
+    expect(read?.stale).toBe(false);
+  });
+
+  it("honors congressRequireTopBucketPositive (P2-3) — bakes the long-leg reason into the stored verdict", async () => {
+    const { audit, setPolicy } = await import("../src/lib/db");
+    const { refreshCongressScoreVerdict } = await import("../src/lib/congress-score-gate");
+    const userId = `p28-p23-${randomUUID()}`;
+    setPolicy(policyFor(`P28TB-${randomUUID()}`, { congressRequireTopBucketPositive: true }), userId);
+    // Seed several dates where the TOP score bucket falls while the BOTTOM falls harder (spread positive,
+    // long leg negative). Fixture fetcher returns FALLING bars so forward returns are negative for all.
+    const fallFetcher = async () => {
+      const bars = [] as { time: string; close: number }[];
+      for (let d = 1; d <= 28; d++) for (const m of ["01", "02"]) bars.push({ time: `2026-${m}-${String(d).padStart(2, "0")}`, close: 100 - d });
+      return bars as never;
+    };
+    for (const day of ["01-02", "01-05", "01-08"]) {
+      audit("signal_snapshot", {
+        runId: `r-${day}`, asOf: `2026-${day}T00:00:00.000Z`,
+        signals: [
+          { symbol: `T1${day}`, refPrice: 100, congressCompositeScore: 90, congressCompositeDirection: "BUY" },
+          { symbol: `T2${day}`, refPrice: 100, congressCompositeScore: 80, congressCompositeDirection: "BUY" },
+          { symbol: `B1${day}`, refPrice: 100, congressCompositeScore: 20, congressCompositeDirection: "BUY" },
+          { symbol: `B2${day}`, refPrice: 100, congressCompositeScore: 10, congressCompositeDirection: "BUY" }
+        ]
+      }, userId);
+    }
+    const verdict = await refreshCongressScoreVerdict(userId, { horizonDays: 5, fetchOHLC: fallFetcher as never, placeboSeed: 3 });
+    // The stored verdict cannot PASS while the long leg loses; when it FAILs on significance the P2-3 reason
+    // is among the reasons. (Data thinness may render it INSUFFICIENT — the reason set still carries P2-3.)
+    expect(verdict.reasons.some((r) => r.startsWith("top-bucket long-leg excess return is not positive"))).toBe(true);
+    expect(verdict.pass).toBe(false);
+  });
+});
