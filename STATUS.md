@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Market-data freshness decision + implementation plan (Claude)
+Branch `claude/stock-data-pricing-comparison-2wzg8u`. **Docs-only.** Recorded a
+real-time-vs-15-min-delayed market-data analysis and a sequenced plan to act on it:
+`docs/market-data-freshness-decision.md` + `docs/market-data-freshness-implementation-plan.md`.
+Headline: the engine is broker/strategy-neutral and already runs "delayed bulk +
+real-time hot-set on demand"; real-time only matters at the 60s exit layer and the
+order-submission instant (small hot sets already quotable free via broker / FMP).
+The primitives to exploit it (`maxEntryDriftPct`, `maxQuoteAgeSec`,
+`marketableLimitEntries`) already exist but are **default-OFF/un-tuned**. Decision:
+**do not add a new data feed** (owner already has FMP ~$30 real-time + Massive $30
+history + free broker quotes; Twelve Data would be redundant, Polygon Developer $79
+is delayed). Lever = config + a small hot-set quote-source router + optional
+poll→push exit refactor. No code paths touched; verify trio not run (docs-only).
+See `docs/rollouts/2026-07-01-market-data-freshness-decision-and-plan.md`.
+
 ## 2026-06-30 — Full app review, PR review-fixes, and worktree/branch cleanup (Claude)
 Branch `docs/improvement-audit-2026-06-30`. Ran an 11-expert read-only audit across
 all 8 owner dimensions + architecture/security + both cross-app integrations
