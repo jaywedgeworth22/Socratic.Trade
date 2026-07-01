@@ -75,8 +75,13 @@ Now includes CODE, not just docs:
   broker-neutral; `activeBroker` is set when a real broker connects (`db-profiles.ts`),
   and `getBrokerGateway` (`broker.ts:12-13`) already resolves undefined → local sim
   safely. Rationale: the seeded `test`/paper literals propagated a false "paper/test
-  app by default" assumption. Also set `marketableLimitEntries: true` (degrades to a
-  plain market order when no ask/qty<1).
+  app by default" assumption.
+  - **`marketableLimitEntries` left as an opt-in settings toggle, NOT a global
+    default.** An initial commit defaulted it ON, but CI `verify` showed it changes
+    deterministic order sizing (reserves the 15 bps buffer, `strategy.ts:1190`) and
+    broke `conviction-size-cap.test.ts` (4 assertions, each ~0.15% low). Reverted the
+    default; it stays fully wired as a per-account toggle in settings. This is the
+    concrete example of why the verify CI gate is the authoritative check here.
 - `app/dashboard-client.tsx`: surfaced "Max quote age (sec)" and "Max fundamentals age
   (sec)" as optional settings fields (mirroring the existing `OptionalNumberField`
   pattern), completing "surface the gates in settings." Staleness stays default-OFF

@@ -10,8 +10,10 @@ analysis + sequenced plan: `docs/market-data-freshness-decision.md` +
 `docs/market-data-freshness-implementation-plan.md`. **Now includes code:** removed the
 paper/test defaults from `DEFAULT_POLICY` (`paperMode:false`; dropped `activeBroker:"test"`
 — broker-neutral, set on connect; `getBrokerGateway` resolves undefined→local sim safely),
-set `marketableLimitEntries:true`, and surfaced quote/fundamentals staleness fields in
-settings (`dashboard-client.tsx`). Plan reframed on the operator principle: **whichever
+left `marketableLimitEntries` as an opt-in settings toggle (an initial commit defaulted
+it ON but CI caught that it reserves the 15bps sizing buffer and broke
+`conviction-size-cap.test.ts` — reverted), and surfaced quote/fundamentals staleness
+fields in settings (`dashboard-client.tsx`). Plan reframed on the operator principle: **whichever
 account you're in IS the account; its broker feed is the quote source of record** — the
 fallback tiers are a Test-account/missing-feed safety net, not a routine path. Folds in 7
 Codex P2 review points (entry-drift already enabled/tune-only; marketable limits need

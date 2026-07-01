@@ -61,7 +61,6 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
-  marketableLimitEntries: true, // rewrite opening market orders as marketable limits (caps fast-tape slippage); degrades to a plain market order when no ask/quote is available or qty < 1 share
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
   marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,

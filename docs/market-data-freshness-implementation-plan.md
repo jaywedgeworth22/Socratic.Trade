@@ -19,7 +19,7 @@ Audit of `src/lib/policy.ts`, `strategy.ts`, `synthetic-stops.ts`, `types.ts`:
 |---|---|---|
 | Entry-drift guard | `policy.maxEntryDriftPct` — enforced `policy.ts:109-127` | Implemented; **already enabled, default `10`** in `DEFAULT_POLICY`; UI exposes "Max entry drift %". **Tune-only — do NOT silently reset to 1–2% without an explicit retune/migration.** |
 | Staleness gate | `policy.maxQuoteAgeSec` / `maxFundamentalsAgeSec` — enforced `policy.ts:132-168` | Implemented; **surfaced in settings UI (this PR)**; default OFF — keep OFF until Workstream 2 stamps honest `asOf` (missing `asOf` = block). Note: enforced for **opening proposals only** (not the exit path — see WS2). |
-| Marketable-limit entries | `policy.marketableLimitEntries` + `tuning.marketableLimitBufferBps` — applied `strategy.ts:1191-1192`, `2764-2789` | Implemented; **now default ON (this PR)**. Degrades to a plain market order when qty < 1 or not dollar-routed; prices through `quote.ask`/`bid`, falling back to `referencePrice` when bid/ask absent (see WS2 caveat). |
+| Marketable-limit entries | `policy.marketableLimitEntries` + `tuning.marketableLimitBufferBps` — applied `strategy.ts:1191-1192`, `2764-2789` | Implemented; **opt-in settings toggle (NOT defaulted ON)** — defaulting it globally reserves the 15 bps buffer in deterministic sizing (`strategy.ts:1190`), changing order-sizing math (broke `conviction-size-cap.test.ts` in CI), so it stays a per-account choice. Degrades to a plain market order when qty < 1 or not dollar-routed; prices through `quote.ask`/`bid`, falling back to `referencePrice` when bid/ask absent (see WS2 caveat). |
 | Approval-time re-quote | `strategy.ts:1502-1511` re-scans + `getEquityQuotes` for hot set | Implemented |
 | Synthetic trailing-stop poll | `synthetic-stops.ts:170`, every 60s tick; consumes `quote.price` | Implemented (poll-based) |
 | Price alerts | `alerts.ts` prices armed symbols via `getEquityQuotes`; `scheduler.ts` runs `checkAllUserPriceAlerts()` per tick | Implemented (poll-based) |
@@ -30,13 +30,17 @@ Audit of `src/lib/policy.ts`, `strategy.ts`, `synthetic-stops.ts`, `types.ts`:
 
 ## Workstream 1 — Enable & tune the gates (DONE in this PR, except the WS2-dependent default)
 
-- **Marketable-limit entries → default ON** (`DEFAULT_POLICY.marketableLimitEntries = true`).
+- **Marketable-limit entries → left as an opt-in settings toggle** (NOT defaulted ON).
   Converts deterministic opening market orders into marketable limits priced through
-  the quote — real slippage control on the 1–5 traded names. **Caveat (Codex):** the
-  conversion needs `bid`/`ask`; with a last-price-only source it falls back to
-  `referencePrice`, which can be non-marketable/stale. Fully trustworthy only once
-  WS2 guarantees bid/ask (or derives a conservative side-specific limit from a fresh
-  last price) on the fallback path.
+  the quote — real slippage control on the 1–5 traded names. It was *not* made a
+  global default because turning it on reserves the 15 bps buffer in deterministic
+  sizing (`strategy.ts:1190`), which changes order-sizing math and broke
+  `conviction-size-cap.test.ts` in CI — so that's a deliberate per-account choice, not
+  a silent default. Still fully wired in settings; enable it per account when wanted.
+  **Caveat (Codex):** the conversion needs `bid`/`ask`; with a last-price-only source
+  it falls back to `referencePrice`, which can be non-marketable/stale. Fully
+  trustworthy only once WS2 guarantees bid/ask (or derives a conservative side-specific
+  limit from a fresh last price) on the fallback path.
 - **Entry-drift guard → already enabled** (`DEFAULT_POLICY.maxEntryDriftPct = 10`; UI
   exposes it). **Tune-only.** Tightening to 1–2% is a deliberate retune, not a
   "turn it on" — don't change the shipped default without a migration note.
