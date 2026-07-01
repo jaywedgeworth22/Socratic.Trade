@@ -7,6 +7,7 @@
 // lost across reconnects. Opt-in (CONGRESS_STREAM_ENABLED); no-op otherwise. Fully self-guarded.
 
 import { applyCongressEvent, type CongressEvent } from "./congress-trade-events";
+import { logApiHealth } from "./db-health";
 
 const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
@@ -103,6 +104,7 @@ async function connectOnce(): Promise<void> {
   const controller = new AbortController();
   state.controller = controller;
   const token = readToken();
+  const startedAt = Date.now();
   const res = await fetch(streamUrl(), {
     headers: {
       accept: "text/event-stream",
@@ -114,6 +116,10 @@ async function connectOnce(): Promise<void> {
   });
   if (!res.ok || !res.body) throw new Error(`SSE connect failed: HTTP ${res.status}`);
   state.backoffMs = INITIAL_BACKOFF_MS; // healthy connection → reset backoff
+  // Connection-health signal for the admin Connections page (App B's side of the
+  // App A → App B real-time link). Re-fires on each (re)connect within App A's
+  // ~25min stream lifetime; connection failures log ok:false below.
+  logApiHealth({ service: "congress.trade:sse", ok: true, latencyMs: Date.now() - startedAt });
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -144,6 +150,11 @@ async function runLoop(): Promise<void> {
       await connectOnce();
     } catch (err) {
       console.error("[congress-stream] connection error:", err instanceof Error ? err.message : err);
+      logApiHealth({
+        service: "congress.trade:sse",
+        ok: false,
+        errorText: err instanceof Error ? err.message : String(err),
+      });
     }
     if (state.closing) break;
     await sleep(state.backoffMs);

@@ -8,8 +8,10 @@ import {
   resetCongressEventDedupe
 } from "../src/lib/congress-trade-events";
 import { verifyCongressWebhookSecret } from "../src/lib/congress-webhook-auth";
+import { getServiceHealthSummaries } from "../src/lib/db-health";
 import { coerceCongressTrade, fetchAppACongressTrades } from "../src/lib/web-sources/congress";
 import { getCongressDataset, getInsiderSignals, getSymbolWebSignals } from "../src/lib/web-sources";
+import { POST as postCongressWebhook } from "../app/api/webhooks/congress/route";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-congress-events-${randomUUID()}.db`)}`;
@@ -215,5 +217,22 @@ describe("verifyCongressWebhookSecret", () => {
     expect(verifyCongressWebhookSecret(reqWith("Bearer wrong"))).toBe(false);
     expect(verifyCongressWebhookSecret(reqWith(undefined))).toBe(false);
     expect(verifyCongressWebhookSecret(reqWith("s3cr3t"))).toBe(false); // missing "Bearer "
+  });
+
+  it("records webhook health from the ingest result, not just successful authentication", async () => {
+    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
+
+    const res = await postCongressWebhook(
+      new Request("https://b.example/api/webhooks/congress", {
+        method: "POST",
+        headers: { authorization: "Bearer s3cr3t", "content-type": "application/json" },
+        body: JSON.stringify({ foo: "bar" }),
+      })
+    );
+
+    expect(res.status).toBe(400);
+    const summary = getServiceHealthSummaries().find((item) => item.service === "congress.trade:webhook");
+    expect(summary?.lastFailureError).toBe("invalid-event");
+    expect(summary?.lastSuccessTs).toBeNull();
   });
 });
