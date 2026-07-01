@@ -5,6 +5,19 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/competent-elion-c82938`): Workstream C2 — API Usage Monitor
+> integration. Wired App B's usage ledgers (`recordLlmUsage`/`recordRagUsage`) +
+> market-data/broker call paths to push real usage/cost to `usage.jays.services`
+> via a new fire-and-forget forwarder (the shared push client had zero callers —
+> audit §6.9 / top-10 #9); added the audit's cost-aware feedback loop (monitor
+> `GET /api/budget-status` + App B budget client: alerts by default, model-downgrade/
+> cycle-skip behind default-off `USAGE_BUDGET_ENFORCE`). All default-off,
+> fire-and-forget, fail-open — App B runs standalone without the monitor. Hand-rolled
+> the push (App B's pinned shared pkg 1.0.0 lacks the `usageTelemetry` export; publish
+> + pin-bump deferred). No roadmap-phase change. See
+> `docs/usage-monitor-integration.md` +
+> `docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+
 > 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
 > Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
 > `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised

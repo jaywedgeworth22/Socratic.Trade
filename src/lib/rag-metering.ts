@@ -12,6 +12,7 @@
 
 import crypto from "crypto";
 import { getDb } from "./db";
+import { pushRagUsage } from "./usage-monitor-push";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,17 @@ export function recordRagUsage(entry: RagUsageEntry): void {
         cost ?? null,
         new Date().toISOString()
       );
+    // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
+    pushRagUsage({
+      provider,
+      operation: entry.operation,
+      model: entry.model,
+      userId,
+      tokensIn,
+      tokensOut,
+      batchCount,
+      costUsd: cost,
+    });
   } catch {
     /* ledger is best-effort; never break the caller */
   }
