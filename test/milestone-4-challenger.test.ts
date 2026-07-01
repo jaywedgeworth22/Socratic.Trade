@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sanitizeUserId, retrieveContext, retryAfterMs } from "../src/lib/vector-db";
 import {
   FinnhubEnrichmentProvider,
@@ -279,6 +279,11 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
   beforeEach(() => {
     clearEnrichmentCache();
     vi.stubGlobal("fetch", vi.fn());
+    // Exercise the FMP short_interest call's cache-poisoning participation (default-off in prod).
+    process.env.FMP_SHORT_INTEREST_ENABLED = "on";
+  });
+  afterEach(() => {
+    delete process.env.FMP_SHORT_INTEREST_ENABLED;
   });
 
   it("prevents cache writes on Finnhub when a transient error occurs in at least one promise", async () => {

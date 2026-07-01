@@ -1064,6 +1064,17 @@ export function shortInterestDisagreementThresholdPct(): number {
   return Number.isFinite(value) && value > 0 ? value : 5;
 }
 
+/**
+ * Whether to call FMP's short-interest endpoint for the second-source disagreement cross-check.
+ * DEFAULT OFF: FMP's public API does not currently provide a short-interest endpoint (their FAQ
+ * confirms it), so the call 404s for every symbol and never contributes. Enable only if your FMP
+ * plan/endpoint actually returns short interest, or when wiring a different verified source here.
+ */
+export function fmpShortInterestEnabled(): boolean {
+  const v = (process.env.FMP_SHORT_INTEREST_ENABLED ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on" || v === "yes";
+}
+
 // Opt-in: drop Finnhub's per-symbol `stock/recommendation` REST call (5 sub-calls → 4). Analyst ratings
 // are already backstopped elsewhere in the cascade (Yahoo `recommendationMean` on the keyless floor, plus
 // FMP grades-consensus / Alpha Vantage), so with this on a symbol still gets a blended analyst score from
@@ -2076,11 +2087,15 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             wantTargets
               ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
               : Promise.resolve(undefined),
-            // Second short-interest source: FMP's short-interest endpoint. Carried alongside Yahoo's
-            // read so the cascade can flag a material disagreement. Both 403 (non-premium key) and 404
-            // (no short-interest row for this symbol) are EXPECTED for this optional call and must not
-            // log an fmp health failure — suppress both, like the insider/senate optional calls.
-            this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false, [403, 404])
+            // Second short-interest source for the Yahoo-vs-FMP disagreement cross-check. DEFAULT OFF:
+            // FMP's public API does not currently provide a short-interest endpoint (their FAQ confirms
+            // it), so /v4/short_interest 404s for every symbol — the cross-check can never fire and the
+            // call just wastes a request per scan (silently, since 404 is suppressed). Enable
+            // FMP_SHORT_INTEREST_ENABLED only if your FMP plan/endpoint actually returns short interest.
+            // The disagreement machinery below stays intact so a real second source can be wired later.
+            fmpShortInterestEnabled()
+              ? this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false, [403, 404])
+              : Promise.resolve(undefined)
           ]);
 
           let peRatio: number | undefined;

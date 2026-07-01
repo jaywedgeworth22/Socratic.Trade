@@ -43,6 +43,7 @@ describe("market enrichment provider", () => {
     delete process.env.WEBULL_UNOFFICIAL_ENABLED;
     delete process.env.FINTECH_STUDIOS_API_KEY;
     delete process.env.FINTECH_STUDIOS_BASE_URL;
+    delete process.env.FMP_SHORT_INTEREST_ENABLED;
   });
 
   afterEach(() => {
@@ -414,6 +415,12 @@ describe("enrichment cache consent gate", () => {
 });
 
 describe("Finnhub & FMP Cache Poisoning Protection", () => {
+  // These tests exercise the FMP short_interest call's participation in cache-poisoning protection,
+  // so opt into the (default-off) call. FMP has no public short-interest endpoint, but the fetch is
+  // still gated behind this flag for the disagreement-cross-check machinery / a future real source.
+  beforeEach(() => {
+    process.env.FMP_SHORT_INTEREST_ENABLED = "on";
+  });
   it("prevents cache writes on Finnhub when a transient error occurs", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
@@ -605,6 +612,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
   });
 
   it("carries FMP short interest and flags a material Yahoo-vs-FMP disagreement", async () => {
+    process.env.FMP_SHORT_INTEREST_ENABLED = "on"; // opt in to the (default-off) FMP short-interest call
     const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
       "../src/lib/data-providers"
     );
@@ -639,6 +647,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
   });
 
   it("does not flag short-interest disagreement when the two sources agree", async () => {
+    process.env.FMP_SHORT_INTEREST_ENABLED = "on"; // opt in to the (default-off) FMP short-interest call
     const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
       "../src/lib/data-providers"
     );
