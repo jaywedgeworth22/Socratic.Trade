@@ -14,9 +14,21 @@
 import { audit, getInternalSetting, setInternalSetting } from "../db";
 import { hasIngestedAccession, insertIngestedAccession } from "../db";
 import { normalizeSymbol } from "../money";
+import { envFlagOn } from "../rag/env-flag";
 import { retryBackoffMs } from "./congress";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { extractFilingText } from "./sec-filings";
+
+/**
+ * R10 (2026-07-01 RAG backlog): opt-in content_hash dedup for the always-on 8-K SUMMARY ingest
+ * below. Default OFF — `refreshEightK` re-embeds the same short summary on every refresh cycle
+ * even when the underlying event data hasn't changed (the Pinecone upsert is idempotent by
+ * contextId, but the Voyage embed call is NOT free). Set VECTOR_STORECONTEXTS_DEDUP=on to skip
+ * re-embedding events whose summary text hasn't changed since last indexed.
+ */
+function storeContextsDedupEnabled(): boolean {
+  return envFlagOn("VECTOR_STORECONTEXTS_DEDUP", false);
+}
 
 const DATASET_KEY = "webSource:sec8k:dataset";
 const ATTEMPT_KEY = "webSource:sec8k:lastAttempt";
@@ -373,20 +385,25 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
     const ragEvents = fresh.slice(0, eightKRagLimit());
     import("../vector-db")
       .then(({ storeContexts }) =>
-        storeContexts(ragEvents.map((event) => ({
-          text: buildEightKContext(event),
-          metadata: {
-            symbol: event.symbol,
-            source: "sec-8k",
-            timestamp: event.filedAt,
-            // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
-            acceptance_datetime: event.filedAt,
-            doc_type: "8-k",
-            accession: event.accession,
-            filingUrl: event.filingUrl,
-            items: event.items ?? []
-          }
-        })))
+        storeContexts(
+          ragEvents.map((event) => ({
+            text: buildEightKContext(event),
+            metadata: {
+              symbol: event.symbol,
+              source: "sec-8k",
+              timestamp: event.filedAt,
+              // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+              acceptance_datetime: event.filedAt,
+              doc_type: "8-k",
+              accession: event.accession,
+              filingUrl: event.filingUrl,
+              items: event.items ?? []
+            }
+          })),
+          "local",
+          // R10: opt-in dedup so an unchanged summary isn't re-embedded every refresh cycle.
+          storeContextsDedupEnabled() ? { dedupKeyPrefix: "sec8k-summary" } : undefined
+        )
       )
       .catch((error) => console.warn("[sec8k] vector store failed", error));
   }

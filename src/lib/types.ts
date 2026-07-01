@@ -36,7 +36,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "price_alert",
   "proposal_withdrawn",
   "limit_order_stale",
-  "provider_degraded"
+  "provider_degraded",
+  "budget_alert"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -238,6 +239,141 @@ export interface TuningSettings {
    * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
    */
   minProposalScoreThreshold?: number;
+
+  // ── Workstream B: learning-loop auto-tuning (all DEFAULT OFF) ──────────────────
+  /**
+   * OPT-IN (DEFAULT false): when true, a cadence-gated caller may AUTONOMOUSLY apply the
+   * auto-tuner's proposed factor-weight changes — but ONLY after the existing OOS walk-forward
+   * gate passes, every delta is clamped to MAX_WEIGHT_STEP, and a previous-weights snapshot is
+   * stored (audit kind "auto_weight_apply") so a revert can restore the prior vector. Off by
+   * default: today the tuner only ever feeds a manual proposal / read-only route, so default
+   * behavior is byte-identical. Never applies weights when the OOS gate strips them.
+   */
+  autoApplyWeights?: boolean;
+  /**
+   * OPT-IN (DEFAULT 0 = current strict `>` behavior, panel P0-2): minimum OOS composite IC improvement
+   * (candidate − baseline) the autonomous apply path requires BEFORE the paired-t significance test. A
+   * flat margin alone is the floor; the paired-t (computed from the per-date IC-difference series) is the
+   * correct form and is ALSO required. 0 keeps today's behavior (the existing env `AUTO_TUNE_MIN_IC_DELTA`
+   * still supplies a small default margin); a positive value tightens the margin. Surfaced as an audited
+   * no-op when it silently blocks autonomy.
+   */
+  minOosICImprovement?: number;
+  /**
+   * OPT-IN (DEFAULT 0 = paired-t OFF, panel P0-2): minimum PAIRED t-statistic on the per-date
+   * candidate-vs-baseline IC-difference series that the autonomous apply path requires. 0 disables the
+   * significance test entirely (byte-identical to pre-P0-2 autonomy); a positive value (e.g. 1.5–2.0)
+   * requires the candidate's OOS edge to be statistically distinguishable from the baseline on the shared
+   * fold, not merely a point-estimate margin. Defaults to a no-op so nothing changes unless an operator
+   * opts in.
+   */
+  minOosPairedTStat?: number;
+  /**
+   * ESCAPE HATCH (DEFAULT false, panel P0-3): explicitly allow `autoApplyWeights` to run even when
+   * `oosWithholdUnvalidated` is false. Without this override the fail-closed invariant guard SKIPS the
+   * autonomous apply (it must not run while unvalidated weight moves are kept). Set this only if you
+   * deliberately want autonomy under a permissive OOS-withhold posture.
+   */
+  autoApplyOverrideUnvalidated?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the scan composite gates the congressional contribution on
+   * the congress-score-eval go/no-go verdict — a "no-go" signal (below the eval's t-stat / marginal-IC
+   * thresholds) no longer lifts a name into the candidate set or up the composite. Off by default:
+   * the congress term is applied unconditionally today, so default scans are unchanged.
+   */
+  congressGoNoGoGating?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, matured missed-opportunity evidence (skipped names that beat
+   * the benchmark) produces a small, clamped, audited per-factor nudge into the scan composite weights
+   * used for THIS run's scoring, subject to the sample gate. Off by default: today these stats only
+   * feed the manual tuning proposal, so default scan scoring is unchanged.
+   */
+  missedOpportunityNudge?: boolean;
+  /**
+   * Minimum count of benchmark-beating missed winners a single dominant factor must recur across before
+   * `summarizeMissedOpportunities` flags it as a recurring factor. Default 2 (current behavior). Item-4
+   * hardening raises this to 5 via the benchmark-relative path when `benchmarkRelativeMisses` is on.
+   */
+  recurringFactorMinCount?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, a skipped name only counts as a "missed winner" if it beat SPY
+   * over the same horizon (return minus the SPY return), not merely returnPct > 0, and the recurring-factor
+   * threshold is raised to `recurringFactorMinCount` (>= 5 recommended). Off by default: the winner test
+   * stays `returnPct > 0` with no market adjustment, so default missed-opportunity stats are unchanged.
+   */
+  benchmarkRelativeMisses?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the deterministic sizer remaps the proposal's confidenceScore
+   * through the account's realized confidence-calibration curve BEFORE it becomes the conviction sizing
+   * multiplier — a poorly-calibrated high-confidence band is sized down toward its realized win rate. Off
+   * by default: the sizer uses the raw confidenceScore/100 exactly as today. Still respects the existing
+   * convictionCapUncorroborated cap.
+   */
+  calibrationSizing?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true AND per-regime sample sizes are sufficient, regime-conditioned
+   * factor-weight vectors (keyed off determineMarketRegime) are applied in scan scoring. Off by default;
+   * when the per-regime sample is too thin, the app produces only the admin-side per-regime IC report and
+   * leaves application off regardless of this flag.
+   */
+  perRegimeWeights?: boolean;
+
+  // ── Broader backlog (Chat B, 2026-07-01) — all DEFAULT OFF / no-op ─────────────
+  /**
+   * OPT-IN (DEFAULT false, panel P1-2): when true, `runWalkForwardOOS`'s chronological train/test split
+   * additionally PURGES train rows whose forward-return window `[date, date+horizonDays]` overlaps the first
+   * test date (they share realized bars with the test fold → leakage that inflates OOS IC). The embargo of
+   * `horizonDays` snapshot-date buckets after the boundary is applied EITHER way (it predates this flag); this
+   * flag only adds the purge. Off by default → the split is byte-identical to today (embargo only, no purge).
+   */
+  oosPurgeEmbargo?: boolean;
+  /**
+   * OPT-IN (DEFAULT false, panel P1-3): when true, each autonomous-tuning EVALUATION records a SHADOW ledger
+   * row — what the tuner WOULD have applied and the OOS readout — WITHOUT applying it (never touches policy).
+   * A forward-A/B audit trail so an operator can watch the tuner's decisions accrue before trusting autonomy.
+   * Off by default → no shadow rows are written. Independent of `autoApplyWeights` (works whether or not real
+   * auto-apply is on); when both are on, a real apply is recorded in the ledger as usual and no duplicate
+   * shadow row is written for that same evaluation.
+   */
+  shadowWeightLedger?: boolean;
+  /**
+   * OPT-IN (DEFAULT false, panel P2-1): when true, `summarizeMissedOpportunities` only flags a recurring
+   * factor when, among ALL matured skipped candidates (winners AND losers), that factor's benchmark-beating
+   * hit rate — SHRUNK toward the overall skipped hit rate — clears the base rate with a minimum denominator.
+   * Off by default → recurring-factor flagging uses the winners-only count exactly as today. Sequence AFTER
+   * `benchmarkRelativeMisses` (it reuses the same benchmark-relative winner test).
+   */
+  missedOpportunityRequireHitRate?: boolean;
+  /**
+   * OPT-IN (DEFAULT false, panel P2-3): when true AND `congressGoNoGoGating` is on, the congress go/no-go
+   * verdict additionally requires the TOP score bucket's own excess return (over the bottom bucket) to be
+   * positive with a minimum observation floor before it may PASS. A symmetric top-minus-bottom spread whose
+   * edge lives entirely in the (unused) short leg no longer promotes a long-biased congress signal. Off by
+   * default and inert unless the congress gate is evaluated → default verdicts are unchanged.
+   */
+  congressRequireTopBucketPositive?: boolean;
+  /**
+   * OPT-IN (DEFAULT 0 = no shrinkage, panel P2-4): shrinkage λ (0–1) applied when the OOS harness derives
+   * weights from ICs — `w_final = λ·w_IC + (1−λ)·w_default`. 0 keeps today's pure-IC derivation (byte-
+   * identical); a positive λ pulls the derived vector toward `DEFAULT_SCORING_WEIGHTS`, damping a single
+   * high-IC factor on a thin fold. Applied BEFORE the MAX_WEIGHT_STEP clamp on the apply path.
+   */
+  icWeightShrinkage?: number;
+  /**
+   * OPT-IN (DEFAULT false, panel P2-5): when true (and `autoApplyWeights` is on), the autonomous apply is
+   * BLOCKED when the candidate's OOS max-drawdown exceeds the baseline's beyond a small tolerance — but only
+   * when the OOS test fold has at least `minOosTestDates` (or the panel's floor) distinct dates; below that,
+   * the drawdown guard is skipped and the IC/paired-t gate governs alone. Off by default → autonomy is
+   * governed purely by the IC + paired-t gate as today.
+   */
+  autoApplyDrawdownGuard?: boolean;
+  /**
+   * OPT-IN (DEFAULT 0 = OFF, panel P2-6): minimum number of DISTINCT OOS test-fold dates the autonomous apply
+   * path requires before it may persist (a starvation guard so a thin fixed 500-row window that spans only a
+   * few dates can't pass the gate). 0 keeps the existing behavior (the env `AUTO_TUNE_MIN_TEST_DATES`, default
+   * 4, still supplies a floor). A positive value raises the distinct-test-date floor above that env default.
+   */
+  minOosTestDates?: number;
 }
 
 export interface RiskRules {
@@ -845,6 +981,12 @@ export interface MarketDataProviderOptions {
   outlierReserve?: number;
   /** Penny/illiquid exclusion for index + dynamic-universe candidates (explicit symbols + positions exempt). */
   universeFloor?: UniverseFloor;
+  /**
+   * Item 2: multiplier applied to the congressional contribution in scan scoring. Default (undefined → 1)
+   * leaves the congress term unchanged; 0 zeroes it when the congress-score go/no-go gate returned a no-go
+   * verdict and `policy.tuning.congressGoNoGoGating` is on. Resolved by the caller from the cached verdict.
+   */
+  congressMultiplier?: number;
 }
 
 export interface MarketDataProvider {

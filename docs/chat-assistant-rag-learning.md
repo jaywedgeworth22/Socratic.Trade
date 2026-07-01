@@ -112,17 +112,67 @@ the onboarding minimum from **I13** (router-matched suggested-prompt chips; fix 
 8-K framing). *Approved by the user.*
 
 **NEXT** (grounding fidelity + helpful dialogue + corpus): ingest filing **bodies** via the built
-`storeDocument` path (**I5**); real citation provenance (**I4**); ticker-less `kb_search` + apply
-`doc_type`/`as_of` Pinecone metadata filters (stored, never queried); relevance-score floor + Voyage
-`rerank` + an explicit insufficient-evidence path; slot-filling + model-authored rationale (**I7**);
+`storeDocument` path (**I5** — full-body ingest paths verified end-to-end against fixtures 2026-07-01,
+`docs/rollouts/2026-07-01-rag-eval-and-rerank.md`; enabling them by default is still a pending
+paid-Voyage-key cost decision, see `docs/prod-config-voyage.md`); real citation provenance (**I4**);
+ticker-less `kb_search` + apply `doc_type`/`as_of` Pinecone metadata filters (stored, never queried);
+~~relevance-score floor + Voyage `rerank`~~ — **DONE 2026-07-01**: `rerankMatches` now captures each
+match's `relevanceScore` (was previously discarded) and `RetrieveOptions.minRelevanceScore` applies
+an opt-in post-rerank floor, fail-open when no score is available (see the rollout note); an explicit
+insufficient-evidence path is still open; slot-filling + model-authored rationale (**I7**);
 prompt-injection hardening (**I8**); capture chat feedback (**I12**, chat-behavior only).
 
-**LATER** (durability/provenance/polish): LLM salience extractor (**I9**); unify constraints↔policy
-(**I10**, with confirm); restore chat→trade provenance (**I11**); hybrid lexical (FTS5/BM25 + RRF) leg
-for exact tickers/CUSIPs/"Item 5.02"/dollar figures + a 20–40 query retrieval eval set
-(recall@k/MRR + faithfulness); corpus coverage/freshness UI ("8-K through 2026-06-18; no 10-K on
-file"); typed second gate on **BROKERAGE·LIVE** confirm only (keep paper/test one-click); persistent
-"what can I ask?" popover.
+**LATER** (durability/provenance/polish): ~~LLM salience extractor~~ (**I9** — **DONE 2026-07-01**:
+`src/lib/memory/salience-llm.ts`, default off via `LLM_SALIENCE_EXTRACTOR`, falls back to the regex
+extractor on any failure, validates tickers against `isIndexMemberSymbol`; the regex extractor's own
+first-match-only ticker-binding bug was also fixed independently, see the rollout note); unify
+constraints↔policy (**I10**, with confirm); restore chat→trade provenance (**I11**); hybrid lexical
+(FTS5/BM25 + RRF) leg for exact tickers/CUSIPs/"Item 5.02"/dollar figures — **evaluated 2026-07-01**,
+stays off by default (measured eval-delta table in the rollout note; reranking alone already reaches
+the eval ceiling on the golden fixture; hybrid's real value is narrowly the exact-token case) + a
+20–40 query retrieval eval set (recall@k/MRR + faithfulness) — **DONE 2026-07-01**: the recall@k/MRR
+half shipped as `test/rag-retrieval-eval.test.ts` (28-case golden fixture, no live network calls);
+the faithfulness half shipped in the backlog pass below as `scripts/eval/faithfulness.ts` +
+`test/rag-faithfulness-eval.test.ts` (deterministic citation-grounding + numeric-claim checks, optional
+default-off LLM judge); an offline **corpus coverage/freshness report** shipped as
+`scripts/eval/corpus-coverage.ts` (doc_type/symbol breakdown + watchlist zero-coverage check from
+SQLite, no Pinecone key required) — a richer **dashboard UI** surfacing the same data is still open
+(note: `/api/admin/rag-coverage` + `app/admin/rag-coverage/` already exist as a related, separate
+live-API/UI capability — not touched by this pass, owned by the dashboard-redesign thread); typed
+second gate on **BROKERAGE·LIVE** confirm only (keep paper/test one-click); persistent "what can I
+ask?" popover.
+
+**Follow-on, 2026-07-01** (`docs/rollouts/2026-07-01-rag-followon.md`): the two items the Workstream
+C rollout note deferred are now DONE — a **retrieval regression net** (R4) pins the as-of/rerank/
+hybrid fail-safes as network-free unit tests (`test/rag-retrieval-regression.test.ts`) driven through
+a newly-exported pure `rankPool(matches, query, limit, options)` helper factored out of
+`retrieveContextDetailed`'s post-recall pipeline; and **`VECTOR_ASOF_STRICT`** (R1 part 2, default
+OFF) now drops undated chunks under an active `asOf` instead of the previous unconditional
+lenient-keep, with a drop-count `audit()` record and a golden as-of tuple test
+(`test/vector-db-asof-strict.test.ts`) proving the on/off/unset-`asOf` behavior end-to-end. Both are
+byte-identical to prior behavior unless explicitly opted in.
+
+**Backlog pass, 2026-07-01** (`docs/rollouts/2026-07-01-rag-backlog.md`): all remaining P1 items
+(**R5** consolidated per-retrieval distribution telemetry via `recordRetrievalQuality()`, default off
+via `RAG_RETRIEVAL_TELEMETRY`; **R6** shared `envFlagOn` parser now used by rerank/hybrid/as-of-strict/
+disclosure flags, fixing `RAG_EMBED_DISCLOSURES` to accept `true/1/yes` like every other flag; **R7**
+`describeIndex` metric assertion at bootstrap, cached, warn+audit-only; **R9** query-embedding LRU
+(`RAG_QUERY_EMBED_CACHE`, vector-only, never Pinecone results); **R10** `content_hash` dedup for the
+`storeContexts` path (opt-in `dedupKeyPrefix`, wired into the 8-K summary and disclosure ingesters
+behind `VECTOR_STORECONTEXTS_DEDUP`); **R11** faithfulness/citation-grounding eval
+(`scripts/eval/faithfulness.ts` + `run-faithfulness.ts`, deterministic-first with an optional
+default-off LLM judge that no-ops without `OPENAI_API_KEY`)) and all P2 items (**R12** centralized
+default cosine floor via `applyDefaultFloors`/`RAG_APPLY_DEFAULT_FLOORS`; **R13** provenance-complete
+citations (additive `doc_type`/`section` keys) + optional `isStale` advisory label behind
+`RAG_CITATION_STALENESS` — backend/payload only, no UI change; **R14** near-duplicate suppression via
+opt-in `RetrieveOptions.dedupeSimilarity` (Jaccard-shingle, greedy + back-fill); **R15** offline corpus
+coverage & freshness report (`scripts/eval/corpus-coverage.ts`); **R16** per-run RAG budget ceiling
+(`RAG_RUN_BUDGET_ENABLED`, degrades by skipping rerank/hybrid only, never core recall); **R17** fixed
+train/serve text skew via `VECTOR_EMBED_CLEAN_TEXT` (embeds clean chunk text, stored/cited text
+unchanged)) are now DONE. R3 (golden-set anti-leakage lint) and R8 (salience first-valid-ticker) had
+already shipped in earlier passes (#297/#299) and were verified, not re-implemented. Every item is
+default-off/opt-in and proven byte-identical when unset — see the rollout note for the full
+item-by-item detail and verify-quartet results.
 
 ## 6. User-guidance design ("how to advise users to interact")
 

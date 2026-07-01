@@ -16,6 +16,128 @@ filling the missing pieces.
 > the fail-closed safety fix are default-off flags. Verified tsc/lint/test(1692)/build +
 > eval green. See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
 
+> 2026-07-01 (`agent/claude-backlog-b-learning-b`): **Learning-loop BROADER BACKLOG (P1 + P2).**
+> Backend/API/tests-only pass on `docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON
+> #300's ledger / tuning-invariants / `pairedICDiffStats` (no duplication). P1: (P1-1) read-only
+> `dryRunAutonomousWeightTuning` + shared side-effect-free evaluator + `GET /api/admin/tuning-dry-run`;
+> (P1-2) opt-in purged-&-embargoed walk-forward split (`policy.tuning.oosPurgeEmbargo`, default-off
+> byte-identical); (P1-3) shadow / forward-A-B ledger (`shadowWeightLedger`) reusing #300's
+> `learning_mutations` with a distinct `auto_weight_shadow` trigger; (P1-4) HARD look-ahead unit test
+> (`isPointInTimeForwardExit`) + SOFT survivorship proxy (`certifyForwardResolution`). P2: (P2-1/2)
+> missed-opportunity HIT-RATE over winners+losers, shrunk to base rate, benchmark-parity both legs
+> (`missedOpportunityRequireHitRate`); (P2-3) signed top-bucket congress gate
+> (`congressRequireTopBucketPositive`); (P2-4) IC-weight shrinkage λ (`icWeightShrinkage`); (P2-5)
+> drawdown guard (`autoApplyDrawdownGuard`, candidate/baseline OOS drawdown curves); (P2-6) OOS
+> starvation floor (`minOosTestDates`); (P2-7) `tuning_apply_provenance` audit per apply; (P2-8)
+> `refreshCongressScoreVerdict` cadence refresher + fixtured test. Also the composed paired-t gate E2E
+> #300 deferred. D-1 (multiplicity) deferred with docs; P1-5 verified already-shipped in #296 (skip);
+> admin ledger UI skipped (redesign thread owns UI). Every knob default off/no-op with a per-flag
+> byte-identical proof; red-team/inline-Bear + `app/` UI untouched. Verify quartet green (tsc / lint
+> 0-err / 195 files 1977 tests / build). See `docs/rollouts/2026-07-01-learning-loop-backlog.md` +
+> `docs/phase-7-strategy.md` §3.E.8–E.15.
+>
+> 2026-07-01 (`claude/settings-navigation-redesign-a3k1yv`): **settings & navigation IA
+> redesign proposal** (docs-only, no code). Large-team workflow (`wf_000ecc50-7eb`, 48
+> agents) using the owner-requested two-track method (one informed team + two blind
+> greenfield teams that never saw the current UI + one pattern-led team → adjudication →
+> red-team → artifacts). Canonical target: account = primary object; 7+4 tabs collapse to
+> 6 verb destinations + off-rail Settings + Assistant overlay; Strategy consolidates to one
+> editable home; money-reality vs authority split into two dials; settings split by scope
+> first; copy-on-bind presets; server-side write-time scope validation. Deliverable
+> `docs/settings-navigation-redesign.md` (+ appendix corpus). Complements — does not replace
+> — the settings-and-universe-overhaul field-completeness program. No roadmap phase changed.
+> **Owner approved the design + answered all 7 open questions (later 2026-07-01); a second workflow
+> (`wf_598c6d71-77d`, 16 agents) built the full implementation-ready spec under
+> `docs/settings-navigation-redesign/spec/`** (11 sections + grounding + reconciliation; start at
+> `spec/00-README.md`). Still docs-only. Next: clickable prototype, then delivery-plan PR #1 (relabels +
+> scope-surfacing). See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
+> **PR #1 landed (2026-07-01, `claude/settings-navigation-redesign-a3k1yv-mce45j`):** first app code —
+> vocabulary relabels (`Stop`→`STOP` w/ never-sells tooltip, handler unchanged; `Notifications`→`Alert
+> history`/`Alert delivery`; `Display`→`Appearance`; `Data`→`Data & Privacy`) + settings-header
+> `THIS ACCOUNT`/`ALL ACCOUNTS` scope tags. No flag, no data path. New `app/settings-scope.ts` (shared
+> scope-tag SSOT) + `test/scope-tag-render.test.ts`. tsc/lint/test/build green. Next: PR #2 (`DestinationTab`
+> mapping + localStorage shim behind `NAV_V2`). See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+> 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
+> Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
+> (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
+> `db-learning-ledger.ts` CRUD + `learning-ledger.ts` record/revert) that GENERALIZES #296's
+> tuning-specific audited revert into one ledger + one `requireAdmin` revert route
+> (`/api/admin/learning-ledger`); (P0-2) effect-size + PAIRED-t significance on the autonomous
+> OOS gate (pure `pairedICDiffStats` on the shared-fold per-date IC-difference series;
+> `policy.tuning.minOosICImprovement` + `minOosPairedTStat`, both default no-op); (P0-3) a
+> FAIL-CLOSED tuning-config invariant guard (`tuning-invariants.ts`) that skips (never throws)
+> the autonomous apply on a bad config and warns (never blocks) the manual tune route. Ledger
+> RECORDING is passive/always-on (audit trail only); every behavior-changing knob defaults
+> off/no-op. Red-team/inline-Bear untouched. Verify quartet green (tsc / lint 0-err / 1793
+> tests / build). See `docs/rollouts/2026-07-01-learning-loop-followon.md` +
+> `docs/phase-7-strategy.md` §3.E.5–E.7.
+>
+> 2026-07-01 (`claude/competent-elion-c82938`): Workstream C2 — API Usage Monitor
+> integration. Wired App B's usage ledgers (`recordLlmUsage`/`recordRagUsage`) +
+> market-data/broker call paths to push real usage/cost to `usage.jays.services`
+> via a new fire-and-forget forwarder (the shared push client had zero callers —
+> audit §6.9 / top-10 #9); added the audit's cost-aware feedback loop (monitor
+> `GET /api/budget-status` + App B budget client: alerts by default, model-downgrade/
+> cycle-skip behind default-off `USAGE_BUDGET_ENFORCE`). All default-off,
+> fire-and-forget, fail-open — App B runs standalone without the monitor. Hand-rolled
+> the push (App B's pinned shared pkg 1.0.0 lacks the `usageTelemetry` export; publish
+> + pin-bump deferred). No roadmap-phase change. See
+> `docs/usage-monitor-integration.md` +
+> `docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+
+> 2026-07-01 (`agent/claude-backlog-c-rag`): RAG expansion backlog, broader pass - implemented
+> all remaining P1/P2 items from `docs/reviews/2026-07-01-rag-knowledge-expansion.md`: **R5**
+> consolidated per-retrieval telemetry (`recordRetrievalQuality()`, hashed query, default off);
+> **R6** shared `envFlagOn` parser (fixes `RAG_EMBED_DISCLOSURES` to accept `true/1/yes`); **R7**
+> index-metric assertion at bootstrap (warn+audit only, never throws); **R9** query-embedding LRU
+> (vector-only, never Pinecone results, default off); **R10** `content_hash` dedup for
+> `storeContexts` (opt-in `dedupKeyPrefix`, wired into 8-K summary + disclosure ingesters);
+> **R11** faithfulness/citation-grounding eval (`scripts/eval/faithfulness.ts`, deterministic +
+> optional off-by-default LLM judge); **R12** centralized default cosine floor
+> (`applyDefaultFloors`); **R13** provenance-complete citations (additive `doc_type`/`section`) +
+> optional advisory `isStale` label, backend/payload only; **R14** near-duplicate suppression
+> (Jaccard-shingle, opt-in); **R15** offline corpus coverage & freshness report
+> (`scripts/eval/corpus-coverage.ts`); **R16** per-run RAG budget ceiling (degrades rerank/hybrid
+> only, never core recall); **R17** fixed train/serve text skew (`VECTOR_EMBED_CLEAN_TEXT`,
+> embeds clean text, stored/cited text unchanged). R3/R8 already shipped (#297/#299), verified not
+> re-implemented. Every item default-off/opt-in, proven byte-identical when unset. Read/
+> retrieval-only, no UI touched. See `docs/rollouts/2026-07-01-rag-backlog.md`.
+> 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
+> Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
+> `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised
+> by 19 network-free tests pinning the as-of/rerank/hybrid fail-safes) and **R1 part 2**
+> (`VECTOR_ASOF_STRICT`, default off - drops undated chunks under an active `asOf` instead of
+> the lenient default, with a drop-count audit; golden as-of tuple proven end-to-end). Both
+> byte-identical to current behavior unless explicitly opted in. See
+> `docs/rollouts/2026-07-01-rag-followon.md`.
+> 2026-07-01 (`agent/claude-workstream-c-rag-v2`): RAG/embedding Workstream C - closed the 3
+> highest-leverage gaps the 2026-06-30 audit found in the RAG pipeline (no retrieval-quality
+> eval, reranker discarding its own relevance score, char-cap/doc_type/salience hygiene
+> issues): a new recall@k/MRR eval harness (28-case golden fixture, no live network calls)
+> gates future retrieval-pipeline changes; rerank relevance scores are now captured +
+> surfaced with an opt-in post-rerank floor; char-cap alignment + write-time doc_type
+> lowercasing landed; the salience extractor's first-match-only ticker-binding bug was fixed
+> and a default-off structured-output LLM extractor with real ticker validation was added.
+> Hybrid BM25/RRF was evaluated (measured delta table) and stays off by default - reranking
+> alone already reaches the eval ceiling on the golden fixture. All behavior changes are
+> default-off/opt-in; no order/execution-path code touched. A parallel 16-agent expert
+> design review (`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) landed corrections
+> mid-implementation, folded in per the rollout note. See
+> `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for full item-by-item status and explicit
+> follow-ups (R1 strict as-of mode, R3/R4/R5/R6/R7/R9/R10/R11, R12-R17 P2 backlog).
+> 2026-07-01 (`agent/claude-workstream-b-learning-v2`): **Workstream B — learning
+> loop / auto-tuning.** Wired the audit's "built-but-unwired" learning loops into the
+> money path behind default-off `policy.tuning.*` flags, with the 16-expert-panel
+> corrections folded in (B1–B8): opt-in autonomous factor-weight apply (stricter OOS
+> gate + write-scope safety + scheduler-hosted cadence + audited revert); congress
+> go/no-go gating with a three-way verdict (no data-poverty kill-switch); missed-
+> opportunity per-factor scan nudge; ≥5 + SPY-relative recurringFactor; factor
+> attribution stamped at entry (no momentum default); confidence-calibration→sizing
+> (isotonic, reduce-only); per-regime IC report (application off — samples too thin);
+> and a REAL fix — paper/test protective EXITS now pay execution cost. Verify quartet
+> green (tsc/lint/1710 tests/build). See
+> `docs/rollouts/2026-07-01-learning-loop-autotuning.md` + `docs/phase-7-strategy.md` §3.E.
+>
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value

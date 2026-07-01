@@ -85,7 +85,11 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
   strategyTuning: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   redTeamDebate: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   postMortemReflection: LLM_REQUEST_DEFAULTS.maxOutputTokens,
-  proposalRevalidation: LLM_REQUEST_DEFAULTS.maxOutputTokens
+  proposalRevalidation: LLM_REQUEST_DEFAULTS.maxOutputTokens,
+  // Small — a structured-output extraction of a handful of {kind,subject,value,symbol} candidates
+  // from one chat message, not a proposal/critique. Kept well below the shared default so a
+  // pathological reply can't run up cost; the extractor also has an offline regex fallback.
+  salienceExtraction: 400
 } as const;
 
 type RequestBounds = {

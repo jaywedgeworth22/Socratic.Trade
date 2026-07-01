@@ -23,6 +23,311 @@ changes except item 1 are default-off flags (Phase-0 byte-identical when off).
 **Verified:** `tsc` clean, `lint` 0 errors, `npm test` green (178 files / 1692 tests),
 `npm run build` passes, `eval:strategy-offline` green. Next: open the PR (ready).
 See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+## 2026-07-01 — Learning-loop BROADER BACKLOG (P1 + P2), backend/API/tests only (Claude)
+Branch `agent/claude-backlog-b-learning-b` (off `origin/main` after #300 merged; base = #296 + #300 unified
+ledger / tuning-invariants / `pairedICDiffStats`). Implements the remaining P1 + P2 backlog from
+`docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON #300's helpers (no duplication). BACKEND /
+API / TESTS ONLY — no `app/` UI component edited (dashboard redesign owned by a parallel thread); the
+"admin ledger UI" item was SKIPPED per that constraint. Did NOT touch `red-team.ts` / inline-Bear.
+
+- **P1-1 dry-run/replay harness.** New `dryRunAutonomousWeightTuning()` + shared side-effect-free evaluator
+  `evaluateAutonomousWeightTuning()` (refactored out of `applyAutonomousWeightTuning`). Read-only admin route
+  `GET /api/admin/tuning-dry-run` (`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern) —
+  returns `{ wouldApply, before, after, clampedDeltas, oosICCandidate/Baseline, oosReadout, invariantViolations }`
+  with ZERO writes (test spies on `setPolicy`/ledger/audit).
+- **P1-2 purged & embargoed split.** `splitWalkForward` gained an opt-in `{ purge }` (4th arg); `runWalkForwardOOS`
+  gained `purgeEmbargo` (from `policy.tuning.oosPurgeEmbargo`). The embargo already existed; the PURGE (drop the
+  last `horizonDays` train-date buckets that straddle the boundary) is the new default-off addition. Flag off =
+  byte-identical.
+- **P1-3 shadow / forward-A-B ledger.** `policy.tuning.shadowWeightLedger` (default off): each autonomous-tuning
+  EVALUATION records a passive SHADOW row in #300's `learning_mutations` (trigger `auto_weight_shadow`, distinct
+  from the real-apply trigger so no revert restores it) capturing what the tuner WOULD have applied + OOS
+  readout — WITHOUT touching policy. Works whether or not `autoApplyWeights` is on.
+- **P1-4 survivorship & look-ahead certification.** HARD `isPointInTimeForwardExit()` predicate + CI-failing unit
+  test (same-day / pre-horizon exits rejected). SOFT `certifyForwardResolution()` IO diagnostic (forward-price
+  coverage proxy + point-in-time check), explicitly labeled a proxy that gates nothing.
+- **P2-1 / P2-2 missed-opportunity hit-rate.** `summarizeMissedOpportunities` gained `requireHitRate` (default
+  off): flags a recurring factor only when its benchmark-beating hit rate over ALL matured skipped rows (winners
+  AND losers), SHRUNK toward the overall skipped base rate, clears that base rate with a min denominator. P2-2:
+  the same benchmark-relative test classifies BOTH legs. `proposeStrategyTuning` widens the skipped fetch to 100
+  when on. Flag `policy.tuning.missedOpportunityRequireHitRate`.
+- **P2-3 signed/directional top-bucket congress gate.** `evaluateCongressScore` gained `requireTopBucketPositive`
+  (default off): the go/no-go additionally requires the TOP bucket's OWN excess return positive + a min-n floor,
+  so a spread carried by the (unused) short leg no longer promotes the long signal. Wired via
+  `policy.tuning.congressRequireTopBucketPositive` in the eval route + the new refresher.
+- **P2-4 IC-weight shrinkage.** `deriveWeightsFromICs(ics, fallback, λ)` blends toward `DEFAULT_SCORING_WEIGHTS`
+  (`w=λ·w_IC+(1−λ)·w_default`, renormalized); `runWalkForwardOOS` reads `policy.tuning.icWeightShrinkage` (default
+  0 = pure-IC, byte-identical).
+- **P2-5 turnover/drawdown guardrail.** `runWalkForwardOOS` now also returns `candidate/baselineMaxDrawdownPct`
+  (two extra equity curves via the pure `maxDrawdownOfCurve`). Autonomous gate blocks an apply whose candidate DD
+  exceeds baseline by >2pts, but only when `testDates ≥ 8`. Flag `policy.tuning.autoApplyDrawdownGuard`.
+- **P2-6 fixed-window OOS starvation guard.** `policy.tuning.minOosTestDates` raises the distinct-test-date floor
+  above the `AUTO_TUNE_MIN_TEST_DATES` env default (default 0 = env floor governs).
+- **P2-7 reproducibility/provenance.** Each real apply writes `audit('tuning_apply_provenance', …)` with fold
+  shape (train/test dates + observation counts), ICs/ICIR/paired-t, drawdowns, thresholds, and the flags in
+  effect.
+- **P2-8 congress go/no-go scheduled + cached + fixtured.** New `refreshCongressScoreVerdict()` cadence-callable
+  refresher moves the OHLC-backed eval off the scan hot path (the read-time cache already existed); honors P2-3.
+  Fixtured vitest (recorded snapshots + injected OHLC fetcher + fixed `placeboSeed`).
+- **Composed paired-t gate E2E** (#300 deferred): DB-backed test seeds 22 closed lots + mocks `runWalkForwardOOS`
+  to exercise the full `applyAutonomousWeightTuning` gate boolean (apply-on-pass / block-on-paired-t-fail).
+- **D-1 multiplicity** DEFERRED (documented): needs a per-account trial counter; no teeth until paired-t is on.
+  **P1-5 (calibration remap)** verified already shipped in #296 (`calibratedConviction` isotonic+shrunk) — skipped.
+  Admin **ledger UI** skipped (redesign thread owns UI; #300 route is API-only).
+
+All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quartet green in order:
+`npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276 grandfathered warnings) → `npm test` (195 files /
+1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
+`docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
+
+## 2026-07-01 — NAV_V2 PR #1: vocabulary relabels + scope-surfacing (first app code) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`. **First app-code step** of the redesign —
+executes PR #1 of `docs/settings-navigation-redesign/spec/08-delivery-plan-prs-and-tests.md`. **No flag**
+(pure clarifying copy on the current IA + surfacing the already-coded account/user tier split; no panel
+moved, no data path touched). Changes in `app/dashboard-client.tsx`: chrome kill button `Stop`→**`STOP`**
+with a never-sells tooltip (**handler byte-identical** — the real STOP/Flatten split is PR #9); feed tab
+`Notifications`→**`Alert history`**; settings sections `Display`→**`Appearance`**,
+`Notifications`→**`Alert delivery`**, `Data`→**`Data & Privacy`** (+ in-section `Alerts webhook`/`Send
+alerts for`); Help glossary + scope-detail copy updated. **Scope-surfacing:** each settings-section header
+now renders a **`THIS ACCOUNT`**/**`ALL ACCOUNTS`** `Chip` via `scopeTagForSection`. New module
+`app/settings-scope.ts` extracts `SettingsSection`/`settingsTierForSection` (unchanged) + adds
+`SCOPE_TAG_LABEL`/`scopeTagForSection` as the shared source of truth for the tag copy. New test
+`test/scope-tag-render.test.ts`. **Verify (this worktree, deps installed):** `tsc --noEmit` clean ·
+`lint` 0 errors · `npm test` 173 files / 1675 pass (+1 file/+4 tests) · `build` success. No existing test
+asserted a relabeled string. Reviewed adversarially via a 4-dimension Workflow. **Next:** PR #2
+(`DestinationTab` mapping + one-time localStorage shim, behind `NAV_V2`).
+See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+
+## 2026-07-01 — Settings & navigation redesign proposal (large-team, docs-only) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv`. **Docs-only; no app code changed** — a canonical
+proposal to fix the "Frankenstein" IA the owner called out (Strategy config in 5 places; duplicated
+"Tax"/"Notifications" labels; three un-named multi-account concepts). Produced by a large orchestrated
+workflow (`wf_000ecc50-7eb`: **48 agents, ~3.5M tokens**) running exactly the two-track method the owner
+asked for — one **informed** team + two **blind greenfield** teams (given only a layout-agnostic
+capability inventory, forbidden from reading the current UI) + one **pattern-led** team, then
+adjudication → adversarial red-team → concrete artifacts. Deliverable:
+`docs/settings-navigation-redesign.md` (diagnosis, canonical target design v2, 5 wireframes, field-level
+scope-tagged settings tree, full current→new migration table, 5-phase build plan, must-fix gaps, open
+questions) + a 10-file appendix corpus under `docs/settings-navigation-redesign/`. Convergent spine (all
+teams independently): **account = primary object**; nav collapses 7+4 tabs → **6 verb destinations**
+(Dashboard/Approvals/Scan/Strategy/Guardrails/Results) + off-rail Settings + Assistant overlay;
+**Strategy → one editable home** (Studio modal deleted, twin TuningCard `:3725/:4441` merged);
+**money-reality (Test/Paper/Live) and authority (Propose/Decide) are two orthogonal dials**; **settings
+split by scope first**; presets are **copy-on-bind**, scope validated **server-side on every write**.
+Design anchors were re-verified against `HEAD 0f6bf0a` inside the workflow (e.g. wash-sale enforced
+`policy.ts:311`; `test→paper` wash-sale leak `tax.ts:113`; `USER_LEVEL_POLICY_FIELDS`=3).
+**UPDATE (later 2026-07-01): owner approved the design and answered all 7 open questions**; a second
+workflow (`wf_598c6d71-77d`: 16 agents) built the full **implementation-ready spec** under
+`docs/settings-navigation-redesign/spec/` (11 sections + grounding + reconciliation; start at
+`spec/00-README.md`). Editor pass corrected key anchors (autonomy-reset primitive already exists at
+`scheduler.ts:66-97`; scheduler already fans out per-account; wash-sale real anchors `tax.ts:104/115/117`)
+and I made the open-item calls in `spec/00-README.md` (R1–R8). 3 forward-looking default-off fields folded
+into `spec/04`. Also built a **clickable prototype** (`docs/settings-navigation-redesign/prototype/index.html`,
+vanilla HTML, mock data) — verified via headless Chromium across Dashboard / Live Approvals / Guardrails /
+Settings / Fleet. **Still docs-only, no app code.** **Next:** delivery-plan **PR #1 (relabels +
+scope-surfacing)** on the owner's word. Complementary to
+`docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
+See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
+## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
+Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
+merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three
+guardrail items on top of #296's autonomous factor-weight tuning:
+- **P0-4 — Unified learning-mutation ledger + admin revert.** New `learning_mutations` table (`db.ts`
+  `migrate()`), CRUD in new `src/lib/db-learning-ledger.ts`, orchestration in new
+  `src/lib/learning-ledger.ts` (`recordLearningMutation` / `revertLearningMutation`, subsystem
+  `scoring_weights`). One canonical append-only row per gated mutation (before/after full weight vectors,
+  subsystem, trigger, OOS evidence, flag, timestamp). Recording is passive/always-on. GENERALIZES #296's
+  tuning-specific audited revert — `applyAutonomousWeightTuning` now records here (still writes the legacy
+  `auto_weight_apply` audit row for dashboard back-compat), and `revertAutonomousWeightTuning` delegates to
+  the unified ledger (falls back to the legacy audit row for pre-ledger applies). Admin-only revert route
+  `app/api/admin/learning-ledger/route.ts` (`requireAdmin`; GET lists, POST reverts). `before` is captured
+  ATOMICALLY (re-read policy immediately before `setPolicy`).
+- **P0-2 — Effect-size + paired-t significance on the OOS gate.** New pure `pairedICDiffStats()` in
+  `backtest.ts` computes the PAIRED per-date candidate−baseline IC-difference series (correct SE source: the
+  two ICs share the same fold) and a t-stat; threaded onto `OOSResult.pairedICDiff` when both weight vectors
+  are supplied. Autonomous gate extended with `policy.tuning.minOosICImprovement` (default 0 = today's margin
+  via env `AUTO_TUNE_MIN_IC_DELTA`) and `policy.tuning.minOosPairedTStat` (default 0 = paired-t OFF / no-op).
+  Multiplicity (D-1) explicitly deferred (documented; no teeth until a per-account trial counter exists).
+- **P0-3 — Fail-closed tuning-config invariant guard.** New pure `src/lib/tuning-invariants.ts`
+  (`validateTuningInvariants`) checks a small hard-coupling set (positive sample gates,
+  `sizingFloorPct ≤ sizingCeilingPct`, `autoApplyWeights ⇒ oosWithholdUnvalidated` unless the new
+  `autoApplyOverrideUnvalidated` escape hatch, calibration ⇒ band gate). The AUTONOMOUS apply path calls it
+  at the TOP and fails CLOSED (skip + `auto_weight_apply_skipped` audit row, NEVER throws). The manual tune
+  route surfaces the same violations as non-blocking `tuningConfigWarnings`.
+
+All behavior-changing knobs default OFF/no-op; the ledger RECORDING is passive/always-on (audit trail only,
+no trading behavior change). Did NOT touch `red-team.ts` / inline-Bear (separate session). Verify quartet
+green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 265 grandfathered warnings) →
+`npm test` (182 files / 1793 tests) → `npm run build` (see rollout note). See
+`docs/rollouts/2026-07-01-learning-loop-followon.md` and `docs/phase-7-strategy.md` §3.E.5–E.7.
+## 2026-07-01 — RAG expansion backlog, broader pass (Claude)
+Branch `agent/claude-backlog-c-rag`, based on `origin/main` after #297 (Workstream C) and #299
+(follow-on: `rankPool` helper, R1 `published_at` fallback + `VECTOR_ASOF_STRICT`, R2 embedding-
+integrity guard, R8 first-valid-ticker) merged. Implements the full remaining backlog from
+`docs/reviews/2026-07-01-rag-knowledge-expansion.md` — all P1 (R5, R6, R7, R9, R10, R11) and all
+P2 (R12, R13, R14, R15, R16, R17) items. R3 (golden-set anti-leakage lint) and R8 (salience
+first-valid-ticker) were already shipped in earlier passes and are verified, not re-implemented.
+Read/retrieval-only — no order/execution-path code touched, no `app/` UI component edited (R13 is
+backend/payload-only per the redesign-thread constraint).
+
+- **R5** `recordRetrievalQuality()` in `rag-metering.ts` — one consolidated per-retrieval
+  distribution-telemetry record (hashed query via SHA-256-first-16, never raw; k/candidates/
+  dropped-by-minScore/dropped-by-asOf/hybrid/rerank-attempted/rerank-ran/top-cosine/top-relevance/
+  final-count), fire-and-forget try/catch, default off via `RAG_RETRIEVAL_TELEMETRY`.
+- **R6** new `src/lib/rag/env-flag.ts` (`envFlagOn(name, default)`), routed through by rerank/
+  hybrid/as-of-strict/disclosure flags. `RAG_EMBED_DISCLOSURES` now accepts `true/1/yes` (was
+  exact-`'on'`-only) — an intentional safe-direction change, called out because it can trigger
+  real embedding cost for an operator relying on the old quirk.
+- **R7** `assertIndexMetric()` — `describeIndex` called once per index-init cache key (cached),
+  `console.warn` + `audit("vector_index_metric_mismatch", ...)` if the metric isn't `cosine`,
+  NEVER throws.
+- **R9** query-embedding LRU (`src/lib/rag/query-embed-cache.ts`), keyed on
+  `${VOYAGE_MODEL}:${query.trim()}` (no userId), caches ONLY the 1024-dim vector never Pinecone
+  results, `meterEmbed` only on miss, default off via `RAG_QUERY_EMBED_CACHE`.
+- **R10** `storeContexts` gained opt-in `dedupKeyPrefix` (hashes trimmed text via the existing
+  `hashContent` SHA-256 helper, reuses `document_chunks`/`filterNewDocumentChunks`/
+  `insertDocumentChunks`); wired into `sec8k.ts`'s summary ingest and `disclosure-rag.ts` behind
+  new `VECTOR_STORECONTEXTS_DEDUP` (default off).
+- **R11** `scripts/eval/faithfulness.ts` (+ `run-faithfulness.ts`, `test/rag-faithfulness-eval.test.ts`,
+  `test/fixtures/rag-faithfulness-fixture.ts`) — deterministic citation-grounding (cited chunk_id
+  present in retrieval?) + numeric-claim substring-support checks, plus an optional LLM judge
+  (default off, no-ops without `OPENAI_API_KEY`, kept out of the required CI test run).
+- **R12** `RetrieveOptions.applyDefaultFloors` / `RAG_APPLY_DEFAULT_FLOORS` (default off) applies
+  `defaultMinScore()` when a NEW caller omits `minScore`; both existing callers (`strategy.ts`,
+  `orchestrator.ts`) already pass it explicitly and are proven byte-identical.
+- **R13** `KbChunk` gained additive `doc_type`/`isStale` fields; `orchestrator.searchKnowledge`
+  forwards `doc_type`/`section` always, and `isStale` (heuristic per-doc_type staleness horizon,
+  advisory only) only when `RAG_CITATION_STALENESS` is on. Backend/payload only — no UI renders
+  these yet (owned by the parallel dashboard-redesign thread).
+- **R14** `src/lib/rag/dedupe-similar.ts` — greedy Jaccard-shingle near-duplicate suppression with
+  back-fill, opt-in via `RetrieveOptions.dedupeSimilarity`, applied after the relevance floor and
+  before the final slice-to-limit.
+- **R15** `scripts/eval/corpus-coverage.ts` (npm run `eval:corpus-coverage`) — offline report from
+  `ingested_accessions`/`document_chunks` (doc_type breakdown, per-symbol chunk counts, watchlist
+  symbols with zero coverage), optional live `describeIndexStats` cross-check. Related but
+  separate from the existing live `/api/admin/rag-coverage` + `app/admin/rag-coverage/` UI (not
+  touched by this pass).
+- **R16** `src/lib/rag/run-budget.ts` — default-off, very-high-ceiling rolling-window operation
+  counter (`RAG_RUN_BUDGET_ENABLED`); on trip, degrades by skipping rerank/hybrid ONLY (never core
+  dense-cosine recall), emits exactly one `rag_run_budget_tripped` audit row per process lifetime.
+- **R17** `VECTOR_EMBED_CLEAN_TEXT` (default off) — `storeContexts` embeds boilerplate-stripped
+  text (`stripPublishedPrefix`) while the stored/cited metadata text is unchanged; confirmed no
+  consumer parses the `[Published:]` prefix out of chunk text (only test fixtures reference it).
+
+Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276
+warnings, pre-existing grandfathered class) → `npm test` (193 files / 1918 tests, up from 183/1797)
+→ `npm run build` (clean). See `docs/rollouts/2026-07-01-rag-backlog.md` for full detail, the
+updated `test/disclosure-rag.test.ts` `RAG_EMBED_DISCLOSURES` behavior-change note, and the two new
+`scripts/eval/*` diagnostics (`eval:faithfulness`, `eval:corpus-coverage`) smoke-tested against a
+real (empty) dev DB with no keys configured.
+
+## 2026-07-01 — API Usage Monitor integration (Workstream C2) (Claude)
+Branch `claude/competent-elion-c82938`. Wired App B → the API Usage Monitor
+(`usage.jays.services`) per `docs/reviews/2026-07-01-audit-work-split.md` (Cross-repo C2):
+(1) `recordLlmUsage`/`recordRagUsage` now fire-and-forget push usage+cost via new
+`src/lib/usage-monitor-push.ts`; (2) market-data (`fetchWithRetry`) + broker
+(`alpaca.trackHealth`, `robinhood.callRobinhoodMcpTool`) call-volume is counted and flushed
+as aggregated per-provider `requests` events; (3) Anthropic/Voyage/Robinhood become
+push-primary just by tagging `provider` (poll adapters are blind); (4) cost-aware loop — new
+monitor `GET /api/budget-status` (token-gated, combines poll snapshot + pushed MTD cost vs
+`ProviderPlan.monthlyBudgetUsd`) + App B `src/lib/usage-budget.ts` firing `budget_alert`
+notifications (**Phase 1, wired**). **Phase 2** (model-downgrade / cycle-skip enforcement) is
+implemented + tested as a building block but **DEFERRED** — the Codex PR review showed a naive
+strategy-loop wiring is unsafe (must skip only the LLM step, not risk exits/reconcile; must not
+persist a temp downgrade via `setPolicy`; must thread the override into `debateProposal`). **Self-
+sufficient by design** (owner requirement): all default-off, fire-and-forget, never-throws,
+fail-open — a monitor outage only shows a `usage-monitor` row on the admin connections-health page,
+never blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
+`congress-trading-shared@1.0.0`, which lacks the `usageTelemetry` export (it's on the shared
+repo's unmerged 1.1.0 branch) and publishing/lockfile-regen isn't possible here — same event
+contract, migration path documented. **Monitor DEPLOYED to prod (Render, `usage.jays.services`,
+PR #6 merged); App B deploy pending PR #294 merge → `trading-publish.sh`.** Verify (in-worktree
+after `NODE_AUTH_TOKEN=$(gh auth token) npm ci`): tsc clean, lint 0 errors, full suite green
+(+16 tests), build clean; monitor tsc + build clean. Reviews: pre-merge multi-agent (2 fixes) +
+Codex PR review (5 fixes + Phase-2 deferral). See `docs/usage-monitor-integration.md` +
+`docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+## 2026-07-01 — RAG follow-on: retrieval regression net + R1 strict as-of mode (Claude)
+Branch `agent/claude-followon-c-rag`, based on `origin/main` after Workstream C (PR #297,
+below) merged. Focused follow-on implementing the two items PR #297 explicitly deferred:
+**R4** (retrieval regression net) and **R1 part 2** (`VECTOR_ASOF_STRICT`). Read/retrieval-only
+— no order/execution-path code touched; every behavior change is default-off/opt-in and
+byte-identical to the pre-change pipeline unless a new flag/option is explicitly set.
+
+- **R4:** factored a pure `rankPool(matches, query, limit, options)` helper out of
+  `retrieveContextDetailed`'s inline post-recall pipeline (score floor → as-of guard → hybrid
+  fuse → rerank → post-rerank floor) — no such helper existed after #297 (verified by grep).
+  New `test/rag-retrieval-regression.test.ts` (19 tests, network-free) pins: a chunk dated
+  after `asOf` is dropped / an undated chunk kept (lenient) or dropped (strict); `rerankMatches`
+  preserves length+identity when the real Voyage client throws or returns empty data
+  (fail-open); `fuseHybrid` returns input unchanged on `<=1` match or malformed input; hybrid
+  on-vs-off reorders the pool but never drops a candidate. Includes an explicit `fetch` spy
+  assertion proving no live network is reachable from the file.
+- **R1 part 2:** new `VECTOR_ASOF_STRICT` flag (default OFF). `isWithinAsOf` gained an optional
+  third `strict` parameter (default `false`, byte-identical for every existing caller). When
+  strict is on **and** `options.asOf` is set, chunks with no resolvable date stamp are now
+  DROPPED instead of kept, with a fire-and-forget `audit("vector_asof_strict_drop", {
+  droppedUndated, asOf }, userId)` record. New `test/vector-db-asof-strict.test.ts` (5 tests)
+  proves the golden as-of tuple (undated excluded under strict / included without) through the
+  real `retrieveContextDetailed` pipeline (mocked Pinecone/Voyage).
+- Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 274
+  warnings, pre-existing grandfathered class, unchanged in kind) → `npm test` (183 files / 1797
+  tests, up from 181/1778) → `npm run build` (clean). `tsc --noEmit` re-checked clean after the
+  build regenerated `.next/types`. See `docs/rollouts/2026-07-01-rag-followon.md` for full
+  detail and remaining backlog (R3/R5-R17 still unimplemented, per PR #297's own deferral list —
+  out of scope for this focused pass).
+
+## 2026-07-01 — RAG eval harness, rerank scoring, char-cap/doc_type/salience fixes — Workstream C (Claude)
+Branch `agent/claude-workstream-c-rag-v2`. Implements all 7 items from
+`docs/reviews/2026-07-01-audit-work-split.md` §"Chat C — RAG / Embedding / Knowledge Framework",
+plus a correction pass from a parallel 16-agent expert review
+(`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) that arrived mid-implementation.
+Read/retrieval-only — no order/execution-path code touched; every behavior change is
+default-off/opt-in. Highlights: a new recall@k/MRR eval harness
+(`test/rag-retrieval-eval.test.ts` + a 28-case golden fixture, no live network calls) that
+drives the real `retrieveContextDetailed` pipeline; the reranker now captures + surfaces its
+own `relevanceScore` (was previously discarded) with an opt-in post-rerank floor
+(`RetrieveOptions.minRelevanceScore`, fail-open on missing scores); the per-chunk char cap is
+now aligned with the token chunker (`storeDocument` computes an aligned cap; atomic table
+chunks are exempt from trimming entirely — truncating mid-row would corrupt numbers);
+`doc_type` is normalized to lowercase at write time (`cleanMetadata`), with the legacy
+upper/lower query-time shim kept intact; a new structured-output LLM salience extractor
+(`src/lib/memory/salience-llm.ts`, default off, falls back to regex on any failure) validates
+tickers against the real known-universe check (`isIndexMemberSymbol`) instead of the old
+`\b([A-Z]{1,5})\b` first-match regex, which also had its own first-match-only mis-binding bug
+fixed independently (`firstValidTicker`, injected validator + stopword denylist, kept pure/DB-free);
+hybrid BM25/RRF was evaluated (delta table in the rollout note) and **stays OFF by default** —
+reranking alone already reaches 1.0 recall@1/MRR on the eval fixture, hybrid's real value is
+narrowly the exact-token case. Also folded in two expert-review P0 items: an always-on
+embedding-integrity guard (rejects non-finite/empty embeddings before upsert/query, degraded to
+non-emptiness+finiteness-only after a strict-1024 check broke 16 pre-existing tests using short
+mock embeddings) and a safe additive `published_at` fallback in the as-of point-in-time guard's
+resolution chain. Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint`
+(0 errors, 265 warnings, pre-existing grandfathered class) → `npm test` (179 files / 1734
+tests) → `npm run build` (clean). See `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for the
+full item-by-item status (incl. explicit follow-ups not implemented: R1's strict-mode flag,
+R3/R4/R5/R6/R7/R9/R10/R11 and the R12-R17 P2 backlog) and the measured hybrid on/off delta table.
+## 2026-07-01 — Workstream B: learning loop / auto-tuning (Claude)
+Branch `agent/claude-workstream-b-learning-v2`. Implemented all 8 items of "Chat B" from
+`docs/reviews/2026-07-01-audit-work-split.md` PLUS the 16-expert-panel mid-flight corrections
+(`docs/reviews/2026-07-01-learning-loop-expansion.md`, B1–B8). Every change is behind a **default-off**
+`policy.tuning.*` flag EXCEPT the B8 execution-cost correctness fix. Highlights: (1) opt-in autonomous
+factor-weight tuning with a stricter-than-manual OOS gate (IC-delta margin + candidateIC>0 + ICIR floor +
+min test-dates; null OOS = hard no-apply), WRITE-SCOPE SAFETY (scoringWeights ONLY — never
+policy/risk/strategyAuthority/prompt), cadence in `scheduler.ts` under the single-leader gate, persist via
+`setPolicy`, ±MAX_WEIGHT_STEP re-clamped post-normalization, audited revert; (2) congress go/no-go gating
+with a THREE-WAY verdict (PASS/FAIL_SIGNIFICANCE→down-weight/INSUFFICIENT→neutral) so data-poverty is not a
+kill-switch, verdict cached + surfaced on the dashboard + new admin route; (3) matured missed-opportunity
+per-factor nudge into scan-scoring weights (transient, audited); (4) recurringFactor ≥5 + SPY-relative
+(reuses backtest SPY fetch, injected in getSkippedCandidateReturns); (5) factor attribution stamps
+`dominantFactor` at entry (survives audit-cap aging), no momentum default; (6) confidence calibration →
+sizing (isotonic, reduce-only, shrunkWinRate, per-band gate, shorts→raw, once-per-run); (7) per-regime IC
+**report only** (application off — samples too thin); (8) REAL BUG: paper/test EXIT fills in
+`synthetic-stops.ts`/`order-replacement.ts` now pay exit-side execution cost (were cost-free, overstating
+edge on the losing tail). Verify quartet all green: tsc 0 errors, lint 0 errors, `npm test` 174 files /
+1710 tests, `npm run build` compiled successfully. See
+`docs/rollouts/2026-07-01-learning-loop-autotuning.md`. Coordination: the stale
+`agent/claude-workstream-b-learning` worktree (a stopped sibling) was left untouched; Red Team / inline-Bear
+code was NOT touched (separate session).
 
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
