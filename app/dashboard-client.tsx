@@ -242,6 +242,12 @@ function inferAlpacaEnvironment(input: { accountNumber?: string; apiKey?: string
   const accountNumber = input.accountNumber?.trim().toUpperCase() ?? "";
   const apiKey = input.apiKey?.trim().toUpperCase() ?? "";
   if (accountNumber.startsWith("PA") || apiKey.startsWith("PK")) return "paper";
+  // Credential-authoritative once creds are entered: non-PA/PK Alpaca creds are LIVE. This matches
+  // the server, which infers environment purely from the credentials and ignores body.environment —
+  // so the client must not stay stuck on a seeded "paper" (which previously made a live account fall
+  // back to the paper host / baseUrl and 401). Only fall back to the prior/seeded environment when NO
+  // credentials have been entered yet, so a brand-new draft still shows the paper default until typed.
+  if (accountNumber || apiKey) return "live";
   return input.environment === "paper" ? "paper" : "live";
 }
 
