@@ -51,6 +51,9 @@ export interface ClosedLot {
   confidence?: number;
   /** Sector the position was opened in (stamped at fill time), for the sector dimension. */
   sector?: string;
+  /** Dominant scan factor at entry (stamped at fill time). Preferred by getFactorScorecard over the
+   * signal_snapshot lookup, so per-factor attribution survives after the entry snapshot ages out. */
+  dominantFactor?: MarketFactor;
   /** Max Adverse Excursion (% from entry price, typically negative for longs) persisted after post-mortem. */
   mae?: number;
   /** Max Favorable Excursion (% from entry price, typically positive for longs) persisted after post-mortem. */
@@ -205,7 +208,18 @@ export function recordFillFromProposal(input: {
     brokerOrderId: input.execution?.orderId,
     // Stamp the symbol's sector at fill time so closed lots can be grouped by sector
     // for the sector learning dimension (sector isn't on the proposal itself).
-    raw: { proposal: input.proposal, review: input.review, execution: input.execution, sector: input.marketScan?.quotesBySymbol[symbol]?.sector }
+    // B5: also stamp the dominant scan factor at ENTRY (opening sides only), mirroring the sector stamp.
+    // getFactorScorecard prefers this persisted value so per-factor attribution survives even after the
+    // entry's signal_snapshot ages out of the 500-row listAudit window — the real coverage-decay hazard.
+    raw: {
+      proposal: input.proposal,
+      review: input.review,
+      execution: input.execution,
+      sector: input.marketScan?.quotesBySymbol[symbol]?.sector,
+      ...((input.proposal.side === "buy" || input.proposal.side === "short")
+        ? { dominantFactor: dominantFactor(input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.factorBreakdown) }
+        : {})
+    }
   });
 
   // Advance the take-profit trim ratchet ONLY now that the trim has actually been placed/filled — a
@@ -385,6 +399,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       regime?: string;
       confidence?: number;
       sector?: string;
+      dominantFactor?: MarketFactor;
       entryAt?: string;
     }>
   >();
@@ -407,6 +422,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         regime: meta.regime,
         confidence: meta.confidence,
         sector: meta.sector,
+        dominantFactor: meta.dominantFactor,
         entryAt: fill.filledAt
       });
       addAttribution(attribution, fill, 0);
@@ -447,6 +463,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         entryRunId: lot.runId,
         confidence: lot.confidence,
         sector: lot.sector,
+        dominantFactor: lot.dominantFactor,
         mae: fill.mae,
         mfe: fill.mfe
       });
@@ -742,15 +759,21 @@ export function getFactorScorecard(
   const factorKey = (lot: ClosedLot) =>
     lot.entryRunId && lot.symbol ? `${lot.entryRunId}|${normalizeSymbol(lot.symbol)}` : undefined;
 
+  // Resolve each lot's dominant entry factor. B5: prefer the value PERSISTED at entry on the fill raw
+  // (`lot.dominantFactor`) — it survives even after the entry's signal_snapshot ages out of the 500-row
+  // listAudit window (the real coverage-decay hazard). Fall back to the signal_snapshot lookup for legacy
+  // lots that predate the stamp. A lot whose factor can't be resolved by EITHER path is DROPPED — never
+  // silently attributed to "momentum" (mislabeling would corrupt the per-factor stats the tuner learns from).
+  const resolveFactor = (lot: ClosedLot): MarketFactor | undefined => {
+    if (lot.dominantFactor) return lot.dominantFactor;
+    const key = factorKey(lot);
+    return key ? factorByKey.get(key) : undefined;
+  };
+
   return aggregateClosedLots(
-    closedLots.filter((lot) => {
-      const key = factorKey(lot);
-      return Boolean(key && factorByKey.has(key));
-    }),
-    (lot) => {
-      const key = factorKey(lot);
-      return key ? factorByKey.get(key) ?? "momentum" : "momentum";
-    },
+    closedLots.filter((lot) => resolveFactor(lot) !== undefined),
+    // Safe: the filter above guarantees a resolved factor here.
+    (lot) => resolveFactor(lot) as MarketFactor,
     userId
   ).map(({ key, ...rest }) => ({ factor: key as MarketFactor, ...rest }));
 }
@@ -768,16 +791,27 @@ export interface SkippedCandidateReturn {
   regime?: string;
   dominantFactor?: MarketFactor;
   bulletins?: string[];
+  /** SPY % return (item 4) over this row's OWN entry→now window, from the injected per-date SPY map.
+   * Present only when `benchmarkReturnBySnapshotDate` was supplied AND had a value for this row's date. */
+  benchmarkReturnPct?: number;
 }
 
 export function getSkippedCandidateReturns(
   currentPrices: Record<string, number>,
   userId: string = "local",
-  options: { limit?: number; maxAgeDays?: number; connectedAccountId?: string } = {}
+  options: { limit?: number; maxAgeDays?: number; connectedAccountId?: string; benchmarkReturnBySnapshotDate?: Map<string, number> } = {}
 ): SkippedCandidateReturn[] {
   const limit = options.limit ?? 12;
   const maxAgeDays = options.maxAgeDays ?? 14;
   const now = Date.now();
+  // B4: SPY return (as a %) for a row's snapshot date, over the same entry→now window. Injected by the
+  // caller (built once from the reused backtest SPY fetch); undefined when no SPY value for that date.
+  const benchmarkPctFor = (asOf?: string): number | undefined => {
+    if (!options.benchmarkReturnBySnapshotDate || !asOf) return undefined;
+    const dateKey = asOf.slice(0, 10);
+    const frac = options.benchmarkReturnBySnapshotDate.get(dateKey);
+    return typeof frac === "number" ? Number((frac * 100).toFixed(2)) : undefined;
+  };
   const seen = new Set<string>();
   const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3, options.connectedAccountId)
     .map((row): SkippedCandidateReturn | undefined => {
@@ -798,7 +832,8 @@ export function getSkippedCandidateReturns(
         sector: row.sector,
         regime: row.regime,
         dominantFactor: row.dominantFactor as MarketFactor | undefined,
-        bulletins: row.bulletins
+        bulletins: row.bulletins,
+        ...(benchmarkPctFor(row.snapshotAt) !== undefined ? { benchmarkReturnPct: benchmarkPctFor(row.snapshotAt) } : {})
       };
     })
     .filter((row): row is SkippedCandidateReturn => Boolean(row));
@@ -845,7 +880,8 @@ export function getSkippedCandidateReturns(
         sector: signal.sector,
         regime: signal.regime,
         dominantFactor: dominantFactor(signal.factorBreakdown),
-        bulletins: signal.bulletins
+        bulletins: signal.bulletins,
+        ...(benchmarkPctFor(asOf) !== undefined ? { benchmarkReturnPct: benchmarkPctFor(asOf) } : {})
       });
     }
   }
@@ -874,6 +910,86 @@ export interface ConfidenceCalibrationStat {
   avgReturnPct: number;
 }
 
+/** The confidence-calibration band label a confidenceScore (1–100) falls into. Exported so the sizer
+ * can look up a proposal's realized band without duplicating the boundaries. */
+export function confidenceBandOf(c: number): string {
+  return c >= 85 ? "85-100 (high)" : c >= 70 ? "70-84" : c >= 50 ? "50-69" : "1-49 (low)";
+}
+
+/** Confidence bands from LOWEST to HIGHEST confidence — the order calibration must be monotonic in. */
+const CONFIDENCE_BANDS_ASC = ["1-49 (low)", "50-69", "70-84", "85-100 (high)"] as const;
+
+/**
+ * Remap a proposal's raw conviction (confidenceScore/100) toward the account's REALIZED win rate for its
+ * confidence band (item 6, panel-hardened). Properties:
+ *  - Uses `shrunkWinRate` (Bayesian-shrunk toward 50%), never the raw win rate.
+ *  - DOWNWARD-ONLY: never inflates conviction on the learner's say-so (a well-calibrated or under-confident
+ *    band is left at raw).
+ *  - ISOTONIC: realized rates are made non-decreasing across bands (low→high) via a pooled-adjacent-violators
+ *    pass, so a low-N mid band whose realized rate dips can't invert the ordering and size a mid call above
+ *    a high call.
+ *  - Per-band SAMPLE-GATED: a band with fewer than `minTrades` closed lots is ignored (raw conviction).
+ * Pure over (confidenceScore, calibration). Shorts have no long-only calibration and should not call this —
+ * the sizer falls back to raw for them.
+ */
+export function calibratedConviction(
+  confidenceScore: number,
+  calibration: ConfidenceCalibrationStat[],
+  minTrades = 5
+): number {
+  const raw = Math.max(0, Math.min(1, confidenceScore / 100));
+  const band = confidenceBandOf(confidenceScore);
+  const stat = calibration.find((c) => c.band === band);
+  if (!stat || stat.trades < minTrades) return raw;
+
+  // Build an isotonic (non-decreasing by band, low→high) realized-rate curve from sufficiently-sampled
+  // bands, then read this band's isotonic value. Bands below the sample gate are skipped (not fabricated).
+  const points = CONFIDENCE_BANDS_ASC
+    .map((b) => calibration.find((c) => c.band === b))
+    .map((c) => (c && c.trades >= minTrades ? Math.max(0, Math.min(1, c.shrunkWinRate / 100)) : undefined));
+  const isotonic = poolAdjacentViolators(points);
+  const bandIdx = CONFIDENCE_BANDS_ASC.indexOf(band as (typeof CONFIDENCE_BANDS_ASC)[number]);
+  const realized = bandIdx >= 0 ? isotonic[bandIdx] : undefined;
+  if (realized === undefined || realized >= raw) return raw;
+  // Blend 50/50 toward realized so a single unlucky window can't zero out sizing, but persistent
+  // over-confidence is meaningfully de-risked.
+  return Number(((raw + realized) / 2).toFixed(4));
+}
+
+/**
+ * Pool-adjacent-violators (isotonic regression, non-decreasing) over an ordered series with optional gaps.
+ * `undefined` entries are treated as unknown and passed through unchanged (they are sample-gated-out bands);
+ * the monotonic constraint is enforced only across the KNOWN entries. Pure.
+ */
+function poolAdjacentViolators(values: Array<number | undefined>): Array<number | undefined> {
+  const idx = values.map((v, i) => (v === undefined ? -1 : i)).filter((i) => i >= 0);
+  if (idx.length <= 1) return values.slice();
+  // Collect known values with unit weights, then merge adjacent decreasing blocks by averaging.
+  const blocks = idx.map((i) => ({ sum: values[i] as number, count: 1, indices: [i] }));
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < blocks.length - 1; i++) {
+      if (blocks[i].sum / blocks[i].count > blocks[i + 1].sum / blocks[i + 1].count) {
+        blocks[i] = {
+          sum: blocks[i].sum + blocks[i + 1].sum,
+          count: blocks[i].count + blocks[i + 1].count,
+          indices: [...blocks[i].indices, ...blocks[i + 1].indices]
+        };
+        blocks.splice(i + 1, 1);
+        merged = true;
+        break;
+      }
+    }
+  }
+  const out = values.slice();
+  for (const block of blocks) {
+    const avg = block.sum / block.count;
+    for (const i of block.indices) out[i] = avg;
+  }
+  return out;
+}
+
 export function getConfidenceCalibration(
   accountNumber: string,
   source?: FillSource,
@@ -881,10 +997,9 @@ export function getConfidenceCalibration(
   userId: string = "local"
 ): ConfidenceCalibrationStat[] {
   const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
-  const bandOf = (c: number): string => (c >= 85 ? "85-100 (high)" : c >= 70 ? "70-84" : c >= 50 ? "50-69" : "1-49 (low)");
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
-    (lot) => bandOf(lot.confidence as number),
+    (lot) => confidenceBandOf(lot.confidence as number),
     userId
   )
     .map(({ key, trades, winRate, shrunkWinRate, avgReturnPct }) => ({ band: key, trades, winRate, shrunkWinRate, avgReturnPct }))
@@ -995,19 +1110,29 @@ function dominantFactor(breakdown?: MarketFactorBreakdown): MarketFactor | undef
   return best?.factor;
 }
 
-function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string } {
+const MARKET_FACTOR_KEYS = new Set<string>([
+  "liquidity", "momentum", "value", "quality", "volatility", "sentiment", "positioning", "diversification"
+]);
+
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string; dominantFactor?: MarketFactor } {
   const raw = fill.raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;
   const proposal = r.proposal;
   const sector = typeof r.sector === "string" ? r.sector : undefined;
-  if (!proposal || typeof proposal !== "object") return { sector };
+  // B5: dominant scan factor persisted at entry (mirrors the sector stamp). Validated against the known
+  // factor keys so a malformed value never becomes a bogus bucket.
+  const dominantFactor = typeof r.dominantFactor === "string" && MARKET_FACTOR_KEYS.has(r.dominantFactor)
+    ? (r.dominantFactor as MarketFactor)
+    : undefined;
+  if (!proposal || typeof proposal !== "object") return { sector, dominantFactor };
   const p = proposal as Record<string, unknown>;
   return {
     thesisTag: typeof p.tradeThesisTag === "string" ? p.tradeThesisTag : undefined,
     regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined,
     confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
-    sector
+    sector,
+    dominantFactor
   };
 }
 

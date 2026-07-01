@@ -29,12 +29,16 @@ import type {
   UniverseFloor
 } from "./types";
 
-/** A web signal worth pulling a below-cutoff name into the candidate set for. */
-export function hasNotableWebSignal(sig?: SymbolWebSignal): boolean {
-  return outlierInterestScore(sig) > 0;
+/**
+ * A web signal worth pulling a below-cutoff name into the candidate set for.
+ * `congressMultiplier` (item 2): scales the congressional terms; 1 = no change (default), 0 = the
+ * go/no-go gate zeroed a statistically-unvalidated congress signal. Non-congress signals are unaffected.
+ */
+export function hasNotableWebSignal(sig?: SymbolWebSignal, congressMultiplier = 1): boolean {
+  return outlierInterestScore(sig, congressMultiplier) > 0;
 }
 
-export function outlierInterestScore(sig?: SymbolWebSignal): number {
+export function outlierInterestScore(sig?: SymbolWebSignal, congressMultiplier = 1): number {
   if (!sig) return 0;
   // Congress: require at least 2 distinct members buying AND net >= 2 (more buys than sells).
   // Single-member disclosures are too thin to justify overriding the scan score cutoff.
@@ -42,13 +46,13 @@ export function outlierInterestScore(sig?: SymbolWebSignal): number {
     (sig.congress?.buyCount ?? 0) >= 2 &&
     (sig.congress?.netSignal ?? 0) >= 2;
   const congressScore = congressNotable
-    ? 70 + Math.min(25, (sig.congress?.netSignal ?? 0) * 5 + (sig.congress?.buyCount ?? 0) * 2)
+    ? (70 + Math.min(25, (sig.congress?.netSignal ?? 0) * 5 + (sig.congress?.buyCount ?? 0) * 2)) * congressMultiplier
     : 0;
   // App A analytics boost (the "Trends" composite): a strong dollar-weighted net buy flow, a cluster
   // buy (many members → same ticker), or multiple distinct members + high-track-record members can
   // surface a name even when the scraped per-member netSignal is thin. Only present when
   // CONGRESS_ANALYTICS_ENABLED is on; absent → 0 → no behavior change (back-compatible).
-  const analyticsScore = notableCongressAnalyticsScore(sig);
+  const analyticsScore = notableCongressAnalyticsScore(sig) * congressMultiplier;
   const insiderScore = typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60
     ? sig.insiderSentiment
     : 0;
@@ -159,7 +163,7 @@ export async function scanMarket(
   scoringWeights: ScoringWeights = DEFAULT_SCORING_WEIGHTS,
   userId?: string,
   dynamicUniverses: IndexUniverse[] = [],
-  scanOptions: { candidateLimit?: number; outlierReserve?: number; universeFloor?: UniverseFloor } = {}
+  scanOptions: { candidateLimit?: number; outlierReserve?: number; universeFloor?: UniverseFloor; congressMultiplier?: number } = {}
 ): Promise<MarketScan> {
   const scan = await nasdaqDelayedProvider.scan(symbols, positions, {
     scoringWeights,
@@ -168,7 +172,8 @@ export async function scanMarket(
     dynamicUniverses,
     candidateLimit: scanOptions.candidateLimit,
     outlierReserve: scanOptions.outlierReserve,
-    universeFloor: scanOptions.universeFloor
+    universeFloor: scanOptions.universeFloor,
+    congressMultiplier: scanOptions.congressMultiplier
   });
   // Forward the candidate company refs to congress.trade (App A) so it can avoid spending the shared
   // FMP quota. No-op unless CONGRESS_TRADE_TOKEN + CONGRESS_SHARE_ENABLED are set; per-symbol
@@ -189,6 +194,8 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     ]);
     const dynamicUniverses = Array.from(new Set(options?.dynamicUniverses ?? []));
     const weights = options?.scoringWeights ?? DEFAULT_SCORING_WEIGHTS;
+    // Item 2: congressional gate multiplier (1 = no change / default; 0 = go/no-go verdict zeroed it).
+    const congressMultiplier = typeof options?.congressMultiplier === "number" ? options.congressMultiplier : 1;
     const warnings: string[] = [];
     let quotes: MarketQuote[] = [];
     let cached = false;
@@ -272,9 +279,9 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     // candidate set is the full top-N PLUS the outliers — exactly the "30 + up to 8 outliers" model.
     const eventExtra = ranked
       .filter((quote) => !topCut.has(quote.symbol)
-        && (hasNotableWebSignal(allWebSignals[quote.symbol]) || isStatisticalOutlier(quote)))
+        && (hasNotableWebSignal(allWebSignals[quote.symbol], congressMultiplier) || isStatisticalOutlier(quote)))
       .sort((a, b) => {
-        const signalDelta = outlierInterestScore(allWebSignals[b.symbol]) - outlierInterestScore(allWebSignals[a.symbol]);
+        const signalDelta = outlierInterestScore(allWebSignals[b.symbol], congressMultiplier) - outlierInterestScore(allWebSignals[a.symbol], congressMultiplier);
         return signalDelta !== 0 ? signalDelta : b.score - a.score;
       })
       .slice(0, outlierReserve);
@@ -315,7 +322,9 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       if (!sig) return quote;
       const sources = { ...(quote.sources ?? {}) };
       let senateTrades = quote.senateTrades;
-      if (senateTrades == null && typeof sig.congress?.netSignal === "number") {
+      // Item 2: skip the congressional senateTrades overlay entirely when the go/no-go gate zeroed the
+      // congress term (multiplier 0), so the positioning factor never lifts on an unvalidated signal.
+      if (congressMultiplier !== 0 && senateTrades == null && typeof sig.congress?.netSignal === "number") {
         senateTrades = sig.congress.netSignal;
         sources.senateTrades = "congress";
         overlaySources.add("congress");
@@ -329,10 +338,16 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       if (typeof sig.shortVolumeRatio === "number" && sig.shortVolumeRatio >= 55) overlaySources.add("finra");
       // Bar-based technical read (TradingView push or in-house computed). Feeds momentumScore.
       if (sig.technical) overlaySources.add(sig.technical.source);
-      const congressComposite = scoreCongressSignal(
+      const rawCongressComposite = scoreCongressSignal(
         { congress: sig.congress, congressAnalytics: sig.congressAnalytics },
         signalNow
       );
+      // Item 2: when the go/no-go gate zeroed the congress term (multiplier 0), scale the composite score
+      // to 0 so it neither lifts positioning nor adds the congress.trade source — the signal failed
+      // statistical validation and must not move the ranking. Multiplier 1 (default) = unchanged.
+      const congressComposite = congressMultiplier === 1
+        ? rawCongressComposite
+        : { ...rawCongressComposite, score: rawCongressComposite.score * congressMultiplier, signedScore: rawCongressComposite.signedScore * congressMultiplier };
       if (congressComposite.score > 0) overlaySources.add("congress.trade");
       const overlaid: MarketQuote = {
         ...quote,

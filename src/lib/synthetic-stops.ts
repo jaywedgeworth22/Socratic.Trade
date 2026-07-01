@@ -12,6 +12,7 @@ import {
   type SyntheticTrailingStop
 } from "./db";
 import { getBrokerGateway } from "./broker";
+import { applyPaperExitCost } from "./execution-cost";
 import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
@@ -269,6 +270,10 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         marketHours,
         refId
       });
+      // B8: a paper/test protective exit is booked at the raw quote here (no broker reconciliation), so
+      // debit the same execution-cost model the entry path uses — otherwise the losing tail exits cost-free
+      // and overstates realized edge feeding the tuner/sizer. Live exits are unchanged (reconciled later).
+      const exitPrice = applyPaperExitCost(price, exitSide, source);
       insertFillEvent({
         userId,
         accountNumber,
@@ -277,8 +282,8 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         symbol: normalizeSymbol(stop.symbol),
         side: exitSide,
         quantity: qty,
-        price,
-        notional: qty * price,
+        price: exitPrice,
+        notional: qty * exitPrice,
         // Live exits are provisional at the quote price; reconcilePendingFills books the
         // real fill price/qty from the broker (brokerOrderId is the match key). Booking
         // 'filled' at the quote understates slippage at the worst possible moment. Paper/
