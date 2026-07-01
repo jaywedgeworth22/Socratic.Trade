@@ -92,6 +92,20 @@ Verification: `npx tsc --noEmit` pass; targeted Vitest (antigravity-cheap-wins,
 llm-request, conviction-size-cap, policy, chat-draft-policy, policy-notification-events)
 6 files / 78 tests pass. Full `verify` CI (tsc → test → build) gates the merge.
 
+### Round 2 (Codex re-review)
+
+- **Clamp reasoning on pending-proposal revalidation too** — `revalidatePendingProposals`
+  (`proposal-revalidation.ts`) runs first in a strategy run while the per-user lock is held and
+  still built its request with raw `policy.llmReasoningEffort`, leaving the timeout/lock guardrail
+  bypassed for that call. Now routed through `interactiveStrategyReasoningEffort`, matching
+  Green/Bear/debate. (`npx tsc --noEmit` pass; `llm-request` + `proposal-revalidation` tests pass.)
+- **Wide-spread marketable-limit headroom (acknowledged, not further changed):** the buffer factor
+  reserves `bufferBps`; for names whose ask sits materially above the reference price the converted
+  `qty × limitPrice` can still exceed the preferred headroom. This is a strict improvement over the
+  prior behavior and the residual only causes a *conservative* block (never an over-cap order), on
+  top of the existing 5% `OPENING_ORDER_HEADROOM`. Exact ask/reference-ratio accounting is deferred
+  to avoid over-shrinking wide-spread sizes.
+
 ## Follow-ups
 
 - Consider a per-context timeout knob only if a future queued/background strategy
