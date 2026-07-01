@@ -761,17 +761,37 @@ export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
       `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
     );
   }
+  // FRACTIONAL / NOTIONAL ENTRIES ARE MARKET-ONLY ON ROBINHOOD. A fractional order -- a dollar_amount
+  // order OR a sub-whole-share quantity (e.g. 0.5 sh) -- sent as a LIMIT (or in extended hours) is
+  // accepted by the API but never fills: it shows "Placed"/working while the cash is never spent (the
+  // $1 GOOG/AMAT symptom). Robinhood fills fractional/notional orders only as regular-hours MARKET
+  // orders. So coerce a fractional ENTRY to a regular-hours market order and drop the limit modifier.
+  //
+  // Three things we deliberately do NOT coerce:
+  //   - STOPS (stop_market/stop_limit): converting a protective/trailing stop to a market order would
+  //     sell immediately instead of resting until the stop triggers. Robinhood can't place a notional
+  //     stop, so a dollar-sized stop must be caught upstream by policy, never silently reshaped here.
+  //   - EXITS (sell): a limit/take-profit exit must rest at its requested price or be rejected upstream;
+  //     silently turning it into market would liquidate immediately.
+  //   - Whole-share orders (integer quantity >= 1): preserved as-is so marketable-limit entries work.
+  const wholeShare = input.quantity != null && Number.isInteger(input.quantity) && input.quantity >= 1;
+  const fractional =
+    !wholeShare && ((input.dollarAmount != null && input.dollarAmount > 0) || (input.quantity != null && input.quantity > 0));
+  const isStop = input.type === "stop_market" || input.type === "stop_limit";
+  const isOpening = input.side === "buy";
+  const coerceFractional = isOpening && fractional && !isStop;
+
   return {
     account_number: input.accountNumber,
     symbol: normalizeSymbol(input.symbol),
     side: input.side,
-    type: input.type,
+    type: coerceFractional ? "market" : input.type,
     quantity: input.quantity?.toString(),
     dollar_amount: input.dollarAmount?.toFixed(2),
-    limit_price: input.limitPrice?.toFixed(2),
-    stop_price: input.stopPrice?.toFixed(2),
-    time_in_force: input.timeInForce,
-    market_hours: input.marketHours
+    limit_price: coerceFractional ? undefined : input.limitPrice?.toFixed(2),
+    stop_price: coerceFractional ? undefined : input.stopPrice?.toFixed(2),
+    time_in_force: coerceFractional ? "gfd" : input.timeInForce,
+    market_hours: coerceFractional ? "regular_hours" : input.marketHours
   };
 }
 

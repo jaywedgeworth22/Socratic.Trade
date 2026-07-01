@@ -181,6 +181,21 @@ Round 5 review fix: `scripts/npm-ci-with-shared-deps.sh` now includes `GH_TOKEN`
 in the package-auth fallback chain, matching the script fetch paths used by
 manual/operator preview syncs.
 
+## 2026-07-01 - PR #282 Robinhood fractional routing review fixes
+Branch `fix/robinhood-fractional-market`. Round-3 review tightened the Robinhood
+small-dollar routing fix: entry-drift policy now treats fractional opening
+limits as market-routed for Robinhood, fractional opening coercion forces GFD,
+and sell/exit limits preserve their requested limit semantics instead of being
+converted into immediate market sells. See
+`docs/rollouts/2026-06-30-robinhood-fractional-market-fix.md`.
+
+## 2026-07-01 - PR #282 Robinhood fractional drift scoping
+Branch `fix/robinhood-fractional-market`. Round-4 review narrowed the
+fractional-limit entry-drift special case to `policy.activeBroker ===
+"robinhood"` so brokers that preserve fractional limit orders keep broker-side
+limit-price protection. Verification: `npx vitest run test/robinhood-mcp.test.ts
+test/strategy-hardening.test.ts` (54 tests pass) and `npx tsc --noEmit`.
+
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
 Reconnect path without using browser secrets: production `/api/auth/robinhood/start`
