@@ -64,6 +64,111 @@ windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envel
 disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
 MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
 (monolithic-snapshot whole-tree re-render refactor, audit §6.1).
+## 2026-07-01 — Learning-loop BROADER BACKLOG (P1 + P2), backend/API/tests only (Claude)
+Branch `agent/claude-backlog-b-learning-b` (off `origin/main` after #300 merged; base = #296 + #300 unified
+ledger / tuning-invariants / `pairedICDiffStats`). Implements the remaining P1 + P2 backlog from
+`docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON #300's helpers (no duplication). BACKEND /
+API / TESTS ONLY — no `app/` UI component edited (dashboard redesign owned by a parallel thread); the
+"admin ledger UI" item was SKIPPED per that constraint. Did NOT touch `red-team.ts` / inline-Bear.
+
+- **P1-1 dry-run/replay harness.** New `dryRunAutonomousWeightTuning()` + shared side-effect-free evaluator
+  `evaluateAutonomousWeightTuning()` (refactored out of `applyAutonomousWeightTuning`). Read-only admin route
+  `GET /api/admin/tuning-dry-run` (`requireAdmin`, mirrors the backtest-ic "suggestion only" pattern) —
+  returns `{ wouldApply, before, after, clampedDeltas, oosICCandidate/Baseline, oosReadout, invariantViolations }`
+  with ZERO writes (test spies on `setPolicy`/ledger/audit).
+- **P1-2 purged & embargoed split.** `splitWalkForward` gained an opt-in `{ purge }` (4th arg); `runWalkForwardOOS`
+  gained `purgeEmbargo` (from `policy.tuning.oosPurgeEmbargo`). The embargo already existed; the PURGE (drop the
+  last `horizonDays` train-date buckets that straddle the boundary) is the new default-off addition. Flag off =
+  byte-identical.
+- **P1-3 shadow / forward-A-B ledger.** `policy.tuning.shadowWeightLedger` (default off): each autonomous-tuning
+  EVALUATION records a passive SHADOW row in #300's `learning_mutations` (trigger `auto_weight_shadow`, distinct
+  from the real-apply trigger so no revert restores it) capturing what the tuner WOULD have applied + OOS
+  readout — WITHOUT touching policy. Works whether or not `autoApplyWeights` is on.
+- **P1-4 survivorship & look-ahead certification.** HARD `isPointInTimeForwardExit()` predicate + CI-failing unit
+  test (same-day / pre-horizon exits rejected). SOFT `certifyForwardResolution()` IO diagnostic (forward-price
+  coverage proxy + point-in-time check), explicitly labeled a proxy that gates nothing.
+- **P2-1 / P2-2 missed-opportunity hit-rate.** `summarizeMissedOpportunities` gained `requireHitRate` (default
+  off): flags a recurring factor only when its benchmark-beating hit rate over ALL matured skipped rows (winners
+  AND losers), SHRUNK toward the overall skipped base rate, clears that base rate with a min denominator. P2-2:
+  the same benchmark-relative test classifies BOTH legs. `proposeStrategyTuning` widens the skipped fetch to 100
+  when on. Flag `policy.tuning.missedOpportunityRequireHitRate`.
+- **P2-3 signed/directional top-bucket congress gate.** `evaluateCongressScore` gained `requireTopBucketPositive`
+  (default off): the go/no-go additionally requires the TOP bucket's OWN excess return positive + a min-n floor,
+  so a spread carried by the (unused) short leg no longer promotes the long signal. Wired via
+  `policy.tuning.congressRequireTopBucketPositive` in the eval route + the new refresher.
+- **P2-4 IC-weight shrinkage.** `deriveWeightsFromICs(ics, fallback, λ)` blends toward `DEFAULT_SCORING_WEIGHTS`
+  (`w=λ·w_IC+(1−λ)·w_default`, renormalized); `runWalkForwardOOS` reads `policy.tuning.icWeightShrinkage` (default
+  0 = pure-IC, byte-identical).
+- **P2-5 turnover/drawdown guardrail.** `runWalkForwardOOS` now also returns `candidate/baselineMaxDrawdownPct`
+  (two extra equity curves via the pure `maxDrawdownOfCurve`). Autonomous gate blocks an apply whose candidate DD
+  exceeds baseline by >2pts, but only when `testDates ≥ 8`. Flag `policy.tuning.autoApplyDrawdownGuard`.
+- **P2-6 fixed-window OOS starvation guard.** `policy.tuning.minOosTestDates` raises the distinct-test-date floor
+  above the `AUTO_TUNE_MIN_TEST_DATES` env default (default 0 = env floor governs).
+- **P2-7 reproducibility/provenance.** Each real apply writes `audit('tuning_apply_provenance', …)` with fold
+  shape (train/test dates + observation counts), ICs/ICIR/paired-t, drawdowns, thresholds, and the flags in
+  effect.
+- **P2-8 congress go/no-go scheduled + cached + fixtured.** New `refreshCongressScoreVerdict()` cadence-callable
+  refresher moves the OHLC-backed eval off the scan hot path (the read-time cache already existed); honors P2-3.
+  Fixtured vitest (recorded snapshots + injected OHLC fetcher + fixed `placeboSeed`).
+- **Composed paired-t gate E2E** (#300 deferred): DB-backed test seeds 22 closed lots + mocks `runWalkForwardOOS`
+  to exercise the full `applyAutonomousWeightTuning` gate boolean (apply-on-pass / block-on-paired-t-fail).
+- **D-1 multiplicity** DEFERRED (documented): needs a per-account trial counter; no teeth until paired-t is on.
+  **P1-5 (calibration remap)** verified already shipped in #296 (`calibratedConviction` isotonic+shrunk) — skipped.
+  Admin **ledger UI** skipped (redesign thread owns UI; #300 route is API-only).
+
+All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quartet green in order:
+`npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276 grandfathered warnings) → `npm test` (195 files /
+1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
+`docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
+
+## 2026-07-01 — NAV_V2 PR #1: vocabulary relabels + scope-surfacing (first app code) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`. **First app-code step** of the redesign —
+executes PR #1 of `docs/settings-navigation-redesign/spec/08-delivery-plan-prs-and-tests.md`. **No flag**
+(pure clarifying copy on the current IA + surfacing the already-coded account/user tier split; no panel
+moved, no data path touched). Changes in `app/dashboard-client.tsx`: chrome kill button `Stop`→**`STOP`**
+with a never-sells tooltip (**handler byte-identical** — the real STOP/Flatten split is PR #9); feed tab
+`Notifications`→**`Alert history`**; settings sections `Display`→**`Appearance`**,
+`Notifications`→**`Alert delivery`**, `Data`→**`Data & Privacy`** (+ in-section `Alerts webhook`/`Send
+alerts for`); Help glossary + scope-detail copy updated. **Scope-surfacing:** each settings-section header
+now renders a **`THIS ACCOUNT`**/**`ALL ACCOUNTS`** `Chip` via `scopeTagForSection`. New module
+`app/settings-scope.ts` extracts `SettingsSection`/`settingsTierForSection` (unchanged) + adds
+`SCOPE_TAG_LABEL`/`scopeTagForSection` as the shared source of truth for the tag copy. New test
+`test/scope-tag-render.test.ts`. **Verify (this worktree, deps installed):** `tsc --noEmit` clean ·
+`lint` 0 errors · `npm test` 173 files / 1675 pass (+1 file/+4 tests) · `build` success. No existing test
+asserted a relabeled string. Reviewed adversarially via a 4-dimension Workflow. **Next:** PR #2
+(`DestinationTab` mapping + one-time localStorage shim, behind `NAV_V2`).
+See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+
+## 2026-07-01 — Settings & navigation redesign proposal (large-team, docs-only) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv`. **Docs-only; no app code changed** — a canonical
+proposal to fix the "Frankenstein" IA the owner called out (Strategy config in 5 places; duplicated
+"Tax"/"Notifications" labels; three un-named multi-account concepts). Produced by a large orchestrated
+workflow (`wf_000ecc50-7eb`: **48 agents, ~3.5M tokens**) running exactly the two-track method the owner
+asked for — one **informed** team + two **blind greenfield** teams (given only a layout-agnostic
+capability inventory, forbidden from reading the current UI) + one **pattern-led** team, then
+adjudication → adversarial red-team → concrete artifacts. Deliverable:
+`docs/settings-navigation-redesign.md` (diagnosis, canonical target design v2, 5 wireframes, field-level
+scope-tagged settings tree, full current→new migration table, 5-phase build plan, must-fix gaps, open
+questions) + a 10-file appendix corpus under `docs/settings-navigation-redesign/`. Convergent spine (all
+teams independently): **account = primary object**; nav collapses 7+4 tabs → **6 verb destinations**
+(Dashboard/Approvals/Scan/Strategy/Guardrails/Results) + off-rail Settings + Assistant overlay;
+**Strategy → one editable home** (Studio modal deleted, twin TuningCard `:3725/:4441` merged);
+**money-reality (Test/Paper/Live) and authority (Propose/Decide) are two orthogonal dials**; **settings
+split by scope first**; presets are **copy-on-bind**, scope validated **server-side on every write**.
+Design anchors were re-verified against `HEAD 0f6bf0a` inside the workflow (e.g. wash-sale enforced
+`policy.ts:311`; `test→paper` wash-sale leak `tax.ts:113`; `USER_LEVEL_POLICY_FIELDS`=3).
+**UPDATE (later 2026-07-01): owner approved the design and answered all 7 open questions**; a second
+workflow (`wf_598c6d71-77d`: 16 agents) built the full **implementation-ready spec** under
+`docs/settings-navigation-redesign/spec/` (11 sections + grounding + reconciliation; start at
+`spec/00-README.md`). Editor pass corrected key anchors (autonomy-reset primitive already exists at
+`scheduler.ts:66-97`; scheduler already fans out per-account; wash-sale real anchors `tax.ts:104/115/117`)
+and I made the open-item calls in `spec/00-README.md` (R1–R8). 3 forward-looking default-off fields folded
+into `spec/04`. Also built a **clickable prototype** (`docs/settings-navigation-redesign/prototype/index.html`,
+vanilla HTML, mock data) — verified via headless Chromium across Dashboard / Live Approvals / Guardrails /
+Settings / Fleet. **Still docs-only, no app code.** **Next:** delivery-plan **PR #1 (relabels +
+scope-surfacing)** on the owner's word. Complementary to
+`docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
+See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
 ## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
 Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
 merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three
