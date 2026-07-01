@@ -369,7 +369,12 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
               congressCompositeWeights: { ...congressComposite.weights }
             }
           : {}),
-        evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins,
+        // MERGE (deduped) rather than replace — otherwise a disagreement bulletin already on the quote
+        // (e.g. the Yahoo-vs-FMP short-interest warning added in applyEnrichment) is silently dropped
+        // for any symbol that also has web-source (congress/insider/FINRA) bulletins.
+        evidenceBulletins: sig.bulletins.length > 0
+          ? Array.from(new Set([...(quote.evidenceBulletins ?? []), ...sig.bulletins]))
+          : quote.evidenceBulletins,
         sources
       };
       // Recompute the score: positioning depends on senateTrades/insiderSentiment and momentum
