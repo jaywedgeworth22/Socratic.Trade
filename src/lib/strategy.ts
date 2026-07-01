@@ -2237,9 +2237,13 @@ async function proposeTrades(input: {
       )
     });
   }
-  // Which endpoint actually served the run (starts as the primary; updated on failover).
+  // Which endpoint actually served the run (starts as the primary; updated on failover). Transport
+  // and keySource are tracked too so the served step/audit trail reports the FALLBACK's transport
+  // (e.g. anthropic-messages vs the primary's responses), not the primary's — accurate money-path tracing.
   let bullServedProvider = provider;
   let bullServedModel = model;
+  let bullServedTransport = transport;
+  let bullServedKeySource = llmKeySource;
   let bullFailoverNote: string | undefined;
 
   const bullStepBase = {
@@ -2302,6 +2306,8 @@ async function proposeTrades(input: {
             if (i > 0) {
               bullServedProvider = attempt.provider;
               bullServedModel = attempt.model;
+              bullServedTransport = attempt.transport;
+              bullServedKeySource = attempt.keySource;
               bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${bullAttempts.length}).`;
             }
             const text = extractLlmText(payload);
@@ -2367,6 +2373,8 @@ async function proposeTrades(input: {
     ...bullStepBase,
     provider: bullServedProvider,
     model: bullServedModel,
+    transport: bullServedTransport,
+    keySource: bullServedKeySource,
     status: "completed",
     proposalCount: rawBullProposals.length,
     ...(bullCompletedReason ? { reason: bullCompletedReason } : {})

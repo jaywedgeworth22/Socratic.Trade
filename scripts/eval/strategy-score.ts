@@ -47,7 +47,10 @@ function hasStop(p: ProposalFixture): boolean {
   // The ENTRY order's own type (a stop_market/stop_limit entry) is NOT a post-entry stop-loss, so a
   // stopless short entered as a stop order must not count as protected (that would let the offline
   // eval report a stopless short as passing and give false confidence in prompt/schema changes).
-  return p.stopPrice != null || p.bracketStopLoss != null;
+  // Require a FINITE POSITIVE value — malformed model output like `stopPrice: 0` or a negative bracket
+  // stop is not a real protective stop and must not pass the invariant.
+  const isPositive = (v: number | null | undefined): boolean => typeof v === "number" && Number.isFinite(v) && v > 0;
+  return isPositive(p.stopPrice) || isPositive(p.bracketStopLoss);
 }
 
 /**
