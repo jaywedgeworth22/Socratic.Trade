@@ -9,10 +9,13 @@
 > **one** and hardens it against the reliability, independence, and visibility
 > failures documented below.
 >
-> **Working name:** the consolidated adversary is referred to throughout as the
-> **Adversary Review** (placeholder). The final product name is an **OPEN
-> decision** — see [§9](#9-open-decisions). Do **not** pick a name during
-> implementation.
+> **Name — DECIDED (2026-07-01): "Red Team".** The consolidated adversary is the
+> **Red Team**. Some sections below still use the leftover placeholder **"Adversary
+> Review"** — read every such instance as **"Red Team"**. Keeping the existing name
+> is deliberate and low-churn: the code already calls this path *Red Team*
+> (`redTeamLlmModel`, `redTeamProvider`, `RED_TEAM_*`), and consolidation deletes
+> the *other* thing that shared the name (the in-flow Bear), so "Red Team" now
+> refers unambiguously to the single surviving adversary. See [§9](#9-decisions) O1.
 >
 > **Related docs (do not silently replace):** `docs/phase-7-strategy.md` (the
 > owning phase doc for the strategy engine),
@@ -602,16 +605,15 @@ under the new hard-independence rule — not silently reused as the Green model
 
 ## 9. Decisions
 
-> **Only O1 (naming) is genuinely open** — deferred by the owner. **O2, O3, and
-> O4 were decided in discussion (2026-07-01)** and are marked **DECIDED** below;
-> the last column records the agreed answer, not an unresolved choice. The single
-> genuinely-new item is O3's pure-simulator (`test/local`) sub-nuance, which
-> surfaced from the spec review rather than the design discussion and carries a
-> default that the owner can override.
+> **All four decisions are now RESOLVED** (O1 named "Red Team" on 2026-07-01;
+> O2–O4 decided in the design discussion). The last column records the agreed
+> answer, not an unresolved choice. The only item still carrying an
+> owner-overridable *default* is O3's pure-simulator (`test/local`) sub-nuance,
+> which surfaced from the spec review rather than the design discussion.
 
 | # | Decision | Options | Resolution |
 |---|----------|---------|----------------|
-| **O1** | **Naming (DEFERRED by the user).** The consolidation makes naming *easier* — there is no second "Red Team" to disambiguate. This spec uses **"Adversary Review"** as a working placeholder consistently across all touch points. | On the table: **"Conviction Check"**, **"Final Sanity Check"**, **"High-Conviction Safeguard"**, **"Second-Opinion Gate"**. | **OPEN — deferred by owner. Do not pick during implementation.** Note the rename scope: the persisted `redTeamLlmModel` field, `redTeamProvider`, `debateProposal`, `RED_TEAM_*` constants, UI labels, and ~15+ call sites across 4 source files + 3 test files — a repo-wide find/replace **plus a DB-value migration** for any saved policy rows if the persisted field is renamed. |
+| **O1** | **Naming — RESOLVED: "Red Team".** The consolidation makes this trivial — with the in-flow Bear deleted there is no second "Red Team" to disambiguate. Replace the **"Adversary Review"** placeholder throughout this doc with **"Red Team"**. | Owner picked **"Red Team"** (over Conviction Check / Final Sanity Check / High-Conviction Safeguard / Second-Opinion Gate). | **DECIDED (2026-07-01): keep "Red Team".** Low-churn by design: the code already uses `redTeamLlmModel` / `redTeamProvider` / `RED_TEAM_*`, so **no code rename and no DB-value migration** are needed — you keep the existing field/labels and just delete the duplicate (in-flow Bear). A *different* name would have cost ~15+ call-site edits across 4 source + 3 test files plus a saved-policy DB migration — avoided. |
 | **O2** | **Universal vs. conviction-gated coverage (CONFIRM-POINT).** §3.6 recommends removing the conviction gate and running on all openings. | Remove gate entirely; **or** keep a default-off gate. | **DECIDED (2026-07-01): remove the gate — run on all openings**, AND run the openings' adversary calls concurrently (§3.6) so universal coverage doesn't extend the scheduler-lock hold. Cost (~$0.07/day) and — with concurrency — latency both stay negligible. Concurrency was a spec-review addition, not a reopening. Deleting `tuning.redTeamConvictionThreshold` + its UI follows. |
 | **O3** | **`test/local` on adversary-unavailable.** §3.7. | Route `test/local` through `requiresHumanReview` too (one visibility path); **or** keep auto-filling with a loud flag wired separately into the `fill` notification + proposal row. | **DECIDED core (never-silent + fail-closed in broker modes). Sub-nuance is NEW (from spec review) — default: route `test/local` through `requiresHumanReview`** so the §5 badge / flag / persisted-reason path covers all three modes with one code path; the auto-fill+flag option needs duplicate wiring and is easy to leave invisible. Owner may override to keep the pure simulator frictionless. |
 | **O4** | **Blank-adversary behavior when no second key exists.** §3.8a. | (a1) treat as unconfigured → fail-closed; **or** reuse same-provider model with a Settings warning only. | **DECIDED (2026-07-01): (a1) fail-closed** — follows from the agreed independence rule (different model required, different company preferred not forced); the same-provider *different-model* case is allowed but warned. |
