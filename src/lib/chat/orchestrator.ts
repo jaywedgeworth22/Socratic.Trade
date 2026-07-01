@@ -23,7 +23,7 @@ import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
-import { extractLearnedCandidates } from "../memory/salience";
+import { extractLearnedCandidatesLLM } from "../memory/salience-llm";
 import { ingestLearned, retrieveLearnedContext } from "../learned-context/store";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
@@ -51,7 +51,10 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     const mem = ingestMessage(userId, message);
     // Extract learned-context candidates from the message for both the write path (ingest) and
     // the read path (retrieve facts already in store to inject into the system prompt).
-    const learnedCandidates = extractLearnedCandidates(message);
+    // extractLearnedCandidatesLLM is regex (extractLearnedCandidates) unless LLM_SALIENCE_EXTRACTOR=on
+    // AND a credential resolves for this user — falls back to regex on any LLM-path failure, and
+    // validates any LLM-proposed symbol against the real known-ticker universe (see salience-llm.ts).
+    const learnedCandidates = await extractLearnedCandidatesLLM(message, userId);
     // Fire-and-forget write path: the semantic classifier runs 3+ sequential LLM calls — awaiting
     // it on the hot path would add 1–3 s of latency to every chat turn. Errors are benign: advisory
     // writes, never critical. The chat hard-cap (risk-adjacent prose is DROPPED) holds inside
