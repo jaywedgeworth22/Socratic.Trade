@@ -281,6 +281,45 @@ describe("enrichment cache consent gate", () => {
     else delete process.env.FINNHUB_DROP_RECOMMENDATION;
   });
 
+  it("keys the Finnhub cache by FINNHUB_DROP_RECOMMENDATION so flipping the flag refetches (not a stale no-rec row)", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    let recFetches = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("recommendation")) {
+        recFetches++;
+        return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+      }
+      if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+      return new Response(JSON.stringify({}));
+    });
+
+    try {
+      // Flag ON: recommendation dropped, row cached under the flag-specific namespace.
+      process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+      const onProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const on1 = await onProvider.enrich(["AAPL"]);
+      expect(on1.AAPL?.analystBySource?.finnhub).toBeUndefined();
+      expect(recFetches).toBe(0);
+      // Same flag again → cache hit, still no recommendation fetch.
+      await onProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(0);
+
+      // Flag OFF: distinct cache namespace → MISS → refetch, now including the recommendation, so the
+      // blended analyst rating regains Finnhub's vote instead of serving the stale no-rec row until TTL.
+      delete process.env.FINNHUB_DROP_RECOMMENDATION;
+      const offProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const off1 = await offProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(1);
+      expect(off1.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+    } finally {
+      if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+      else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    }
+  });
+
   it("user-keyed data is shared via pool to a consenting second user", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
@@ -489,6 +528,30 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ peRatio: 20 });
     expect(fetchCount).toBe(5);
+  });
+
+  it("does not cache the FMP row when short_interest returns HTTP 500 (recoverable server error)", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      // HTTP 500 is not matched by isTransientError (only 502/503/504 are), but it is recoverable and
+      // must still block caching so the disagreement input isn't frozen for a full TTL.
+      if (url.includes("short_interest")) return new Response("Internal Server Error", { status: 500 });
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: 20 }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 20 });
+    const afterFirst = fetchCount;
+    // Not cached → the next scan re-fetches (asserted without relying on exact retry counts).
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBeGreaterThan(afterFirst);
   });
 
   it("logs non-premium optional FMP failures while suppressing expected premium 403s", async () => {

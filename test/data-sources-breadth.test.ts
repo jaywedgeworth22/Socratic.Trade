@@ -191,6 +191,18 @@ describe("Robinhood options enrichment tier (opt-in)", () => {
     expect(deriveOptionMetrics({ chains: { results: [] }, instruments: undefined }, 100)).toEqual({});
   });
 
+  it("falls back to volume for the put/call ratio when open interest is present but zero", async () => {
+    const { deriveOptionMetrics } = await import("../src/lib/robinhood-options");
+    const chains = {
+      results: [
+        { strike_price: 100, type: "call", implied_volatility: 0.3, open_interest: 0, volume: 200 },
+        { strike_price: 100, type: "put", implied_volatility: 0.3, open_interest: 0, volume: 100 }
+      ]
+    };
+    // OI is zero on both rows (common for new/same-day strikes) → weight by volume: puts 100 / calls 200.
+    expect(deriveOptionMetrics({ chains, instruments: undefined }, 100).putCallRatio).toBe(0.5);
+  });
+
   it("provider fails closed (empty) with no userId in scope", async () => {
     const { RobinhoodOptionsEnrichmentProvider } = await import("../src/lib/robinhood-options");
     const out = await new RobinhoodOptionsEnrichmentProvider(undefined).enrich(["AAPL"]);

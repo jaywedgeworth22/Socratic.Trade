@@ -191,4 +191,20 @@ Four further P2s, two of them behavior regressions in the ostensibly-safe change
   real value is accepted. Test added asserting a merged real spread carries broker (not synthetic)
   provenance on both. This was a direct consequence of the item-2 provenance tag, not a pre-existing bug.
 
+### 4th round (commit e756175 → follow-up) — all follow-ons to items 4 & 6
+
+- **[D] Finnhub cache now keyed by `FINNHUB_DROP_RECOMMENDATION`** (`data-providers.ts`) — a row
+  fetched with the recommendation dropped is missing Finnhub's analyst vote; caching it under the plain
+  `finnhub` namespace meant turning the flag back OFF kept serving the partial row until TTL. Reads/writes
+  now use a `finnhub-norec` namespace when the flag is on, so flipping it is a natural cache miss (→
+  refetch) while caching still works within each flag state. Test added (toggle → refetch).
+- **[D] Short-interest HTTP 500 now blocks caching** (`data-providers.ts`) — `isTransientError` matches
+  502/503/504 but not 500, so a 500 on the optional `short_interest` call slipped through the round-1
+  guard and wrote a full-TTL row missing the disagreement input. The guard now blocks caching on ANY
+  recoverable short-interest failure (429/5xx incl. 500/network/timeout); only a permanent 403/404 caches
+  without it. Test added (500 → refetch).
+- **[D] Option put/call falls back to volume when OI is zero** (`robinhood-options.ts`) — `openInterest
+  ?? volume` selected a present-but-zero OI (common for new/same-day strikes) and dropped the row; now
+  uses volume whenever OI is not positive. Test added.
+
 

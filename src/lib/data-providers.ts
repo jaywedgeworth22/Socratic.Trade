@@ -1825,10 +1825,15 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const now = Date.now();
     const consented = hasDataPoolConsent(this.userId ?? "local");
     const dropRecommendation = finnhubDropRecommendationEnabled();
+    // Key the cache by the flag: a row fetched with the recommendation DROPPED is missing Finnhub's
+    // analyst vote, so if the operator later turns the flag off we must not keep serving that partial
+    // row until TTL. A distinct namespace makes flipping the flag a natural cache miss (→ refetch),
+    // while still caching normally within each flag state.
+    const cacheKey = dropRecommendation ? "finnhub-norec" : "finnhub";
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = readEnrichmentCache("finnhub", symbol, this.userId, consented, now);
+      const cached = readEnrichmentCache(cacheKey, symbol, this.userId, consented, now);
       if (cached) result[symbol] = cached.data;
       else misses.push(symbol);
     }
@@ -1944,7 +1949,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
                 `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
               );
             } else {
-              writeEnrichmentCache("finnhub", symbol, this.scope, this.userId, data, now + ttlMs());
+              writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
             }
             result[symbol] = data;
           } catch {
@@ -2175,13 +2180,15 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
           const allRejected = promises.every((p) => p.status === "rejected");
-          // Include the optional short-interest call in the transient guard: a 429/5xx on
-          // short_interest (while the core calls succeed) must NOT write a full-TTL row missing
-          // shortPercentOfFloatFmp, or the Yahoo-vs-FMP disagreement signal is suppressed until the
-          // cache expires. A 403 (non-premium key) is NOT transient, so it still caches as before.
-          const hasTransientError =
-            promises.some((p) => p.status === "rejected" && isTransientError(p.reason)) ||
-            (shortRaw.status === "rejected" && isTransientError(shortRaw.reason));
+          const hasTransientError = promises.some((p) => p.status === "rejected" && isTransientError(p.reason));
+          // The optional short-interest source blocks caching on ANY recoverable failure — 429, every 5xx
+          // (incl. HTTP 500, which isTransientError intentionally doesn't match), network/timeout — so a
+          // full-TTL row missing shortPercentOfFloatFmp can't freeze the Yahoo-vs-FMP disagreement signal
+          // until expiry. Only a permanent 4xx (403 non-premium / 404) is allowed to cache without it.
+          const shortReason = shortRaw.status === "rejected"
+            ? (shortRaw.reason instanceof Error ? shortRaw.reason.message : String(shortRaw.reason ?? ""))
+            : "";
+          const shortInterestRecoverableFailure = shortRaw.status === "rejected" && !/\b40[34]\b/.test(shortReason);
           const isEmpty = Object.keys(data).length === 0;
           // A coverage-trimmed fetch (we skipped ratios-ttm and/or grades-consensus)
           // yields a PARTIAL row. Don't write it to the normal fmp cache: a later scan
@@ -2193,11 +2200,12 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // must still be cached, or FMP's calls would repeat every scan.
           const trimmed = skipPe || skipConsensus || (skipTargets && fmpPriceTargetsEnabled());
 
-          if (allRejected || hasTransientError || isEmpty || trimmed) {
+          if (allRejected || hasTransientError || shortInterestRecoverableFailure || isEmpty || trimmed) {
             if (!trimmed) {
               console.warn(
                 `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
-                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
+                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, ` +
+                `shortInterestRecoverableFailure=${shortInterestRecoverableFailure}, isEmpty=${isEmpty})`
               );
             }
           } else {

@@ -108,7 +108,9 @@ export function deriveOptionMetrics(raw: { chains: unknown; instruments: unknown
   let callWeight = 0;
   for (const r of rows) {
     if (!near(r)) continue;
-    const w = r.openInterest ?? r.volume;
+    // Prefer open interest, but fall back to volume whenever OI is not POSITIVE — a present-but-zero
+    // open_interest (common for new / same-day strikes) must not shadow real volume via `??`.
+    const w = r.openInterest && r.openInterest > 0 ? r.openInterest : r.volume;
     if (typeof w !== "number" || w <= 0) continue;
     if (r.type === "put") putWeight += w;
     else if (r.type === "call") callWeight += w;
