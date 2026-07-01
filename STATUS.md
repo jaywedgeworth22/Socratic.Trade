@@ -4,6 +4,37 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Congress.Trade integration repair (Workstream C1) (Claude)
+Branch `claude/elastic-rosalind-a2a48a`. Implements C1 from
+`docs/reviews/2026-07-01-audit-work-split.md`. **App B side (this PR):**
+(1) **Push/SSE** — rewrote `src/lib/congress-stream.ts` to App A's **subscription model**
+(`/api/stream` requires `?subscription=<id>` + a per-subscription secret; the old consumer
+connected without it and got `400`, so the push path was dead). Now resolves a subscription
+(env-provisioned or opt-in auto-create), connects with `?subscription=` + Bearer secret, maps
+App A's raw `trade.new` Transaction into a `congress.trade` envelope, and treats
+cursor/ping/reconnect/error control frames as no-ops (kills the per-heartbeat "dropped
+unparseable" spam). Still gated by `CONGRESS_STREAM_ENABLED` (default off) → inert until a
+subscription is provisioned.
+(2) **"drops 4 of 7"** — verified this is **correct-by-design** (App A persists all 7 inbound;
+App B is authoritative for insider/shortVolume and pulls fundamentals/analyst), NOT the bug the
+source docs implied. Trimming outbound would break the working donation; adding tables duplicates
+the pull tier. Fixed by making App B's inbound import receiver **explicitly acknowledge**
+non-persisted datasets (`acceptedNotPersisted`) + documenting the directional asymmetry.
+(3) **Pinning** — exact-pinned shared pkg to `1.0.0` (`package.json` + lockfile) and rewrote
+`shared-package-pin-check.yml` to fetch App A's peer spec and **fail on divergence** (the old
+check no-oped for semver pins). No shared-pkg source change needed for C1.
+(4) **Aliases** — applied shared `resolveTickerAlias` on all outbound row tickers
+(`congress-share.ts`, new `canonicalOutboundSymbol`) so FB→META etc. don't fragment rows.
+(5) **Validation** — `shareWithCongressTrade` now drops schema-invalid rows per-dataset instead
+of warn-and-send.
+**Verify:** tsc clean; lint 0 errors; `npm test` 1680/1680 pass; `npm run build` success. `node_modules`
+symlinked from parent worktree (no `read:packages` token for `npm ci` here).
+**Next / follow-up:** App A PR in `jaywedgeworth22/Congress.Trade` — exact-pin `app/package.json`
++ mirror the peer pin-check, and retire App A's local `TICKER_ALIASES` for the shared one (App A is
+on `chore/pin-check-latest-sha-guard`, which also edits the pin-check workflow — land on a separate
+branch, reconcile that file). Operator must provision an SSE subscription + set
+`CONGRESS_STREAM_ENABLED` to activate the push path. See
+`docs/rollouts/2026-07-01-congress-integration-repair.md`.
 ## 2026-07-01 — Audit work-split Chats D + E implemented (Claude)
 Branch `claude/trading-audit-d-e-dpw0h7`. Implemented both single-repo workstreams from
 `docs/reviews/2026-07-01-audit-work-split.md` using two parallel agents (disjoint file sets)
