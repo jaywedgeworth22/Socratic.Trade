@@ -38,6 +38,78 @@ only when it is a known event name, otherwise `event` supplies the event and
 `type` remains available to `coerceCongressTrade` as the side alias. Verification:
 `npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
 (27 tests pass) and `npx tsc --noEmit`.
+## 2026-06-30 - Broker reliability + capability audit (order confirmation, Alpaca news root cause, 5-broker plan)
+Branch `claude/affectionate-franklin-a52935` (same branch/PR as the share-class fix
+below). Three code fixes plus a diagnosis plus a research-backed plan, from a user
+request to make order-placement confirmation broker-agnostic and audit broker
+capability usage:
+1. Extended the share-class symbol fix (`BRK-B` -> `BRK.B`) beyond the trading
+   gateway into `data-providers.ts`'s Alpaca snapshot/news enrichment providers and
+   the news-streaming store, which had the identical bug independently. Confirmed
+   via a read-only production DB query that this was the actual cause of
+   `alpaca-snapshot` still failing ~97% of the time (`HTTP 400`) after an unrelated
+   credential issue self-resolved on 2026-06-30 ~10:01 UTC.
+2. `alpaca-news` "has never worked" per the user report: confirmed via production
+   `api_health_log` that it was a real credential problem that self-resolved at the
+   same 10:01 UTC cutover — not a code bug, and should now show healthy on the
+   admin connection-status page (reload if it still shows red).
+3. Broker-agnostic order-placement confirmation: `executeProposal`/the run-loop in
+   `strategy.ts` used to record a proposal `"placed"` any time the broker call
+   didn't throw, even though Alpaca/Robinhood can both return a synchronous
+   rejected/canceled state without throwing. Added
+   `isRejectedOrCanceledState()` (`broker-side.ts`) and check it before marking
+   "placed"; a decline now records `"rejected_by_broker"` with its own
+   notification.
+4. Robinhood `placeEquityOrder` no longer fabricates the order id string
+   `"undefined"` when the MCP response is malformed — throws instead, routing into
+   the existing placement-uncertain path.
+5. `docs/broker-capability-plan.md` (new): full capability audit of Alpaca,
+   Robinhood, eToro, Public.com, and IBKR (trading, market data, streaming, MCP,
+   non-trading uses, order-status monitoring), including a live enumeration of the
+   43-tool Robinhood MCP surface (34 unused, incl. options trading, fundamentals,
+   historicals, earnings calendar, realized P&L, native scanner) since a live
+   Robinhood MCP connector happened to be attached to this session. MCP evaluation
+   per broker in §7. Prioritized roadmap in §10 — nothing there has been
+   implemented yet (e.g. the 3 disabled Alpaca streams `STREAMS_ALPACA_NEWS_ENABLED`
+   / `STREAMS_ALPACA_TRADE_UPDATES_ENABLED` / `STREAMS_ALPACA_PRICE_EVENTS_ENABLED`
+   remain off in production — flipping them is a deliberate follow-up decision, not
+   done here).
+Verification: `npm run lint` (0 errors, 254 pre-existing warnings), `npx tsc
+--noEmit`, `npm test` (full suite green; two new `executeProposal`-driving tests
+padded to 30s after confirming a timeout was a full-suite-parallel-load artifact,
+not a logic bug — this repo has a documented history of this exact flake class,
+see `approval-lock.test.ts`). `npm run build` — run before landing. See
+`docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md`.
+
+## 2026-07-01 - PR #284 broker/share-class review fixes
+Branch `claude/affectionate-franklin-a52935`. Addressed Codex review follow-up:
+Alpaca quotes/news now return requested share-class aliases such as `BRK.B`
+alongside internal `BRK-B`; `AlpacaNewsEnrichmentProvider` canonicalizes
+dot-form requests before matching article tags; and the unified Activity feed
+shows `order_rejected_by_broker` as a broker decline rather than a manual
+rejection. Verification:
+`npx vitest run test/order-confirmation-status.test.ts test/data-providers.test.ts
+test/dashboard-feed.test.ts` (79 tests pass) and `npx tsc --noEmit`.
+
+## 2026-06-30 - Alpaca share-class symbol mapping fix
+Branch `claude/affectionate-franklin-a52935`. Fixed live orders for share-class
+tickers (e.g. `BRK-B`) failing with `Alpaca order failed: HTTP 422 — asset
+"BRK-B" not found`. Our canonical symbol format uses a hyphen for share
+classes (Robinhood convention, `src/lib/sp500.ts:2`); Alpaca requires a dot
+(`BRK.B`) and rejected the hyphenated form outright. Added
+`toAlpacaSymbol`/`fromAlpacaSymbol` in `src/lib/alpaca.ts` and applied them at
+every Alpaca API boundary — order placement (REST + MCP paths),
+`getEquityQuotes`, and the order/position response mappers — so internal
+state stays hyphenated while Alpaca gets dot notation. Also fixed a related
+silent bug: `getEquityQuotes` previously keyed its response by Alpaca's raw
+(dot-notation) symbol, so hyphenated lookups always missed and silently fell
+through to the Yahoo keyless fallback instead of using Alpaca's real quote.
+Verification: `npm run lint` (0 errors, 254 pre-existing warnings), `npx tsc
+--noEmit`, `npm test` (165 files / 1,582 tests), `npm run build` all pass. See
+`docs/rollouts/2026-06-30-alpaca-share-class-symbol-mapping.md`. Follow-up:
+`src/lib/streams/alpaca-price-events-stream.ts` has the same symbol-format gap
+on its websocket subscription but is a separate, default-off, flag-gated
+feature — left untouched, noted in the rollout doc.
 ## 2026-07-01 - CI hosted-runner migration + concurrency guards
 Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
 `trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
