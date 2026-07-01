@@ -120,11 +120,14 @@ export function recordRagUsage(entry: RagUsageEntry): void {
 }
 
 /**
- * Convenience: record a Voyage embed call.
+ * Convenience: record a Voyage embed call. Pass `userId` for per-user retrieval spend so the daily
+ * LLM/RAG budget (`checkLlmDailyBudget`, which filters `rag_usage` by userId) actually sees it —
+ * omitting it books the spend under the default "local" user and a non-local user's ceiling never trips.
  */
-export function meterEmbed(texts: string[], model?: string): void {
+export function meterEmbed(texts: string[], model?: string, userId?: string): void {
   const tokens = approxTokens(texts);
   recordRagUsage({
+    userId,
     operation: "embed",
     provider: "voyage",
     model: model || "voyage-finance-2",
@@ -134,11 +137,13 @@ export function meterEmbed(texts: string[], model?: string): void {
 }
 
 /**
- * Convenience: record a Voyage rerank call.
+ * Convenience: record a Voyage rerank call. Pass `userId` so retrieval rerank spend counts toward that
+ * user's daily budget (see `meterEmbed`).
  */
-export function meterRerank(query: string, documents: string[], model?: string): void {
+export function meterRerank(query: string, documents: string[], model?: string, userId?: string): void {
   const tokens = approxTokens([query, ...documents]);
   recordRagUsage({
+    userId,
     operation: "rerank",
     provider: "voyage",
     model: model || "rerank-2.5",
@@ -148,17 +153,18 @@ export function meterRerank(query: string, documents: string[], model?: string):
 }
 
 /**
- * Convenience: record a Pinecone query.
+ * Convenience: record a Pinecone query. Pass `userId` so retrieval query spend counts toward that
+ * user's daily budget (see `meterEmbed`).
  */
-export function meterPineconeQuery(recordCount: number): void {
-  recordRagUsage({ operation: "query", provider: "pinecone", tokensOut: recordCount });
+export function meterPineconeQuery(recordCount: number, userId?: string): void {
+  recordRagUsage({ userId, operation: "query", provider: "pinecone", tokensOut: recordCount });
 }
 
 /**
  * Convenience: record a Pinecone upsert.
  */
-export function meterPineconeUpsert(recordCount: number): void {
-  recordRagUsage({ operation: "upsert", provider: "pinecone", tokensOut: recordCount });
+export function meterPineconeUpsert(recordCount: number, userId?: string): void {
+  recordRagUsage({ userId, operation: "upsert", provider: "pinecone", tokensOut: recordCount });
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────────

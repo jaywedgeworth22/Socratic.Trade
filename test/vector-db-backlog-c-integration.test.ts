@@ -134,7 +134,8 @@ describe("R7: index-metric assertion at bootstrap", () => {
 // ── R9: query-embedding LRU ──────────────────────────────────────────────────
 
 describe("R9: query-embedding LRU cache", () => {
-  it("default OFF: embeds fresh on every call, even for the identical query", async () => {
+  it("default ON (consolidated G8b): a repeated identical query reuses the cached vector", async () => {
+    // resetEnv() clears RAG_QUERY_EMBED_CACHE, so the consolidated default (ON) applies with no env set.
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
     mocks.query.mockResolvedValue({ matches: [] });
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
@@ -142,7 +143,20 @@ describe("R9: query-embedding LRU cache", () => {
     await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
     await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
 
-    expect(mocks.embed).toHaveBeenCalledTimes(2); // no caching by default
+    expect(mocks.embed).toHaveBeenCalledTimes(1); // cached by default — second call is a hit
+    expect(mocks.query).toHaveBeenCalledTimes(2); // Pinecone query still runs fresh both times
+  });
+
+  it("opt-out (RAG_QUERY_EMBED_CACHE=off): embeds fresh on every call, even for the identical query", async () => {
+    process.env.RAG_QUERY_EMBED_CACHE = "off";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({ matches: [] });
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+
+    await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
+    await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
+
+    expect(mocks.embed).toHaveBeenCalledTimes(2); // caching disabled → fresh embed each call
   });
 
   it("when ON: a repeated identical query reuses the cached vector (embed called once)", async () => {

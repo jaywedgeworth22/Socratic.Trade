@@ -6,10 +6,16 @@
 // are deduped, COALESCED over a debounce window (a storm of events → ONE run), then GATED
 // (market hours + global/per-symbol cooldown + hourly/daily caps) before firing one strategy run.
 //
-// Defaults below are the panel's reconciled paper-mode numbers. Per-user policy fields + the $/token
-// budget ceiling are deferred (the policy schema was just migrated; env config ships first).
+// Defaults below are the panel's reconciled paper-mode numbers. Per-user policy fields for these
+// caps are deferred (the policy schema was just migrated; env config ships first).
+//
+// G8(a) hard per-user/day LLM token-budget ceiling: checked at this trigger entry (fire(), just
+// before runStrategyOnce) via checkLlmDailyBudget(), which sums TODAY's usage for the user from the
+// ledger in llm-usage.ts. Default OFF (TRIGGER_LLM_DAILY_TOKEN_BUDGET unset => no ceiling), so
+// existing behavior is byte-identical until an operator opts in.
 
 import { audit, getPolicy, listUsers } from "./db";
+import { checkLlmDailyBudget } from "./llm-budget";
 import { isRunAllowedNow } from "./market-hours";
 import { runStrategyOnce } from "./strategy";
 
@@ -116,6 +122,12 @@ export function broadcastMaterialEvent(event: MaterialEvent): void {
   }
 }
 
+// checkLlmDailyBudget now lives in ./llm-budget (so runStrategyOnce can enforce it as the single
+// choke point without a strategy↔triggers cycle). Re-exported here for existing importers
+// (scheduler, tests) that reference it via ./triggers.
+export { checkLlmDailyBudget };
+export type { LlmBudgetDecision } from "./llm-budget";
+
 async function fire(userId: string): Promise<void> {
   const s = stateFor(userId);
   if (s.timer) { clearTimeout(s.timer); s.timer = null; }
@@ -130,6 +142,10 @@ async function fire(userId: string): Promise<void> {
     return;
   }
 
+  // NOTE: the daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM risk
+  // breakers + reconciliation, before proposal generation), NOT here — suppressing the whole run at
+  // this outer gate would also skip the drawdown/volatility breakers + fill reconciliation, disabling
+  // safety maintenance for the rest of the day. So we always enter the run; it skips only LLM work.
   const now = Date.now();
   rollWindows(s, now);
   s.lastRunMs = now;
