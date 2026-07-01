@@ -1,13 +1,11 @@
 /**
- * Single stampable version for the Bull/Bear/Red-Team strategy prompts.
+ * Thin re-export of the CANONICAL strategy prompt version, which lives in ./strategy-prompts
+ * next to the prompt builders it versions (bumped whenever prompt wording changes; stamped onto
+ * trade_proposals.prompt_version and Langfuse `metadata.promptVersion`).
  *
- * Bump this string whenever the strategy's prompt semantics change so Langfuse traces can be
- * filtered/compared across prompt revisions (it's attached to every traced generation's
- * `metadata.promptVersion`). This lives in its own tiny module — rather than in `strategy.ts` — so
- * both `strategy.ts` (bull/bear) and `red-team.ts` (debate) can import it without a circular
- * dependency (`strategy.ts` imports `red-team.ts`).
- *
- * This is a lightweight stamping constant only; full prompt extraction/versioning is a separate
- * workstream and intentionally out of scope here.
+ * This module is kept so consumers that only need the stamping constant — red-team.ts, which
+ * cannot import strategy.ts without a cycle and doesn't need the prompt builders — keep a tiny
+ * dependency-light import path. (Two lanes briefly defined competing constants here and in
+ * strategy-prompts.ts; unified 2026-07-01 to the single canonical export below.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@0.1.0";
+export { STRATEGY_PROMPT_VERSION } from "./strategy-prompts";

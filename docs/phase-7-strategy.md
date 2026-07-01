@@ -45,6 +45,18 @@ adversarial-debate lenses before making a decision.
 *Prevent confirmation bias and hallucination.*
 - **Mechanism:** Before a high-conviction trade is finalized, the proposal is routed to a separate "Red Team / Bear" prompt. This prompt is tasked *exclusively* with finding reasons the trade will fail (e.g., hidden technical resistance, negative sector news, overvaluation).
 - **Goal:** The main agent must successfully address or invalidate the Bear agent's concerns before the trade is approved, ensuring maximum robustness and quality.
+- **Implementation status (2026-07-01, Audit Chat A):** the inline Bear critique inside
+  `proposeTrades` now **fails CLOSED** — if it can't run (missing key, transport
+  error/timeout, unparseable response) the un-critiqued Bull proposals are routed to
+  human review in `decide` mode instead of auto-executing (never a silent carry-forward),
+  with a loud audit + `provider_degraded` notification. The Bull/Bear system prompts are
+  extracted to the versioned leaf module `src/lib/strategy-prompts.ts`
+  (`STRATEGY_PROMPT_VERSION` + `buildBullSystem`/`buildBearSystem`), stamped onto every
+  proposal via `trade_proposals.prompt_version`, and covered by a deterministic offline
+  eval (`npm run eval:strategy-offline`). The per-proposal `debateProposal` red-team now
+  requests strict `json_schema` on OpenAI-compatible providers, and the strategy/red-team
+  Anthropic calls use prompt caching. See
+  `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
 - **Proposed redesign (design-only, 2026-07-01):** `docs/single-adversary-consolidation.md`
   proposes collapsing today's *two* adversarial passes (the in-flow Bear inside `proposeTrades`
   and the standalone `debateProposal`, which run the same model twice) into a single hardened
