@@ -140,7 +140,7 @@ export class RobinhoodOptionsEnrichmentProvider implements MarketEnrichmentProvi
     const now = Date.now();
     const misses: string[] = [];
     for (const symbol of normalized) {
-      const cached = optionsCache.get(symbol);
+      const cached = optionsCache.get(cacheKey(this.userId, symbol));
       if (cached && cached.expiresAt > now) result[symbol] = cached.data;
       else misses.push(symbol);
     }
@@ -153,9 +153,11 @@ export class RobinhoodOptionsEnrichmentProvider implements MarketEnrichmentProvi
       for (const symbol of misses) {
         try {
           const raw = await fetchRobinhoodOptionChain(symbol, this.userId);
-          const data = raw ? deriveOptionMetrics(raw) : {};
+          // Pass the underlying price so near-the-money IV picks the closest strike and the put/call
+          // ratio applies its ±20% ATM filter — far-OTM tails must not drive these fields.
+          const data = raw ? deriveOptionMetrics(raw, raw.underlyingPrice) : {};
           if (Object.keys(data).length > 0) {
-            optionsCache.set(symbol, { expiresAt: now + optionsTtlMs(), data });
+            optionsCache.set(cacheKey(this.userId, symbol), { expiresAt: now + optionsTtlMs(), data });
           }
           result[symbol] = data;
         } catch {
@@ -169,7 +171,14 @@ export class RobinhoodOptionsEnrichmentProvider implements MarketEnrichmentProvi
   }
 }
 
+// Keyed by user + symbol. The option data is fetched with a PER-USER Robinhood OAuth token, so a value
+// warmed by user A must never be served to user B (who may have no connected Robinhood session and whose
+// own fetch would fail closed) — that would leak A's token-derived data and mis-attribute it.
 const optionsCache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
+
+function cacheKey(userId: string, symbol: string): string {
+  return `${userId}::${symbol}`;
+}
 
 /** Test helper: clear the long-TTL options cache between runs. */
 export function clearRobinhoodOptionsCache(): void {

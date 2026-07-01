@@ -445,6 +445,52 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     expect(fetchCount).toBe(10);
   });
 
+  it("does not cache the FMP row when short_interest transiently fails (429) but core calls succeed", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("short_interest")) return new Response("Too Many Requests", { status: 429 });
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: 20 }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 20 }); // core field present…
+    // 5 sub-calls + 1 retry on the 429'd short_interest = 6.
+    expect(fetchCount).toBe(6);
+    // …but the transient short_interest failure blocks caching, so the next scan re-fetches and the
+    // Yahoo-vs-FMP disagreement signal can appear once FMP recovers (not suppressed until TTL).
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBe(12);
+  });
+
+  it("still caches the FMP row when short_interest returns a non-premium 403 (not transient)", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("short_interest")) return new Response("premium endpoint", { status: 403 });
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: 20 }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBe(5);
+    // 403 is a permanent "not entitled" state, not transient → the row still caches (second call hits).
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBe(5);
+  });
+
   it("logs non-premium optional FMP failures while suppressing expected premium 403s", async () => {
     const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { getDb } = await import("../src/lib/db");

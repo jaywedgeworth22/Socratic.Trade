@@ -19,7 +19,7 @@ import {
   type AppAAnalyst,
 } from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
-import { logApiHealth, getServiceHealthSummaries } from "./db-health";
+import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { getStreamedHeadlines } from "./streams/news-store";
@@ -720,7 +720,13 @@ export function applyCircuitBreaker(providers: MarketEnrichmentProvider[]): Mark
     // that service is stopped — a working lane means the provider can still serve someone.
     const lanes = summaries.filter((s) => s.service === service);
     if (lanes.length === 0) return p;
-    const allStopped = lanes.every((s) => s.stoppedWorking);
+    // Only the 5-consecutive-failure condition trips the breaker. `stoppedWorking` is also set by
+    // softer heuristics ("active this hour but no success yet") that a SINGLE cold failure on a
+    // newly-configured provider satisfies — those must not black out a provider for the whole
+    // backoff window. Trip only when EVERY lane for the service is in hard consecutive-failure.
+    const laneHardStopped = (s: (typeof lanes)[number]) =>
+      s.stoppedWorking && s.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
+    const allStopped = lanes.every(laneHardStopped);
     if (!allStopped) return p;
     // Re-probe if enough time has passed since the most recent failure across the stopped lanes.
     const lastFailureTs = lanes
@@ -2163,9 +2169,13 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
           const allRejected = promises.every((p) => p.status === "rejected");
-          const hasTransientError = promises.some(
-            (p) => p.status === "rejected" && isTransientError(p.reason)
-          );
+          // Include the optional short-interest call in the transient guard: a 429/5xx on
+          // short_interest (while the core calls succeed) must NOT write a full-TTL row missing
+          // shortPercentOfFloatFmp, or the Yahoo-vs-FMP disagreement signal is suppressed until the
+          // cache expires. A 403 (non-premium key) is NOT transient, so it still caches as before.
+          const hasTransientError =
+            promises.some((p) => p.status === "rejected" && isTransientError(p.reason)) ||
+            (shortRaw.status === "rejected" && isTransientError(shortRaw.reason));
           const isEmpty = Object.keys(data).length === 0;
           // A coverage-trimmed fetch (we skipped ratios-ttm and/or grades-consensus)
           // yields a PARTIAL row. Don't write it to the normal fmp cache: a later scan

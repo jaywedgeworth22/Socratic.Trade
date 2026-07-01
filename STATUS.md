@@ -48,10 +48,18 @@ constants. Those files are untouched by this change; the CI `verify` gate (real 
 authoritative. See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
 `docs/rollouts/2026-07-01-performance-efficiency.md`.
 
+**Codex PR review (5 of 6 P2s fixed, tested):** options cache keyed per-user (no cross-user
+token-derived leak); underlying price threaded into option metrics (+`underlying_symbol` MCP
+arg); circuit breaker requires the 5-consecutive-failure condition (no single-cold-failure
+blackout); FMP transient short-interest failure no longer caches a row missing the disagreement
+input. Deferred: per-credential circuit-breaker lane (interface change across ~9 providers on a
+default-off feature) — tracked in the rollout note. gitleaks false positive (a `clearEnrichmentCache`
+identifier) resolved via a narrow `.gitleaks.toml` allowlist.
+
 **Next / follow-ups:** UI surfacing of the new D fields (earnings, institution %, IV, put/call,
 disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
-MCP / real health data; the deferred E item 6 (monolithic-snapshot whole-tree re-render
-refactor, audit §6.1).
+MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
+(monolithic-snapshot whole-tree re-render refactor, audit §6.1).
 
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed

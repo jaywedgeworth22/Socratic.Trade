@@ -941,15 +941,23 @@ export async function fetchRobinhoodOptionChain(
   symbol: string,
   userId: string,
   opts: { expiration?: string; type?: "call" | "put" } = {}
-): Promise<{ chains: unknown; instruments: unknown } | null> {
+): Promise<{ chains: unknown; instruments: unknown; underlyingPrice?: number } | null> {
   if (!robinhoodMcpDataEnabled()) return null;
   const sym = normalizeSymbol(symbol);
   if (!sym || !userId) return null;
   try {
-    const chains = await callRobinhoodMcpTool(userId, "get_option_chains", { symbol: sym, symbols: [sym] });
+    // `underlying_symbol` is the argument the Robinhood MCP option tools expect (the chat orchestrator's
+    // caller uses it too). `symbol`/`symbols` are sent alongside for tolerance across MCP server variants;
+    // a server that requires `underlying_symbol` would otherwise throw and yield no metrics.
+    const chains = await callRobinhoodMcpTool(userId, "get_option_chains", {
+      underlying_symbol: sym,
+      symbol: sym,
+      symbols: [sym]
+    });
     let instruments: unknown = undefined;
     try {
       instruments = await callRobinhoodMcpTool(userId, "get_option_instruments", {
+        underlying_symbol: sym,
         symbol: sym,
         symbols: [sym],
         ...(opts.expiration ? { expiration_date: opts.expiration } : {}),
@@ -959,10 +967,48 @@ export async function fetchRobinhoodOptionChain(
       // get_option_instruments is best-effort; the chain payload often already carries what we need.
       instruments = undefined;
     }
-    return { chains, instruments };
+    // Best-effort underlying price so the caller can pick the true near-the-money strike and apply its
+    // ±20% around-the-money filter. Without it, "near-the-money" IV / put-call ratio are basis-less and
+    // far-OTM strikes can dominate; a failure here simply omits the price (metrics fall back / suppress).
+    let underlyingPrice: number | undefined;
+    try {
+      const quote = await callRobinhoodMcpTool(userId, "get_equity_quotes", { symbols: [sym] });
+      underlyingPrice = extractUnderlyingPrice(quote, sym);
+    } catch {
+      underlyingPrice = undefined;
+    }
+    return { chains, instruments, ...(underlyingPrice !== undefined ? { underlyingPrice } : {}) };
   } catch {
     return null;
   }
+}
+
+/** Tolerantly pull a positive underlying last/mark price for `sym` from a get_equity_quotes payload. */
+function extractUnderlyingPrice(raw: unknown, sym: string): number | undefined {
+  const root = raw as Record<string, unknown> | undefined;
+  const rows: unknown[] = Array.isArray(root?.results)
+    ? (root!.results as unknown[])
+    : Array.isArray(raw)
+      ? (raw as unknown[])
+      : root && typeof root === "object"
+        ? [root]
+        : [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    const row = r as Record<string, unknown>;
+    const rsym = normalizeSymbol(String(row.symbol ?? row.ticker ?? ""));
+    if (rows.length > 1 && rsym && rsym !== sym) continue;
+    const price = firstNum(row, [
+      "last_trade_price",
+      "last_non_reg_trade_price",
+      "mark_price",
+      "adjusted_mark_price",
+      "price",
+      "last_price"
+    ]);
+    if (price !== undefined && price > 0) return price;
+  }
+  return undefined;
 }
 
 function firstNum(row: Record<string, unknown>, keys: string[]): number | undefined {

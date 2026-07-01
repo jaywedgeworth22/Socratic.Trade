@@ -126,4 +126,36 @@ the feature.
   correctly attributed; dashboard wiring is a follow-up.
 - `package.json`/`package-lock.json` sandbox edits must be reverted/reconciled by the
   orchestrator (private-dep stub only).
-```
+
+## Codex review follow-ups (PR #292, 2026-07-01)
+
+Addressed 5 of 6 automated P2 suggestions on the new tiers; all with tests:
+
+- **Options cache keyed by user** (`robinhood-options.ts`) — the long-TTL cache is now keyed
+  `userId::symbol`, not by symbol alone, so user A's per-user-OAuth-token-derived IV/put-call
+  can never be served to user B (who fails closed). Test: `data-sources-breadth.test.ts`.
+- **Underlying price threaded into option metrics** (`robinhood.ts` + `robinhood-options.ts`) —
+  `fetchRobinhoodOptionChain` now also fetches the underlying last/mark price (`get_equity_quotes`)
+  and returns it; `deriveOptionMetrics(raw, raw.underlyingPrice)` uses it to pick the true
+  near-the-money strike and apply the ±20% ATM put/call filter (far-OTM strikes no longer drive
+  the fields). Fallback (no price) documented + tested.
+- **`underlying_symbol` MCP arg** (`robinhood.ts`) — `get_option_chains`/`get_option_instruments`
+  now send `underlying_symbol` (alongside `symbol`/`symbols` for tolerance), matching the chat
+  orchestrator's caller, so servers requiring it no longer throw → null → empty metrics.
+- **Circuit breaker no longer trips on a single cold failure** (`data-providers.ts` +
+  `db-health.ts`) — it now requires the exported `HEALTH_REASON_CONSECUTIVE_FAILURES` (5
+  consecutive) condition, not the broad `stoppedWorking` flag that a lone "no success yet this
+  hour" failure also sets. Test asserts a single failure does not blackout the lane.
+- **Short-interest failures included in the FMP cache guard** (`data-providers.ts`) — a transient
+  (429/5xx) `short_interest` failure now blocks caching the FMP row so the Yahoo-vs-FMP
+  disagreement signal isn't suppressed until TTL; a non-premium 403 is (correctly) not transient
+  and still caches. Two tests cover both.
+
+**Deferred (1 of 6):** "trip the circuit breaker per credential lane" — backing off the *specific*
+failing credential (env vs a given user) rather than requiring every lane for the service to be
+stopped. This needs the provider to carry its `keySource` into `applyCircuitBreaker` (an interface
+change threaded through ~9 providers) and is a design refinement of a **default-off** feature; the
+current "all lanes stopped" behavior is the deliberate conservative choice (don't black out a
+provider that can still serve someone). The `#5` tightening above already removes the most harmful
+false-trip. Tracked as a follow-up rather than expanding this PR's surface.
+

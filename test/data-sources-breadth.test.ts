@@ -153,6 +153,54 @@ describe("Robinhood options enrichment tier (opt-in)", () => {
     const out = await new RobinhoodOptionsEnrichmentProvider(undefined).enrich(["AAPL"]);
     expect(out.AAPL).toEqual({});
   });
+
+  it("without an underlying price, falls back to median IV and an unfiltered put/call ratio", async () => {
+    const { deriveOptionMetrics } = await import("../src/lib/robinhood-options");
+    const chains = {
+      results: [
+        { strike_price: 95, type: "call", implied_volatility: 0.3, open_interest: 100 },
+        { strike_price: 100, type: "call", implied_volatility: 0.32, open_interest: 100 },
+        { strike_price: 500, type: "put", implied_volatility: 0.8, open_interest: 100 } // far strike
+      ]
+    };
+    const metrics = deriveOptionMetrics({ chains, instruments: undefined }); // no underlying price
+    expect(metrics.nearTheMoneyIv).toBe(32); // median of [0.30, 0.32, 0.80] → 0.32 → 32%
+    expect(metrics.putCallRatio).toBe(0.5); // no ATM filter → far 500 put counts: 100 / (100+100)
+  });
+
+  it("caches option data per-user: user B never receives user A's Robinhood-derived metrics", async () => {
+    vi.resetModules();
+    // Only user A has a connected Robinhood session; user B's own fetch fails closed (null).
+    vi.doMock("../src/lib/robinhood", () => ({
+      fetchRobinhoodOptionChain: async (_sym: string, userId: string) =>
+        userId === "userA"
+          ? {
+              chains: {
+                results: [
+                  { strike_price: 100, type: "call", implied_volatility: 0.32, open_interest: 200 },
+                  { strike_price: 100, type: "put", implied_volatility: 0.35, open_interest: 200 }
+                ]
+              },
+              instruments: undefined,
+              underlyingPrice: 100
+            }
+          : null
+    }));
+    try {
+      const { RobinhoodOptionsEnrichmentProvider, clearRobinhoodOptionsCache } = await import(
+        "../src/lib/robinhood-options"
+      );
+      clearRobinhoodOptionsCache();
+      const a = await new RobinhoodOptionsEnrichmentProvider("userA").enrich(["AAPL"]);
+      expect(a.AAPL.nearTheMoneyIv).toBe(32); // user A warms the (user-keyed) cache
+
+      const b = await new RobinhoodOptionsEnrichmentProvider("userB").enrich(["AAPL"]);
+      expect(b.AAPL).toEqual({}); // user B must NOT be served user A's cached, token-derived data
+    } finally {
+      vi.doUnmock("../src/lib/robinhood");
+      vi.resetModules();
+    }
+  });
 });
 
 // ── Item 5: active circuit breaker ───────────────────────────────────────────
@@ -218,5 +266,27 @@ describe("enrichment circuit breaker (opt-in)", () => {
     };
     const [wrapped] = applyCircuitBreaker([fmpLike]);
     expect(await wrapped.enrich(["AAPL"])).toEqual({ AAPL: { peRatio: 22 } });
+  });
+
+  it("does NOT trip on a single cold failure (only a 5-consecutive-failure streak trips)", async () => {
+    const { applyCircuitBreaker } = await import("../src/lib/data-providers");
+    const { logApiHealth } = await import("../src/lib/db-health");
+    const { getDb } = await import("../src/lib/db");
+    getDb().prepare("DELETE FROM api_health_log WHERE service = ?").run("finnhub");
+    // One failure, no success ever → db-health sets stoppedWorking with the SOFT "no success yet this
+    // hour" reason. A newly-configured provider must not be blacked out for the whole backoff on that.
+    logApiHealth({ service: "finnhub", ok: false, errorText: "HTTP 500" });
+
+    const finnhubLike: import("../src/lib/data-providers").MarketEnrichmentProvider = {
+      name: "finnhub",
+      configured: true,
+      async enrich(symbols) {
+        const out: Record<string, import("../src/lib/data-providers").SymbolEnrichment> = {};
+        for (const s of symbols) out[s] = { peRatio: 10 };
+        return out;
+      }
+    };
+    const [wrapped] = applyCircuitBreaker([finnhubLike]);
+    expect(await wrapped.enrich(["AAPL"])).toEqual({ AAPL: { peRatio: 10 } }); // NOT skipped
   });
 });
