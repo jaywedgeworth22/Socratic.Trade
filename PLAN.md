@@ -12,6 +12,15 @@ filling the missing pieces.
 > unwired learning guardrails (factor tuning, congress go/no-go, rationale
 > collapse), RAG evaluation/corpus depth, usage-telemetry push integration, and
 > dashboard decomposition. See `docs/reviews/2026-06-30-improvement-audit.md`.
+> 2026-07-01 (`agent/claude-congress-webhook-parity` / PR #283, [codex-autofix]):
+> Congress bare-tx ingest fix - the "envelope itself is one trade" last-resort
+> branch in `applyCongressEvent` was pushing the whole envelope into
+> `coerceCongressTrade`, so a bare App A transaction over SSE (whose `type` was
+> stamped with the SSE event name by `applySseMessage`) had its trade side
+> shadowed and was dropped as `no-trades`. Now strips envelope keys
+> (`type`/`event`/`id`/`data`) before coercing, with a regression test. No
+> roadmap change; see `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+
 > 2026-06-30 (`claude/affectionate-franklin-a52935`): broker reliability +
 > capability audit - broker-agnostic order-placement confirmation
 > (`isRejectedOrCanceledState` in `broker-side.ts`; a non-throwing but
