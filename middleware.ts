@@ -57,6 +57,58 @@ function isPublicPath(pathname: string): boolean {
   return pathname.startsWith("/api/auth/callback/") || pathname.startsWith("/api/auth/signin/");
 }
 
+// --- Security response headers -------------------------------------------------
+//
+// Applied to EVERY response the middleware returns (allowed, 401, 403, redirects). X-Frame-Options
+// and Referrer-Policy are unconditional and safe. CSP is DEFAULT-OFF: it only emits when CSP_ENABLED
+// is truthy, and defaults to report-only (Content-Security-Policy-Report-Only) unless CSP_REPORT_ONLY
+// is explicitly falsy — so it can never block the dashboard's inline/eval/Next resources by default.
+// A conservative starter policy is used; tighten it once report-only telemetry confirms no breakage.
+function isFlagOn(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function isFlagExplicitlyOff(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === "0" || v === "false" || v === "no" || v === "off";
+}
+
+/** The CSP directive string. Kept intentionally permissive (unsafe-inline/eval, https:) because Next.js
+ *  ships inline bootstrap scripts and styled-jsx; this is a starting point for report-only telemetry,
+ *  NOT a hardened enforcing policy. Override via CSP_POLICY when you have a tightened one. */
+function cspPolicy(): string {
+  const custom = process.env.CSP_POLICY?.trim();
+  if (custom) return custom;
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join("; ");
+}
+
+/** Set the standard security headers on `res` and return it. Mutates in place for convenience.
+ *  Exported so tests can assert the header set without driving the full edge middleware. */
+export function withSecurityHeaders(res: NextResponse): NextResponse {
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (isFlagOn(process.env.CSP_ENABLED)) {
+    // Report-only by default; enforcing only when CSP_REPORT_ONLY is explicitly turned off.
+    const reportOnly = !isFlagExplicitlyOff(process.env.CSP_REPORT_ONLY);
+    const header = reportOnly ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";
+    res.headers.set(header, cspPolicy());
+  }
+  return res;
+}
+
 // Auth is "configured" (armed) when at least one real identity source is active.
 // This is the reliable fail-closed signal — it does not depend on NODE_ENV.
 function isAuthConfigured(): boolean {
@@ -87,7 +139,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     // Public (no auth) — but still strip client-supplied identity headers so a forged
     // identity can never reach a handler that reads it.
     const headers = stripClientIdentityHeaders(new Headers(req.headers));
-    return NextResponse.next({ request: { headers } });
+    return withSecurityHeaders(NextResponse.next({ request: { headers } }));
   }
 
   // CSRF: reject cross-site state-changing requests to /api/*
@@ -103,10 +155,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       host: req.headers.get("host")
     });
     if (!csrf.ok) {
-      return new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
-        status: 403,
-        headers: { "content-type": "application/json" }
-      });
+      return withSecurityHeaders(
+        new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
+          status: 403,
+          headers: { "content-type": "application/json" }
+        })
+      );
     }
   }
 
@@ -141,21 +195,25 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (trustedEmail) {
     if (!isEmailAllowed(trustedEmail, fromCf)) {
       // Authenticated upstream, but not permitted in this app.
-      return pathname.startsWith("/api/")
-        ? new NextResponse("Forbidden", { status: 403 })
-        : NextResponse.redirect(new URL("/access-denied", req.url));
+      return withSecurityHeaders(
+        pathname.startsWith("/api/")
+          ? new NextResponse("Forbidden", { status: 403 })
+          : NextResponse.redirect(new URL("/access-denied", req.url))
+      );
     }
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
-    return pathname.startsWith("/api/")
-      ? new NextResponse("Unauthorized", { status: 401 })
-      : NextResponse.redirect(new URL("/login", req.url));
+    return withSecurityHeaders(
+      pathname.startsWith("/api/")
+        ? new NextResponse("Unauthorized", { status: 401 })
+        : NextResponse.redirect(new URL("/login", req.url))
+    );
   }
 
   // Strip any spoofable client-supplied identity hints, then forward the VERIFIED identity.
   const headers = stripClientIdentityHeaders(new Headers(req.headers));
   headers.set("x-authenticated-user-email", trustedEmail);
-  return NextResponse.next({ request: { headers } });
+  return withSecurityHeaders(NextResponse.next({ request: { headers } }));
 }
 
 export const config = {

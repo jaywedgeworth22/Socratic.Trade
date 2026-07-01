@@ -284,6 +284,79 @@ async function embedDocumentsWithRetry(
   return embedWithRetry(voyage, input, "document");
 }
 
+// ── Query-embedding LRU cache (G8b) ────────────────────────────────────────
+// Small in-process cache for the single-query embed call in retrieveContextDetailed. Document/
+// upsert embeddings are NEVER cached (only the "query" inputType path below uses this). Keyed by
+// normalized query text so trivial whitespace/casing variants of the same question share a hit.
+// Bounded LRU (default 128 entries) — a Map preserves insertion order, so "touch on hit" is done by
+// delete+re-set, and eviction just deletes the oldest (first) key once over the bound.
+type EmbedResponse = Awaited<ReturnType<VoyageAIClient["embed"]>>;
+
+const DEFAULT_QUERY_EMBED_CACHE_SIZE = 128;
+
+function queryEmbedCacheSize(): number {
+  return Math.floor(numericEnv("VECTOR_QUERY_EMBED_CACHE_SIZE", DEFAULT_QUERY_EMBED_CACHE_SIZE, 0, 10_000));
+}
+
+function queryEmbedCacheEnabled(): boolean {
+  const v = String(process.env.VECTOR_QUERY_EMBED_CACHE ?? "true").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(v) && queryEmbedCacheSize() > 0;
+}
+
+/** Normalize query text so "AAPL guidance", " aapl  guidance ", "AAPL GUIDANCE" share a cache entry. */
+export function normalizeQueryCacheKey(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// One LRU per underlying Voyage client instance so cached embeddings never leak across distinct
+// API keys/tenants (getClients() already memoizes clients per key-pair, so this keys naturally).
+// Map (not WeakMap) so tests can enumerate/clear it deterministically between runs.
+const queryEmbedCaches = new Map<VoyageAIClient, Map<string, EmbedResponse>>();
+
+function cacheFor(voyage: VoyageAIClient): Map<string, EmbedResponse> {
+  let cache = queryEmbedCaches.get(voyage);
+  if (!cache) {
+    cache = new Map();
+    queryEmbedCaches.set(voyage, cache);
+  }
+  return cache;
+}
+
+/** Test-only: drop all cached query embeddings (all clients). */
+export function clearQueryEmbedCache(): void {
+  queryEmbedCaches.clear();
+}
+
+/**
+ * Embed a single retrieval QUERY, served from a bounded per-client LRU cache when enabled
+ * (default on, 128 entries — set VECTOR_QUERY_EMBED_CACHE=off or VECTOR_QUERY_EMBED_CACHE_SIZE=0 to
+ * disable). Only ever called with inputType "query" — document/upsert embeddings always go through
+ * embedDocumentsWithRetry uncached.
+ */
+async function embedQueryCached(voyage: VoyageAIClient, query: string): Promise<EmbedResponse> {
+  if (!queryEmbedCacheEnabled()) return embedWithRetry(voyage, [query], "query");
+
+  const cache = cacheFor(voyage);
+  const key = normalizeQueryCacheKey(query);
+  const hit = cache.get(key);
+  if (hit) {
+    // Touch: move to most-recently-used position.
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
+
+  const response = await embedWithRetry(voyage, [query], "query");
+  cache.set(key, response);
+  const maxSize = queryEmbedCacheSize();
+  while (cache.size > maxSize) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+  return response;
+}
+
 /**
  * Reorder Pinecone matches by Voyage cross-encoder relevance and keep the top `topK`. Pure
  * best-effort: on any error (rate limit, unsupported model, empty docs) returns the input order
@@ -629,7 +702,7 @@ export async function retrieveContextDetailed(
   const extraFilter = buildExtraFilters(options);
 
   try {
-    const response = await embedWithRetry(voyage, [query], "query");
+    const response = await embedQueryCached(voyage, query);
     meterEmbed([query]);
 
     const embedding = response.data?.[0]?.embedding;

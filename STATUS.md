@@ -4,6 +4,38 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
+Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G
+(security/risk/testing/ops) from `docs/reviews/2026-07-01-audit-work-split.md` via four parallel
+Opus/Sonnet agents on disjoint file sets, then integrated + verified as one change.
+- **F (UI/IA):** first-class `redTeamVerdict` on `TradeProposal` (`types.ts`) rendered as a distinct
+  "Bear Review" block in `DecisionView`; `proposal_rejected_by_red_team` audit on Bear veto; visible
+  ⌘K command-bar button; Macro/Tax demoted to a "More" tab overflow (5 primary tabs); tap-to-expand
+  rationale (touch-reachable); bare empty states → `<EmptyState>` + a real `.skeleton` loader; 3-tier
+  elevation/blur scale (no more `blur-[Npx]`); 3-step icon scale (`ICON.sm/md/lg`); `docs/phase-8`
+  IA corrected (7 workspace + 4 feed tabs); new `docs/design/visual-system.md`.
+- **G (security/risk/ops):** `/api/chat` + `/api/scan` rate-limited (429+Retry-After); Robinhood
+  OAuth tokens AES-256-GCM encrypted at rest (legacy-plaintext fallback preserved); constant-time
+  admin-token compare (`timingSafeEqualStr`, length-guarded — no throw) + reindex routes migrated to
+  shared `requireAdmin`; security headers in `middleware.ts` (X-Frame-Options/Referrer-Policy always;
+  CSP **default-off/report-only** behind `CSP_ENABLED`); drawdown-breaker + correlation-gate verified
+  wired/durable (regression tests added); one e2e money-path test + a default-safe `assertLivePreflight`
+  guard (blocks broker/live unless `paperMode:false` AND `ALLOW_LIVE_TRADING=true`); default-off
+  per-user/day token-budget ceiling in `triggers.ts` (`TRIGGER_LLM_DAILY_TOKEN_BUDGET`/`_COST_BUDGET_USD`)
+  + query-embedding LRU in `vector-db.ts`; **account-deletion gap fixed** — 4 user-scoped tables
+  (`api_health_log`, `mobile_commands`, `rag_usage`, `take_profit_trims`) were escaping deletion, now
+  covered + a runtime cross-check test; Langfuse `promptVersion` stamping + Bear-veto/diversity-collapse
+  observations (no-op when unconfigured). **Litestream restore: never exercised — documented a
+  restore-verification runbook (`docs/litestream.md`); no infra change here.**
+- **Every new behavior is default-off/conservative** (CSP, token budget, live guard); paper/Test mode
+  untouched. Deferred (noted, not attempted): the `strategy.ts` god-module split; interval-scheduler
+  budget wiring (event-trigger path only).
+- **Verify quartet GREEN locally:** `tsc --noEmit` 0 errors · `lint` 0 errors (261 grandfathered warns)
+  · `vitest` **1720/1720** · `build` success. Env note: the private `@jaywedgeworth22/congress-trading-shared`
+  dep is unfetchable here (GH Packages 401) and agents clobbered the installed copy; rebuilt a faithful
+  local stub in gitignored `node_modules` to run the full quartet — CI `verify` uses the real package.
+  Rollout notes: `docs/rollouts/2026-07-01-{ux-ia-aesthetics,security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
+
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
 analysis + sequenced plan: `docs/market-data-freshness-decision.md` +

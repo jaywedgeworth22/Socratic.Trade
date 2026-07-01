@@ -5,6 +5,14 @@ import { clearMcpOAuthForUser } from "./mcp-oauth";
 export const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
 export const LOCAL_OPERATOR_DELETE_PHRASE = "DELETE LOCAL OPERATOR ACCOUNT";
 
+// G9(b) audit (2026-07-01): cross-checked against every table's FULLY-MIGRATED runtime schema
+// (several tables — strategy_runs, trade_proposals, strategy_profiles, portfolio_snapshots,
+// fill_events, notification_events, audit_events, api_health_log — only gain user_id via an ALTER
+// TABLE in db.ts migrate(), not their original CREATE TABLE, so a static grep of CREATE TABLE alone
+// would miss them). Four tables were found user-scoped but MISSING from this list and have been
+// added: api_health_log, mobile_commands, rag_usage, take_profit_trims. See
+// test/account-deletion-coverage.test.ts, which queries sqlite_master + PRAGMA table_info at runtime
+// so a future new user-scoped db-*.ts table can't silently escape deletion again — keep it green.
 const DELETE_TABLES_BY_USER_ID = [
   "user_api_keys",
   "connected_accounts",
@@ -28,10 +36,18 @@ const DELETE_TABLES_BY_USER_ID = [
   "learned_context_pending",
   "synthetic_trailing_stops",
   "broker_protective_stops",
-  "audit_events"
+  "audit_events",
+  // Added by the G9(b) coverage cross-check (2026-07-01) — previously missing:
+  "api_health_log",
+  "mobile_commands",
+  "rag_usage",
+  "take_profit_trims"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];
+
+/** Test-only read view of the deletion table list (avoids re-exporting it as public API surface). */
+export const DELETE_TABLES_BY_USER_ID_FOR_TEST: readonly string[] = DELETE_TABLES_BY_USER_ID;
 
 export interface AccountDeletionConnectedAccountPreview {
   id: string;

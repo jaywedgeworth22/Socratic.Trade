@@ -11,6 +11,7 @@ import {
   type LlmUsageOpts
 } from "@/lib/chat/llm";
 import { resolveLlmCredential } from "@/lib/db";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { DEFAULT_OPENAI_MODEL } from "@/lib/llm-request";
 import { NextResponse } from "next/server";
@@ -63,6 +64,10 @@ function llmFromProvider(hint: string | undefined, userId: string) {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as { message?: unknown; userId?: unknown; provider?: unknown; model?: unknown };
   const userId = resolveRequestUserId(request, body);
+  // Per-user rate limit BEFORE the LLM gate: each chat turn can spend operator-funded tokens, so a
+  // runaway/scripted burst must be contained (returns 429 with Retry-After). Fails open on limiter error.
+  const limited = enforceRateLimit(userId, "chat", RATE_LIMITS.chat);
+  if (limited) return limited;
   if (typeof body.message !== "string" || !body.message.trim()) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }

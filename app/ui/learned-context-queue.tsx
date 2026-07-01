@@ -114,9 +114,9 @@ function PendingItemCard({
         <div className="flex flex-wrap items-center gap-2 min-w-0">
           <Chip tone={tone}>
             {tone === "warn" ? (
-              <AlertTriangle size={10} />
+              <AlertTriangle size={14} />
             ) : (
-              <Brain size={10} />
+              <Brain size={14} />
             )}
             {tierLabel(item.riskTier)}
           </Chip>
@@ -171,7 +171,7 @@ function PendingItemCard({
           onClick={() => onApprove(item)}
           className="gap-1.5"
         >
-          <Check size={13} /> Approve
+          <Check size={14} /> Approve
         </Button>
         <Button
           variant="ghost"
@@ -179,7 +179,7 @@ function PendingItemCard({
           onClick={() => onReject(item)}
           className="gap-1.5 text-muted"
         >
-          <X size={13} /> Reject
+          <X size={14} /> Reject
         </Button>
       </div>
     </Card>
@@ -288,7 +288,7 @@ export function LearnedContextQueue({
         onClose={onClose}
         title="Pending Learned Changes"
         subtitle={subtitle}
-        icon={<Brain size={18} />}
+        icon={<Brain size={20} />}
         width="max-w-xl"
       >
         <div className="flex flex-col gap-3 p-4">
@@ -306,7 +306,7 @@ export function LearnedContextQueue({
 
           {!loading && !error && fetchedOnce && items.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
-              <Brain size={28} className="text-faint" />
+              <Brain size={20} className="text-faint" />
               <p className="text-sm text-muted">No pending learned changes</p>
               <p className="text-xs text-faint max-w-xs">
                 Autonomous runs may queue learned context here for your review before it
@@ -356,7 +356,7 @@ export function LearnedContextQueueBadge({
         "relative inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface/50 px-2 text-xs font-medium text-fg backdrop-blur-xl transition-colors hover:bg-surface-2/50 lg:h-9 lg:gap-1.5 lg:px-3 lg:text-sm"
       )}
     >
-      <Brain size={15} />
+      <Brain size={16} />
       <span className="hidden sm:inline">Learned</span>
       <span
         aria-live="polite"

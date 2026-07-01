@@ -63,6 +63,8 @@ import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { avgReturnCorrelation } from "./correlation";
+import { assertLivePreflight } from "./preflight-live-guard";
+import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
@@ -70,7 +72,7 @@ import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
 import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { withLlmGeneration } from "./observability";
+import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -87,6 +89,11 @@ import { isTradingDay } from "./market-calendar";
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+// STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
+// can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
+// so red-team.ts can import it too without a circular dep.
+export { STRATEGY_PROMPT_VERSION };
 type RunnablePolicy = TradingPolicy & { accountNumber: string };
 
 export interface StrategyLlmStep {
@@ -448,8 +455,14 @@ export async function runStrategyOnce(
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
         const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
+        // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
+        // rationale-append text below too for backward compatibility with anything reading the string.
+        proposal.redTeamVerdict = { rejected: redTeamResult.rejected, available: redTeamResult.available, reason: redTeamResult.reason };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
+          // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
+          // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
+          audit("proposal_rejected_by_red_team", { symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason }, userId);
           // Skip this proposal completely, as the Red Team found a critical flaw
           continue;
         } else if (!redTeamResult.available) {
@@ -520,6 +533,20 @@ export async function runStrategyOnce(
       console.warn(
         `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
       );
+      // Emit the diversity-collapse decision point as a queryable Langfuse observation (no-op when
+      // Langfuse is unconfigured). Advisory only — never blocks/drops/modifies proposals.
+      await recordDecisionObservation({
+        name: "trading.strategy.diversity-collapse",
+        userId,
+        metadata: {
+          promptVersion: STRATEGY_PROMPT_VERSION,
+          meanPairwiseSimilarity: Number(rationaleDiversity.meanPairwiseSimilarity.toFixed(4)),
+          threshold: rationaleDiversity.threshold,
+          proposalCount: rationaleDiversity.count,
+          runId
+        },
+        tags: ["strategy", "diversity-collapse"]
+      });
     }
 
     const results: StrategyResult["proposals"] = [];
@@ -699,6 +726,33 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        continue;
+      }
+
+      // Pre-flight live-order guard: a last, default-SAFE assertion just before a real-capital order
+      // is placed. No-op in Test/paper mode (usesLocalSimulation → returns immediately, and the
+      // simulated path already `continue`d above); on the broker/live path it throws unless the run
+      // is genuinely out of paper mode AND live trading is explicitly enabled (ALLOW_LIVE_TRADING).
+      // This code path can also be reached for broker/paper (submitsBrokerOrders, real-capital-free),
+      // where mode !== "broker/live" so the guard is a no-op. It NEVER places or enables a trade.
+      try {
+        assertLivePreflight({
+          mode: executionState.mode,
+          usesLocalSimulation: executionState.usesLocalSimulation,
+          paperMode: policy.paperMode,
+          symbol: normalizedProposal.symbol,
+          side: normalizedProposal.side
+        });
+      } catch (guardError) {
+        const message = guardError instanceof Error ? guardError.message : String(guardError);
+        const proposalId = crypto.randomUUID();
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
+        await sendNotification(
+          { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision, review, proposal: normalizedProposal, reason: message } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
         continue;
       }
 
@@ -2149,7 +2203,8 @@ async function proposeTrades(input: {
           executionMode,
           internalPaperMode: input.policy.paperMode,
           usesLocalSimulation: executionState.usesLocalSimulation,
-          currentMarketRegime
+          currentMarketRegime,
+          promptVersion: STRATEGY_PROMPT_VERSION
         },
         tags: ["strategy", "bull-agent"],
         output: (result) => ({
@@ -2367,14 +2422,24 @@ async function proposeTrades(input: {
           executionMode,
           internalPaperMode: input.policy.paperMode,
           usesLocalSimulation: executionState.usesLocalSimulation,
-          currentMarketRegime
+          currentMarketRegime,
+          promptVersion: STRATEGY_PROMPT_VERSION
         },
         tags: ["strategy", "bear-agent", "red-team"],
-        output: (result) => ({
-          ...summarizeOpenAiResponseText(result.text),
-          ...summarizeTradeProposals(result.proposals),
-          fallbackToBull: result.fallbackToBull
-        })
+        output: (result) => {
+          // Bear-veto decision point: the Bear removed one or more Bull proposals (fewer survived
+          // than were reviewed, and it did not fall back to Bull). Stamp the veto count + a boolean
+          // so a Bear veto is queryable in Langfuse (no-op when Langfuse is unconfigured).
+          const survivorCount = result.proposals.length;
+          const bearVetoCount = result.fallbackToBull ? 0 : Math.max(0, bullProposals.length - survivorCount);
+          return {
+            ...summarizeOpenAiResponseText(result.text),
+            ...summarizeTradeProposals(result.proposals),
+            fallbackToBull: result.fallbackToBull,
+            bearVeto: bearVetoCount > 0,
+            bearVetoCount
+          };
+        }
       },
       async () => {
         const bearResponse = await llmFetch(bearUrl, {

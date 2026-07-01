@@ -1,4 +1,4 @@
-import { deleteInternalSetting, findInternalSettingByKeyLike, getDb, getInternalSetting, setInternalSetting } from "./db";
+import { decryptValue, deleteInternalSetting, encryptValue, findInternalSettingByKeyLike, getDb, getInternalSetting, setInternalSetting } from "./db";
 import { isLoopbackUrl, resolvePublicAppOrigin } from "./public-origin";
 export { resolvePublicAppOrigin } from "./public-origin";
 
@@ -210,8 +210,34 @@ export function migrateLocalRobinhoodToken(): boolean {
   return true;
 }
 
+/**
+ * Encrypt-on-write / decrypt-on-read helpers for the Robinhood OAuth token blob. Only the SECRET
+ * fields (`accessToken`, `refreshToken`) are run through the shared AES-256-GCM field encryption
+ * (encryptValue/decryptValue from db-api-keys) — the non-secret metadata (tokenType/scope/expiresAt)
+ * stays plaintext for debuggability. `decryptValue` tolerates legacy plaintext (its 3-part
+ * `iv:tag:ct` check returns non-envelope values unchanged), so tokens stored before this change still
+ * load without a migration.
+ */
+function encryptStoredTokens(tokens: McpOAuthTokens): McpOAuthTokens {
+  return {
+    ...tokens,
+    accessToken: tokens.accessToken ? encryptValue(tokens.accessToken) : tokens.accessToken,
+    refreshToken: tokens.refreshToken ? encryptValue(tokens.refreshToken) : tokens.refreshToken
+  };
+}
+
+function decryptStoredTokens(tokens: McpOAuthTokens): McpOAuthTokens {
+  return {
+    ...tokens,
+    accessToken: tokens.accessToken ? decryptValue(tokens.accessToken) : tokens.accessToken,
+    refreshToken: tokens.refreshToken ? decryptValue(tokens.refreshToken) : tokens.refreshToken
+  };
+}
+
 export function getStoredMcpOAuthTokens(userId: string): McpOAuthTokens | undefined {
-  return getInternalSetting<McpOAuthTokens>(tokenSettingKey(userId));
+  const stored = getInternalSetting<McpOAuthTokens>(tokenSettingKey(userId));
+  if (!stored) return undefined;
+  return decryptStoredTokens(stored);
 }
 
 export function clearMcpOAuthTokens(userId: string): void {
@@ -232,7 +258,9 @@ export function clearMcpOAuthForUser(userId: string): { tokenDeleted: number; st
 }
 
 export function setMcpOAuthTokens(userId: string, tokens: McpOAuthTokens): void {
-  setInternalSetting(tokenSettingKey(userId), tokens);
+  // Encrypt the secret fields at rest so a settings-row leak (backup, replica, casual DB read)
+  // never exposes a live Robinhood bearer/refresh token in plaintext.
+  setInternalSetting(tokenSettingKey(userId), encryptStoredTokens(tokens));
 }
 
 export function tokenResponseToTokens(raw: Record<string, unknown>, existing?: McpOAuthTokens): McpOAuthTokens {

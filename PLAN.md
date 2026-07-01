@@ -5,6 +5,21 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): audit workstreams **F**
+> (UX/IA/aesthetics) and **G** (security/risk/testing/ops) implemented together via
+> 4 parallel agents on disjoint files. F: first-class `redTeamVerdict` + "Bear
+> Review" block, Bear-veto audit, visible ⌘K, Macro/Tax tab overflow, tap-to-expand
+> rationale, EmptyState/skeleton + elevation/blur/icon token scales, `docs/design/
+> visual-system.md`, phase-8 IA fix. G: chat/scan rate limits, OAuth-token at-rest
+> encryption, constant-time admin compare + CSP/security headers (default-off),
+> drawdown/correlation-gate verification, an e2e money-path test + default-safe
+> live-order pre-flight guard, a default-off per-user/day token-budget ceiling +
+> query-embedding LRU, an **account-deletion coverage fix** (4 user-scoped tables
+> were escaping deletion), and Langfuse prompt-version/veto stamping. All new
+> behavior is default-off; paper/Test mode unchanged. Deferred (noted): the
+> `strategy.ts` god-module split and interval-scheduler budget wiring. Verify quartet
+> green locally (1720 tests); see `docs/rollouts/2026-07-01-{ux-ia-aesthetics,
+> security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value

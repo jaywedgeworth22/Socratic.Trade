@@ -620,6 +620,18 @@ export interface TradeProposal {
    */
   takeProfitBand?: number;
   takeProfitBasis?: number;
+  /**
+   * Red Team (Bear) debate verdict for this proposal, mirroring `RedTeamDebateResult`
+   * (src/lib/red-team.ts). Set by the strategy loop when the Red Team debate runs on a
+   * high-conviction proposal; surfaced as its own "Bear Review" block in the dashboard so the
+   * critique isn't buried inside the truncated rationale. Optional so existing/persisted proposals
+   * and test fixtures that predate the field render unchanged.
+   *   - `rejected`: the Bear found a critical flaw (the proposal is dropped upstream, so a persisted
+   *     proposal will normally have `rejected: false`; the field records the surviving verdict).
+   *   - `available`: the debate actually ran and returned a verdict (vs skipped / failed-open).
+   *   - `reason`: the Bear's counter-argument or approval reasoning.
+   */
+  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string };
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
