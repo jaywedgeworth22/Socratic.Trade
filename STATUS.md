@@ -4,6 +4,28 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Settings & navigation redesign proposal (large-team, docs-only) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv`. **Docs-only; no app code changed** — a canonical
+proposal to fix the "Frankenstein" IA the owner called out (Strategy config in 5 places; duplicated
+"Tax"/"Notifications" labels; three un-named multi-account concepts). Produced by a large orchestrated
+workflow (`wf_000ecc50-7eb`: **48 agents, ~3.5M tokens**) running exactly the two-track method the owner
+asked for — one **informed** team + two **blind greenfield** teams (given only a layout-agnostic
+capability inventory, forbidden from reading the current UI) + one **pattern-led** team, then
+adjudication → adversarial red-team → concrete artifacts. Deliverable:
+`docs/settings-navigation-redesign.md` (diagnosis, canonical target design v2, 5 wireframes, field-level
+scope-tagged settings tree, full current→new migration table, 5-phase build plan, must-fix gaps, open
+questions) + a 10-file appendix corpus under `docs/settings-navigation-redesign/`. Convergent spine (all
+teams independently): **account = primary object**; nav collapses 7+4 tabs → **6 verb destinations**
+(Dashboard/Approvals/Scan/Strategy/Guardrails/Results) + off-rail Settings + Assistant overlay;
+**Strategy → one editable home** (Studio modal deleted, twin TuningCard `:3725/:4441` merged);
+**money-reality (Test/Paper/Live) and authority (Propose/Decide) are two orthogonal dials**; **settings
+split by scope first**; presets are **copy-on-bind**, scope validated **server-side on every write**.
+Design anchors were re-verified against `HEAD 0f6bf0a` inside the workflow (e.g. wash-sale enforced
+`policy.ts:311`; `test→paper` wash-sale leak `tax.ts:113`; `USER_LEVEL_POLICY_FIELDS`=3). **Next:** owner
+approves direction + the 7 open questions; **Phase 1 (pure relabel + scope-surfacing) is a safe first PR**.
+Complementary to `docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
+See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
+
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
 analysis + sequenced plan: `docs/market-data-freshness-decision.md` +

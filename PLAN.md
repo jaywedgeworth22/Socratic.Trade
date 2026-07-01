@@ -5,6 +5,18 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/settings-navigation-redesign-a3k1yv`): **settings & navigation IA
+> redesign proposal** (docs-only, no code). Large-team workflow (`wf_000ecc50-7eb`, 48
+> agents) using the owner-requested two-track method (one informed team + two blind
+> greenfield teams that never saw the current UI + one pattern-led team → adjudication →
+> red-team → artifacts). Canonical target: account = primary object; 7+4 tabs collapse to
+> 6 verb destinations + off-rail Settings + Assistant overlay; Strategy consolidates to one
+> editable home; money-reality vs authority split into two dials; settings split by scope
+> first; copy-on-bind presets; server-side write-time scope validation. Deliverable
+> `docs/settings-navigation-redesign.md` (+ appendix corpus). Complements — does not replace
+> — the settings-and-universe-overhaul field-completeness program. No roadmap phase changed;
+> Phase 1 (relabel + scope-surfacing) is a safe first PR pending owner approval. See
+> `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value
