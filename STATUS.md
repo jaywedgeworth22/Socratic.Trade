@@ -4,6 +4,32 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - Alpaca streams enabled + stale-credential fix; coordination note re: Codex new-broker work
+Branch `claude/affectionate-franklin-a52935`. At the owner's explicit request, enabled the
+3 previously-disabled Alpaca streams in production (`STREAMS_ALPACA_NEWS_ENABLED`,
+`STREAMS_ALPACA_TRADE_UPDATES_ENABLED`, `STREAMS_ALPACA_PRICE_EVENTS_ENABLED`) plus the
+`TRIGGER_ENGINE` prerequisite the price-events stream needs to start at all (broader
+scope than just price events — see rollout note). Found and fixed a real bug while
+verifying: `alpaca-news-stream.ts`/`alpaca-trade-updates-stream.ts` were reading Alpaca
+credentials from a stale legacy `user_api_keys` row (last touched 2026-06-22) instead of
+the actively-used `connected_accounts` record (rotated 2026-06-29) the rest of the app
+reads from — added `resolveAlpacaStreamAccount()` (`db-api-keys.ts`) to fix this, plus
+picking the correct live-vs-paper trade_updates WS host. **Not yet deployed to
+`trading-live`** — the `.env.local` flags are live on the production box now, but the
+credential-resolution code fix is only pushed to this branch/PR, so the 2 auth-dependent
+streams will keep reconnect-looping on `HTTP 401` in production until this merges +
+deploys. Price-events stream IS running correctly but has nothing to watch (`local`'s
+`user_watchlist` is empty) — a content gap, not a bug. See
+`docs/rollouts/2026-07-01-enable-alpaca-streams.md`.
+
+**Coordination**: the owner says Codex has separate, currently-unmerged work (on a dirty
+local worktree) adding new broker integrations (eToro/Public.com/IBKR per the earlier
+capability plan). Not pushed as of this note, so no branch to reference yet — check
+`git branch -r` for new codex/* branches before starting any new-broker work to avoid
+duplicating it. This session's work stayed in the "use Alpaca/Robinhood more fully" lane
+per `docs/broker-capability-plan.md`, not new-broker integration, specifically to avoid
+collision.
+
 ## 2026-06-30 - Broker reliability + capability audit (order confirmation, Alpaca news root cause, 5-broker plan)
 Branch `claude/affectionate-franklin-a52935` (same branch/PR as the share-class fix
 below). Three code fixes plus a diagnosis plus a research-backed plan, from a user

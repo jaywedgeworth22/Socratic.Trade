@@ -409,6 +409,36 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
   return { source: "none" };
 }
 
+/**
+ * Resolve Alpaca credentials for the process-level background WebSocket stream workers
+ * (news, trade_updates — see src/lib/streams/alpaca-*-stream.ts). These are single
+ * long-lived connections keyed to the `local` operator, not a per-request user, so they need
+ * the environment (paper vs live) alongside the key/secret to pick the right WS host — unlike
+ * resolveAlpacaMarketData, which only serves read-only market-data REST calls where paper vs
+ * live doesn't matter.
+ *
+ * Prefers the active connected Alpaca account (the modern, actively-maintained credential
+ * store — same one Settings -> Accounts writes to) over the legacy standalone
+ * `alpaca_paper_api_key`/`alpaca_paper_secret_key` user-API-key pair, which is not updated by
+ * the connected-accounts UI and can silently go stale (confirmed in production: the legacy
+ * pair was last touched 2026-06-22, while the account's real key was rotated 2026-06-29).
+ */
+export function resolveAlpacaStreamAccount(
+  userId: string = "local"
+): { apiKey: string; apiSecret?: string; environment: "paper" | "live" } | undefined {
+  const active = getActiveConnectedAccount(userId);
+  if (active?.broker === "alpaca") {
+    const detailed = getConnectedAccount(active.id, userId);
+    if (detailed?.apiKey) {
+      return { apiKey: detailed.apiKey, apiSecret: detailed.apiSecret, environment: detailed.environment === "live" ? "live" : "paper" };
+    }
+  }
+  const legacyKey = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey ?? (userId === LOCAL_USER ? process.env.ALPACA_PAPER_API_KEY?.trim() : undefined);
+  const legacySecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey ?? (userId === LOCAL_USER ? process.env.ALPACA_PAPER_SECRET_KEY?.trim() : undefined);
+  if (legacyKey) return { apiKey: legacyKey, apiSecret: legacySecret, environment: "paper" };
+  return undefined;
+}
+
 // ── LLM credential resolution (per-user-first, operator-funded failover) ─────
 //
 // LLM keys (openai/anthropic) are per-user-only in the generic resolver above, so `local` keeps
