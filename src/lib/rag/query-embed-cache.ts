@@ -9,21 +9,26 @@
  * This cache stores ONLY the 1024-dim query VECTOR — never Pinecone results. That's the key
  * safety property: Pinecone results depend on symbol/asOf/docType/section/source filters and
  * per-user scoping, all of which must stay live on every call. The query embedding itself is
- * provably user-independent and filter-independent (it's a pure function of
- * `${VOYAGE_MODEL}:${query.trim()}`), so caching it introduces no cross-user or stale-filter
- * leakage. Per-user access control lives entirely in the Pinecone filter, applied AFTER a cache
- * hit exactly as it would be after a fresh embed.
+ * user-independent and filter-independent (a function of `${VOYAGE_MODEL}:${normalizedQuery}`),
+ * so caching it introduces no cross-user or stale-filter leakage. Per-user access control lives
+ * entirely in the Pinecone filter, applied AFTER a cache hit exactly as it would be after a fresh
+ * embed.
  *
- * Default OFF via RAG_QUERY_EMBED_CACHE — when off, `getCachedQueryEmbedding` always returns
- * `undefined` (forcing a live embed) and `setCachedQueryEmbedding` is a no-op, so the default
- * retrieval path (a fresh Voyage call every time) is completely unchanged.
+ * Consolidated with G8b (PR #293): the key is NORMALIZED (trim + lowercase + collapsed whitespace)
+ * so trivial casing/spacing variants of the same question share a hit, and the cache is Default ON.
+ * Disable with RAG_QUERY_EMBED_CACHE=off (or 0/false/no) — then `getCachedQueryEmbedding` always
+ * returns `undefined` (forcing a live embed) and `setCachedQueryEmbedding` is a no-op.
  */
 
 import { envFlagOn } from "./env-flag";
 
-/** Returns true when RAG_QUERY_EMBED_CACHE is truthy. Default OFF. */
+/**
+ * Whether the query-embed cache is enabled. Default ON (consolidated G8b behavior): it stores only
+ * the query VECTOR, so it is safe to run by default and it saves redundant Voyage embeds under the
+ * free-tier rate limit. Disable with RAG_QUERY_EMBED_CACHE=off (or 0/false/no).
+ */
 export function queryEmbedCacheEnabled(): boolean {
-  return envFlagOn("RAG_QUERY_EMBED_CACHE", false);
+  return envFlagOn("RAG_QUERY_EMBED_CACHE", true);
 }
 
 const DEFAULT_MAX_ENTRIES = 200;
@@ -50,12 +55,23 @@ function ttlMs(): number {
 }
 
 /**
- * Build the cache key. Deliberately omits userId and any per-user/filter context — the key is
- * ONLY `${model}:${query.trim()}`, which is the entire point: the query vector is the same
- * regardless of who's asking or what Pinecone filter will be applied afterward.
+ * Normalize query text for cache-key purposes: trim, lowercase, and collapse internal whitespace
+ * (ported from G8b). Near-identical queries that differ only by casing/spacing share one entry,
+ * raising the hit rate on strategy-scan fan-outs. Tradeoff: a casing/spacing variant is served the
+ * cached vector of its normalized form rather than a fresh per-variant embed — acceptable for a
+ * retrieval-quality cache, since the query vector (not Pinecone results) is what's reused.
+ */
+export function normalizeQueryCacheKey(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Build the cache key. Deliberately omits userId and any per-user/filter context — the key is ONLY
+ * `${model}:${normalizeQueryCacheKey(query)}`, which is the entire point: the query vector is the
+ * same regardless of who's asking or what Pinecone filter will be applied afterward.
  */
 export function queryEmbedCacheKey(model: string, query: string): string {
-  return `${model}:${query.trim()}`;
+  return `${model}:${normalizeQueryCacheKey(query)}`;
 }
 
 /** Look up a cached query embedding. Returns `undefined` on a miss, expiry, or when the flag is off. */

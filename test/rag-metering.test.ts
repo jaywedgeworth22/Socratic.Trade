@@ -27,7 +27,7 @@ afterAll(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // Dynamic imports so the module cache sees the overridden DATABASE_URL.
-const { recordRagUsage, getRagUsageSummary, meterEmbed, meterRerank } = await import("../src/lib/rag-metering");
+const { recordRagUsage, getRagUsageSummary, meterEmbed, meterRerank, meterPineconeQuery } = await import("../src/lib/rag-metering");
 const { getChunkCoverage, filterNewDocumentChunks, insertDocumentChunks } = await import("../src/lib/db");
 
 function sha16(text: string): string {
@@ -54,6 +54,23 @@ describe("rag-metering", () => {
     // Rerank: 3 documents in one call
     const rerankTotal = rerankRows.reduce((s, r) => s + r.batchCount, 0);
     expect(rerankTotal).toBe(3);
+  });
+
+  it("meter helpers attribute retrieval spend to the requesting userId (not default 'local')", () => {
+    // Regression: the daily LLM/RAG budget filters rag_usage by userId, so retrieval meters MUST book
+    // under the requesting user or a non-local user's ceiling never trips (Codex P2 on 1e14e848fb).
+    meterEmbed(["query for alice"], undefined, "alice");
+    meterPineconeQuery(7, "alice");
+    meterRerank("alice q", ["d1", "d2"], undefined, "alice");
+
+    const alice = getRagUsageSummary().filter((r) => r.userId === "alice");
+    expect(alice.some((r) => r.operation === "embed")).toBe(true);
+    expect(alice.some((r) => r.operation === "query")).toBe(true);
+    expect(alice.some((r) => r.operation === "rerank")).toBe(true);
+    // And nothing from these calls leaked to the default "local" bucket.
+    const localAfter = getRagUsageSummary().filter((r) => r.userId === "local");
+    expect(localAfter.every((r) => r.userId === "local")).toBe(true); // sanity
+    expect(alice.reduce((s, r) => s + r.batchCount, 0)).toBeGreaterThan(0);
   });
 
   it("recordRagUsage never throws", () => {

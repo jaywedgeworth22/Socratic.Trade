@@ -230,6 +230,20 @@ export interface TuningSettings {
    * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
    */
   minProposalScoreThreshold?: number;
+  /**
+   * Hard per-user/day LLM + RAG TOKEN ceiling. When today's summed model + retrieval usage reaches
+   * this, the run skips every model/RAG spend for the rest of the day (non-LLM risk maintenance still
+   * runs). `undefined` (blank in the UI) INHERITS the operator env default
+   * `TRIGGER_LLM_DAILY_TOKEN_BUDGET`; an explicit `0` means NO LIMIT (opt out of the default); a
+   * positive value is that ceiling. Modifiable in Settings → Tuning. Enforced at the spend primitives
+   * (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   */
+  llmDailyTokenBudget?: number;
+  /**
+   * Hard per-user/day LLM + RAG COST ceiling in USD (estimated). Same semantics as
+   * `llmDailyTokenBudget`: `undefined` inherits env `TRIGGER_LLM_DAILY_COST_BUDGET_USD`, `0` = no limit.
+   */
+  llmDailyCostBudgetUsd?: number;
 
   // ── Workstream B: learning-loop auto-tuning (all DEFAULT OFF) ──────────────────
   /**
@@ -765,6 +779,18 @@ export interface TradeProposal {
    */
   takeProfitBand?: number;
   takeProfitBasis?: number;
+  /**
+   * Red Team (Bear) debate verdict for this proposal, mirroring `RedTeamDebateResult`
+   * (src/lib/red-team.ts). Set by the strategy loop when the Red Team debate runs on a
+   * high-conviction proposal; surfaced as its own "Bear Review" block in the dashboard so the
+   * critique isn't buried inside the truncated rationale. Optional so existing/persisted proposals
+   * and test fixtures that predate the field render unchanged.
+   *   - `rejected`: the Bear found a critical flaw (the proposal is dropped upstream, so a persisted
+   *     proposal will normally have `rejected: false`; the field records the surviving verdict).
+   *   - `available`: the debate actually ran and returned a verdict (vs skipped / failed-open).
+   *   - `reason`: the Bear's counter-argument or approval reasoning.
+   */
+  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string };
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
