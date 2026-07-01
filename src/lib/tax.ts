@@ -1,7 +1,7 @@
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { listConnectedAccounts, listFillEvents } from "./db";
 import { normalizeSymbol } from "./money";
-import { getClosedLotsDetailed, getOpenLots, type ClosedLot } from "./performance";
+import { getClosedLotsDetailed, getOpenLots, type ClosedLot, type PrefetchedFills } from "./performance";
 import type { FillEvent, FillSource, TaxSettings, TaxationType } from "./types";
 
 const MS_PER_DAY = 86_400_000;
@@ -72,10 +72,16 @@ function holdingDays(entryAt: string | undefined, exitAt: string | undefined): n
  * window) would create a wash sale and disallow that loss (IRC §1091). Used by the
  * policy guardrail to block new buys.
  */
-export function getWashSaleLockedSymbols(accountNumber: string, source: FillSource, now = new Date(), userId: string = "local"): Set<string> {
+export function getWashSaleLockedSymbols(
+  accountNumber: string,
+  source: FillSource,
+  now = new Date(),
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): Set<string> {
   const locked = new Set<string>();
   const cutoff = now.getTime() - WASH_WINDOW_DAYS * MS_PER_DAY;
-  for (const lot of getClosedLotsDetailed(accountNumber, source, userId)) {
+  for (const lot of getClosedLotsDetailed(accountNumber, source, userId, prefetched)) {
     if (lot.pnl >= 0 || lot.side !== "long" || !lot.exitAt || !lot.symbol) continue;
     const exitT = new Date(lot.exitAt).getTime();
     if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) locked.add(normalizeSymbol(lot.symbol));
@@ -154,13 +160,17 @@ export function getTaxSummary(
   currentPrices: Record<string, number> = {},
   settings?: Partial<TaxSettings>,
   now = new Date(),
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): TaxSummary {
   const tax = resolveTaxSettings(settings);
   const taxYear = now.getFullYear();
-  const fills = listFillEvents(accountNumber, source, 500, userId);
-  const closedLots = getClosedLotsDetailed(accountNumber, source, userId);
-  const openLotsRaw = getOpenLots(accountNumber, source, userId);
+  // Prefer the pre-fetched source-matching fills so a shared request replays them once; the direct
+  // `detectWashSales` read here reuses the same array instead of a third SELECT for the same source.
+  const prefetchedSourceFills = source === "live" ? prefetched?.liveFills : source === "paper" ? prefetched?.paperFills : undefined;
+  const fills = prefetchedSourceFills ?? listFillEvents(accountNumber, source, 500, userId);
+  const closedLots = getClosedLotsDetailed(accountNumber, source, userId, prefetched);
+  const openLotsRaw = getOpenLots(accountNumber, source, userId, prefetched);
 
   const washSales = detectWashSales(fills, closedLots, taxYear);
   const disallowedKeys = new Set(washSales.map((w) => `${w.symbol}:${w.soldAt}`));
@@ -229,7 +239,7 @@ export function getTaxSummary(
     estimatedLongTermTax: Number(estimatedLongTermTax.toFixed(2)),
     estimatedTaxLiability: Number((estimatedShortTermTax + estimatedLongTermTax).toFixed(2)),
     washSales,
-    lockedSymbols: tax.washSaleGuard ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId)) : [],
+    lockedSymbols: tax.washSaleGuard ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId, prefetched)) : [],
     openLots,
     harvestCandidates,
     settings: tax

@@ -4,6 +4,66 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Audit work-split Chats D + E implemented (Claude)
+Branch `claude/trading-audit-d-e-dpw0h7`. Implemented both single-repo workstreams from
+`docs/reviews/2026-07-01-audit-work-split.md` using two parallel agents (disjoint file sets)
+plus orchestrator integration (Finnhub item 4, env repair, full verify).
+
+**Chat D — data sources & breadth (all 6):** `daysToEarnings` + `institutionOwnershipPct`
+added to the existing authenticated Yahoo `quoteSummary` call (zero added API cost, threaded
+through the full per-field enrichment checklist, degrade to `undefined` — never fabricated);
+synthetic Yahoo bid/ask now provenance-tagged `yahoo-finance-synthetic`, and `hasAskData`
+(via new `hasRealAsk`) + the marketable-limit calc exclude it so a placeholder spread no
+longer anchors live limit prices (correctness/safety fix); new default-off Robinhood
+options/IV enrichment tier (`RobinhoodOptionsEnrichmentProvider`,
+`src/lib/robinhood-options.ts`); default-off active per-provider circuit breaker consulting
+`getServiceHealthSummaries()`; FMP added as a second short-interest source with a ≥5pp
+Yahoo-vs-FMP disagreement bulletin (`MarketScan.source` credits `fmp` only when it actually
+contributed).
+
+**Chat E — request-path & bundle performance (items 1,2,3,4,5,7,8; item 6 deferred):**
+`getDashboardSnapshot` fetches live+paper fills once and threads them through the perf/tax/feed
+functions (collapsing ~9 `listFillEvents` replays → 1 live + 1 paper; all new params optional/
+backward-compatible); batched proposal lookups (`getProposalsByIds`, one `IN (...)`); unified
+feed capped at 60; `next/dynamic` code-split of `StrategyFlow` + `SymbolDrilldown` (verified
+`@xyflow/react` is out of the dashboard first-load JS via the react-loadable manifest); sqlite
+`cache_size`/`mmap_size` pragmas; Playwright-CI `.next/cache` restore step. Item 4 (Finnhub
+5→4 REST calls) landed by the orchestrator as `FINNHUB_DROP_RECOMMENDATION` (default-off, drops
+`stock/recommendation`; analyst ratings still backstopped by Yahoo/FMP/Alpha-Vantage). E is a
+pure refactor — no user-visible number or trading behavior changes.
+
+**New env flags (all default-off / behavior-preserving):**
+`ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED` (+`ROBINHOOD_OPTIONS_TTL_MS`),
+`ENRICHMENT_CIRCUIT_BREAKER_ENABLED` (+`ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN`),
+`SHORT_INTEREST_DISAGREEMENT_PCT_PT` (default 5), `FINNHUB_DROP_RECOMMENDATION`.
+
+**Verification:** `npx tsc --noEmit` clean (0 errors); `npm run lint` 0 errors (258
+grandfathered warnings); `npm run build` clean (item-5 code-split confirmed in the build
+output); `npm test` = **1689 passed**, with **8 failures confined to `congress-*` test files
+only**. Those 8 are an environmental sandbox artifact: the private
+`@jaywedgeworth22/congress-trading-shared` GitHub Packages dep can't be authenticated here
+(no `read:packages` token — same limitation noted in the entry below), so a permissive local
+stub stands in for it and can't replicate the real package's exact Zod schemas / API-path
+constants. Those files are untouched by this change; the CI `verify` gate (real package) is
+authoritative. See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+`docs/rollouts/2026-07-01-performance-efficiency.md`.
+
+**Codex PR review (5 of 6 P2s fixed, tested):** options cache keyed per-user (no cross-user
+token-derived leak); underlying price threaded into option metrics (+`underlying_symbol` MCP
+arg); circuit breaker requires the 5-consecutive-failure condition (no single-cold-failure
+blackout); FMP transient short-interest failure no longer caches a row missing the disagreement
+input. Deferred: per-credential circuit-breaker lane (interface change across ~9 providers on a
+default-off feature) — tracked in the rollout note. gitleaks false positive (a `clearEnrichmentCache`
+identifier) resolved via a narrow `.gitleaks.toml` allowlist. **2nd review round (4 more P2s fixed):**
+unified-feed cap now keeps all proposal-bearing groups (ledger reconciliation was regressing for
+>60 groups) and caps only the render-only tail; marketable-limit prices each side independently
+(a synthetic ask no longer discards a real bid); `parseDaysToEarnings` keeps same-day/straddling
+windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envelope.
+
+**Next / follow-ups:** UI surfacing of the new D fields (earnings, institution %, IV, put/call,
+disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
+MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
+(monolithic-snapshot whole-tree re-render refactor, audit §6.1).
 ## 2026-07-01 - Alpaca account-editor "Custom Endpoint" checkbox bug (base_url/environment drift)
 Branch `claude/affectionate-franklin-a52935`. User reported a newly-added live Alpaca
 account ("Alpaca Standard") failing with `Request failed with status code 401` on the

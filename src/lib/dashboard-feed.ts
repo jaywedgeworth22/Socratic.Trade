@@ -564,6 +564,11 @@ export interface UnifiedActivityGroup {
   accountLabel?: string;
 }
 
+/** Source-level cap on the PROPOSAL-LESS unified-feed tail (fills with no proposal + notifications),
+ *  which is render-only (client slices the rendered feed to 50). Proposal-bearing groups are never
+ *  capped — the decision ledger reconciles their statuses for up to 100 recent proposals. */
+export const UNIFIED_FEED_MAX_GROUPS = 60;
+
 export function buildUnifiedFeed(input: {
   audit: SourceAuditEvent[];
   notifications: NotificationEvent[];
@@ -951,7 +956,17 @@ export function buildUnifiedFeed(input: {
     });
   }
 
-  return unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  // Bound the shipped payload WITHOUT changing observable output. The client uses this feed two ways:
+  // (1) it renders only the newest 50 (`feed.slice(0, 50)`), and (2) `decisionLedgerItems` reconciles
+  // fill/order-derived statuses for up to 100 recent proposals from it. So we keep EVERY
+  // proposal-bearing group (reconciliation must stay complete) and cap only the proposal-less tail
+  // (fills without a proposal + notifications), which is render-only. Because any proposal-less group
+  // in the newest 50 is necessarily within the newest 60 proposal-less groups, the rendered newest-50
+  // is unchanged; only the far, render-invisible tail is trimmed.
+  const sorted = unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const withProposal = sorted.filter((g) => g.proposalId);
+  const withoutProposal = sorted.filter((g) => !g.proposalId).slice(0, UNIFIED_FEED_MAX_GROUPS);
+  return [...withProposal, ...withoutProposal].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function getProposalIdFromAudit(event: SourceAuditEvent): string | undefined {

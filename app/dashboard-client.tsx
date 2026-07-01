@@ -113,13 +113,12 @@ import {
 } from "./settings-scope";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
+import dynamic from "next/dynamic";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
-import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
-import { SymbolDrilldown, SymbolDrilldownTitle } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
@@ -148,6 +147,30 @@ import {
   CUSTOM_MODEL_ID_SEED as CUSTOM_STRATEGY_MODEL_SEED,
   DEFAULT_LLM_MODEL
 } from "./ui/llm-model-catalog";
+
+// Code-split the two heaviest tab payloads out of the initial dashboard bundle:
+//  • StrategyFlow pulls in @xyflow/react (~3.9MB) + its CSS — only needed when the Strategy Flow
+//    modal opens.
+//  • SymbolDrilldown pulls in PriceChart (which lazy-loads lightweight-charts) — only needed when a
+//    symbol drilldown slide-over opens.
+// Both are client-only (`ssr: false`) with lightweight loading fallbacks matching our skeleton /
+// EmptyState conventions, so @xyflow/react and the drilldown chart boundary never ship on first load.
+const StrategyFlow = dynamic(() => import("./ui/strategy-flow").then((m) => m.StrategyFlow), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center py-10">
+      <EmptyState icon={<Network size={18} />} title="Loading strategy flow…" />
+    </div>
+  )
+});
+const SymbolDrilldown = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldown), {
+  ssr: false,
+  loading: () => <EmptyState title="Loading symbol details…" />
+});
+const SymbolDrilldownTitle = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldownTitle), {
+  ssr: false,
+  loading: () => <span className="text-sm font-medium text-muted">Symbol</span>
+});
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };

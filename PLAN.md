@@ -5,6 +5,25 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/trading-audit-d-e-dpw0h7`): audit work-split Chats D+E
+> (data-source breadth + request-path/bundle performance), two parallel agents +
+> orchestrator integration. **D (data sources):** `daysToEarnings` and
+> `institutionOwnershipPct` from the existing Yahoo `quoteSummary` call (zero added
+> cost); synthetic Yahoo bid/ask now provenance-tagged `yahoo-finance-synthetic` so
+> `hasAskData`/marketable-limit math no longer treats it as a real quoted ask
+> (correctness fix); a default-off Robinhood options/IV enrichment tier
+> (`RobinhoodOptionsEnrichmentProvider`); a default-off active per-provider circuit
+> breaker; FMP as a second short-interest source with a ≥5pp disagreement bulletin;
+> and a default-off Finnhub `stock/recommendation`-drop lever (5→4 calls/symbol).
+> **E (performance):** collapse ~9 redundant `listFillEvents` replays to one live +
+> one paper per dashboard request; batch proposal lookups (`getProposalsByIds`); cap
+> the unified feed at 60; `next/dynamic` code-split of `StrategyFlow`/`SymbolDrilldown`
+> (verified `@xyflow/react` out of the dashboard first-load JS); sqlite
+> `cache_size`/`mmap_size` pragmas; Playwright-CI `.next/cache` restore. All new
+> behavior behind default-off env flags; E is a pure refactor (identical outputs). The
+> monolithic-snapshot re-render refactor is tracked as a deferred follow-up. No roadmap
+> change; see `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+> `docs/rollouts/2026-07-01-performance-efficiency.md`.
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): Alpaca account-editor
 > "Custom Endpoint" checkbox fix - a live Alpaca account (`environment: "live"`)
 > ended up with `base_url` stuck on Alpaca's paper endpoint, causing a

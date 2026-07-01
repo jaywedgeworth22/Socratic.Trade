@@ -145,6 +145,58 @@ export function getProposal(id: string, userId: string = "local"):
   };
 }
 
+type ProposalRow = NonNullable<ReturnType<typeof getProposal>>;
+
+/**
+ * Batch variant of `getProposal`: resolve many proposal ids for a user in a SINGLE
+ * `WHERE id IN (...)` query, returning a Map keyed by id. Replaces the per-row point queries the
+ * dashboard feed builders otherwise issue (one prepared-statement round trip per audit row + fill).
+ * Ids not found (or belonging to another user) are simply absent from the Map — identical to
+ * `getProposal` returning undefined per-id. Row parsing mirrors `getProposal` exactly.
+ */
+export function getProposalsByIds(ids: string[], userId: string = "local"): Map<string, ProposalRow> {
+  const result = new Map<string, ProposalRow>();
+  const distinct = Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0)));
+  if (distinct.length === 0) return result;
+  type RawRow = {
+    id: string;
+    run_id: string;
+    account_number: string;
+    created_at: string;
+    proposal: string;
+    decision: string;
+    review: string | null;
+    estimated_notional: number | null;
+    status: string;
+    trade_thesis_tag: string | null;
+    entry_market_regime: string | null;
+    execution_mode: string | null;
+  };
+  const placeholders = distinct.map(() => "?").join(", ");
+  const rows = getDb()
+    .prepare(
+      `SELECT id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, status, trade_thesis_tag, entry_market_regime, execution_mode FROM trade_proposals WHERE user_id = ? AND id IN (${placeholders})`
+    )
+    .all(userId, ...distinct) as RawRow[];
+  for (const row of rows) {
+    result.set(row.id, {
+      id: row.id,
+      runId: row.run_id,
+      accountNumber: row.account_number,
+      createdAt: row.created_at,
+      proposal: JSON.parse(row.proposal) as TradeProposal,
+      decision: JSON.parse(row.decision) as PolicyDecision,
+      review: row.review ? (JSON.parse(row.review) as ReviewedOrder) : undefined,
+      estimatedNotional: row.estimated_notional ?? undefined,
+      status: row.status,
+      tradeThesisTag: row.trade_thesis_tag ?? undefined,
+      entryMarketRegime: row.entry_market_regime ?? undefined,
+      executionMode: row.execution_mode ? (row.execution_mode as ExecutionMode) : undefined
+    });
+  }
+  return result;
+}
+
 export function updateProposalStatus(
   id: string,
   status: string,

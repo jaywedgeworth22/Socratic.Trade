@@ -3,7 +3,7 @@ import {
   getActiveStrategyProfile,
   getAutoResumeOnBoot,
   getPolicy,
-  getProposal,
+  getProposalsByIds,
   getStrategyPrompt,
   latestAuditByKind,
   listAudit,
@@ -38,7 +38,8 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
-import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { PrefetchedFills } from "./performance";
+import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
@@ -334,14 +335,24 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     ? dailyExecutionStats(accountNumber, new Date(), userId)
     : { orderCount: 0, openingOrderCount: 0, notional: 0 };
 
+  // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse + FIFO replay)
+  // and thread the parsed arrays into every downstream consumer — performance summary, scorecards,
+  // tax, the paper projection, and the unified feed — instead of each re-issuing its own query.
+  const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", 500, userId) : [];
+  const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", 500, userId) : [];
+  const prefetchedFills: PrefetchedFills = { liveFills, paperFills };
+
   // Build a live current-price map (broker quotes for held + paper symbols) so the paper
   // account and all P&L are marked to the same prices Live uses.
   let currentPrices: Record<string, number> = {};
   let paperProjection: ReturnType<typeof getPaperPortfolioProjection> | undefined;
   if (accountNumber && portfolio) {
-    const paperPre = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, userId });
+    // Single projection replay (reuses the pre-fetched paper fills). We derive the price symbols
+    // from its open positions, fetch quotes, then re-mark the SAME positions to those prices in
+    // place — collapsing the old two back-to-back getPaperPortfolioProjection calls into one.
+    const projection = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, userId, paperFills });
     const priceSymbols = Array.from(
-      new Set([...positions.map((p) => normalizeSymbol(p.symbol)), ...paperPre.positions.map((p) => normalizeSymbol(p.symbol))])
+      new Set([...positions.map((p) => normalizeSymbol(p.symbol)), ...projection.positions.map((p) => normalizeSymbol(p.symbol))])
     );
     const quotes = priceSymbols.length > 0 ? await gateway.getEquityQuotes(accountNumber, priceSymbols) : {};
     currentPrices = Object.fromEntries(
@@ -354,14 +365,29 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       const symbol = normalizeSymbol(position.symbol);
       if (!(symbol in currentPrices) && position.quantity > 0) currentPrices[symbol] = position.marketValue / position.quantity;
     }
-    paperProjection = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId });
+    // Re-mark the already-replayed positions to the resolved prices (fall back to averageCost when a
+    // price is missing) — identical math to a fresh getPaperPortfolioProjection({ currentPrices }),
+    // but without a second fill replay.
+    const remarkedPositions = projection.positions.map((position) => {
+      const mark = currentPrices[normalizeSymbol(position.symbol)] ?? position.averageCost;
+      return { ...position, marketValue: position.quantity * mark };
+    });
+    const equityMarketValue = remarkedPositions.reduce((sum, position) => sum + position.marketValue, 0);
+    paperProjection = {
+      positions: remarkedPositions,
+      portfolio: {
+        ...projection.portfolio,
+        equityMarketValue,
+        totalMarketValue: projection.portfolio.cash + equityMarketValue
+      }
+    };
   }
   const displayPortfolio = policy.paperMode ? paperProjection?.portfolio ?? portfolio : portfolio;
   const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
-  const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId) : undefined;
+  const performance = accountNumber ? getPerformanceSummary(accountNumber, currentPrices, userId, prefetchedFills) : undefined;
   const executionState = deriveExecutionState(policy, activeAccount);
   const scorecardSource = fillSourceForExecutionMode(executionState);
   // SPY-benchmark scoreboard for the active execution mode's equity curve. Best-effort: a SPY fetch
@@ -371,10 +397,10 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     const benchmark = await computeSpyBenchmark(curve, userId).catch(() => null);
     if (benchmark) performance.benchmark = benchmark;
   }
-  const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
-  const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId) : [];
+  const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
+  const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
   const tax = accountNumber
-    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId)
+    ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId, prefetchedFills)
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
@@ -388,6 +414,52 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const audit = policy.connectedAccountId
     ? listAudit(100, userId, policy.connectedAccountId, true)
     : listAudit(100, userId);
+
+  // Unified fills for the feed: merge the pre-fetched live + paper arrays (oldest-first, capped at
+  // 500) instead of re-issuing the unfiltered listFillEvents query the feed builder used to trigger.
+  const unifiedFills: FillEvent[] = accountNumber
+    ? [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt)).slice(0, 500)
+    : [];
+
+  // Batch every proposal point-query the audit/unified-feed builders would otherwise issue one-by-one:
+  // collect all distinct proposalIds referenced by audit rows, fills, and notifications, run ONE
+  // `WHERE id IN (...)` query, and back a Map-keyed closure with it (with a memoized single-row
+  // fallback for any id not pre-collected, so output is identical to the old per-row getProposal).
+  const referencedProposalIds = new Set<string>();
+  const addProposalId = (value: unknown) => {
+    if (typeof value === "string" && value) referencedProposalIds.add(value);
+  };
+  const asRec = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  for (const event of audit) {
+    const payload = asRec(event.payload);
+    const nested = asRec(payload.payload);
+    addProposalId(payload.proposalId);
+    addProposalId(nested.proposalId);
+    addProposalId(asRec(nested.proposal).id);
+    addProposalId(asRec(nested.proposal).proposalId);
+    addProposalId(asRec(nested.fill).proposalId);
+  }
+  for (const fill of unifiedFills) addProposalId(fill.proposalId);
+  for (const notification of notifications) {
+    const payload = asRec(notification.payload);
+    addProposalId(payload.proposalId);
+    addProposalId(asRec(payload.fill).proposalId);
+    addProposalId(asRec(payload.proposal).id);
+    addProposalId(asRec(payload.proposal).proposalId);
+  }
+  const proposalsById = getProposalsByIds([...referencedProposalIds], userId);
+  const proposalFallbackCache = new Map<string, { proposal: TradeProposal } | undefined>();
+  const getProposalById = (proposalId: string): { proposal: TradeProposal } | undefined => {
+    const batched = proposalsById.get(proposalId);
+    if (batched) return { proposal: batched.proposal };
+    if (proposalFallbackCache.has(proposalId)) return proposalFallbackCache.get(proposalId);
+    const single = getProposalsByIds([proposalId], userId).get(proposalId);
+    const resolved = single ? { proposal: single.proposal } : undefined;
+    proposalFallbackCache.set(proposalId, resolved);
+    return resolved;
+  };
+
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,
     livePositions: positions,
@@ -400,10 +472,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     audit,
     symbolMetaBySymbol,
     accountLabelById,
-    getProposalById: (proposalId) => {
-      const proposal = getProposal(proposalId, userId);
-      return proposal ? { proposal: proposal.proposal } : undefined;
-    }
+    getProposalById
   });
 
   // Macro & market-regime board for the Macro tab (FRED macro + derived metrics + free
@@ -457,14 +526,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const unifiedFeed = buildUnifiedFeed({
     audit,
     notifications,
-    fills: accountNumber ? listFillEvents(accountNumber, undefined, 500, userId) : [],
+    fills: unifiedFills,
     orders,
     symbolMetaBySymbol,
     accountLabelById,
-    getProposalById: (proposalId) => {
-      const proposal = getProposal(proposalId, userId);
-      return proposal ? { proposal: proposal.proposal } : undefined;
-    }
+    getProposalById
   });
   const clientAudit = audit.map((event) => ({
     id: event.id,
