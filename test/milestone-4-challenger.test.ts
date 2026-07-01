@@ -280,10 +280,10 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     clearEnrichmentCache();
     vi.stubGlobal("fetch", vi.fn());
     // Exercise the FMP short_interest call's cache-poisoning participation (default-off in prod).
-    process.env.FMP_SHORT_INTEREST_ENABLED = "on";
+    process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED = "on";
   });
   afterEach(() => {
-    delete process.env.FMP_SHORT_INTEREST_ENABLED;
+    delete process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED;
   });
 
   it("prevents cache writes on Finnhub when a transient error occurs in at least one promise", async () => {

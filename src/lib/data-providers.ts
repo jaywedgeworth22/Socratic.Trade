@@ -114,12 +114,13 @@ export interface SymbolEnrichment {
   companyName?: string;
   pbRatio?: number;
   shortPercentOfFloat?: number;
-  // FMP's independent short-interest read, carried alongside the primary (Yahoo-first) value
-  // ONLY so the cascade can flag a material Yahoo-vs-FMP disagreement. Not a first-wins sourced
-  // field: the winning shortPercentOfFloat is still chosen by registration order via takeScalar.
-  shortPercentOfFloatFmp?: number;
-  // Set by the cascade when Yahoo and FMP short interest disagree beyond the threshold. Surfaced
-  // as an evidence bulletin rather than silently picking one source.
+  // A SECOND source's independent short-interest read (source-agnostic; gated OFF by default behind
+  // FUTURE_SOURCE_SHORT_INTEREST_ENABLED — see that helper), carried alongside the primary (Yahoo-first)
+  // value ONLY so the cascade can flag a material disagreement. Not a first-wins sourced field: the
+  // winning shortPercentOfFloat is still chosen by registration order via takeScalar.
+  shortPercentOfFloatSecondary?: number;
+  // Set by the cascade when the primary and the second source's short interest disagree beyond the
+  // threshold. Surfaced as an evidence bulletin rather than silently picking one source.
   shortInterestDisagreement?: string;
   beta?: number;
   fiftyTwoWeekHigh?: number;
@@ -902,8 +903,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("nearTheMoneyIv", name, r.nearTheMoneyIv);
         takeScalar("putCallRatio", name, r.putCallRatio);
         // FMP's independent short read is carried (not first-wins) so we can flag disagreement below.
-        if (base.shortPercentOfFloatFmp === undefined && r.shortPercentOfFloatFmp !== undefined) {
-          base.shortPercentOfFloatFmp = r.shortPercentOfFloatFmp;
+        if (base.shortPercentOfFloatSecondary === undefined && r.shortPercentOfFloatSecondary !== undefined) {
+          base.shortPercentOfFloatSecondary = r.shortPercentOfFloatSecondary;
         }
         takeScalar("targetMean", name, r.targetMean);
         takeScalar("targetHigh", name, r.targetHigh);
@@ -957,26 +958,28 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         this.contributingNames.add("alpha-vantage");
       }
 
-      // Short-interest cross-check: when the primary (Yahoo-first) shortPercentOfFloat and FMP's
-      // independent read disagree by more than SHORT_INTEREST_DISAGREEMENT_PCT_PT percentage points,
-      // record a disagreement note. We keep the first-wins primary value but flag it so the prompt
-      // and dashboard don't trust a single source silently. Both must be present for a comparison.
+      // Short-interest cross-check: when the primary (Yahoo-first) shortPercentOfFloat and the
+      // SECOND source's independent read disagree by more than SHORT_INTEREST_DISAGREEMENT_PCT_PT
+      // percentage points, record a disagreement note. Source-agnostic: the second source is wired
+      // behind FUTURE_SOURCE_SHORT_INTEREST_ENABLED (see the fetch site) — currently the (dead) FMP
+      // endpoint, but the field/flag are named generically so a real source can replace it. We keep
+      // the first-wins primary value but flag it so the prompt/dashboard don't trust one source.
       if (
         typeof base.shortPercentOfFloat === "number" &&
-        typeof base.shortPercentOfFloatFmp === "number" &&
+        typeof base.shortPercentOfFloatSecondary === "number" &&
         base.sources?.shortPercentOfFloat !== "fmp"
       ) {
-        const delta = Math.abs(base.shortPercentOfFloat - base.shortPercentOfFloatFmp);
+        const delta = Math.abs(base.shortPercentOfFloat - base.shortPercentOfFloatSecondary);
         if (delta >= shortInterestDisagreementThresholdPct()) {
           const primarySrc = sources.shortPercentOfFloat ?? "primary";
           base.shortInterestDisagreement =
             `Short interest disagreement: ${primarySrc} ${base.shortPercentOfFloat.toFixed(1)}% vs ` +
-            `fmp ${base.shortPercentOfFloatFmp.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
+            `secondary ${base.shortPercentOfFloatSecondary.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
           this.contributingNames.add("fmp");
         }
       }
       // The carrier field never leaves the cascade — it exists only to compute the flag above.
-      delete base.shortPercentOfFloatFmp;
+      delete base.shortPercentOfFloatSecondary;
 
       base.sources = sources;
       merged[symbol] = base;
@@ -1065,13 +1068,15 @@ export function shortInterestDisagreementThresholdPct(): number {
 }
 
 /**
- * Whether to call FMP's short-interest endpoint for the second-source disagreement cross-check.
- * DEFAULT OFF: FMP's public API does not currently provide a short-interest endpoint (their FAQ
- * confirms it), so the call 404s for every symbol and never contributes. Enable only if your FMP
- * plan/endpoint actually returns short interest, or when wiring a different verified source here.
+ * Whether to call the SECOND short-interest source for the disagreement cross-check. DEFAULT OFF and
+ * source-agnostic on purpose: NONE of our integrated providers currently expose short interest % of
+ * float (Yahoo is the only source; FMP has no such endpoint; FINRA is short *volume*, a different
+ * metric). The only thing wired today is the (dead) FMP `/v4/short_interest` call, kept off so it
+ * doesn't 404 every scan. Flip FUTURE_SOURCE_SHORT_INTEREST_ENABLED on — and point the fetch at a real
+ * source — when a genuine second source is added (e.g. Finnhub's metric payload, already fetched).
  */
-export function fmpShortInterestEnabled(): boolean {
-  const v = (process.env.FMP_SHORT_INTEREST_ENABLED ?? "").trim().toLowerCase();
+export function secondSourceShortInterestEnabled(): boolean {
+  const v = (process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "on" || v === "yes";
 }
 
@@ -2087,13 +2092,14 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             wantTargets
               ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
               : Promise.resolve(undefined),
-            // Second short-interest source for the Yahoo-vs-FMP disagreement cross-check. DEFAULT OFF:
-            // FMP's public API does not currently provide a short-interest endpoint (their FAQ confirms
-            // it), so /v4/short_interest 404s for every symbol — the cross-check can never fire and the
-            // call just wastes a request per scan (silently, since 404 is suppressed). Enable
-            // FMP_SHORT_INTEREST_ENABLED only if your FMP plan/endpoint actually returns short interest.
-            // The disagreement machinery below stays intact so a real second source can be wired later.
-            fmpShortInterestEnabled()
+            // SECOND short-interest source for the disagreement cross-check — source-agnostic, DEFAULT
+            // OFF (FUTURE_SOURCE_SHORT_INTEREST_ENABLED). The only URL wired today is FMP's
+            // /v4/short_interest, which DOESN'T EXIST in FMP's public API (their FAQ confirms it), so it
+            // 404s for every symbol and the cross-check can never fire — hence off by default so it
+            // doesn't waste a request per scan. When a REAL second source is added (e.g. parse a short
+            // field out of Finnhub's metric payload we already fetch), swap this URL and flip the flag;
+            // the disagreement machinery + shortPercentOfFloatSecondary field are named generically for it.
+            secondSourceShortInterestEnabled()
               ? this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false, [403, 404])
               : Promise.resolve(undefined)
           ]);
@@ -2175,7 +2181,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           // Short interest → percent of float. FMP shapes vary; accept shortPercentOfFloat /
           // shortInterestRatio-style fields and normalize a 0–1 fraction to 0–100 percentage points.
-          let shortPercentOfFloatFmp: number | undefined;
+          let shortPercentOfFloatSecondary: number | undefined;
           if (shortRaw.status === "fulfilled" && Array.isArray(shortRaw.value)) {
             const row = (shortRaw.value as Array<Record<string, unknown>>)[0];
             const raw = Number(
@@ -2183,7 +2189,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             );
             if (Number.isFinite(raw) && raw >= 0) {
               // Values ≤ 1 are treated as a fraction (0.08 → 8%); larger values are already percent.
-              shortPercentOfFloatFmp = raw <= 1 ? Math.round(raw * 10000) / 100 : Math.round(raw * 100) / 100;
+              shortPercentOfFloatSecondary = raw <= 1 ? Math.round(raw * 10000) / 100 : Math.round(raw * 100) / 100;
             }
           }
 
@@ -2192,7 +2198,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             ...(analystBySource !== undefined && { analystBySource }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
             ...(senateTrades !== undefined && { senateTrades }),
-            ...(shortPercentOfFloatFmp !== undefined && { shortPercentOfFloatFmp }),
+            ...(shortPercentOfFloatSecondary !== undefined && { shortPercentOfFloatSecondary }),
             ...(targetMean !== undefined && { targetMean }),
             ...(targetHigh !== undefined && { targetHigh }),
             ...(targetLow !== undefined && { targetLow }),
@@ -2204,7 +2210,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           const hasTransientError = promises.some((p) => p.status === "rejected" && isTransientError(p.reason));
           // The optional short-interest source blocks caching on ANY recoverable failure — 429, every 5xx
           // (incl. HTTP 500, which isTransientError intentionally doesn't match), network/timeout — so a
-          // full-TTL row missing shortPercentOfFloatFmp can't freeze the Yahoo-vs-FMP disagreement signal
+          // full-TTL row missing shortPercentOfFloatSecondary can't freeze the Yahoo-vs-FMP disagreement signal
           // until expiry. Only a permanent 4xx (403 non-premium / 404) is allowed to cache without it.
           const shortReason = shortRaw.status === "rejected"
             ? (shortRaw.reason instanceof Error ? shortRaw.reason.message : String(shortRaw.reason ?? ""))

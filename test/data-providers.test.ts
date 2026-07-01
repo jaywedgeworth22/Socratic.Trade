@@ -43,7 +43,7 @@ describe("market enrichment provider", () => {
     delete process.env.WEBULL_UNOFFICIAL_ENABLED;
     delete process.env.FINTECH_STUDIOS_API_KEY;
     delete process.env.FINTECH_STUDIOS_BASE_URL;
-    delete process.env.FMP_SHORT_INTEREST_ENABLED;
+    delete process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED;
   });
 
   afterEach(() => {
@@ -419,7 +419,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
   // so opt into the (default-off) call. FMP has no public short-interest endpoint, but the fetch is
   // still gated behind this flag for the disagreement-cross-check machinery / a future real source.
   beforeEach(() => {
-    process.env.FMP_SHORT_INTEREST_ENABLED = "on";
+    process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED = "on";
   });
   it("prevents cache writes on Finnhub when a transient error occurs", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
@@ -612,7 +612,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
   });
 
   it("carries FMP short interest and flags a material Yahoo-vs-FMP disagreement", async () => {
-    process.env.FMP_SHORT_INTEREST_ENABLED = "on"; // opt in to the (default-off) FMP short-interest call
+    process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED = "on"; // opt in to the (default-off) FMP short-interest call
     const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
       "../src/lib/data-providers"
     );
@@ -640,14 +640,14 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
 
     // Primary value stays first-wins (yahoo's 3%); carrier field never leaks out.
     expect(out.AAPL.shortPercentOfFloat).toBe(3);
-    expect(out.AAPL.shortPercentOfFloatFmp).toBeUndefined();
-    expect(out.AAPL.shortInterestDisagreement).toContain("fmp 12.0%");
+    expect(out.AAPL.shortPercentOfFloatSecondary).toBeUndefined();
+    expect(out.AAPL.shortInterestDisagreement).toContain("secondary 12.0%");
     // fmp contributed the disagreement flag, so it must appear in the source list.
     expect(cascade.activeSources).toContain("fmp");
   });
 
   it("does not flag short-interest disagreement when the two sources agree", async () => {
-    process.env.FMP_SHORT_INTEREST_ENABLED = "on"; // opt in to the (default-off) FMP short-interest call
+    process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED = "on"; // opt in to the (default-off) FMP short-interest call
     const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
       "../src/lib/data-providers"
     );
