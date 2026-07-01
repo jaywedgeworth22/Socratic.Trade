@@ -707,8 +707,21 @@ function WorkspaceTabsBar({
   onChange: (v: WorkspaceTab) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
   const activeOverflow = OVERFLOW_WORKSPACE_TABS.find((t) => t.id === value);
+
+  // The tab row lives inside an `overflow-x-auto` scroll container, which also clips VERTICAL
+  // overflow — an absolutely-positioned `top-full` dropdown gets cut off on exactly the narrow
+  // layouts this overflow menu exists for. So position the menu with `fixed` coords derived from the
+  // trigger's rect, escaping the clip; recompute on open and close on scroll/resize (fixed coords
+  // would otherwise drift as the row scrolls).
+  const openMenu = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+    setOpen(true);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -718,11 +731,18 @@ function WorkspaceTabsBar({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
     }
+    function close() {
+      setOpen(false);
+    }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
     };
   }, [open]);
 
@@ -731,6 +751,7 @@ function WorkspaceTabsBar({
       <Tabs value={value} onChange={onChange} tabs={PRIMARY_WORKSPACE_TABS} />
       <div ref={menuRef} className="relative">
         <button
+          ref={btnRef}
           type="button"
           id="tab-more"
           role="tab"
@@ -739,7 +760,7 @@ function WorkspaceTabsBar({
           aria-selected={Boolean(activeOverflow)}
           aria-controls={activeOverflow ? `tabpanel-${activeOverflow.id}` : undefined}
           title="More workspaces"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => (open ? setOpen(false) : openMenu())}
           className={cn(
             "inline-flex items-center gap-1 rounded-xl border border-line bg-surface px-3 py-1.5 text-[13px] font-medium transition-colors touch-manipulation max-sm:min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
             activeOverflow ? "text-fg shadow-sm" : "text-muted hover:text-fg"
@@ -748,11 +769,12 @@ function WorkspaceTabsBar({
           {activeOverflow ? activeOverflow.label : "More"}
           <ChevronDown size={ICON.sm} className={cn("transition-transform", open && "rotate-180")} />
         </button>
-        {open && (
+        {open && menuPos && (
           <div
             role="menu"
             aria-label="More workspaces"
-            className="absolute right-0 top-full z-[1200] mt-2 w-44 rounded-lg border border-line bg-surface p-1 text-fg shadow-[var(--shadow-lg)]"
+            style={{ top: menuPos.top, right: menuPos.right }}
+            className="fixed z-[1200] w-44 rounded-lg border border-line bg-surface p-1 text-fg shadow-[var(--shadow-lg)]"
           >
             {OVERFLOW_WORKSPACE_TABS.map((tab) => {
               const active = value === tab.id;

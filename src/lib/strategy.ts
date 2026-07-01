@@ -746,10 +746,13 @@ export async function runStrategyOnce(
       } catch (guardError) {
         const message = guardError instanceof Error ? guardError.message : String(guardError);
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
+        // leave an `approved: true` row in the decision/audit ledger.
+        const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
         await sendNotification(
-          { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision, review, proposal: normalizedProposal, reason: message } },
+          { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
@@ -1729,10 +1732,12 @@ export async function executeProposal(
       });
     } catch (guardError) {
       const message = guardError instanceof Error ? guardError.message : String(guardError);
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message);
+      // Persist a REJECTED decision (not the earlier approved one) so the ledger reflects the block.
+      const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
       audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId);
       await sendNotification(
-        { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message } },
+        { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message, decision: blockedDecision } },
         { policy, userId }
       );
       return { status: "blocked", reasons: [message] };

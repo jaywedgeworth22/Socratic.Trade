@@ -62,12 +62,13 @@ function llmFromProvider(hint: string | undefined, userId: string) {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => ({}))) as { message?: unknown; userId?: unknown; provider?: unknown; model?: unknown };
-  const userId = resolveRequestUserId(request, body);
-  // Per-user rate limit BEFORE the LLM gate: each chat turn can spend operator-funded tokens, so a
-  // runaway/scripted burst must be contained (returns 429 with Retry-After). Fails open on limiter error.
+  // Identity comes from the trusted header (resolveRequestUserId ignores the body), so rate-limit
+  // BEFORE parsing the request body — an over-limit caller must not be able to force server-side
+  // JSON parsing/allocation of an oversized payload just to be rejected. Returns 429 + Retry-After.
+  const userId = resolveRequestUserId(request);
   const limited = enforceRateLimit(userId, "chat", RATE_LIMITS.chat);
   if (limited) return limited;
+  const body = (await request.json().catch(() => ({}))) as { message?: unknown; userId?: unknown; provider?: unknown; model?: unknown };
   if (typeof body.message !== "string" || !body.message.trim()) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }

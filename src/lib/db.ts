@@ -371,14 +371,34 @@ export function getSchemaVersion(database: Database.Database = getDb()): number 
 }
 
 // ── ENCRYPTION_KEY boot guard ────────────────────────────────────────────────
-/** True if connected_accounts holds at least one AES-GCM ciphertext (the
- *  `iv:tag:ciphertext` shape). Legacy plaintext values (no colons) don't count — a
- *  wrong key can't corrupt those. */
+/** True if the DB holds at least one AES-GCM ciphertext (the `iv:tag:ciphertext` shape) that a
+ *  wrong/missing ENCRYPTION_KEY would silently decrypt to empty. Covers connected_accounts creds AND
+ *  Robinhood OAuth token blobs in settings. Legacy plaintext values don't count. */
 export function hasEncryptedCredentials(database: Database.Database): boolean {
   const row = database
     .prepare("SELECT COUNT(*) AS n FROM connected_accounts WHERE api_key GLOB '*:*:*' OR api_secret GLOB '*:*:*'")
     .get() as { n: number };
-  return row.n > 0;
+  if (row.n > 0) return true;
+  // Robinhood OAuth token blobs are JSON in settings; the JSON itself contains colons, so match the
+  // SECRET fields against the iv:tag:ct hex envelope rather than GLOB-ing the whole value.
+  const envelope = /^[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/i;
+  const oauthRows = database
+    .prepare("SELECT value FROM settings WHERE key GLOB 'robinhood_mcp_oauth_token:*'")
+    .all() as { value: string }[];
+  for (const r of oauthRows) {
+    try {
+      const blob = JSON.parse(r.value) as { accessToken?: unknown; refreshToken?: unknown };
+      if (
+        (typeof blob.accessToken === "string" && envelope.test(blob.accessToken)) ||
+        (typeof blob.refreshToken === "string" && envelope.test(blob.refreshToken))
+      ) {
+        return true;
+      }
+    } catch {
+      /* malformed settings row — ignore */
+    }
+  }
+  return false;
 }
 
 /**

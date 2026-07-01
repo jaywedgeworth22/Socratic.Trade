@@ -13,8 +13,12 @@ path, not just the autonomous loop; (P2) cached query embeds no longer metered a
 (`embedQueryCached` returns hit/miss; meter only on miss); (P2) the daily LLM-budget ceiling is now
 enforced on the fixed-interval scheduler lane too, not only the event-trigger path; (P2) OAuth tokens
 only encrypt when a stable `ENCRYPTION_KEY` is set (else plaintext, as before — no ephemeral-key
-brick), and an undecryptable stored token is treated as missing so env-token reseed runs. Verify
-quartet green (1726 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+brick), and an undecryptable stored token is treated as missing so env-token reseed runs. **Round 2**
+(4 more P2s on the fix commit): rate-limit `/api/chat` before body-parse; persist live-preflight
+blocks as REJECTED decisions (both autonomous + approval paths); extend the `ENCRYPTION_KEY` boot
+guard to encrypted OAuth-token rows; fixed-position the Macro/Tax "More" menu so the tab-row's
+`overflow-x-auto` no longer clips it. Verify quartet green (1728 tests). See
+`docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 
 ## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
 Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G

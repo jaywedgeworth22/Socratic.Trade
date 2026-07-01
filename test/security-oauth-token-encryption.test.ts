@@ -88,6 +88,22 @@ describe("G2: Robinhood OAuth token encryption at rest", () => {
     expect(getStoredMcpOAuthTokens("local")?.accessToken).toBe(ACCESS);
   });
 
+  it("boot guard (hasEncryptedCredentials) flags encrypted OAuth token rows so a lost key fails fast", async () => {
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const { getDb, hasEncryptedCredentials } = await import("../src/lib/db");
+    // ENCRYPTION_KEY is set (beforeEach) → the token blob's secret fields are AES-GCM ciphertext.
+    setMcpOAuthTokens("local", { accessToken: ACCESS, tokenType: "Bearer" });
+    expect(hasEncryptedCredentials(getDb())).toBe(true);
+  });
+
+  it("boot guard ignores PLAINTEXT OAuth token rows (no false fail-fast without a key)", async () => {
+    delete process.env.ENCRYPTION_KEY;
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const { getDb, hasEncryptedCredentials } = await import("../src/lib/db");
+    setMcpOAuthTokens("local", { accessToken: ACCESS, tokenType: "Bearer" }); // plaintext (no key)
+    expect(hasEncryptedCredentials(getDb())).toBe(false);
+  });
+
   it("treats an undecryptable stored token as MISSING so the env-token migration reseeds", async () => {
     // Simulate a row encrypted under a since-lost ephemeral key: a well-formed iv:tag:ct envelope
     // that cannot decrypt under the current key → decryptValue returns "" → treated as missing.

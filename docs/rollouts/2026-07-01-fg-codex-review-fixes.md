@@ -50,9 +50,31 @@ review findings (2×P1, 3×P2). Each was verified against the actual code before
 - Tests: extended `test/security-admin-timing-safe.test.ts`, `test/query-embedding-cache.test.ts`,
   `test/security-oauth-token-encryption.test.ts` (+6 cases).
 
+## Round 2 (commit after 69ee75f) — 4 more Codex P2 findings on the fix commit
+
+6. **Rate-limit `/api/chat` before body parsing.** The limiter ran after `await request.json()`, so an
+   over-limit caller could still force server-side JSON parse/alloc. `resolveRequestUserId` uses the
+   trusted header (ignores the body), so identity + rate-limit now run first, then the body is parsed.
+   (`app/api/chat/route.ts`)
+7. **Persist live-preflight blocks as REJECTED decisions.** Both preflight-block sites (autonomous +
+   approval) stored `status: "blocked"` but kept the earlier `approved` `decision`, corrupting the
+   decision/audit ledger. Now persist `{ ...decision, approved: false, reasons: [...reasons, message] }`.
+   (`src/lib/strategy.ts`)
+8. **Extend the `ENCRYPTION_KEY` boot guard to OAuth tokens.** `hasEncryptedCredentials` (`db.ts`) only
+   checked `connected_accounts`; a Robinhood-only deploy that lost its key would boot instead of failing
+   fast. It now also detects AES-GCM ciphertext in `robinhood_mcp_oauth_token:*` settings rows (matching
+   the secret fields against the `iv:tag:ct` hex envelope, since the JSON itself contains colons).
+9. **Fixed-position the workspace "More" menu.** The Macro/Tax overflow dropdown sat inside the tab
+   row's `overflow-x-auto` scroll container, which clips vertical overflow — the menu could be cut off
+   on the narrow layouts the overflow exists for. It now positions with `fixed` coords from the
+   trigger's rect (closes on scroll/resize). (`app/dashboard-client.tsx`)
+
+Tests: +2 boot-guard cases in `test/security-oauth-token-encryption.test.ts` (findings 7/9 are
+data-integrity/UI changes covered by tsc + the existing guard/money-path suites).
+
 ## Verification
 
-`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1726/1726** · `npm run build` ok.
+`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1728/1728** · `npm run build` ok.
 (Private `@jaywedgeworth22/congress-trading-shared` dep stubbed locally as before; CI `verify` uses the
 real package.)
 
