@@ -20,6 +20,39 @@ local stub: `vitest` on the two congress event suites → 25 passed (the new tes
 fails on the pre-fix code), `eslint` clean, `tsc` shows no errors in the touched
 files. The `verify` CI gate runs the full trio with real registry access on
 push. See `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+## 2026-07-01 - CI hosted-runner migration + concurrency guards
+Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
+`trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
+across every branch, causing long queue waits even for green PRs — observed
+directly while landing PR #280. Added `cancel-in-progress` concurrency
+groups to `ci.yml`/`security.yml`/`e2e.yml` so superseded pushes don't queue
+behind themselves, and moved `verify`, `gitleaks`, and `smoke` to
+`runs-on: ubuntu-latest` (none depend on the production box; `smoke` builds
+and serves its own local `next start`). `deploy.yml`/`sync-previews.yml`
+stay self-hosted — they operate on the live PM2 process and local preview
+lanes directly. Owner is on GitHub Pro and explicitly approved the
+associated Actions-minutes cost. Follow-up: confirm the account's Actions
+spending limit is > $0, or required-check jobs could fail before startup.
+See `docs/rollouts/2026-07-01-ci-hosted-runner-migration.md`.
+
+## 2026-07-01 - congress-trading-shared drift fixes
+Branch `chore/shared-package-drift-fixes` (PR #280), pushed from
+`~/apps/trading-claude` (the main `~/Code/Agentic Trading` integration
+worktree's pre-push hook blocks agent pushes from there by design).
+`congress-trade-client.ts` now imports the shared `MAX_REFS_BATCH` constant
+instead of a locally hardcoded `500`; deleted the unused
+`congress-shared-aliases.ts`, whose `CongressRef` alias conflicted in shape
+with the `CongressRef` actually used elsewhere; added
+`.github/workflows/shared-package-pin-check.yml`, a weekly + manual job that
+warns (never fails the build) when this repo's git-pinned
+`congress-trading-shared` commit falls behind that repo's `main`, using the
+`GH_PACKAGES_TOKEN` repo secret. A companion fix landed in Congress.Trade PR
+#124 for the same workflow (that repo's `package.json` had separately moved
+to a semver/registry dependency, which the original parsing didn't handle).
+Verification: `npx tsc --noEmit` passes. Follow-up: confirm
+`GH_PACKAGES_TOKEN`'s scope is sufficient once the workflow can actually be
+dispatched (requires landing on `main` first). See
+`docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
 
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
