@@ -926,6 +926,9 @@ export function matchToChunk(match: any): RetrievedChunk {
 export interface RetrieveOptions {
   /** Point-in-time guard: drop chunks whose acceptance_datetime is after this ISO date. */
   asOf?: string;
+  /** The account being run, so the RAG budget guard resolves THAT account's ceiling (not the active
+   *  account's) in a multi-account scheduler run. Omit for the active-account default (unchanged). */
+  connectedAccountId?: string;
   /** Restrict to these document types (metadata.doc_type), e.g. ["10-k","10-q"]. */
   docType?: string[];
   /** Restrict to a specific filing section (metadata.section). */
@@ -993,7 +996,7 @@ export async function retrieveContextDetailed(
   // Budget guard (durable spend primitive): when the user is over their daily LLM/RAG budget, skip
   // retrieval entirely — no Voyage embed, no Pinecone query, no metered spend. Returns empty like the
   // no-client case, so every caller degrades gracefully. Default OFF (no ceiling) → no-op.
-  if (isOverLlmBudget(userId)) return [];
+  if (isOverLlmBudget(userId, options?.connectedAccountId)) return [];
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];

@@ -451,7 +451,8 @@ export async function runStrategyOnce(
         // never wired through this call site before. Advisory context only — not a money-path gate.
         retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
           docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
-          minScore: defaultMinScore()
+          minScore: defaultMinScore(),
+          connectedAccountId: policy.connectedAccountId
         })
       ));
       const validContexts = contexts.flat().filter(Boolean);
