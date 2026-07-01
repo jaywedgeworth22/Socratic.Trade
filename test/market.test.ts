@@ -220,6 +220,41 @@ describe("mergeQuoteData", () => {
 
     expect(merged.source).toBe("nasdaq-delayed-screener+alpaca-quotes");
   });
+
+  it("refreshes synthetic bid/ask provenance when a real broker spread is merged in", () => {
+    const synthetic = () =>
+      quote({
+        symbol: "AAPL",
+        bid: 99.9,
+        ask: 100.1,
+        sources: { price: "yahoo-finance", bid: "yahoo-finance-synthetic", ask: "yahoo-finance-synthetic" }
+      });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [synthetic()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: synthetic() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 101, bid: 100.9, ask: 101.1, provider: "alpaca", asOf: "2026-06-19T14:00:00.000Z" }
+    });
+
+    // A real broker spread replaces the synthetic values AND their provenance — on both the ranked
+    // candidate and the quotesBySymbol entry the marketable-limit calc reads — so a real ask is no
+    // longer mistaken for synthetic and does not fall back to refPrice.
+    expect(merged.topCandidates[0]!.ask).toBe(101.1);
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("alpaca");
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("alpaca");
+    expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("alpaca");
+    expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("alpaca");
+  });
 });
 
 describe("mergeGroupedBarData", () => {

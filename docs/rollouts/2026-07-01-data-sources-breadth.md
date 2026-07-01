@@ -181,4 +181,14 @@ Four further P2s, two of them behavior regressions in the ostensibly-safe change
   commonly returns `{ quote: {...} }`; the extractor now reads `item.quote ?? item` (exported + tested)
   so the options tier gets a real moneyness anchor instead of falling back to median IV.
 
+### 3rd round (commit c2971e8 → follow-up)
+
+- **[D] Sticky synthetic bid/ask provenance across `mergeQuoteData`** (`market.ts`) — the new
+  `yahoo-finance-synthetic` tag was not refreshed when `mergeQuoteData` later merged a REAL broker
+  bid/ask (it only updated volume provenance), so a genuine broker spread still looked synthetic to
+  `hasRealAsk`/the marketable-limit calc and wrongly fell back to `refPrice`. Both merge branches
+  (`topCandidates` + `quotesBySymbol`) now refresh the side's provenance to the broker provider when a
+  real value is accepted. Test added asserting a merged real spread carries broker (not synthetic)
+  provenance on both. This was a direct consequence of the item-2 provenance tag, not a pre-existing bug.
+
 

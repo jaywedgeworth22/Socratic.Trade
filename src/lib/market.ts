@@ -460,24 +460,38 @@ export function mergeQuoteData(
   scan: MarketScan,
   quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string }>
 ): MarketScan {
+  // When a merge accepts a real broker bid/ask/volume, refresh THAT side's provenance too. Otherwise a
+  // "yahoo-finance-synthetic" tag from the quote-only fallback (toQuoteOnlyMarketQuote) would stick even
+  // after a real broker spread is merged in, making a genuine ask look synthetic to hasRealAsk and the
+  // marketable-limit calc (which would then wrongly fall back to refPrice).
+  const refreshSideProvenance = (
+    base: EnrichmentSources | undefined,
+    extra: { bid?: number; ask?: number; volume?: number; provider?: string }
+  ): EnrichmentSources | undefined => {
+    if (!extra.provider) return base;
+    const usedBid = positiveNumber(extra.bid) !== undefined;
+    const usedAsk = positiveNumber(extra.ask) !== undefined;
+    const usedVol = !!(extra.volume && extra.volume > 0);
+    if (!usedBid && !usedAsk && !usedVol) return base;
+    const next: EnrichmentSources = { ...(base ?? {}) };
+    if (usedBid) next.bid = extra.provider;
+    if (usedAsk) next.ask = extra.provider;
+    if (usedVol) next.volume = extra.provider;
+    return next;
+  };
   const normalize = (quote: MarketQuote): MarketQuote => {
     const extra = quoteData[quote.symbol];
     if (!extra) return quote;
-    // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
-    const usedExtraVolume = !!(extra.volume && extra.volume > 0);
-    const sources: EnrichmentSources | undefined =
-      usedExtraVolume && extra.provider
-        ? { ...(quote.sources ?? {}), volume: extra.provider }
-        : quote.sources;
     return {
       ...quote,
       bid: positiveNumber(extra.bid) ?? quote.bid,
       ask: positiveNumber(extra.ask) ?? quote.ask,
       price: positiveNumber(extra.price) ?? quote.price,
-      volume: (usedExtraVolume ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
+      // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
+      volume: (extra.volume && extra.volume > 0 ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
       asOf: extra.asOf ?? quote.asOf,
       provider: extra.provider ?? quote.provider,
-      sources
+      sources: refreshSideProvenance(quote.sources, extra)
     };
   };
   const topCandidates = scan.topCandidates.map(normalize);
@@ -490,7 +504,8 @@ export function mergeQuoteData(
         ask: positiveNumber(extra?.ask) ?? quote.ask,
         price: positiveNumber(extra?.price) ?? quote.price,
         provider: extra?.provider ?? quote.provider,
-        asOf: extra?.asOf ?? quote.asOf
+        asOf: extra?.asOf ?? quote.asOf,
+        sources: extra ? refreshSideProvenance(quote.sources, extra) : quote.sources
       };
       return [quote.symbol, merged] as const;
     })
