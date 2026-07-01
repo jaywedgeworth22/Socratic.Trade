@@ -5,163 +5,182 @@ Companion to `docs/market-data-freshness-decision.md`.
 Scope: make real-time quotes *matter where they should* and *not cost where they
 shouldn't*, without buying a new data feed.
 
-## Key finding: most primitives already exist (default-OFF / un-tuned)
+> Safety note (development): these gates are additive/protective — enabling or
+> tuning them never places real capital at risk on its own. Real money is only in
+> play when a live broker/account is explicitly connected and funded, which is
+> operator-controlled. The engine is broker- and strategy-neutral; there is no
+> paper/test default (removed in this PR — see `defaults.ts`).
+
+## Key finding: the primitives already exist
 
 Audit of `src/lib/policy.ts`, `strategy.ts`, `synthetic-stops.ts`, `types.ts`:
 
 | Capability | Field / call site | State |
 |---|---|---|
-| Entry-drift guard | `policy.maxEntryDriftPct` — enforced `policy.ts:109-127` | Implemented; **default unset (OFF)** |
-| Staleness gate | `policy.maxQuoteAgeSec` / `maxFundamentalsAgeSec` — enforced `policy.ts:132-168` | Implemented; **default OFF** |
-| Marketable-limit entries | `policy.marketableLimitEntries` + `tuning.marketableLimitBufferBps` — applied `strategy.ts:1191-1192`, `2764-2773` | Implemented; **default OFF** |
-| Approval-time re-quote | `strategy.ts:1502-1511` re-scans + `getEquityQuotes` for hot set at approval | Implemented |
-| Synthetic trailing-stop poll | `synthetic-stops.ts:170`, every 60s tick | Implemented (poll-based) |
+| Entry-drift guard | `policy.maxEntryDriftPct` — enforced `policy.ts:109-127` | Implemented; **already enabled, default `10`** in `DEFAULT_POLICY`; UI exposes "Max entry drift %". **Tune-only — do NOT silently reset to 1–2% without an explicit retune/migration.** |
+| Staleness gate | `policy.maxQuoteAgeSec` / `maxFundamentalsAgeSec` — enforced `policy.ts:132-168` | Implemented; **surfaced in settings UI (this PR)**; default OFF — keep OFF until Workstream 2 stamps honest `asOf` (missing `asOf` = block). Note: enforced for **opening proposals only** (not the exit path — see WS2). |
+| Marketable-limit entries | `policy.marketableLimitEntries` + `tuning.marketableLimitBufferBps` — applied `strategy.ts:1191-1192`, `2764-2789` | Implemented; **now default ON (this PR)**. Degrades to a plain market order when qty < 1 or not dollar-routed; prices through `quote.ask`/`bid`, falling back to `referencePrice` when bid/ask absent (see WS2 caveat). |
+| Approval-time re-quote | `strategy.ts:1502-1511` re-scans + `getEquityQuotes` for hot set | Implemented |
+| Synthetic trailing-stop poll | `synthetic-stops.ts:170`, every 60s tick; consumes `quote.price` | Implemented (poll-based) |
+| Price alerts | `alerts.ts` prices armed symbols via `getEquityQuotes`; `scheduler.ts` runs `checkAllUserPriceAlerts()` per tick | Implemented (poll-based) |
 | Broker-held OCO brackets / RH stops | `policy.brokerBracketsEnabled` (default ON, Alpaca), `robinhoodBrokerStops` | Implemented |
 | Quote type carries freshness | `MarketQuote.bid/ask/asOf` (`types.ts:360-364, 644-661`) | Present |
 
-So the work is **enable + route + (optional) push**, not "build."
-
 ---
 
-## Workstream 1 — Enable & tune the existing gates (low effort, do first)
+## Workstream 1 — Enable & tune the gates (DONE in this PR, except the WS2-dependent default)
 
-**Goal:** turn on the protections that are already coded but dormant.
+- **Marketable-limit entries → default ON** (`DEFAULT_POLICY.marketableLimitEntries = true`).
+  Converts deterministic opening market orders into marketable limits priced through
+  the quote — real slippage control on the 1–5 traded names. **Caveat (Codex):** the
+  conversion needs `bid`/`ask`; with a last-price-only source it falls back to
+  `referencePrice`, which can be non-marketable/stale. Fully trustworthy only once
+  WS2 guarantees bid/ask (or derives a conservative side-specific limit from a fresh
+  last price) on the fallback path.
+- **Entry-drift guard → already enabled** (`DEFAULT_POLICY.maxEntryDriftPct = 10`; UI
+  exposes it). **Tune-only.** Tightening to 1–2% is a deliberate retune, not a
+  "turn it on" — don't change the shipped default without a migration note.
+- **Staleness gate → surfaced in settings UI (this PR), default OFF.** Keep OFF until
+  WS2 stamps honest `asOf`, because a missing `asOf` is treated as stale → block.
+- Paper/test defaults removed from `DEFAULT_POLICY` (`paperMode`, `activeBroker: "test"`)
+  so the code stops seeding the false "paper/test app" assumption.
 
-1. **Staleness gate on the hot set.** Set a sane default `maxQuoteAgeSec`
-   (recommend **120–300s**) for opening orders. It reads
-   `MarketScan.quotesBySymbol[sym].asOf` (fallback candidate `asOf`), so it only
-   works if the hot-set quotes carry an honest `asOf` — see Workstream 2.
-   - Files: default/settings surface for `policy.maxQuoteAgeSec`; verify
-     `policy.ts:132-168` behavior with a populated `asOf`.
-2. **Entry-drift guard.** Set a default `maxEntryDriftPct` (recommend **1–2%** for
-   liquid names) so an hours-old market/dollar entry can't fill far from its
-   `referencePrice` (`policy.ts:109-127`).
-3. **Marketable-limit entries.** Default `marketableLimitEntries = true` with
-   `tuning.marketableLimitBufferBps` ~15 (`strategy.ts:1191`). Converts naked
-   opening market orders into marketable limits priced through the quote — turns a
-   fresh quote into real slippage control on the 1–5 traded names. Exits stay
-   market by design (fill certainty; brackets are the exit-reliability mechanism).
-4. **Surface all three in the policy/settings UI** with the recommended defaults
-   and one-line help, so they are discoverable per-account.
-
-**Risk:** these are fail-safe/additive; the main risk is a too-aggressive
-`maxQuoteAgeSec` blocking entries in Test mode or when a broker feed is slow —
-mitigate by tuning and by Workstream 2's honest `asOf` + fallback.
-
-**Verify:** unit tests around `policy.ts` gates with fresh vs stale `asOf`;
-confirm marketable-limit conversion fires only for opening orders and only when
-`limit` is a permitted order type.
+**Verify:** `policy.ts` gate tests (fresh vs stale `asOf`); marketable-limit conversion
+fires only for opening dollar-routed orders with `limit` permitted and qty ≥ 1.
 
 ---
 
 ## Workstream 2 — Hot-set quote-source router with a freshness SLA (the one real gap)
 
-**Problem:** `gateway.getEquityQuotes` routes to the connected broker. That is
-real-time only on a **real-time entitlement/API path** — e.g. Alpaca *free* REST
-(`getLatestQuotes`, which this call uses) is 15-min delayed; real-time there needs
-WebSocket or a paid feed. So (a) in Test mode, with a delayed-only broker, or on a
-delayed broker entitlement the hot-set quote may be delayed, and (b) there is no
-explicit fallback to a real-time source when the broker feed is missing/stale, and
-(c) `asOf` must be stamped honestly for the staleness gate to mean anything.
+**Principle: whichever account you're operating IS the account — its connected
+broker feed is the quote source of record.** In real operation there is no
+"fallback" and no simulator: you're in a real account with a real-time broker feed,
+and that feed is what prices the hot set. The multi-tier fallback machinery below is
+NOT a routine path — it exists only for (a) the **Test account** and (b) a genuinely
+missing/broken broker feed. Do not design around delayed/stale quotes as if they were
+normal; they are not.
 
-**Goal:** guarantee that the **hot set only** (open positions + approval
-candidates + the proposal symbol) is served by a real-time source, with an honest
-freshness stamp, without touching the bulk-scan path.
+**The one real-account caveat, and its fix:** a broker feed can be delayed *if the
+account is on a delayed entitlement* — e.g. Alpaca *free* REST (`getLatestQuotes`) is
+15-min delayed. The fix is to put that account on a real-time entitlement (Alpaca WS /
+paid feed, or use a broker whose feed is real-time), **not** to paper over it with a
+fallback. Fallbacks never make a live account's data "real-time"; they only avoid a
+crash when the account's own feed is absent.
+
+**Goal:** trust the connected account's broker feed as the source of record; stamp
+`asOf` honestly so the staleness gate is meaningful; and provide a *minimal* safety
+net (not a routine path) for the Test account / a missing feed — without touching the
+bulk-scan path.
 
 Design:
-1. **Add a thin quote-source router** in front of **every hot-set fetch**. Wrap the
-   `getEquityQuotes` call sites:
-   - `strategy.ts:217` — **autonomous run-cycle** quote merge before LLM/deterministic
-     sizing (the primary buy path; easy to miss — without it, autonomous entries in
-     Test/delayed-broker mode keep consuming stale quotes while `maxQuoteAgeSec` and
-     marketable limits assume router-stamped freshness).
-   - `strategy.ts:1502-1511` / `1510` — **manual approval** re-quote.
-   - `synthetic-stops.ts:170` — **60s exit** monitor.
+1. **Wrap every hot-set `getEquityQuotes` call site** in a thin router:
+   - `strategy.ts:217` — autonomous run-cycle quote merge (the primary buy path).
+   - `strategy.ts:1502-1511` — manual approval re-quote.
+   - `synthetic-stops.ts:170` — 60s exit monitor.
+   - `alerts.ts` (`checkAllUserPriceAlerts`, run per tick from `scheduler.ts`) —
+     user-facing price alerts; otherwise they fire late / from fallback quotes on a
+     delayed entitlement (Codex).
 
-   Order of precedence:
-   `connected real-time broker (only if the entitlement/path is real-time) → FMP
-   real-time REST → Twelve Data free Basic (on-demand, small-N) → last-known DB price
-   (stamped stale)`. Bulk scan (`market.ts`) is explicitly **out of scope** and stays
-   on delayed/cached data.
-2. **Stamp `asOf` truthfully** at every tier so `maxQuoteAgeSec` can do its job;
-   the DB-fallback tier must stamp the original quote time, never `now`. Broker quotes
-   on a delayed entitlement must be stamped delayed (do not label delayed-REST as
-   real-time), so the router can fall through to FMP/Twelve Data.
-3. **Keep it small:** the hot set is single-digits to low-tens of names, so an
-   on-demand real-time pull (broker/FMP/Twelve Data free) is cheap and rate-limit-safe.
-   Do **not** route the 8k universe here. Twelve Data free is 8 credits/min (800/day) —
-   strictly hot-set/pre-trade lookups only; a single bulk call would exhaust it.
-4. **Twelve Data free — two things to verify once** before relying on it: that Basic's
-   US-equity quotes are genuine real-time (not 15-min or trial-symbols-only), and the
-   per-credit cost of the `/quote`|`/price` endpoint. It extends the existing keyed
-   Twelve Data adapter (`data-providers.ts`), so this is adding a quote endpoint, not a
-   new integration.
-5. **Config:** a per-account "real-time hot-set source" preference
-   (auto → broker → FMP → Twelve Data free), defaulting to auto.
+   Precedence — **the connected account's broker feed is the source of record**;
+   everything after it is a Test-account / missing-feed safety net, not a routine
+   path: `connected account broker feed → [safety net only: FMP real-time REST →
+   Twelve Data free Basic (pre-trade / single-name only, §5) → last-known DB price
+   (stamped stale)]`. Bulk scan (`market.ts`) is **out of scope**.
+2. **Stamp `asOf` truthfully** at every tier; the DB-fallback tier stamps the
+   original quote time, never `now`. Delayed-entitlement broker quotes must be
+   stamped delayed so the router falls through instead of trusting them.
+3. **Provide bid/ask for marketable limits (Codex).** `enrichOpeningProposal` prices
+   buy limits from `quote.ask` / short limits from `quote.bid`. FMP/Twelve Data
+   adapters are last-price-oriented, so the router must either surface real bid/ask
+   or derive a conservative side-specific limit from the fresh last price — otherwise
+   the WS1 marketable-limit default can still emit a stale/non-marketable limit on a
+   delayed broker.
+4. **Guard the exit path against stale fallbacks (Codex).** `maxQuoteAgeSec` gates
+   *opening proposals only*; `runSyntheticStopMonitor` consumes `quote.price`
+   directly and would place a **market protective exit off a stale DB price** during
+   a provider outage after an old price crosses the trail. The exit path must **skip
+   stale fallback quotes / apply an explicit age gate before evaluating a stop** —
+   stamping `asOf` alone does not protect it.
+5. **Twelve Data free Basic is pre-trade / single-name fallback ONLY — not exit
+   polling (Codex).** Basic is 8 credits/min (800/day) and `/quote`|`/price` is
+   charged per symbol; the 60s exit monitor over 5–20 open positions would blow the
+   minute budget on one tick. Exit polling stays on the broker/FMP or a paid source;
+   Basic serves only on-demand single-name pre-trade lookups. (Also verify once that
+   Basic's US-equity quotes are genuine real-time, not trial-symbols/delayed, and the
+   exact per-credit cost.) It extends the existing keyed Twelve Data adapter
+   (`data-providers.ts`) — a new endpoint, not a new integration.
+6. **Config:** per-account "real-time hot-set source" preference
+   (auto → broker → FMP → Twelve Data free), default auto.
 
-**Why this is the gap:** it is what makes "delayed bulk + 5–10 real-time on
-demand" a guarantee rather than an accident of which broker happens to be wired.
-
-**Verify:** tests that (a) a delayed broker + keyed FMP yields a real-time-sourced
-hot-set quote with recent `asOf`; (b) the router covers **all three** call sites —
-`strategy.ts:217` (autonomous run), the approval re-quote, and the synthetic-stop
-monitor — so an autonomous Test/delayed-broker entry gets router-stamped freshness;
-(c) no path routes the bulk universe through the router; (d) a delayed-broker
-entitlement falls through to FMP/Twelve Data rather than being trusted; (e)
-DB-fallback quotes carry their true (older) `asOf` and are caught by the staleness
-gate.
+**Verify:** (a) delayed broker + keyed FMP → real-time-sourced hot-set quote with
+recent `asOf`; (b) router covers all four call sites (run, approval, exit, alerts);
+(c) bulk universe never routed here; (d) delayed entitlement falls through rather
+than being trusted; (e) DB-fallback quotes carry true (older) `asOf`; (f) the exit
+path refuses to fire a protective stop off a stale fallback quote.
 
 ---
 
 ## Workstream 3 — Poll → push exit stream (higher effort; only if pursuing streaming)
 
-**Goal:** fire trailing stops on the tick that *breaches*, not up to 60s later.
-This is the only change that lets a *streaming* real-time plan beat what the app
-already does at 60s polling.
+**Goal:** fire trailing stops on the tick that *breaches*, not up to 60s later — the
+only change that lets a *streaming* plan beat the current 60s poll.
 
 1. Convert `runSyntheticStopMonitor` (`synthetic-stops.ts`) from a 60s poll to a
    **WebSocket subscription on open-position symbols** (subscribe on open,
    unsubscribe on close). Prior art: `docs/rollouts/2026-06-19-push-vs-poll-vwap-sentiment-sse.md`.
-2. Keep the 60s poll as a **fallback/heartbeat** when the stream is down (the
-   monitor already falls back to DB `lastPrice`; preserve that safety net).
-3. **Only now** does a streaming feed have ROI. Options, cheapest first: broker
-   streaming (free, if the connected broker offers it) → Alpaca Algo Trader Plus
-   $99 (full SIP stream) → Twelve Data Pro $99 (WS). Decide at this step, not
-   before — Grow $29 does **not** include production WS.
+2. Keep the 60s poll as a **fallback/heartbeat**; preserve the DB-`lastPrice`
+   safety net (subject to WS2 §4's stale-quote guard).
+3. Only now does a streaming feed have ROI.
 
-**Risk:** streaming adds connection-lifecycle and reconnect complexity; the poll
-fallback must remain authoritative so a dropped socket never leaves a position
-unmonitored.
+### How to test WebSocket streaming *before* paying to upgrade
+Do this on **free/trial** streaming first — no upgrade needed to evaluate:
+1. **Free WS endpoints to trial:** Alpaca free tier streams **IEX** real-time over
+   WebSocket (`wss://stream.data.alpaca.markets/v2/iex`) — real-time on a thin tape,
+   enough to prove the plumbing; Twelve Data Basic includes a **trial** WS. Both let
+   you build and measure push before committing to Alpaca Algo Trader Plus $99 (full
+   SIP) or Twelve Data Pro $99.
+2. **Latency A/B:** subscribe to your open-position symbols on the stream while the
+   60s poll still runs. Log, per tick, the stream's last trade time vs the poll's
+   `asOf`. The gap you measure = the exit responsiveness you'd gain.
+3. **Stop-fire timing:** on a paper/sim position with a tight trailing stop, compare
+   *when* the stop would fire from the stream (breach tick) vs the poll (next 60s
+   boundary). Quantify the avoided slippage on a fast mover — that is the upgrade's
+   dollar case.
+4. **Reconnect / fallback drill:** kill the socket mid-session and confirm the 60s
+   poll (with WS2 §4's staleness guard) still protects the position — the push path
+   must never be a single point of failure.
+5. **Cost check:** confirm IEX-only real-time (free) is or isn't sufficient for your
+   names; if mid/small-caps need full consolidated tape, that is precisely what the
+   paid SIP tier (Alpaca $99) buys — decide with the measured numbers, not a guess.
+
+**Risk:** streaming adds connection-lifecycle/reconnect complexity; the poll fallback
+must remain authoritative.
 
 ---
 
 ## Workstream 4 — Optional: intraday entry triggers (strategy change, largest ask)
 
-Only if the engine should *enter* intraday rather than on the hourly snapshot.
-Adds intra-hour triggers (e.g. pullback-to-VWAP, breakout) on a small streamed
-watchlist. This is a **strategy** change, not a data change, and it is the only
-thing that makes faster *entry* data valuable. Out of scope for the near term;
-listed for completeness.
+Only if the engine should *enter* intraday rather than on the hourly snapshot
+(pullback-to-VWAP, breakout on a small streamed watchlist). A **strategy** change,
+not a data change; the only thing that makes faster *entry* data valuable. Deferred.
 
 ---
 
 ## Recommended sequencing
-
-1. **Workstream 1** (enable/tune gates) — days, no new infra, immediate slippage
-   and stale-fill protection.
-2. **Workstream 2** (hot-set source router) — the one genuine gap; makes the gates
-   trustworthy and the "real-time on demand" story a guarantee.
-3. **Workstream 3** (push exits) — only if pursuing streaming; build the push path
-   *before* buying any streaming plan.
+1. **Workstream 1** — done in this PR (marketable limits default ON; staleness
+   surfaced; paper/test defaults removed; entry-drift confirmed tune-only).
+2. **Workstream 2** — the genuine gap; makes the gates trustworthy (esp. the exit-path
+   stale-quote guard and bid/ask for marketable limits).
+3. **Workstream 3** — only if pursuing streaming; trial free WS and measure first.
 4. **Workstream 4** — deferred; strategy-level.
 
-No new data vendor is required for 1–2. A streaming plan is a step-3 decision, not
-a prerequisite.
-
-## Handoff / verification checklist (per repo protocol)
-- Run `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` before
-  claiming any code change here complete (this doc changes no code paths).
-- Update `STATUS.md` and a `docs/rollouts/` note per commit.
-- Cross-file traps to respect when implementing: `TradeProposal` requires
-  `tradeThesisTag`/`entryMarketRegime` (test fixtures too); persistence edits go in
-  the owning `db-*` module.
+## Handoff / verification note
+This PR changes code (`defaults.ts`, `dashboard-client.tsx`). The full
+`npm run lint` → `npx tsc --noEmit` → `npm test` → `npm run build` trio **could not be
+run in this cloud environment**: `node_modules` is absent and the private
+`@jaywedgeworth22/congress-trading-shared` git dependency 404s here, so `npm install`
+cannot complete (documented blocker, per prior rollouts). The changes are limited to
+type-safe additive edits: two optional-value settings fields (mirroring existing
+`OptionalNumberField` usage) and three `DEFAULT_POLICY` literals. The repo's `verify`
+CI gate runs the full trio with registry access on this PR and must be green before
+merge — treat CI as the authoritative verification.

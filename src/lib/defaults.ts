@@ -34,7 +34,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 export const DEFAULT_POLICY: TradingPolicy = {
   systemState: "halted",
-  paperMode: true,
+  paperMode: false,
   paperStartingCash: 10000,
   includedIndices: ["sp500"],
   additionalSymbols: [],
@@ -61,6 +61,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
+  marketableLimitEntries: true, // rewrite opening market orders as marketable limits (caps fast-tape slippage); degrades to a plain market order when no ask/quote is available or qty < 1 share
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
   marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
@@ -76,8 +77,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
-  taxSettings: DEFAULT_TAX_SETTINGS,
-  activeBroker: "test"
+  taxSettings: DEFAULT_TAX_SETTINGS
+  // No default broker or paper flag: a fresh policy is broker-neutral. activeBroker is set when a
+  // real broker is connected (see db-profiles.ts); until then getBrokerGateway() falls back to the
+  // local simulator. Do not seed "test"/paperMode here — it propagates the false assumption that the
+  // app is a paper/test app by default.
 };
 
 export const DEFAULT_STRATEGY_PROMPT = `OBJECTIVE

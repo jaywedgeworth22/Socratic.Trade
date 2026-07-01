@@ -4,20 +4,22 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-07-01 — Market-data freshness decision + implementation plan (Claude)
-Branch `claude/stock-data-pricing-comparison-2wzg8u`. **Docs-only.** Recorded a
-real-time-vs-15-min-delayed market-data analysis and a sequenced plan to act on it:
-`docs/market-data-freshness-decision.md` + `docs/market-data-freshness-implementation-plan.md`.
-Headline: the engine is broker/strategy-neutral and already runs "delayed bulk +
-real-time hot-set on demand"; real-time only matters at the 60s exit layer and the
-order-submission instant (small hot sets already quotable free via broker / FMP).
-The primitives to exploit it (`maxEntryDriftPct`, `maxQuoteAgeSec`,
-`marketableLimitEntries`) already exist but are **default-OFF/un-tuned**. Decision:
-**do not add a new data feed** (owner already has FMP ~$30 real-time + Massive $30
-history + free broker quotes; Twelve Data would be redundant, Polygon Developer $79
-is delayed). Lever = config + a small hot-set quote-source router + optional
-poll→push exit refactor. No code paths touched; verify trio not run (docs-only).
-See `docs/rollouts/2026-07-01-market-data-freshness-decision-and-plan.md`.
+## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
+Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
+analysis + sequenced plan: `docs/market-data-freshness-decision.md` +
+`docs/market-data-freshness-implementation-plan.md`. **Now includes code:** removed the
+paper/test defaults from `DEFAULT_POLICY` (`paperMode:false`; dropped `activeBroker:"test"`
+— broker-neutral, set on connect; `getBrokerGateway` resolves undefined→local sim safely),
+set `marketableLimitEntries:true`, and surfaced quote/fundamentals staleness fields in
+settings (`dashboard-client.tsx`). Plan reframed on the operator principle: **whichever
+account you're in IS the account; its broker feed is the quote source of record** — the
+fallback tiers are a Test-account/missing-feed safety net, not a routine path. Folds in 7
+Codex P2 review points (entry-drift already enabled/tune-only; marketable limits need
+bid/ask; price-alerts in router scope; exit-path stale-quote guard; Twelve Data Basic
+pre-trade/single-name only). Decision unchanged: **no new data feed** (FMP ~$30 real-time +
+Massive $30 history + broker quotes already cover it). **Verify blocker:** full
+lint/tsc/test/build can't run here (no `node_modules`; private shared dep 404s) — CI
+`verify` gate is authoritative. See `docs/rollouts/2026-07-01-market-data-freshness-decision-and-plan.md`.
 ## 2026-07-01 - Broker capability fan-out (4 parallel Opus agents, merged)
 Branch `claude/affectionate-franklin-a52935`. At the owner's request ("spawn a bunch of
 agents... lots of work"), ran a Workflow with 4 parallel Opus agents (each in an isolated

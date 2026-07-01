@@ -68,6 +68,39 @@ Twelve-Data-free insight (all doc-only):
   bulk), with two verify-once notes (genuine US real-time on Basic; per-credit quote
   cost). This is most valuable precisely when the broker entitlement is delayed.
 
+## Revision 2 (same PR, 2026-07-01) — Workstream 1 wired + defaults corrected + Codex round 2
+Now includes CODE, not just docs:
+- `src/lib/defaults.ts`: removed the paper/test defaults from `DEFAULT_POLICY`
+  (`paperMode: true` → `false`; dropped `activeBroker: "test"`). A fresh policy is
+  broker-neutral; `activeBroker` is set when a real broker connects (`db-profiles.ts`),
+  and `getBrokerGateway` (`broker.ts:12-13`) already resolves undefined → local sim
+  safely. Rationale: the seeded `test`/paper literals propagated a false "paper/test
+  app by default" assumption. Also set `marketableLimitEntries: true` (degrades to a
+  plain market order when no ask/qty<1).
+- `app/dashboard-client.tsx`: surfaced "Max quote age (sec)" and "Max fundamentals age
+  (sec)" as optional settings fields (mirroring the existing `OptionalNumberField`
+  pattern), completing "surface the gates in settings." Staleness stays default-OFF
+  pending Workstream 2's honest `asOf`.
+- Reframed the plan around the operator's principle: **whichever account you're in is
+  the account; its broker feed is the quote source of record.** The fallback tiers are
+  a Test-account / missing-feed safety net, not a routine path; a delayed live feed
+  (Alpaca free REST) is fixed by using a real-time entitlement, not by routing around
+  it.
+- Folded in 7 Codex P2 review comments (all correct): entry-drift is already enabled
+  (tune-only, not "enable"); marketable limits need bid/ask (router must supply or
+  derive them); price-alerts (`alerts.ts`) added to router scope; exit path needs an
+  explicit age gate before firing stops off a stale DB fallback; Twelve Data Basic is
+  pre-trade/single-name only (its 8 credits/min can't serve 5–20-symbol exit polling);
+  verification recorded honestly (below).
+
+**Verification blocker (honest):** the full `lint`/`tsc`/`test`/`build` trio could not
+run in this cloud env — `node_modules` is absent and the private
+`@jaywedgeworth22/congress-trading-shared` git dep 404s, so `npm install` fails here
+(same blocker noted in prior rollouts). Changes are type-safe additive edits (two
+optional settings fields + three `DEFAULT_POLICY` literals). The `verify` CI gate runs
+the full trio with registry access on the PR and gates merge — that is the
+authoritative check.
+
 ## Follow-ups
 - Workstream 1 (enable/tune `maxQuoteAgeSec`, `maxEntryDriftPct`,
   `marketableLimitEntries` + surface in settings UI) — recommended first.
