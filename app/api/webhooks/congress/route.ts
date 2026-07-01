@@ -24,15 +24,23 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Freshness signal for the admin Connections page: an authenticated webhook
-    // was received from App A over the push channel.
-    logApiHealth({ service: "congress.trade:webhook", ok: true });
     const rec = body && typeof body === "object" ? (body as { events?: unknown }) : null;
     if (rec && Array.isArray(rec.events)) {
       const results = applyCongressEvents(rec.events);
+      const failed = results.find((result) => !result.ok);
+      logApiHealth({
+        service: "congress.trade:webhook",
+        ok: !failed,
+        errorText: failed?.reason ?? (failed ? "unsupported congress webhook event" : undefined),
+      });
       return NextResponse.json({ ok: true, count: results.length, results });
     }
     const result = applyCongressEvent(body as CongressEvent);
+    logApiHealth({
+      service: "congress.trade:webhook",
+      ok: result.ok,
+      errorText: result.ok ? undefined : result.reason ?? "unsupported congress webhook event",
+    });
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   } catch (error) {
     audit("congress_webhook_error", { error: error instanceof Error ? error.message : "unknown" });

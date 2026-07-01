@@ -49,8 +49,9 @@ Health** page (`app/admin/connections`) surfaces automatically:
 
 - `src/lib/congress-stream.ts` — logs `congress.trade:sse` ok on each (re)connect
   (with connect latency) and ok:false with the error on connection failure.
-- `app/api/webhooks/congress/route.ts` — logs `congress.trade:webhook` ok on each
-  authenticated receipt, ok:false on an ingest error.
+- `app/api/webhooks/congress/route.ts` — logs `congress.trade:webhook` after
+  payload application: ok:true for accepted events and ok:false with the apply
+  reason for unsupported single events or batches with any rejected item.
 
 The App A side surfaces the outbound half: a "Cross-App Trade Delivery" card in
 Congress.Trade's `/api/admin/diagnostics` (24h delivered/failed/pending +
@@ -113,3 +114,20 @@ stub package (pass-through schemas) that let the rest of the dep tree install:
 
 The `verify` CI job runs with real registry access and will exercise the full
 trio on push.
+
+## 2026-07-01 — webhook health review fix
+
+Codex review caught that webhook health was logged `ok:true` immediately after
+authentication, before `applyCongressEvent` could reject unsupported payloads.
+The route now logs health after application. Single-event failures record the
+`ApplyResult.reason`; batch payloads record ok:false if any item failed.
+
+Regression: `test/congress-trade-events.test.ts` drives the real
+`app/api/webhooks/congress/route.ts` POST handler with an authenticated invalid
+payload and verifies the admin-facing `getServiceHealthSummaries()` row has
+`lastFailureError: "invalid-event"` and no last success.
+
+### Verification (this round)
+
+- `npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts` — 26 tests pass.
+- `npx tsc --noEmit` — clean.

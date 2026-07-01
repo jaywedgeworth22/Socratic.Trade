@@ -20,6 +20,15 @@ local stub: `vitest` on the two congress event suites → 25 passed (the new tes
 fails on the pre-fix code), `eslint` clean, `tsc` shows no errors in the touched
 files. The `verify` CI gate runs the full trio with real registry access on
 push. See `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+
+## 2026-07-01 - PR #283 webhook health review fix
+Branch `agent/claude-congress-webhook-parity`. Authenticated Congress webhook
+requests now log `congress.trade:webhook` health after applying the payload:
+unsupported single events record ok:false with the apply reason, and batches
+record ok:false when any item is rejected. Regression drives the real route
+handler and checks the admin health summary. Verification:
+`npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
+(26 tests pass) and `npx tsc --noEmit`.
 ## 2026-07-01 - CI hosted-runner migration + concurrency guards
 Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
 `trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
