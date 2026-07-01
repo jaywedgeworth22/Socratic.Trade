@@ -2618,8 +2618,10 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     putCall: quote.putCallRatio,
     range52w: pricePosition52w(quote),
     // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) are
-    // computed deterministically, then omitted when their inputs are unavailable.
-    ...deriveMetrics(quote),
+    // computed deterministically, then omitted when their inputs are unavailable. Pass the
+    // synthetic-stripped bid/ask so a price-derived (synthetic) spread doesn't leak into the prompt
+    // as a fabricated `spreadBps` execution-cost signal — matching the bid/ask omission above.
+    ...deriveMetrics({ ...quote, bid: realBid, ask: realAsk }),
     secRelStr: quote.sectorRelStrength,
     newsSent: quote.sentiment,
     insiderSent: quote.insiderSentiment,
