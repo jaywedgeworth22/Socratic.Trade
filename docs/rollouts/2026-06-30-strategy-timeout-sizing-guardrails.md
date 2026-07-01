@@ -124,6 +124,21 @@ regressions (both fixed):
 Verification: `npx tsc --noEmit` pass; `chat-draft-policy` 3 tests pass (added a staleness-only
 "stages (201)" case and a "retry returns 200 deduped even when now-blocked" case).
 
+### Round 4 (Codex re-review)
+
+- **Dry-run preview must apply the same staleness exemption.** The assistant only shows the Stage
+  button when the `dryRun:true` decision is approved; the round-3 exemption ran *after* the dry-run
+  return, so a staleness-only preview still came back `approved:false` and the UI hid Stage even though
+  the commit path would accept it. Both paths now share one `effectiveDecision` (staleness-only →
+  `approved:true`), so dry-run and commit agree. (Added a dry-run regression test.)
+- **Short-specific cap in the headroom gate.** For a short whose binding cap is `maxShortOrderNotional`
+  (generic/NAV cap unset or higher), the execution-buffer gate computed the buffer from the generic cap
+  only, so a short at 100% of the short cap kept no buffer. The headroom now folds in
+  `maxShortOrderNotional` for shorts (without duplicating the hard short-cap check), and the message
+  labels it "max short order limit".
+
+Verification: `npx tsc --noEmit` pass; `policy` + `chat-draft-policy` (52 + 4 tests) pass.
+
 ## Follow-ups
 
 - Consider a per-context timeout knob only if a future queued/background strategy

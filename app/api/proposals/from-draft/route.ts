@@ -109,28 +109,33 @@ export async function POST(request: Request) {
     estimatedNotional = undefined;
   }
 
+  // The commit-time preview runs WITHOUT a market scan, so the staleness gate (which treats a missing
+  // quote/scan timestamp as stale) would fail closed on EVERY draft when maxQuoteAgeSec/
+  // maxFundamentalsAgeSec are enabled. The authoritative gate re-runs at approve time against fresh
+  // data, so a draft blocked ONLY by staleness is effectively stageable. Compute one effective decision
+  // shared by BOTH the dry-run preview (which drives the assistant's Stage button) and the commit path,
+  // so they agree — otherwise dry-run returns approved:false and the UI hides Stage even though the
+  // commit path below would accept it. (Review: PR #278.)
+  const blockingReasons = decision.reasons.filter((r) => !r.startsWith("staleness_gate:"));
+  const stalenessOnly = !decision.approved && blockingReasons.length === 0;
+  const effectiveDecision = stalenessOnly ? { ...decision, approved: true } : decision;
+
   if (body.dryRun) {
-    return NextResponse.json({ dryRun: true, decision, estimatedNotional, proposal });
+    return NextResponse.json({ dryRun: true, decision: effectiveDecision, estimatedNotional, proposal });
   }
 
-  // Commit: idempotent on the synthetic runId so one draft can't mint duplicate proposed rows.
-  // Dedupe BEFORE the policy rejection below so a normal retry of an already-staged draft returns the
-  // existing proposalId (200) rather than a 409 if the preview has since become blocked. (Review: PR #278.)
+  // Commit: idempotent on the synthetic runId so one draft can't mint duplicate proposed rows. Dedupe
+  // BEFORE the policy rejection below so a normal retry of an already-staged draft returns the existing
+  // proposalId (200) rather than a 409 if the preview has since become blocked. (Review: PR #278.)
   const runId = `chat:${body.draft.draft_id}`;
   const existing = findProposedIdByRunId(runId, userId);
   if (existing) {
-    return NextResponse.json({ proposalId: existing, deduped: true, decision, estimatedNotional, proposal }, { status: 200 });
+    return NextResponse.json({ proposalId: existing, deduped: true, decision: effectiveDecision, estimatedNotional, proposal }, { status: 200 });
   }
 
-  // This commit-time preview runs WITHOUT a market scan, so the staleness gate (which treats a missing
-  // quote/scan timestamp as stale) would fail closed on EVERY draft when maxQuoteAgeSec/
-  // maxFundamentalsAgeSec are enabled. The authoritative gate re-runs at approve time against fresh
-  // data, so reject here only for real (non-staleness) policy reasons; stage otherwise and let the
-  // approval-time gate decide on live data. (Review: PR #278.)
-  const blockingReasons = decision.reasons.filter((r) => !r.startsWith("staleness_gate:"));
-  if (!decision.approved && blockingReasons.length > 0) {
+  if (!effectiveDecision.approved) {
     return NextResponse.json(
-      { error: "POLICY_BLOCKED", reasons: blockingReasons, decision, estimatedNotional, proposal },
+      { error: "POLICY_BLOCKED", reasons: blockingReasons, decision: effectiveDecision, estimatedNotional, proposal },
       { status: 409 }
     );
   }

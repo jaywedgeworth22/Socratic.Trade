@@ -214,15 +214,24 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
   }
-  const headroomMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
+  // Headroom (execution-buffer) gate. For shorts, fold in the short-specific cap so a short sized at
+  // the full maxShortOrderNotional still leaves the buffer even when the generic/NAV cap is unset or
+  // higher (the hard short-cap check above only rejects at 100% of the short cap). (Review: PR #278.)
+  const isShortWithShortCap =
+    proposal.side === "short" && context.policy.maxShortOrderNotional != null && context.policy.maxShortOrderNotional > 0;
+  const headroomBaseCap = isShortWithShortCap
+    ? Math.min(effectiveMaxOrderNotional, context.policy.maxShortOrderNotional as number)
+    : effectiveMaxOrderNotional;
+  const headroomMaxOrderNotional = applyOpeningOrderHeadroom(headroomBaseCap);
   if (
     isOpening &&
-    Number.isFinite(effectiveMaxOrderNotional) &&
+    Number.isFinite(headroomBaseCap) &&
     Number.isFinite(headroomMaxOrderNotional) &&
     estimatedNotional > headroomMaxOrderNotional
   ) {
+    const capLabel = isShortWithShortCap && headroomBaseCap === context.policy.maxShortOrderNotional ? "max short order" : "maximum order";
     reasons.push(
-      `Order of ${dollars(estimatedNotional)} leaves less than ${OPENING_ORDER_HEADROOM_PCT}% buffer below the ${dollars(effectiveMaxOrderNotional)} maximum order limit; reduce to ${dollars(headroomMaxOrderNotional)} or raise the policy cap.`
+      `Order of ${dollars(estimatedNotional)} leaves less than ${OPENING_ORDER_HEADROOM_PCT}% buffer below the ${dollars(headroomBaseCap)} ${capLabel} limit; reduce to ${dollars(headroomMaxOrderNotional)} or raise the policy cap.`
     );
   }
   // Market-impact (ADV) ceiling: reject an opening order whose notional exceeds maxOrderPctOfAdv % of

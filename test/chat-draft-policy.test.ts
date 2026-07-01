@@ -162,4 +162,56 @@ describe("chat draft policy bridge", () => {
     expect(retryBody.deduped).toBe(true);
     expect(retryBody.proposalId).toBe(firstBody.proposalId);
   });
+
+  it("dry-run preview reports approved when a draft is blocked ONLY by staleness (so the UI shows Stage)", async () => {
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+    const { getPolicy, setPolicy } = await import("../src/lib/db");
+    const { POST } = await import("../app/api/proposals/from-draft/route");
+
+    setPolicy(
+      {
+        ...getPolicy(DEFAULT_REQUEST_USER_ID),
+        systemState: "active",
+        accountNumber: "TEST",
+        activeBroker: "test",
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        maxOrderNotional: 100000,
+        maxOrderPctOfNav: undefined,
+        maxDailyNotional: 1000000,
+        maxQuoteAgeSec: 60
+      },
+      DEFAULT_REQUEST_USER_ID
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/proposals/from-draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          dryRun: true,
+          draft: {
+            draft_id: "draft-aapl-dryrun-staleness",
+            symbol: "AAPL",
+            side: "buy",
+            qty: 1,
+            order_type: "market",
+            limit_usd: null,
+            rationale: "test",
+            account_label: "Test",
+            is_real: false,
+            blocked: false,
+            warnings: [],
+            executed: false
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.dryRun).toBe(true);
+    // Dry-run and commit must agree: staleness-only preview is effectively stageable.
+    expect(body.decision?.approved).toBe(true);
+  });
 });
