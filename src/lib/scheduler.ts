@@ -14,6 +14,7 @@ import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
 import { reconcilePendingFills, runStrategyOnce } from "./strategy";
+import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
@@ -315,6 +316,9 @@ async function tick(): Promise<void> {
 
     for (const { userId, accountId } of dueRuns) {
       const p = runStrategyOnce(userId, { connectedAccountId: accountId })
+        // Item 1 (opt-in): after a successful cadence run, attempt cadence-gated autonomous weight tuning.
+        // No-op unless policy.tuning.autoApplyWeights is on; fully self-guarded so it can never break the tick.
+        .then(() => maybeAutoTuneWeights(userId))
         .catch((err) => {
           console.error(`[scheduler] error running strategy for ${userId}/${accountId}:`, err);
         })

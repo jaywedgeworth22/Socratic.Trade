@@ -712,6 +712,7 @@ export function deleteConnectedAccount(id: string, userId: string = "local"): bo
       "strategy_runs",
       "skipped_candidate_counterfactuals",
       "counterfactual_learning_watermarks",
+      "learning_mutations",
       "audit_events",
       "notification_events"
     ]) {

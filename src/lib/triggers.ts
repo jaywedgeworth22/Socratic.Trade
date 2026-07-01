@@ -139,6 +139,9 @@ async function fire(userId: string): Promise<void> {
   audit("trigger_run", { userId, events: batch.length, types: distinctTypes(batch), reason: "event" }, userId);
   try {
     await runStrategyOnce(userId);
+    // Note: autonomous weight tuning is intentionally NOT hosted here. It runs on a separate, much-slower
+    // cadence under the scheduler's single-leader gate (see auto-tune-scheduler.ts + scheduler.ts); the
+    // event-driven path fires on material events and would apply weights at the wrong (event) frequency.
   } catch (err) {
     console.error("[triggers] event-driven run error:", err);
   }

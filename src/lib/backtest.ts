@@ -42,6 +42,8 @@ export interface FactorObservation {
   subScores: Record<MarketFactor, number>;
   /** Realized forward return as a fraction (e.g. 0.05 = +5%). */
   forwardReturn: number;
+  /** Market regime stamped on the snapshot at decision time (item 7 per-regime IC report). Optional. */
+  regime?: string;
 }
 
 /** Averaged cross-sectional rank IC for one factor across all snapshot dates. */
@@ -72,6 +74,7 @@ interface SignalSnapshotPayload {
     refPrice?: number;
     factorBreakdown?: MarketFactorBreakdown;
     asOf?: string;
+    regime?: string;
   }>;
 }
 
@@ -121,7 +124,8 @@ export async function buildFactorObservations(
         date: snapshotDate,
         symbol,
         subScores,
-        forwardReturn: (exit - refPrice) / refPrice
+        forwardReturn: (exit - refPrice) / refPrice,
+        ...(typeof signal.regime === "string" && signal.regime.trim() ? { regime: signal.regime.trim() } : {})
       });
     }
   }
@@ -170,6 +174,50 @@ export function computeFactorICs(observations: FactorObservation[]): FactorIC[] 
     }
     return { factor, ic: dates > 0 ? sum / dates : 0, n: dates };
   });
+}
+
+/** Per-regime factor-IC report (item 7). Application of regime-conditioned weights is intentionally NOT
+ * wired: per-regime buckets in this research app are almost always far below the sample size needed to
+ * avoid overfitting, so this is a READ-ONLY diagnostic. `sufficient` flags whether the regime had enough
+ * distinct snapshot dates for its ICs to be trustworthy — application stays off regardless. */
+export interface PerRegimeFactorIC {
+  regime: string;
+  /** Distinct snapshot dates observed in this regime bucket. */
+  dates: number;
+  /** Total observations in this regime bucket. */
+  observations: number;
+  /** Per-factor IC within this regime. */
+  ics: FactorIC[];
+  /** True when `dates >= minDates` (i.e. the per-regime sample is large enough to be worth reading). */
+  sufficient: boolean;
+}
+
+/**
+ * PURE. Group `FactorObservation`s by their stamped `regime` and compute per-factor IC within each regime.
+ * Observations with no regime are bucketed under "Unspecified". `minDates` (default 8) is the sufficiency
+ * bar below which a regime's ICs are statistically too thin to act on — this function REPORTS them either
+ * way (with `sufficient` set) but never itself applies regime-conditioned weights. Date.now()-free.
+ */
+export function computePerRegimeFactorICs(observations: FactorObservation[], minDates = 8): PerRegimeFactorIC[] {
+  const byRegime = new Map<string, FactorObservation[]>();
+  for (const obs of observations) {
+    const regime = obs.regime && obs.regime.trim() ? obs.regime.trim() : "Unspecified";
+    const bucket = byRegime.get(regime);
+    if (bucket) bucket.push(obs);
+    else byRegime.set(regime, [obs]);
+  }
+  return Array.from(byRegime.entries())
+    .map(([regime, group]) => {
+      const dates = new Set(group.map((o) => o.date)).size;
+      return {
+        regime,
+        dates,
+        observations: group.length,
+        ics: computeFactorICs(group),
+        sufficient: dates >= minDates
+      };
+    })
+    .sort((a, b) => b.observations - a.observations);
 }
 
 /**
@@ -421,6 +469,13 @@ export interface OOSResult {
   /** OOS composite IC of `options.baselineWeights` (the status-quo weights), when supplied. */
   oosICBaseline?: number;
   /**
+   * Paired per-date IC-difference statistics (candidate − baseline) over the SAME OOS test fold.
+   * Present only when BOTH `candidateWeights` and `baselineWeights` are supplied. This is the correct
+   * SE source for a significance test on the candidate-vs-baseline edge (the two ICs are correlated
+   * because they share the same fold), used by the autonomous paired-t gate (panel P0-2).
+   */
+  pairedICDiff?: PairedICDiffStats;
+  /**
    * OOS IC information ratio (mean / sample-std of per-date ICs).
    * Values > 0.5 are conventionally considered evidence of a real signal.
    */
@@ -534,6 +589,85 @@ export function computeCompositeIC(
   return { meanIC: mean, icIR: std > 0 ? mean / std : 0 };
 }
 
+/** Paired per-date IC-difference statistics for candidate-vs-baseline weights (panel P0-2). */
+export interface PairedICDiffStats {
+  /** Number of dates that produced a valid IC for BOTH weight vectors (the paired sample size). */
+  n: number;
+  /** Mean of the per-date (candidateIC − baselineIC) series. */
+  meanDiff: number;
+  /** Sample standard deviation of the per-date difference series (n−1 denominator). */
+  stdDiff: number;
+  /** Standard error of the mean difference (stdDiff / sqrt(n)). */
+  seDiff: number;
+  /**
+   * Paired t-statistic: meanDiff / seDiff. Positive ⇒ candidate beats baseline. Special cases:
+   *  - `n < 2` → 0 (no SE from one point);
+   *  - ZERO variance with a NONZERO mean (every date's diff is the same nonzero value) → ±Infinity,
+   *    NOT 0: a candidate that UNIFORMLY beats baseline is, in the limit, infinitely significant. Treating
+   *    that as 0 would wrongly reject the strongest possible edge;
+   *  - zero variance with a zero mean → 0 (truly no difference).
+   */
+  tStat: number;
+}
+
+/**
+ * PURE (panel P0-2). Compute the PAIRED per-date IC-difference series between two weight vectors on
+ * the SAME observations, then summarize it. Because both composite ICs are measured on the identical
+ * test fold and are highly correlated, the difference's standard error MUST come from this paired
+ * per-date difference series — NOT from differencing two independently-estimated ICIRs. Only dates that
+ * yield a finite IC for BOTH vectors contribute a paired point (a date with <2 valid names for either
+ * side is dropped from the pair). Returns `n=0` stats when no date pairs.
+ */
+export function pairedICDiffStats(
+  observations: FactorObservation[],
+  candidateWeights: ScoringWeights,
+  baselineWeights: ScoringWeights
+): PairedICDiffStats {
+  const byDate = new Map<string, FactorObservation[]>();
+  for (const obs of observations) {
+    const bucket = byDate.get(obs.date);
+    if (bucket) bucket.push(obs);
+    else byDate.set(obs.date, [obs]);
+  }
+
+  const diffs: number[] = [];
+  for (const group of byDate.values()) {
+    const candScores: number[] = [];
+    const baseScores: number[] = [];
+    const returns: number[] = [];
+    for (const obs of group) {
+      const cs = compositeScore(obs, candidateWeights);
+      const bs = compositeScore(obs, baselineWeights);
+      const r = obs.forwardReturn;
+      if (Number.isFinite(cs) && Number.isFinite(bs) && Number.isFinite(r)) {
+        candScores.push(cs);
+        baseScores.push(bs);
+        returns.push(r);
+      }
+    }
+    if (returns.length < 2) continue;
+    const candIC = spearmanRankIC(candScores, returns);
+    const baseIC = spearmanRankIC(baseScores, returns);
+    if (candIC === undefined || baseIC === undefined) continue;
+    diffs.push(candIC - baseIC);
+  }
+
+  const n = diffs.length;
+  if (n === 0) return { n: 0, meanDiff: 0, stdDiff: 0, seDiff: 0, tStat: 0 };
+  const meanDiff = diffs.reduce((s, x) => s + x, 0) / n;
+  if (n === 1) return { n, meanDiff, stdDiff: 0, seDiff: 0, tStat: 0 };
+  const sampleVar = diffs.reduce((s, x) => s + (x - meanDiff) ** 2, 0) / (n - 1);
+  const stdDiff = Math.sqrt(sampleVar);
+  const seDiff = stdDiff / Math.sqrt(n);
+  // Zero variance: if the mean is nonzero (every date's diff is the same nonzero value — a candidate that
+  // UNIFORMLY beats or lags baseline), the t-stat is infinite (Math.sign gives its direction). Only a truly
+  // zero mean-difference yields 0. Otherwise the standard meanDiff/seDiff.
+  const tStat = seDiff > 0
+    ? meanDiff / seDiff
+    : (meanDiff === 0 ? 0 : Math.sign(meanDiff) * Infinity);
+  return { n, meanDiff, stdDiff, seDiff, tStat };
+}
+
 /**
  * PURE. Build an equity curve: on each OOS date (chronological), score all names with
  * `weights`, select the top-K, compute their mean net return as the period return, and
@@ -618,6 +752,50 @@ async function buildSpyReturnMap(
 }
 
 /**
+ * EXPORTED (panel B4). SPY % return (as a fraction) from each snapshot business-day to `now`, over the SAME
+ * variable window a skipped-candidate return uses (entry snapshot date → current price). Reuses the single
+ * SPY OHLC fetch + `selectExitClose` machinery (no hand-rolled 2nd fetch). A date with no SPY bar at/before
+ * `now` or at/after the entry date is OMITTED — the caller must treat a missing entry as "exclude", never
+ * fall back to a raw >0 test. Returns an empty Map when SPY is unavailable.
+ */
+export async function buildSpyReturnToNowMap(
+  dates: string[],
+  now: number = Date.now(),
+  fetchOHLC: BacktestOHLCFetcher = fetchDailyOHLC
+): Promise<Map<string, number>> {
+  const spyBars = await fetchOHLC("SPY", now);
+  if (!spyBars || spyBars.length === 0) return new Map();
+  const nowDate = new Date(now).toISOString().slice(0, 10);
+  const result = new Map<string, number>();
+  for (const date of new Set(dates)) {
+    const entryClose = selectExitClose(spyBars, date);
+    if (entryClose === undefined || !(entryClose > 0)) continue;
+    // Exit = the last SPY close at/before "now" (mirrors the skipped-candidate "current price" endpoint).
+    const exitClose = selectExitClose(spyBars, nowDate) ?? lastCloseAtOrBefore(spyBars, nowDate);
+    if (exitClose === undefined || !(exitClose > 0)) continue;
+    result.set(date, (exitClose - entryClose) / entryClose);
+  }
+  return result;
+}
+
+/** Last usable SPY close at/before a date (fallback endpoint when no bar lands exactly on/after "now"). */
+function lastCloseAtOrBefore(bars: OHLCBar[], date: string): number | undefined {
+  const dated = bars
+    .map((b) => ({ d: toBusinessDayLocal(b.time), c: b.close }))
+    .filter((b): b is { d: string; c: number } => Boolean(b.d) && typeof b.c === "number" && b.c > 0)
+    .sort((a, b) => a.d.localeCompare(b.d));
+  const before = dated.filter((b) => b.d <= date);
+  return before.length > 0 ? before[before.length - 1].c : undefined;
+}
+
+function toBusinessDayLocal(time: number | string | undefined): string | undefined {
+  if (time === undefined) return undefined;
+  const d = typeof time === "number" ? new Date(time) : new Date(time);
+  const iso = d.toISOString();
+  return Number.isNaN(d.getTime()) ? undefined : iso.slice(0, 10);
+}
+
+/**
  * IO. Walk-forward out-of-sample validation.
  *
  * 1. Builds factor observations from the `signal_snapshot` audit log.
@@ -666,6 +844,12 @@ export async function runWalkForwardOOS(
     : undefined;
   const oosICBaseline = options.baselineWeights
     ? computeCompositeIC(adjustedTest, options.baselineWeights).meanIC
+    : undefined;
+  // Panel P0-2: when BOTH candidate and baseline weights are supplied, compute the paired per-date IC
+  // difference series on the same fold. Its SE (not a difference of independent ICIRs) is the correct
+  // basis for a significance test on the candidate-vs-baseline edge.
+  const pairedICDiff = options.candidateWeights && options.baselineWeights
+    ? pairedICDiffStats(adjustedTest, options.candidateWeights, options.baselineWeights)
     : undefined;
 
   const oosDates = [...new Set(adjustedTest.map((o) => o.date))];
@@ -724,6 +908,7 @@ export async function runWalkForwardOOS(
     oosICDefault,
     oosICCandidate,
     oosICBaseline,
+    pairedICDiff,
     equityCurve,
     annualizedReturn,
     benchmarkAnnualizedReturn,
