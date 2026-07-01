@@ -28,6 +28,12 @@ A single session that (1) produced a comprehensive multi-expert improvement audi
   branches (detected via upstream `[gone]` OR `git cherry` patch-equivalence), while **keeping
   every dirty or unmerged worktree** and all protected lanes (main integration, the four agent
   previews, production `trading-live`, and the open-PR worktrees).
+- **Review corrections:** re-baselined the audit after Codex review: historical IDOR is marked
+  resolved instead of active P0, route-auth coverage is counted from the current tree (52/66
+  route files import `resolveRequestUser`; 14 explicit exceptions), price-chart code-splitting
+  is narrowed because `lightweight-charts` is already lazy-loaded, risk-breaker is noted as
+  wired with residual live/durability follow-up, PLAN.md records the new priorities, and the
+  stale missing Robinhood rollout-note reference is replaced by PR #282.
 
 ## Why
 
@@ -41,7 +47,9 @@ synthetic bid/ask anchoring limit prices) and the "built-but-unwired" gaps rathe
 - PR #278: `npx tsc --noEmit`; targeted Vitest (sizing, llm-request, revalidation, policy,
   chat-draft, notifications) pass. Full `verify`+`smoke`+`gitleaks` CI gates the merge.
 - PR #279: `bash -n` on both touched scripts; ASCII grep clean on touched files; YAML reviewed.
-- This docs PR is documentation-only; `verify` CI (tsc → test → build) is unaffected.
+- This docs PR is documentation-only. Local review pass: `git diff --check`; `rg --files
+  app/api -g 'route.ts'` + `rg -l "resolveRequestUser" app/api -g 'route.ts'` to recompute the
+  route-auth baseline. Full `verify` CI (tsc → test → build) gates the merge.
 
 ## Follow-ups
 

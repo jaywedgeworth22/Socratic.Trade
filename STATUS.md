@@ -24,12 +24,9 @@ reasoning-clamp bypass) — auto-merge armed. Pruned merged-only worktrees/branc
 38 worktrees + 128 branches, **kept every dirty/unmerged worktree** and the protected lanes
 (main, agent previews, production, open-PR worktrees).
 
-Open item flagged for owner: an orphaned, unverified rollout note
-(`docs/rollouts/2026-06-30-robinhood-small-dollar-routing.md`) describes a real Robinhood
-small-dollar routing bug ($1 fractional buys show "Placed" but never fill / cash unchanged)
-whose code was never committed anywhere. Root cause confirmed in code: dollar-routed
-(fractional) orders can reach Robinhood as a `limit` order, which Robinhood only fills as
-`market` — fix pending (guard in `toMcpOrder`).
+Open item was promoted into active work: the orphaned Robinhood small-dollar routing
+diagnosis became PR #282 (`fix/robinhood-fractional-market`), which implements and verifies
+the `toMcpOrder` guard instead of leaving a missing rollout-note reference in this docs PR.
 ## 2026-07-01 - CI hosted-runner migration + concurrency guards
 Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
 `trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
