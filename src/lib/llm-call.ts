@@ -132,6 +132,29 @@ function openAiResponsesTextFormat(
 }
 
 /**
+ * True when the model stopped because it hit the output-token cap (a truncated answer), across
+ * transports: OpenAI chat-completions `finish_reason:"length"`, OpenAI responses API
+ * `incomplete_details.reason:"max_output_tokens"` / top-level `status:"incomplete"`, and Anthropic
+ * Messages `stop_reason:"max_tokens"`. A truncated JSON answer usually fails to parse, so callers use
+ * this to distinguish "output cap too small" from a genuine empty result.
+ */
+export function detectLlmTruncation(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const p = payload as {
+    stop_reason?: unknown;
+    choices?: unknown;
+    status?: unknown;
+    incomplete_details?: { reason?: unknown } | null;
+    output?: unknown;
+  };
+  if (p.stop_reason === "max_tokens") return true;
+  if (Array.isArray(p.choices) && p.choices.some((c) => (c as { finish_reason?: unknown } | null)?.finish_reason === "length")) return true;
+  if (p.status === "incomplete" && p.incomplete_details?.reason === "max_output_tokens") return true;
+  if (Array.isArray(p.output) && p.output.some((o) => (o as { status?: unknown } | null)?.status === "incomplete")) return true;
+  return false;
+}
+
+/**
  * Extract the model's text answer across all transports, normalized to a string the caller can
  * `JSON.parse` (when a schema was used) or read directly (free text):
  * - OpenAI responses API: `output_text`, else the first text block in `output[]`.

@@ -31,7 +31,7 @@ import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
@@ -2161,7 +2161,7 @@ async function proposeTrades(input: {
     keySource: llmKeySource
   };
   recordStep({ ...bullStepBase, status: "started" }, { includeInResult: false });
-  let bullResult: { text?: string; proposals: TradeProposal[] };
+  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean };
   try {
     bullResult = await withLlmGeneration(
       {
@@ -2198,6 +2198,7 @@ async function proposeTrades(input: {
         const payload = await response.json();
         recordLlmUsage({ userId: input.userId, provider, model, context: "strategy", keySource: llmKeySource, keyRef: llmKeyRef, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
+        const truncated = detectLlmTruncation(payload);
 
         if (!text) {
           throw new Error("Empty response returned from LLM API.");
@@ -2205,12 +2206,13 @@ async function proposeTrades(input: {
 
         try {
           const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
-          return { text, proposals: parsed.proposals ?? [] };
+          return { text, proposals: parsed.proposals ?? [], truncated };
         } catch (error) {
           // A truncated/malformed model response must not crash the whole autonomous
-          // run; degrade to zero proposals for this tick.
+          // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
+          // record a DISTINCT truncation reason instead of a silent no-op (see below).
           console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", error);
-          return { text, proposals: [] as TradeProposal[] };
+          return { text, proposals: [] as TradeProposal[], truncated };
         }
       }
     );
@@ -2225,10 +2227,25 @@ async function proposeTrades(input: {
     ...p,
     entryMarketRegime: currentMarketRegime
   }));
+  // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
+  // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
+  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.)
+  const bullTruncationReason = bullResult.truncated
+    ? `Green Team response hit the ${LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
+    : undefined;
+  if (bullTruncationReason) {
+    console.warn(`[Bull] ${bullTruncationReason}`);
+    audit(
+      "strategy_bull_truncated",
+      { runId: input.runId, cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, parsedProposals: rawBullProposals.length, provider, model },
+      input.userId
+    );
+  }
   recordStep({
     ...bullStepBase,
     status: "completed",
-    proposalCount: rawBullProposals.length
+    proposalCount: rawBullProposals.length,
+    ...(bullTruncationReason ? { reason: bullTruncationReason } : {})
   });
 
   // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
