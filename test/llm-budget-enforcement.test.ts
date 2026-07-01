@@ -33,6 +33,10 @@ async function setTokenBudget(userId: string, tokenBudget: number): Promise<void
   const p = getPolicy(userId);
   setPolicy({ ...p, tuning: { ...p.tuning, llmDailyTokenBudget: tokenBudget } }, userId);
 }
+async function seedRag(userId: string, tokensIn: number): Promise<void> {
+  const { recordRagUsage } = await import("../src/lib/rag-metering");
+  recordRagUsage({ userId, operation: "embed", provider: "voyage", tokensIn });
+}
 
 describe("LLM budget config — per-user POLICY (modifiable) with env fallback", () => {
   it("enforces a per-user policy budget with no env set (this is what the Settings UI writes)", async () => {
@@ -63,6 +67,14 @@ describe("LLM budget config — per-user POLICY (modifiable) with env fallback",
     await seedUsage("local", 10_000_000, 9_999);
     const { isOverLlmBudget } = await import("../src/lib/llm-budget");
     expect(isOverLlmBudget("local")).toBe(false);
+  });
+
+  it("an EXPLICIT policy budget of 0 opts OUT of an operator env default (0 = no limit, not 'block everything')", async () => {
+    process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "1000"; // operator sets a default…
+    await setTokenBudget("local", 0); // …account explicitly opts out with 0
+    await seedUsage("local", 1_000_000);
+    const { isOverLlmBudget } = await import("../src/lib/llm-budget");
+    expect(isOverLlmBudget("local")).toBe(false); // never blocked despite far exceeding the env default
   });
 });
 
@@ -104,5 +116,17 @@ describe("LLM budget — durable spend-primitive enforcement", () => {
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
     const chunks = await retrieveContextDetailed("AAPL catalysts", "AAPL", 3, "local");
     expect(chunks).toEqual([]);
+  });
+
+  it("RAG (Voyage/Pinecone) spend counts toward the ceiling too — not just llm_usage", async () => {
+    await setTokenBudget("local", 1000);
+    // No llm_usage rows at all — the ceiling must trip on rag_usage alone, else RAG spend never counts.
+    await seedRag("local", 1500);
+    const { checkLlmDailyBudget, isOverLlmBudget } = await import("../src/lib/llm-budget");
+    expect(isOverLlmBudget("local")).toBe(true);
+    const decision = checkLlmDailyBudget("local");
+    expect(decision.ok).toBe(false);
+    expect(decision.reason).toBe("token_budget");
+    expect(decision.tokensToday).toBeGreaterThanOrEqual(1500);
   });
 });

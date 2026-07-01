@@ -5,9 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
-> 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Future considerations (deferred, not
-> blocking PR #293)** — the durable per-user LLM budget now enforces at the spend primitives and is
-> user-editable in Settings; two known limitations are intentionally left for a follow-up:
+> 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Follow-up Codex review on the durable budget** —
+> two findings were **fixed in code with tests** (not deferred): (a) an EXPLICIT per-user policy budget
+> of `0` now opts OUT of an operator env default (`0` = no limit, not "block everything") — `resolveLimit`
+> only inherits the env default on `undefined`/blank; (b) RAG (Voyage/Pinecone) spend from the
+> `rag_usage` ledger now counts toward the same ceiling as `llm_usage`, so RAG-only spend can trip the
+> cap (previously it could not). Covered by `test/llm-budget-enforcement.test.ts`.
+>
+> **Future considerations (deferred, not blocking PR #293)** — the durable per-user LLM budget now
+> enforces at the spend primitives and is user-editable in Settings; known limitations left for a
+> follow-up:
 > 1. **Concurrent-run budget reservation.** The daily ceiling is a read-of-the-ledger admission
 >    check, not a reservation. Two of the same user's account runs launched concurrently by the
 >    scheduler can each start just under the limit and both spend, so the cap can be exceeded by up to
@@ -16,7 +23,12 @@ filling the missing pieces.
 > 2. **Chat-path spend coverage.** `/api/chat` LLM spend does not route through `withLlmGeneration`, so
 >    it is outside the budget gate. If a *total* per-user/day ceiling (strategy + chat) is desired,
 >    wire the chat LLM path through the same `assertWithinLlmBudget(userId)` guard.
-> 3. **(Earlier-noted) `strategy.ts` god-module split** (~3k lines) remains a separate large refactor.
+> 3. **Multi-account budget target.** The ceiling is keyed by `userId`, so it is a per-*user* daily cap
+>    that spans all of that user's accounts, not a per-*account* cap. If a user runs several accounts and
+>    the intent is an independent budget per account, the gate would need to key on the account id (and
+>    the ledger read filter + the Settings UI would need a per-account budget field). Today it is
+>    deliberately per-user so one runaway account can't drain a shared daily allowance unnoticed.
+> 4. **(Earlier-noted) `strategy.ts` god-module split** (~3k lines) remains a separate large refactor.
 > See `docs/rollouts/2026-07-01-llm-budget-durable-enforcement.md` and
 > `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 > 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): audit workstreams **F**

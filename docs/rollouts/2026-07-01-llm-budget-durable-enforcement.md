@@ -55,7 +55,24 @@ model/embedding spend site was a fresh bypass. This change makes it **modifiable
 (Private `@jaywedgeworth22/congress-trading-shared` stubbed locally as before; CI `verify` uses the real
 package.)
 
-## Follow-ups
+## Follow-up Codex review — two fixes (in code, with tests)
+
+A second Codex pass on `de66edc` surfaced four items; two were genuine bugs in the newly-written code
+and are **fixed here** (not deferred):
+
+1. **Explicit `0` now opts OUT of an operator env default.** `resolveLimit` previously fell through to
+   the env default whenever the policy value wasn't positive, so a user who set `0` to disable the cap
+   still inherited the operator's env limit. It now treats an explicit finite policy value as
+   authoritative — `> 0` = that limit, `≤ 0` = no ceiling — and only inherits the env default when the
+   policy value is `undefined` (blank in the UI). (`src/lib/llm-budget.ts`.)
+2. **RAG spend now counts toward the ceiling.** `checkLlmDailyBudget` summed only `llm_usage`; since the
+   gate *also* stops RAG retrieval, RAG (Voyage/Pinecone) spend must count too, else RAG-only usage
+   never trips the cap. It now adds `getRagUsageSummary` tokens (in+out) and estimated cost from the
+   `rag_usage` ledger. (`src/lib/llm-budget.ts`, imports `./rag-metering`.)
+
+Both are covered by new cases in `test/llm-budget-enforcement.test.ts` (10 tests total).
+
+## Follow-ups (deferred future considerations)
 
 - The per-user **concurrent-run reservation** (two same-user account runs both passing the read-based
   admission check) is still a documented, deferred limitation — the spend-primitive gate makes the
@@ -64,3 +81,9 @@ package.)
 - Chat (`/api/chat`) LLM spend is not routed through `withLlmGeneration`, so it isn't covered by this
   gate; if a *total* per-user/day ceiling (incl. chat) is wanted, wire chat's LLM path through the same
   `assertWithinLlmBudget` — noted as a follow-up.
+- **Multi-account budget target.** The ceiling keys on `userId`, so it is a per-*user* daily cap across
+  all of that user's accounts, not per-*account*. A per-account budget would need the gate + ledger
+  filter + a Settings field keyed on account id. Deliberately per-user today so one runaway account
+  can't silently drain a shared allowance.
+
+See `PLAN.md` (top) for the consolidated future-considerations list.

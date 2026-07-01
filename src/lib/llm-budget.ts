@@ -14,6 +14,7 @@
 // by one check rather than per-call-site gates.
 import { DAILY_RESET_TIME_ZONE, getPolicy, startOfDayInTimeZone } from "./db";
 import { getLlmUsageSummary } from "./llm-usage";
+import { getRagUsageSummary } from "./rag-metering";
 import type { TradingPolicy } from "./types";
 
 function envNum(name: string, dflt: number): number {
@@ -23,10 +24,13 @@ function envNum(name: string, dflt: number): number {
   return Number.isFinite(n) && n >= 0 ? n : dflt;
 }
 
-/** Resolve a limit: the per-user policy value when set to a positive number, else the env default,
- *  else +Infinity (no ceiling). 0 / negative anywhere means "no limit" for that dimension. */
+/** Resolve a limit for one dimension. An EXPLICIT per-user policy value always wins over the env
+ *  default — including `0`, which means "no limit" (an account opting OUT of an operator-set default).
+ *  Only `undefined` (blank in the UI) inherits the env default. Positive = that limit; ≤0 = no ceiling. */
 function resolveLimit(policyValue: number | undefined, envName: string): number {
-  if (typeof policyValue === "number" && Number.isFinite(policyValue) && policyValue > 0) return policyValue;
+  if (typeof policyValue === "number" && Number.isFinite(policyValue)) {
+    return policyValue > 0 ? policyValue : Number.POSITIVE_INFINITY;
+  }
   const env = envNum(envName, 0);
   return env > 0 ? env : Number.POSITIVE_INFINITY;
 }
@@ -60,10 +64,17 @@ export function checkLlmDailyBudget(userId: string, now: Date = new Date()): Llm
   const costLimit = resolveLimit(tuning?.llmDailyCostBudgetUsd, "TRIGGER_LLM_DAILY_COST_BUDGET_USD");
   if (!Number.isFinite(tokenLimit) && !Number.isFinite(costLimit)) return { ok: true };
 
-  const dayStart = startOfDayInTimeZone(now, DAILY_RESET_TIME_ZONE);
-  const rows = getLlmUsageSummary({ sinceIso: dayStart.toISOString() }).filter((r) => r.userId === userId);
-  const tokensToday = rows.reduce((sum, r) => sum + (r.totalTokens ?? 0), 0);
-  const costUsdToday = rows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+  const sinceIso = startOfDayInTimeZone(now, DAILY_RESET_TIME_ZONE).toISOString();
+  // LLM (model) spend from the llm_usage ledger…
+  const llmRows = getLlmUsageSummary({ sinceIso }).filter((r) => r.userId === userId);
+  let tokensToday = llmRows.reduce((sum, r) => sum + (r.totalTokens ?? 0), 0);
+  let costUsdToday = llmRows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+  // …PLUS RAG (Voyage/Pinecone) spend from the rag_usage ledger — the ceiling gates RAG retrieval
+  // (retrieveContextDetailed), so RAG usage must count toward it too, else RAG spend never trips the
+  // limit. Tokens = embed/rerank input+output; cost = estimated Voyage/Pinecone USD.
+  const ragRows = getRagUsageSummary({ sinceIso }).filter((r) => r.userId === userId);
+  tokensToday += ragRows.reduce((sum, r) => sum + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
+  costUsdToday += ragRows.reduce((sum, r) => sum + (r.costEstUsd ?? 0), 0);
 
   if (Number.isFinite(tokenLimit) && tokensToday >= tokenLimit) {
     return { ok: false, reason: "token_budget", tokensToday, costUsdToday, tokenLimit, costLimitUsd: costLimit };

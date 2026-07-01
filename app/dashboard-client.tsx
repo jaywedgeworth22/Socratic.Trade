@@ -5511,17 +5511,17 @@ function SettingsContent({
             <OptionalNumberField
               label="Daily LLM token budget"
               value={tuning.llmDailyTokenBudget}
-              placeholder="blank / 0 = no limit"
+              placeholder="blank = inherit default"
               step={1000}
-              hint="Hard per-day ceiling on this account's total LLM token usage. Once today's usage reaches it, the run skips all model + RAG spend for the rest of the day — risk breakers, reconciliation, and protective exits still run. Blank/0 = no limit; falls back to the TRIGGER_LLM_DAILY_TOKEN_BUDGET env default."
+              hint="Hard per-day ceiling on this account's total LLM + RAG token usage. Once today's usage reaches it, the run skips all model + RAG spend for the rest of the day — risk breakers, reconciliation, and protective exits still run. Blank inherits the operator default (TRIGGER_LLM_DAILY_TOKEN_BUDGET env); 0 = no limit (opt out of the default)."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, llmDailyTokenBudget: v } })}
             />
             <OptionalNumberField
               label="Daily LLM cost budget ($)"
               value={tuning.llmDailyCostBudgetUsd}
-              placeholder="blank / 0 = no limit"
+              placeholder="blank = inherit default"
               step={1}
-              hint="Hard per-day ceiling on this account's estimated LLM cost (USD). Same behavior as the token budget. Blank/0 = no limit; env fallback TRIGGER_LLM_DAILY_COST_BUDGET_USD."
+              hint="Hard per-day ceiling on this account's estimated LLM + RAG cost (USD). Same behavior as the token budget. Blank inherits the operator default (TRIGGER_LLM_DAILY_COST_BUDGET_USD env); 0 = no limit."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, llmDailyCostBudgetUsd: v } })}
             />
             <OptionalNumberField
