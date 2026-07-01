@@ -4,6 +4,24 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — NAV_V2 PR #1: vocabulary relabels + scope-surfacing (first app code) (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`. **First app-code step** of the redesign —
+executes PR #1 of `docs/settings-navigation-redesign/spec/08-delivery-plan-prs-and-tests.md`. **No flag**
+(pure clarifying copy on the current IA + surfacing the already-coded account/user tier split; no panel
+moved, no data path touched). Changes in `app/dashboard-client.tsx`: chrome kill button `Stop`→**`STOP`**
+with a never-sells tooltip (**handler byte-identical** — the real STOP/Flatten split is PR #9); feed tab
+`Notifications`→**`Alert history`**; settings sections `Display`→**`Appearance`**,
+`Notifications`→**`Alert delivery`**, `Data`→**`Data & Privacy`** (+ in-section `Alerts webhook`/`Send
+alerts for`); Help glossary + scope-detail copy updated. **Scope-surfacing:** each settings-section header
+now renders a **`THIS ACCOUNT`**/**`ALL ACCOUNTS`** `Chip` via `scopeTagForSection`. New module
+`app/settings-scope.ts` extracts `SettingsSection`/`settingsTierForSection` (unchanged) + adds
+`SCOPE_TAG_LABEL`/`scopeTagForSection` as the shared source of truth for the tag copy. New test
+`test/scope-tag-render.test.ts`. **Verify (this worktree, deps installed):** `tsc --noEmit` clean ·
+`lint` 0 errors · `npm test` 173 files / 1675 pass (+1 file/+4 tests) · `build` success. No existing test
+asserted a relabeled string. Reviewed adversarially via a 4-dimension Workflow. **Next:** PR #2
+(`DestinationTab` mapping + one-time localStorage shim, behind `NAV_V2`).
+See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+
 ## 2026-07-01 — Settings & navigation redesign proposal (large-team, docs-only) (Claude)
 Branch `claude/settings-navigation-redesign-a3k1yv`. **Docs-only; no app code changed** — a canonical
 proposal to fix the "Frankenstein" IA the owner called out (Strategy config in 5 places; duplicated

@@ -20,6 +20,12 @@ filling the missing pieces.
 > `docs/settings-navigation-redesign/spec/`** (11 sections + grounding + reconciliation; start at
 > `spec/00-README.md`). Still docs-only. Next: clickable prototype, then delivery-plan PR #1 (relabels +
 > scope-surfacing). See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
+> **PR #1 landed (2026-07-01, `claude/settings-navigation-redesign-a3k1yv-mce45j`):** first app code —
+> vocabulary relabels (`Stop`→`STOP` w/ never-sells tooltip, handler unchanged; `Notifications`→`Alert
+> history`/`Alert delivery`; `Display`→`Appearance`; `Data`→`Data & Privacy`) + settings-header
+> `THIS ACCOUNT`/`ALL ACCOUNTS` scope tags. No flag, no data path. New `app/settings-scope.ts` (shared
+> scope-tag SSOT) + `test/scope-tag-render.test.ts`. tsc/lint/test/build green. Next: PR #2 (`DestinationTab`
+> mapping + localStorage shim behind `NAV_V2`). See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value
