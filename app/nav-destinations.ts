@@ -149,6 +149,22 @@ export function isNavV2Enabled(storage?: Pick<Storage, "getItem"> | null): boole
   return coerceFlag(process.env.NEXT_PUBLIC_NAV_V2) ?? false;
 }
 
+// STRATEGY_CONSOLIDATION (NAV_V2 PR #6) — dedicated sub-flag for the highest-risk
+// TuningCard de-duplication. Off by default; when on, the twin TuningCard render
+// site in the Strategy Studio modal is suppressed so a single instance renders.
+// A bad merge is a flag flip, not a revert.
+export const STRATEGY_CONSOLIDATION_OVERRIDE_KEY = "strategy-consolidation";
+
+export function isStrategyConsolidationEnabled(storage?: Pick<Storage, "getItem"> | null): boolean {
+  try {
+    const override = coerceFlag(storage?.getItem(STRATEGY_CONSOLIDATION_OVERRIDE_KEY));
+    if (override !== undefined) return override;
+  } catch {
+    /* ignore storage failures — fall through to env default */
+  }
+  return coerceFlag(process.env.NEXT_PUBLIC_STRATEGY_CONSOLIDATION) ?? false;
+}
+
 // ── One-time migration shim (flag-INDEPENDENT, additive-write, idempotent) ─────
 // Runs on every client mount but only writes a destination key when it is absent
 // and the matching legacy key holds a valid value. Legacy keys are left intact

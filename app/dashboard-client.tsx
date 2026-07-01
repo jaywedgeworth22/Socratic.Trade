@@ -116,6 +116,7 @@ import {
   WORKSPACE_TAB_KEY,
   isFeedTab,
   isNavV2Enabled,
+  isStrategyConsolidationEnabled,
   isWorkspaceTab,
   migrateNavKeysToDestinations,
   type FeedTab,
@@ -4319,6 +4320,12 @@ function StrategyStudio({
   discardStrategyTuning: () => void;
 }) {
   const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
+  // NAV_V2 PR #6: when STRATEGY_CONSOLIDATION is on, this Studio-modal TuningCard
+  // (the duplicate) is suppressed so a single instance renders on the Strategy
+  // tab. Off by default — flag-off keeps both render sites (byte-identical).
+  const [strategyConsolidation] = useState(() =>
+    isStrategyConsolidationEnabled(typeof window !== "undefined" ? window.localStorage : null)
+  );
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -4444,7 +4451,13 @@ function StrategyStudio({
           </div>
           {tuningError && <p className="mt-3 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           <div className="mt-3">
-            {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
+            {strategyConsolidation ? (
+              <p className="text-[13px] text-faint">Strategy review now lives in one place — the Strategy tab.</p>
+            ) : strategyTuning ? (
+              <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} />
+            ) : (
+              <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>
+            )}
           </div>
         </div>
       </div>
