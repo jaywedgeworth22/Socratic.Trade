@@ -2704,9 +2704,16 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
+/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
+ *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
+ *  degrades to the refPrice-based branch instead. */
+function hasRealAsk(quote: MarketQuote): boolean {
+  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+}
+
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
   if (!marketScan) return undefined;
-  const hasAskData = marketScan.topCandidates.some((quote) => quote.ask && quote.ask > 0);
+  const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
     source: marketScan.source,
     generatedAt: marketScan.generatedAt,
@@ -2726,12 +2733,17 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
+  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
+  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
+  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
     px: quote.price,
-    bid: quote.bid,
-    ask: quote.ask,
+    bid: realBid,
+    ask: realAsk,
     vol: quote.volume,
     mktCap: quote.marketCap,
     chgPct: quote.intradayChangePct,
@@ -2744,10 +2756,16 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     pb: quote.pbRatio,
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    earnIn: quote.daysToEarnings,
+    instOwn: quote.institutionOwnershipPct,
+    iv: quote.nearTheMoneyIv,
+    putCall: quote.putCallRatio,
     range52w: pricePosition52w(quote),
     // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) are
-    // computed deterministically, then omitted when their inputs are unavailable.
-    ...deriveMetrics(quote),
+    // computed deterministically, then omitted when their inputs are unavailable. Pass the
+    // synthetic-stripped bid/ask so a price-derived (synthetic) spread doesn't leak into the prompt
+    // as a fabricated `spreadBps` execution-cost signal — matching the bid/ask omission above.
+    ...deriveMetrics({ ...quote, bid: realBid, ask: realAsk }),
     secRelStr: quote.sectorRelStrength,
     newsSent: quote.sentiment,
     insiderSent: quote.insiderSentiment,
@@ -3005,9 +3023,17 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
     if (qty >= 1) {
       const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
       const buffer = bufferBps / 10_000;
+      // A synthesized (price-derived) Yahoo spread is not a real quote — never anchor the
+      // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
+      // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
+      // back to refPrice only for the side that is actually synthetic so the limit is honest.
+      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
+      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
+      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
-        ? round2((quote?.ask && quote.ask > 0 ? quote.ask : refPrice) * (1 + buffer))
-        : round2((quote?.bid && quote.bid > 0 ? quote.bid : refPrice) * (1 - buffer));
+        ? round2((realAsk ?? refPrice) * (1 + buffer))
+        : round2((realBid ?? refPrice) * (1 - buffer));
       if (limitPrice > 0) {
         next = {
           ...next,

@@ -327,7 +327,8 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     const res1 = await provider.enrich(["AAPL"]);
 
     expect(res1.AAPL).toEqual({ insiderSentiment: 100 });
-    expect(mockFetch).toHaveBeenCalledTimes(4); // FMP calls 4 endpoints
+    // FMP calls 4 endpoints: ratios-ttm, grades-consensus, insider-trading, senate-trading.
+    expect(mockFetch).toHaveBeenCalledTimes(4);
 
     // Call second time to ensure cache bypass
     const res2 = await provider.enrich(["AAPL"]);

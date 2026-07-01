@@ -690,7 +690,13 @@ class TestBrokerGateway implements BrokerGateway {
               ask: yf.ask,
               volume: yf.volume > 0 ? yf.volume : undefined,
               asOf: yf.asOf || new Date().toISOString(),
-              provider: "yahoo-finance"
+              provider: "yahoo-finance",
+              // Carry the synthetic-spread flags so a price-derived Yahoo batch spread isn't relabeled
+              // as a real quoted spread when merged (mergeQuoteData / hasRealAsk). Side-specific flags
+              // preserve the REAL side of a one-sided quote; syntheticSpread stays = both, for back-compat.
+              ...(yf.syntheticBid ? { syntheticBid: true } : {}),
+              ...(yf.syntheticAsk ? { syntheticAsk: true } : {}),
+              ...(yf.syntheticSpread ? { syntheticSpread: true } : {})
             };
           } else {
             remainingSymbols.push(symbol);
@@ -929,6 +935,97 @@ export async function fetchRobinhoodFundamentals(symbols: string[], userId: stri
   } catch {
     return {};
   }
+}
+
+/**
+ * Fetch the option chain for a symbol via Robinhood MCP `get_option_chains`, optionally narrowing to
+ * specific instruments via `get_option_instruments`. Returns the raw MCP payloads for a caller-side
+ * parser (see robinhood-options.ts). Returns null when Robinhood isn't connected or the call fails —
+ * so the options enrichment tier degrades to contributing nothing, exactly like other optional tiers.
+ *
+ * SECURITY: `userId` is REQUIRED (per-user OAuth token). No 'local' fallback — a missing userId must
+ * not resolve the operator's broker token for a shared/background scan.
+ */
+export async function fetchRobinhoodOptionChain(
+  symbol: string,
+  userId: string,
+  opts: { expiration?: string; type?: "call" | "put" } = {}
+): Promise<{ chains: unknown; instruments: unknown; underlyingPrice?: number } | null> {
+  if (!robinhoodMcpDataEnabled()) return null;
+  const sym = normalizeSymbol(symbol);
+  if (!sym || !userId) return null;
+  try {
+    // `underlying_symbol` is the argument the Robinhood MCP option tools expect (the chat orchestrator's
+    // caller uses it too). `symbol`/`symbols` are sent alongside for tolerance across MCP server variants;
+    // a server that requires `underlying_symbol` would otherwise throw and yield no metrics.
+    const chains = await callRobinhoodMcpTool(userId, "get_option_chains", {
+      underlying_symbol: sym,
+      symbol: sym,
+      symbols: [sym]
+    });
+    let instruments: unknown = undefined;
+    try {
+      instruments = await callRobinhoodMcpTool(userId, "get_option_instruments", {
+        underlying_symbol: sym,
+        symbol: sym,
+        symbols: [sym],
+        ...(opts.expiration ? { expiration_date: opts.expiration } : {}),
+        ...(opts.type ? { type: opts.type } : {})
+      });
+    } catch {
+      // get_option_instruments is best-effort; the chain payload often already carries what we need.
+      instruments = undefined;
+    }
+    // Best-effort underlying price so the caller can pick the true near-the-money strike and apply its
+    // ±20% around-the-money filter. Without it, "near-the-money" IV / put-call ratio are basis-less and
+    // far-OTM strikes can dominate; a failure here simply omits the price (metrics fall back / suppress).
+    let underlyingPrice: number | undefined;
+    try {
+      const quote = await callRobinhoodMcpTool(userId, "get_equity_quotes", { symbols: [sym] });
+      underlyingPrice = extractUnderlyingPrice(quote, sym);
+    } catch {
+      underlyingPrice = undefined;
+    }
+    return { chains, instruments, ...(underlyingPrice !== undefined ? { underlyingPrice } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+/** Tolerantly pull a positive underlying last/mark price for `sym` from a get_equity_quotes payload. */
+export function extractUnderlyingPrice(raw: unknown, sym: string): number | undefined {
+  const root = raw as Record<string, unknown> | undefined;
+  const rows: unknown[] = Array.isArray(root?.results)
+    ? (root!.results as unknown[])
+    : Array.isArray(root?.quotes)
+      ? (root!.quotes as unknown[])
+      : Array.isArray(raw)
+        ? (raw as unknown[])
+        : root && typeof root === "object"
+          ? [root]
+          : [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    const outer = r as Record<string, unknown>;
+    // Robinhood commonly wraps the quote in a `quote` envelope (mirrors `item.quote ?? item` used by
+    // the equity-quote parser elsewhere in this file); read that nested shape, not just the top level.
+    const inner =
+      outer.quote && typeof outer.quote === "object" ? (outer.quote as Record<string, unknown>) : outer;
+    const rsym = normalizeSymbol(
+      String(inner.symbol ?? inner.ticker ?? outer.symbol ?? outer.ticker ?? "")
+    );
+    if (rows.length > 1 && rsym && rsym !== sym) continue;
+    const price = firstNum(inner, [
+      "last_trade_price",
+      "last_non_reg_trade_price",
+      "mark_price",
+      "adjusted_mark_price",
+      "price",
+      "last_price"
+    ]);
+    if (price !== undefined && price > 0) return price;
+  }
+  return undefined;
 }
 
 function firstNum(row: Record<string, unknown>, keys: string[]): number | undefined {

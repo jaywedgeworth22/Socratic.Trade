@@ -114,15 +114,26 @@ import {
   type SettingsSection,
   type SettingsTier
 } from "./settings-scope";
+import {
+  FEED_TAB_KEY,
+  WORKSPACE_TAB_KEY,
+  isFeedTab,
+  isNavV2Enabled,
+  isStrategyConsolidationEnabled,
+  isWorkspaceTab,
+  migrateNavKeysToDestinations,
+  type FeedTab,
+  type WorkspaceTab
+} from "./nav-destinations";
+import { GLOSSARY_RULE_OF_THUMB, SETTINGS_GLOSSARY } from "./settings-search";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
+import dynamic from "next/dynamic";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
-import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
-import { SymbolDrilldown, SymbolDrilldownTitle } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
@@ -153,9 +164,32 @@ import {
   DEFAULT_LLM_MODEL
 } from "./ui/llm-model-catalog";
 
+// Code-split the two heaviest tab payloads out of the initial dashboard bundle:
+//  • StrategyFlow pulls in @xyflow/react (~3.9MB) + its CSS — only needed when the Strategy Flow
+//    modal opens.
+//  • SymbolDrilldown pulls in PriceChart (which lazy-loads lightweight-charts) — only needed when a
+//    symbol drilldown slide-over opens.
+// Both are client-only (`ssr: false`) with lightweight loading fallbacks matching our skeleton /
+// EmptyState conventions, so @xyflow/react and the drilldown chart boundary never ship on first load.
+const StrategyFlow = dynamic(() => import("./ui/strategy-flow").then((m) => m.StrategyFlow), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center py-10">
+      <EmptyState icon={<Network size={18} />} title="Loading strategy flow…" />
+    </div>
+  )
+});
+const SymbolDrilldown = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldown), {
+  ssr: false,
+  loading: () => <EmptyState title="Loading symbol details…" />
+});
+const SymbolDrilldownTitle = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldownTitle), {
+  ssr: false,
+  loading: () => <span className="text-sm font-medium text-muted">Symbol</span>
+});
+
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 
 function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode {
   return CURATED_LLM_MODEL_GROUPS.map((group) => (
@@ -168,7 +202,6 @@ function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode
     </optgroup>
   ));
 }
-type FeedTab = "activity" | "runs" | "notifications" | "audit";
 
 type MarketReplaceCandidate = {
   order: EquityOrder;
@@ -196,8 +229,6 @@ const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
 const EXECUTION_BANNER_MODE_KEY = "execution-banner-mode";
 type ExecutionBannerMode = "full" | "compact" | "hidden";
 const HIDE_TEST_ACCOUNT_KEY = "hide-test-account";
-const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
-const FEED_TAB_KEY = "dashboard-feed-tab";
 const STRATEGY_TUNING_STORAGE_KEY = "strategy-tuning-proposal";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
 const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets";
@@ -246,6 +277,12 @@ function inferAlpacaEnvironment(input: { accountNumber?: string; apiKey?: string
   const accountNumber = input.accountNumber?.trim().toUpperCase() ?? "";
   const apiKey = input.apiKey?.trim().toUpperCase() ?? "";
   if (accountNumber.startsWith("PA") || apiKey.startsWith("PK")) return "paper";
+  // Credential-authoritative once creds are entered: non-PA/PK Alpaca creds are LIVE. This matches
+  // the server, which infers environment purely from the credentials and ignores body.environment —
+  // so the client must not stay stuck on a seeded "paper" (which previously made a live account fall
+  // back to the paper host / baseUrl and 401). Only fall back to the prior/seeded environment when NO
+  // credentials have been entered yet, so a brand-new draft still shows the paper default until typed.
+  if (accountNumber || apiKey) return "live";
   return input.environment === "paper" ? "paper" : "live";
 }
 
@@ -266,14 +303,6 @@ function safeJson(value: string): unknown {
   } catch {
     return {};
   }
-}
-
-function isWorkspaceTab(value: unknown): value is WorkspaceTab {
-  return value === "decision" || value === "assistant" || value === "market" || value === "macro" || value === "performance" || value === "tax" || value === "strategy";
-}
-
-function isFeedTab(value: unknown): value is FeedTab {
-  return value === "activity" || value === "runs" || value === "notifications" || value === "audit";
 }
 
 function readStoredWorkspaceTab(): WorkspaceTab {
@@ -1159,6 +1188,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // NAV_V2 PR #2: one-time, flag-INDEPENDENT migration of the legacy tab keys to
+  // the new destination keys. Additive (legacy keys are left intact so a flag-off
+  // render path still finds them) and idempotent (no-op once the new keys exist),
+  // so it is safe to run on every mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    migrateNavKeysToDestinations(window.localStorage);
+  }, []);
 
   useEffect(() => {
     try {
@@ -4508,6 +4546,12 @@ function StrategyStudio({
   discardStrategyTuning: () => void;
 }) {
   const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
+  // NAV_V2 PR #6: when STRATEGY_CONSOLIDATION is on, this Studio-modal TuningCard
+  // (the duplicate) is suppressed so a single instance renders on the Strategy
+  // tab. Off by default — flag-off keeps both render sites (byte-identical).
+  const [strategyConsolidation] = useState(() =>
+    isStrategyConsolidationEnabled(typeof window !== "undefined" ? window.localStorage : null)
+  );
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -4633,7 +4677,13 @@ function StrategyStudio({
           </div>
           {tuningError && <p className="mt-3 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           <div className="mt-3">
-            {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
+            {strategyConsolidation ? (
+              <p className="text-[13px] text-faint">Strategy review now lives in one place — the Strategy tab.</p>
+            ) : strategyTuning ? (
+              <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} />
+            ) : (
+              <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>
+            )}
           </div>
         </div>
       </div>
@@ -4722,6 +4772,9 @@ function SettingsContent({
   const [blockDraft, setBlockDraft] = useState("");
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [settingsTier, setSettingsTier] = useState<SettingsTier>(() => settingsTierForSection(initialSection));
+  // NAV_V2 PR #3: scope-first framing. Off by default (dark launch); the flag-off
+  // modal is byte-identical.
+  const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
   useEffect(() => {
     setSection(initialSection);
     setSettingsTier(settingsTierForSection(initialSection));
@@ -4957,6 +5010,36 @@ function SettingsContent({
               </div>
             );
           })()}
+
+          {navV2 && settingsTier === "user" && (
+            <div className="rounded-lg border border-line/70 bg-bg/35 p-3">
+              <div className="text-sm font-semibold text-fg">Looking for strategy or risk settings?</div>
+              <p className="mt-1 text-[13px] text-muted">
+                Those live with the account. If a setting changes how a trade is decided or placed, it
+                belongs to the account.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setSettingsTier("account"); setSection("strategy"); }}
+                >
+                  Open Strategy ›
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setSettingsTier("account"); setSection("risk"); }}
+                >
+                  Open Guardrails ›
+                </Button>
+              </div>
+              <p className="mt-2 border-t border-line/60 pt-2 text-[11px] text-faint">
+                Rule of thumb: if it changes how a trade is decided or placed → account. Everything else is
+                here in Settings.
+              </p>
+            </div>
+          )}
 
           {settingsTier === "user" && (
             <button
@@ -6809,9 +6892,16 @@ function IntegrationsSection({
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setShowCustomEndpoint(checked);
+                        // Start the custom field EMPTY on check, never copy in the current
+                        // (possibly stale/default) baseUrl — that silently locked in the wrong
+                        // endpoint for anyone who checked this before finishing the account
+                        // number/API key fields, since a checked box also stops those fields'
+                        // auto-derivation of baseUrl from the inferred paper/live environment.
+                        // An empty custom value still saves safely: the save handler falls back
+                        // to alpacaDefaultEndpointFor(environment) when baseUrl is blank.
                         setEditing({
                           ...editing,
-                          baseUrl: checked ? (editing.baseUrl || "") : defaultAlpacaEndpoint
+                          baseUrl: checked ? "" : defaultAlpacaEndpoint
                         });
                       }}
                     />
@@ -7031,6 +7121,8 @@ function CongressionalTradesHelpLine({ sources }: { sources: string[] }) {
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
   type Section = "overview" | "guardrails" | "settings" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
+  // NAV_V2 PR #4: show the old→new Settings Glossary table for returning users.
+  const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const congressionalSources = snapshot.webSources?.congress?.sources ?? [];
@@ -7109,6 +7201,32 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           <p>
             Settings are split by scope. <strong>User Settings</strong> (tagged <strong>ALL ACCOUNTS</strong>) cover provider keys, appearance, alert delivery, and shared data preferences. <strong>Account Settings</strong> (tagged <strong>THIS ACCOUNT</strong>) cover the selected account&apos;s strategy, universe, safety, tax treatment, and tuning behavior.
           </p>
+          {navV2 && (
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-2 font-semibold text-fg">Renamed &amp; relocated — old name → new home</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="text-faint">
+                    <tr>
+                      <th className="py-1 pr-3 font-medium">You used to call it…</th>
+                      <th className="py-1 pr-3 font-medium">It&apos;s now…</th>
+                      <th className="py-1 font-medium">What changed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SETTINGS_GLOSSARY.map((entry) => (
+                      <tr key={entry.oldName} className="border-t border-line/60 align-top">
+                        <td className="py-1.5 pr-3 text-muted">{entry.oldName}</td>
+                        <td className="py-1.5 pr-3 font-medium text-fg">{entry.newHome}</td>
+                        <td className="py-1.5 text-muted">{entry.whatChanged}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 border-t border-line/60 pt-2 text-[11px] text-faint">{GLOSSARY_RULE_OF_THUMB}</p>
+            </div>
+          )}
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">
               <div className="mb-1 font-semibold text-fg">Strategy Studio</div>

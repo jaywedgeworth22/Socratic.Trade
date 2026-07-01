@@ -62,6 +62,26 @@ describe("market scan custom symbols", () => {
     expect(scan.source).toContain("yahoo-finance");
   });
 
+  it("tags the chart-endpoint (quote-only) bid/ask provenance as synthetic", async () => {
+    delete process.env.FINNHUB_API_KEY;
+    delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
+    delete process.env.ALPACA_DATA_API_KEY;
+    delete process.env.ALPACA_DATA_SECRET_KEY;
+    stubMarketFetches();
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const scan = await scanMarket(["SPCX"], []);
+
+    const summary = scan.quotesBySymbol.SPCX;
+    // Price is real; bid/ask are synthesized from price and must be tagged as such so
+    // downstream limit-price math never treats them as a real quoted spread.
+    expect(summary?.sources?.price).toBe("yahoo-finance");
+    expect(summary?.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(summary?.sources?.bid).toBe("yahoo-finance-synthetic");
+  });
+
   it("shows a concrete warning when a custom ticker cannot be priced", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);

@@ -159,9 +159,18 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 
 - **Webhook:** `POST /api/webhooks/congress`, bearer-verified constant-time against `CONGRESS_WEBHOOK_SECRET`
   (`src/lib/congress-webhook-auth.ts`; default-closed when unset). Accepts one envelope or `{events:[...]}`.
-- **SSE:** `src/lib/congress-stream.ts` connects out to App A's `/api/stream` (started from `startStreams()`
-  when `CONGRESS_STREAM_ENABLED` is on), with a tested incremental frame parser, reconnect/backoff, and
-  `Last-Event-ID` resume.
+- **SSE (App A subscription model — repaired 2026-07-01):** `src/lib/congress-stream.ts` connects out to
+  App A's `/api/stream`, which **requires** `?subscription=<id>` and a per-subscription secret. The
+  consumer resolves a subscription — operator-provisioned via `CONGRESS_STREAM_SUBSCRIPTION_ID` +
+  `CONGRESS_STREAM_SUBSCRIPTION_TOKEN`, or auto-created against App A's public `POST /api/subscriptions`
+  when `CONGRESS_STREAM_AUTO_SUBSCRIBE` is on — then connects with `?subscription=` + the secret as
+  `Authorization: Bearer`. App A emits `event: trade.new` with the **raw Transaction** as data; the
+  consumer maps it explicitly into a `congress.trade` envelope (`toCongressEventEnvelope`) before
+  `applyCongressEvent`, and treats `cursor`/`ping`/`reconnect`/`error` as recognized control frames (no
+  per-heartbeat "dropped unparseable" noise). Tested incremental frame parser, reconnect/backoff, and
+  `Last-Event-ID` resume. Started from `startStreams()` when `CONGRESS_STREAM_ENABLED` is on; **inert**
+  until a subscription is provisioned. (Before the fix the consumer connected without `?subscription=`,
+  so App A returned `400 missing ?subscription=` and the push path never connected.)
 - **Idempotency:** events deduped by `id` (bounded in-memory set). `congress.trade` → `upsertCongressTrades`
   (deduped + pruned to 120d); `insider.update` → raw Form-4 filings *or* a precomputed `insiderSentiment`
   scalar (synthesized into a marker filing); `ref.upsert`/`price.eod`/`spx.eod` are acknowledged no-ops
@@ -178,8 +187,12 @@ web-source datasets so the scan's `getSymbolWebSignals` overlay serves them unch
 | `CONGRESS_WEBHOOK_SECRET` | shared bearer App A presents to the webhook (default-closed when blank) |
 | `CONGRESS_STREAM_ENABLED` | start the outbound SSE consumer |
 | `CONGRESS_TRADE_BASE_URL` | App A base (shared with the push side) |
-| `CONGRESS_TRADE_READ_TOKEN` | optional bearer for App A reads/SSE (reads are public) |
+| `CONGRESS_TRADE_READ_TOKEN` | optional bearer for App A reads (reads are public); also the fallback SSE subscription secret |
 | `CONGRESS_STREAM_PATH` | App A SSE path (default `/api/stream`) |
+| `CONGRESS_STREAM_SUBSCRIPTION_ID` | operator-provisioned App A SSE subscription id (added to `?subscription=`) |
+| `CONGRESS_STREAM_SUBSCRIPTION_TOKEN` | that subscription's secret (sent as `Authorization: Bearer`); also the desired secret when auto-creating |
+| `CONGRESS_STREAM_AUTO_SUBSCRIBE` | when no subscription id/token is set, auto-create one via App A's public `POST /api/subscriptions` (default off) |
+| `CONGRESS_STREAM_CLIENT_ID` | clientId used when auto-creating a subscription (default `app-b`) |
 
 ## Status of App A's endpoints (2026-06-22)
 App A's round-2 endpoints are **merged** and go live after its next deploy (a pending prod DB migration).
