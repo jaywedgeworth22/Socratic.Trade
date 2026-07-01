@@ -208,6 +208,15 @@ export interface TuningSettings {
   /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
   skipNegativeExpectancyEdgePct?: number;
   /**
+   * Default OFF. When true, a run whose proposal rationales COLLAPSE to near-identical reasoning
+   * (mean pairwise trigram similarity above the collapse threshold — a sign the LLM is emitting
+   * input-agnostic boilerplate rather than name-specific analysis) has its OPENING proposals
+   * (buy/short) routed to human review instead of auto-executing. Exits (sell/cover) are never gated
+   * — routing a risk-reducing trade to a human is unsafe. Off = today's advisory-only behavior
+   * (the collapse is logged but never affects proposal generation, selection, or execution).
+   */
+  gateOnRationaleCollapse?: boolean;
+  /**
    * When true (DEFAULT), proposed factor-weight changes are WITHHELD (stripped from the patch)
    * whenever the OOS walk-forward gate could not validate them (data-fetch failure, insufficient
    * snapshot history, or missing composite IC). When false, the prior behavior is restored:

@@ -532,13 +532,34 @@ export async function runStrategyOnce(
       userId
     );
 
-    // Advisory-only rationale-diversity check (improvement-program item #8).
-    // Computed on the final post-debate, post-gate proposal set. NEVER blocks, drops, or modifies proposals.
+    // Rationale-diversity check (improvement-program item #8). Computed on the final post-debate,
+    // post-gate proposal set. Advisory by default; an optional default-off gate can route collapsed
+    // runs to human review (Chat A item 7).
     const rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
     if (rationaleDiversity.collapsed) {
       console.warn(
         `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
       );
+      // OPTIONAL GATE (default OFF via policy.tuning.gateOnRationaleCollapse): when enabled, a
+      // collapsed run's OPENING proposals (buy/short) are routed to human review instead of
+      // auto-executing — the LLM may be emitting input-agnostic boilerplate. Exits (sell/cover) are
+      // never gated (routing a risk-reducing trade to a human is unsafe). Flag off = advisory only,
+      // byte-identical to prior behavior.
+      if (policy.tuning?.gateOnRationaleCollapse) {
+        const gatedOpenings = proposals.filter((p) => p.side === "buy" || p.side === "short");
+        for (const p of gatedOpenings) {
+          p.rationale += `\n\nRationale-diversity gate: this run's proposals collapsed to near-identical reasoning (mean similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > ${rationaleDiversity.threshold}); routed to human approval.`;
+          requiresHumanReview.add(p);
+        }
+        if (gatedOpenings.length > 0) {
+          console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
+          audit(
+            "strategy_rationale_collapse_gated",
+            { runId, count: gatedOpenings.length, meanSimilarity: rationaleDiversity.meanPairwiseSimilarity, threshold: rationaleDiversity.threshold },
+            userId
+          );
+        }
+      }
     }
 
     const results: StrategyResult["proposals"] = [];
