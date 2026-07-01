@@ -85,6 +85,13 @@ threads on the PR.
 - Verify: `npx tsc --noEmit` (pass), `npm test` (1578 pass / 165 files), `npm run build` (pass),
   `grep -nP '[^\x00-\x7F]' scripts/*.sh` (ASCII clean).
 
+## Round 5 (Codex re-review)
+
+- **`npm-ci-with-shared-deps.sh` — `GH_TOKEN` fallback now matches the fetch paths.**
+  The helper already fell back to `GITHUB_TOKEN`, but local/operator preview syncs can use `GH_TOKEN`
+  instead. The resolved package token now falls back through `NODE_AUTH_TOKEN`, `GITHUB_TOKEN`, then
+  `GH_TOKEN`, and still exports `NODE_AUTH_TOKEN` for the project `.npmrc`.
+
 ## Follow-ups
 
 - Confirm the `@jaywedgeworth22/congress-trading-shared` package grants `read` to the

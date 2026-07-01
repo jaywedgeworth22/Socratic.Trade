@@ -48,6 +48,10 @@ caller only set `GITHUB_TOKEN`; (2) `scripts/sync-preview-lanes.sh` strips
 green (tsc / 1578 tests / build); scripts ASCII-clean. See
 `docs/rollouts/2026-06-30-shared-dep-github-packages.md` (Round 4).
 
+Round 5 review fix: `scripts/npm-ci-with-shared-deps.sh` now includes `GH_TOKEN`
+in the package-auth fallback chain, matching the script fetch paths used by
+manual/operator preview syncs.
+
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
 Reconnect path without using browser secrets: production `/api/auth/robinhood/start`
