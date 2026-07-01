@@ -328,6 +328,15 @@ Companion shared-package PR:
 jaywedgeworth22/congress-trading-shared#1. See
 `docs/rollouts/2026-06-30-congress-trading-shared.md`.
 
+**UPDATE — PR #279 (`codex/agentic-shared-registry-semver-20260630`):** the shared
+dependency now installs from the private **GitHub Packages** registry
+(`https://npm.pkg.github.com`, `@jaywedgeworth22/congress-trading-shared`) via a
+semver range, **superseding** the git+`220677a`-pin + `CONGRESS_TRADING_SHARED_DEPLOY_KEY`
+model above. `scripts/npm-ci-with-shared-deps.sh` authenticates with
+`NODE_AUTH_TOKEN` (falling back to `GITHUB_TOKEN`); CI/e2e/deploy/preview-sync jobs
+carry `packages: read`. The legacy SSH deploy-key path remains only as a fallback for
+older lockfiles. See `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
+
 ## 2026-06-29 — Sticky top bar, slide-over layout offsets & verification
 Branch `agent/antigravity`. Made the dashboard header/top bar sticky so it always stays at the top of the viewport. Offset the `SlideOver` component dynamically from the top of the viewport using a measured `--header-height` CSS variable so drawer panels (like the Activity Log) render cleanly below the top bar instead of overlapping/sliding behind it. Verified `npx tsc --noEmit`, `npm run lint`, `npm test` (1,516 tests), and `npm run build` are all green. See `docs/rollouts/2026-06-29-sticky-top-bar-and-slideover-offsets.md`.
 

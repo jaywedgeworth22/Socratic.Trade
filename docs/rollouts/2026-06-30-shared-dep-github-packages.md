@@ -43,7 +43,25 @@ threads on the PR.
 - `bash -n scripts/npm-ci-with-shared-deps.sh` — pass.
 - YAML diffs reviewed for indentation; full `verify` + `smoke` + `gitleaks` CI gates the merge.
 
+## Round 2 (Codex re-review)
+
+- **Preview-sync token leak (same class as the deploy.yml P1):** `scripts/sync-preview-lanes.sh`
+  restarted each preview with `pm2 restart --update-env` while `GITHUB_TOKEN` was still in the
+  environment, so adding `packages: read` would have handed a package-capable token to every preview
+  PM2 process. Now runs the restart via `env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN pm2 restart ...` so
+  the app never inherits the token (git fetch + npm ci above still use it).
+- **ASCII-only script rule:** the fallback comment I added to `scripts/npm-ci-with-shared-deps.sh`
+  used em dashes, violating the AGENTS.md `scripts/*.sh` ASCII-only rule; rewritten to ASCII.
+- **Handoff docs:** `STATUS.md` and `PLAN.md` still described the old git+`220677a`-pin + deploy-key
+  model; both now record the GitHub Packages registry switch (this PR).
+
 ## Follow-ups
 
 - Confirm the `@jaywedgeworth22/congress-trading-shared` package grants `read` to the
   consuming repo so the job `GITHUB_TOKEN` (packages: read) can install it without a PAT.
+- **Tokenless fresh-clone install (acknowledged):** switching the shared dep to a private registry
+  means a bare `git clone` with **no** `NODE_AUTH_TOKEN`/`GITHUB_TOKEN` at all now fails `npm ci`
+  (403) — inherent to the registry migration. CI/Actions and most cloud runners always provide
+  `GITHUB_TOKEN`; for a truly tokenless local checkout the package README documents consuming the
+  shared package from a git ref or local path. Follow-up: update the CLAUDE.md "no secrets required"
+  cloud note to mention the package auth (or a git-ref fallback) for bare clones.

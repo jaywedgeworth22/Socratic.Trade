@@ -32,9 +32,10 @@ cleanup() {
 trap cleanup EXIT
 
 # Prefer an explicit NODE_AUTH_TOKEN (a packages-scoped token), but fall back to the ambient
-# GITHUB_TOKEN so callers that only export the job token — e.g. the preview-sync workflow — still get
+# GITHUB_TOKEN so callers that only export the job token (e.g. the preview-sync workflow) still get
 # authenticated GitHub Packages installs instead of a silent 401/404 on the private dependency. Both
 # need read access to @jaywedgeworth22/congress-trading-shared. (Review: PR #279.)
+# NOTE: keep this file ASCII-only (AGENTS.md) -- no em dashes near shell vars.
 NPM_PKG_TOKEN="${NODE_AUTH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [ -n "$NPM_PKG_TOKEN" ]; then
   tmp_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
