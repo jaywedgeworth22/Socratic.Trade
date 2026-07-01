@@ -67,6 +67,24 @@ threads on the PR.
   `.npmrc` carry `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` so a plain `npm install`
   authenticates from the env var (empty/anonymous when unset — same tokenless behavior as before).
 
+## Round 4 (Codex re-review) [codex-autofix]
+
+- **`npm-ci-with-shared-deps.sh` — `GITHUB_TOKEN` fallback was outranked by project `.npmrc`.**
+  The helper wrote the resolved token into a **userconfig** `.npmrc` (`NPM_CONFIG_USERCONFIG`),
+  but the committed **project** `.npmrc` defines `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}`,
+  and project config outranks userconfig. So a caller that only exported `GITHUB_TOKEN`
+  (e.g. sync-previews) still resolved the higher-precedence project entry against an empty
+  `NODE_AUTH_TOKEN` and 403'd on the private package. Fix: also `export NODE_AUTH_TOKEN="$NPM_PKG_TOKEN"`
+  inside the auth block so the project `.npmrc` authenticates from the resolved (possibly-fallback) token.
+- **`sync-preview-lanes.sh` — `GH_TOKEN` also leaked into the PM2 restart.** The restart stripped
+  only `GITHUB_TOKEN` and `NODE_AUTH_TOKEN`, but the script supports a `GH_TOKEN` fetch path; a
+  manual/alternate sync with `GH_TOKEN` set would leave that repo token in the long-running preview
+  process via `--update-env`. Fix: add `-u GH_TOKEN` to the `env -u ...` restart (same class as the
+  round-3 deploy.yml fix).
+- Files: `scripts/npm-ci-with-shared-deps.sh`, `scripts/sync-preview-lanes.sh`.
+- Verify: `npx tsc --noEmit` (pass), `npm test` (1578 pass / 165 files), `npm run build` (pass),
+  `grep -nP '[^\x00-\x7F]' scripts/*.sh` (ASCII clean).
+
 ## Follow-ups
 
 - Confirm the `@jaywedgeworth22/congress-trading-shared` package grants `read` to the

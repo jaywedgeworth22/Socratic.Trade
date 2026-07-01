@@ -77,7 +77,7 @@ restart_pm2() {
     # Strip package/git auth for the --update-env restart so the long-running preview PM2 process
     # does not inherit a GitHub Packages-capable token in its runtime env. The token is only needed
     # by the git fetch + npm ci above, not by the app. (Review: PR #279.)
-    env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN pm2 restart "$app" --update-env >/dev/null
+    env -u GITHUB_TOKEN -u GH_TOKEN -u NODE_AUTH_TOKEN pm2 restart "$app" --update-env >/dev/null
   else
     warn "PM2 app '$app' is missing; skip restart"
   fi

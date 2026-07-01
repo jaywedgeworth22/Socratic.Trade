@@ -46,6 +46,11 @@ if [ -n "$NPM_PKG_TOKEN" ]; then
   } > "$NPMRC_FILE"
   chmod 600 "$NPMRC_FILE"
   export NPM_CONFIG_USERCONFIG="$NPMRC_FILE"
+  # The committed project .npmrc uses //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN} and project
+  # config outranks this userconfig, so a caller that only exported GITHUB_TOKEN would still resolve
+  # the project entry to an empty NODE_AUTH_TOKEN and 403. Export the resolved token so the
+  # higher-precedence project .npmrc authenticates too. (Review: PR #279.)
+  export NODE_AUTH_TOKEN="$NPM_PKG_TOKEN"
 fi
 
 if [ -n "$KEY_FILE" ]; then
