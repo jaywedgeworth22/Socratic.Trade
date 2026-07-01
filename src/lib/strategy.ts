@@ -160,10 +160,17 @@ export async function runStrategyOnce(
   userId: string = "local",
   options: { manual?: boolean; connectedAccountId?: string } = {}
 ): Promise<StrategyResult> {
-  // Hard per-user/day LLM budget ceiling — enforced HERE, the single choke point for EVERY run entry
+  // Per-user/day LLM budget ceiling — enforced HERE, the single choke point for EVERY run entry
   // (event trigger, interval scheduler, manual "Run once" API, mobile command, and any future
   // caller). Default OFF (no ceiling) unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET /
   // _COST_BUDGET_USD. Checked before the run lock + run row so an over-budget call is a clean no-op.
+  //
+  // Known limitation (bounded, documented — see docs/rollouts/2026-07-01-fg-codex-review-fixes.md):
+  // this is a read-of-the-ledger admission check, NOT a reservation. When one user has multiple
+  // accounts due and the scheduler launches their runs concurrently, two runs just under the limit
+  // can both pass here and then both spend, overshooting the ceiling by up to the in-flight runs'
+  // spend. The overshoot is bounded by the per-user concurrency (scheduler cap 3); a true hard cap
+  // would need a per-user token reservation / run serialization, deferred as a follow-up.
   const budget = checkLlmDailyBudget(userId);
   if (!budget.ok) {
     audit(

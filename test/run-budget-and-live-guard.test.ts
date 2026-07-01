@@ -86,5 +86,10 @@ describe("Y — getBrokerGateway guards every real-order path", () => {
     await expect(
       gateway.placeEquityOrder({ accountNumber: "LIVE-1", symbol: "AAPL", side: "buy", type: "market", quantity: 1, timeInForce: "gtc", marketHours: "regular_hours", refId: "guard-2" })
     ).rejects.toMatchObject({ name: "LivePreflightError" });
+
+    // cancelEquityOrder is guarded too — cancel-then-place flows (order replacement, protective-stop
+    // reconcile) must fail BEFORE the live cancel, or they'd leave an order cancelled with no
+    // replacement / an unprotected position.
+    await expect(gateway.cancelEquityOrder("LIVE-1", "order-xyz")).rejects.toThrow(/pre-flight BLOCKED/i);
   });
 });

@@ -21,7 +21,11 @@ guard to encrypted OAuth-token rows; fixed-position the Macro/Tax "More" menu so
 now wraps `placeEquityOrder` in a Proxy that runs `assertLivePreflight` first, so EVERY real-order path
 (strategy, synthetic/protective stops, order replacement, future) is guarded by one wrapper; and the
 LLM budget ceiling moved to the top of `runStrategyOnce` (via a new `src/lib/llm-budget.ts` to avoid a
-strategy↔triggers cycle), so ALL run entries (trigger, scheduler, manual API, mobile) are gated. Verify
+strategy↔triggers cycle), so ALL run entries (trigger, scheduler, manual API, mobile) are gated. **Round
+4** (1 P1 fixed, 1 P2 documented): the `getBrokerGateway` Proxy now also guards `cancelEquityOrder`, so
+cancel-then-place flows (order replacement, protective-stop reconcile) fail BEFORE the live cancel (no
+orphaned/unprotected side effects); and the budget ceiling's concurrent-multi-account TOCTOU overshoot
+is documented as a bounded, deferred limitation (a true per-user reservation is a follow-up). Verify
 quartet green (1730 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 
 ## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)

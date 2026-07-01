@@ -91,6 +91,24 @@ data-integrity/UI changes covered by tsc + the existing guard/money-path suites)
 Tests: new `test/run-budget-and-live-guard.test.ts` (over-budget `runStrategyOnce` is a hard no-op +
 audit; `getBrokerGateway` blocks a broker/live order when `ALLOW_LIVE_TRADING` is unset).
 
+## Round 4 (commit after 36e539b) — 1 P1 fixed, 1 P2 documented
+
+12. **P1 — guard the CANCEL too (cancel-then-place side effects).** The gateway wrapper only guarded
+    `placeEquityOrder`; but `replaceStaleLimitOrderWithMarket` and `broker-protective-stops` cancel
+    the existing order FIRST. In broker/live without `ALLOW_LIVE_TRADING`, the live cancel would run
+    and then the place would throw — leaving the order cancelled with no replacement / an unprotected
+    position. Fix: the `getBrokerGateway` Proxy now also guards `cancelEquityOrder`, so cancel-then-
+    place flows fail BEFORE the cancel — no side effects. (`src/lib/broker.ts`; test asserts the live
+    cancel is blocked.)
+13. **P2 — budget reservation across concurrent same-user runs (DOCUMENTED, not built).** The daily
+    ceiling is a read-of-the-ledger admission check at run entry, not a reservation. When one user has
+    multiple accounts due, the scheduler can launch their runs concurrently; two runs just under the
+    limit can both pass and then both spend, overshooting by up to the in-flight runs' spend (bounded
+    by the scheduler's concurrency cap of 3). A true hard cap needs a per-user token reservation / run
+    serialization — an architecturally-significant concurrency change disproportionate to a bounded
+    cost-cap overshoot, so it is DEFERRED and documented (comment at the `runStrategyOnce` check +
+    here). The wording elsewhere is softened from "hard ceiling" to "per-run-entry ceiling."
+
 ## Verification
 
 `npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1730/1730** · `npm run build` ok.
@@ -99,6 +117,9 @@ real package.)
 
 ## Follow-ups
 
-- Deferred still: the `strategy.ts` god-module split. The LLM budget ceiling now covers ALL run
-  entries (trigger, scheduler, manual API, mobile) via the `runStrategyOnce` choke point, and the
-  live pre-flight guard covers ALL real-order paths via the `getBrokerGateway` wrapper.
+- Deferred: the `strategy.ts` god-module split. The LLM budget ceiling now covers ALL run entries
+  (trigger, scheduler, manual API, mobile) via the `runStrategyOnce` choke point, and the live
+  pre-flight guard covers ALL real-order mutations (place + cancel) via the `getBrokerGateway` wrapper.
+- Deferred: a per-user LLM-budget **reservation / run serialization** so the daily ceiling is truly
+  hard under concurrent multi-account scheduling (today's bounded overshoot is documented at the
+  `runStrategyOnce` check, item 13).
