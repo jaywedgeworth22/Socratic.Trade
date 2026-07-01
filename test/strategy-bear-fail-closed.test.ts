@@ -193,6 +193,41 @@ describe("inline Bear red-team fail-closed (Chat A item 1)", () => {
     30_000
   );
 
+  it("routes Bull proposals to human review when the Bear LLM key is not configured (decide mode)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    // Force the Red Team's (gemini) provider to have NO key so the inline Bear is skipped for lack of
+    // a credential — the fourth acceptance failure mode ("missing-key").
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      // Only the Bull runs (the Bear is skipped, no fetch); return the buy.
+      if (href.includes("api.openai.com")) return bullOk();
+      if (href.includes("nasdaq.com")) return nasdaqResponse();
+      return new Response("not found", { status: 404 });
+    });
+    await setupBrokerPaperDecide("Bear no-key");
+    const { setPolicy, getPolicy, listAudit } = await import("../src/lib/db");
+    // Point the Red Team at a provider with no configured key so bearKey resolves empty.
+    setPolicy({ ...getPolicy(), redTeamLlmModel: "gemini-2.5-flash" });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+
+    const result = await runStrategyOnce();
+
+    const statuses = result.proposals.map((p) => p.status);
+    expect(statuses).toContain("proposed");
+    expect(statuses).not.toContain("paper");
+    expect(statuses).not.toContain("filled");
+    const runKinds = listAudit(500)
+      .filter((e) => (e.payload as { runId?: string })?.runId === result.runId)
+      .map((e) => e.kind);
+    expect(runKinds).toContain("strategy_bear_review_unavailable");
+    expect(runKinds).toContain("strategy_bear_review_routed_to_human");
+    // No key → the Bear step is recorded as "skipped" (not "fallback").
+    const bearStep = result.llmSteps?.find((s) => s.step === "bear");
+    expect(bearStep?.status).toBe("skipped");
+  }, 30_000);
+
   it("does NOT flag bearReviewUnavailable when the Bear call succeeds", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
