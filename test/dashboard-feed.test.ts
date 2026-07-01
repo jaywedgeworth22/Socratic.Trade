@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent, StrategyDecision } from "../app/dashboard-types";
-import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "../src/lib/dashboard-feed";
+import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed, UNIFIED_FEED_MAX_GROUPS } from "../src/lib/dashboard-feed";
+import type { FillEvent } from "../src/lib/types";
 import { enrichPositionsForDisplay, formatNotificationDisplay, formatShareQuantity, ratingTitle, sentimentTitle } from "../src/lib/dashboard-ui";
 import type { EquityPosition, MarketQuote, NotificationEvent } from "../src/lib/types";
 
@@ -479,6 +480,42 @@ describe("dashboard feed helpers", () => {
     expect(tradeGroup!.detail).toContain("Broker state Rejected");
     expect(tradeGroup!.detail).toContain("alpaca-order-rejected");
     expect(tradeGroup!.detail).not.toContain("Rejected manually");
+  });
+
+  it("caps buildUnifiedFeed output at the source-level limit, newest-first", () => {
+    // 200 independent (ungrouped) fills — well above the client's 50-group render slice — so the
+    // only thing keeping the payload bounded is the source-level cap inside buildUnifiedFeed.
+    const total = 200;
+    const fills: FillEvent[] = Array.from({ length: total }, (_, i) => ({
+      id: `f${i}`,
+      accountNumber: "CAP1",
+      source: "paper",
+      symbol: "AAA",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "filled",
+      // Ascending timestamps so the newest is the highest index.
+      filledAt: `2026-06-15T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`
+    }));
+
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [],
+      fills,
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+
+    expect(feed.length).toBe(UNIFIED_FEED_MAX_GROUPS);
+    expect(UNIFIED_FEED_MAX_GROUPS).toBe(60);
+    // Newest-first: the very latest fill must survive the cap and lead the feed.
+    expect(feed[0]!.updatedAt).toBe(fills[total - 1]!.filledAt);
+    // Sorted strictly newest-first across the whole capped array.
+    for (let i = 1; i < feed.length; i++) {
+      expect(feed[i - 1]!.updatedAt >= feed[i]!.updatedAt).toBe(true);
+    }
   });
 });
 

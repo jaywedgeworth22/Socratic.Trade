@@ -215,6 +215,41 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     const sell = buy({ side: "sell" });
     expect(enrichOpeningProposal(sell, policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8 } }), marketScan)).toEqual(sell);
   });
+
+  // Item 2: synthetic bid/ask must NOT anchor marketable-limit pricing.
+  it("prices a marketable-limit buy through a REAL ask", () => {
+    const withRealAsk: MarketScan = {
+      ...marketScan,
+      quotesBySymbol: {
+        TSLA: { symbol: "TSLA", price: 100, ask: 101, score: 50, sources: { ask: "alpaca" } }
+      }
+    };
+    const p = enrichOpeningProposal(
+      buy({ dollarAmount: 1000 }),
+      policy({ activeBroker: "test", marketableLimitEntries: true, permittedOrderTypes: ["market", "limit"] }),
+      withRealAsk
+    );
+    // 101 * (1 + 15bps) = 101.1515 → round2 101.15.
+    expect(p.type).toBe("limit");
+    expect(p.limitPrice).toBe(101.15);
+  });
+
+  it("degrades a marketable-limit buy to a refPrice-based limit when the ask is synthetic", () => {
+    const withSyntheticAsk: MarketScan = {
+      ...marketScan,
+      quotesBySymbol: {
+        TSLA: { symbol: "TSLA", price: 100, ask: 101, score: 50, sources: { ask: "yahoo-finance-synthetic" } }
+      }
+    };
+    const p = enrichOpeningProposal(
+      buy({ dollarAmount: 1000, referencePrice: 100 }),
+      policy({ activeBroker: "test", marketableLimitEntries: true, permittedOrderTypes: ["market", "limit"] }),
+      withSyntheticAsk
+    );
+    // refPrice (100), NOT the synthetic ask (101): 100 * (1 + 15bps) = 100.15.
+    expect(p.type).toBe("limit");
+    expect(p.limitPrice).toBe(100.15);
+  });
 });
 
 describe("generateProactiveRiskProposals beta-scaled stops", () => {

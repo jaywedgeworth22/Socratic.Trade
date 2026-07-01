@@ -241,6 +241,46 @@ describe("enrichment cache consent gate", () => {
     expect(resB.AAPL?.companyName).toBeUndefined();
   });
 
+  it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    const runAndCount = async () => {
+      clearEnrichmentCache();
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        urls.push(String(url));
+        if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+        if (String(url).includes("recommendation")) {
+          return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+        }
+        return new Response(JSON.stringify({}));
+      });
+      const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+      const res = await provider.enrich(["AAPL"]);
+      return { urls, res };
+    };
+
+    // Flag OFF (default) → 5 calls, recommendation IS fetched and yields an analyst score.
+    delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    const off = await runAndCount();
+    expect(off.urls.length).toBe(5);
+    expect(off.urls.some((u) => u.includes("recommendation"))).toBe(true);
+    expect(off.res.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+
+    // Flag ON → 4 calls, recommendation NOT fetched, no fabricated Finnhub analyst rating.
+    process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+    const on = await runAndCount();
+    expect(on.urls.length).toBe(4);
+    expect(on.urls.some((u) => u.includes("recommendation"))).toBe(false);
+    expect(on.res.AAPL?.analystBySource?.finnhub).toBeUndefined();
+    // Non-analyst fields still populate from the remaining calls.
+    expect(on.res.AAPL?.companyName).toBe("Acme Corp");
+
+    if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+    else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+  });
+
   it("user-keyed data is shared via pool to a consenting second user", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
@@ -397,11 +437,12 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({});
-    expect(fetchCount).toBe(4);
+    // 5 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading, short_interest.
+    expect(fetchCount).toBe(5);
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({});
-    expect(fetchCount).toBe(8);
+    expect(fetchCount).toBe(10);
   });
 
   it("logs non-premium optional FMP failures while suppressing expected premium 403s", async () => {
@@ -446,11 +487,73 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({ peRatio: 25.5 });
-    expect(fetchCount).toBe(4);
+    // 5 sub-calls now: ratios-ttm, grades-consensus, insider-trading, senate-trading, short_interest.
+    expect(fetchCount).toBe(5);
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ peRatio: 25.5 });
-    expect(fetchCount).toBe(4);
+    expect(fetchCount).toBe(5);
+  });
+
+  it("carries FMP short interest and flags a material Yahoo-vs-FMP disagreement", async () => {
+    const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
+      "../src/lib/data-providers"
+    );
+    clearEnrichmentCache();
+
+    // Yahoo-shaped provider (registered first → wins the primary shortPercentOfFloat).
+    const yahooish: MarketEnrichmentProvider = {
+      name: "yahoo-finance",
+      configured: true,
+      async enrich() {
+        return { AAPL: { shortPercentOfFloat: 3 } };
+      }
+    };
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("short_interest")) {
+        return new Response(JSON.stringify([{ shortPercentOfFloat: 0.12 }])); // 12% → >5pp apart
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const fmp = new FmpEnrichmentProvider("test-key");
+    const cascade = new CascadingEnrichmentProvider([yahooish, fmp]);
+    const out = await cascade.enrich(["AAPL"]);
+
+    // Primary value stays first-wins (yahoo's 3%); carrier field never leaks out.
+    expect(out.AAPL.shortPercentOfFloat).toBe(3);
+    expect(out.AAPL.shortPercentOfFloatFmp).toBeUndefined();
+    expect(out.AAPL.shortInterestDisagreement).toContain("fmp 12.0%");
+    // fmp contributed the disagreement flag, so it must appear in the source list.
+    expect(cascade.activeSources).toContain("fmp");
+  });
+
+  it("does not flag short-interest disagreement when the two sources agree", async () => {
+    const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
+      "../src/lib/data-providers"
+    );
+    clearEnrichmentCache();
+
+    const yahooish: MarketEnrichmentProvider = {
+      name: "yahoo-finance",
+      configured: true,
+      async enrich() {
+        return { AAPL: { shortPercentOfFloat: 8 } };
+      }
+    };
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("short_interest")) {
+        return new Response(JSON.stringify([{ shortPercentOfFloat: 0.09 }])); // 9% vs 8% → within 5pp
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const fmp = new FmpEnrichmentProvider("test-key");
+    const out = await new CascadingEnrichmentProvider([yahooish, fmp]).enrich(["AAPL"]);
+    expect(out.AAPL.shortPercentOfFloat).toBe(8);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
   });
 });
 

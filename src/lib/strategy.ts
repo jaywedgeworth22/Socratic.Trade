@@ -2471,9 +2471,16 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
+/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
+ *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
+ *  degrades to the refPrice-based branch instead. */
+function hasRealAsk(quote: MarketQuote): boolean {
+  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+}
+
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
   if (!marketScan) return undefined;
-  const hasAskData = marketScan.topCandidates.some((quote) => quote.ask && quote.ask > 0);
+  const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
     source: marketScan.source,
     generatedAt: marketScan.generatedAt,
@@ -2511,6 +2518,10 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     pb: quote.pbRatio,
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    earnIn: quote.daysToEarnings,
+    instOwn: quote.institutionOwnershipPct,
+    iv: quote.nearTheMoneyIv,
+    putCall: quote.putCallRatio,
     range52w: pricePosition52w(quote),
     // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) are
     // computed deterministically, then omitted when their inputs are unavailable.
@@ -2772,9 +2783,14 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
     if (qty >= 1) {
       const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
       const buffer = bufferBps / 10_000;
+      // A synthesized (price-derived) Yahoo spread is not a real quote — never anchor the
+      // marketable-limit through it. Fall back to refPrice for that side so the limit is honest.
+      const syntheticSpread = quote?.sources?.ask === "yahoo-finance-synthetic" || quote?.sources?.bid === "yahoo-finance-synthetic";
+      const realAsk = !syntheticSpread && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !syntheticSpread && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
-        ? round2((quote?.ask && quote.ask > 0 ? quote.ask : refPrice) * (1 + buffer))
-        : round2((quote?.bid && quote.bid > 0 ? quote.bid : refPrice) * (1 - buffer));
+        ? round2((realAsk ?? refPrice) * (1 + buffer))
+        : round2((realBid ?? refPrice) * (1 - buffer));
       if (limitPrice > 0) {
         next = {
           ...next,

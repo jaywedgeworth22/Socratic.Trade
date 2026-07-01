@@ -564,6 +564,9 @@ export interface UnifiedActivityGroup {
   accountLabel?: string;
 }
 
+/** Source-level cap on unified-feed groups (client slices to 50; a small buffer preserves headroom). */
+export const UNIFIED_FEED_MAX_GROUPS = 60;
+
 export function buildUnifiedFeed(input: {
   audit: SourceAuditEvent[];
   notifications: NotificationEvent[];
@@ -951,7 +954,11 @@ export function buildUnifiedFeed(input: {
     });
   }
 
-  return unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  // Cap at the source so we never ship the full 100-audit + 500-fill group set to the client, which
+  // only ever renders the newest 50 (app/dashboard-client.tsx `feed.slice(0, 50)`). We keep a small
+  // buffer above 50 for any client-side re-sort/filter headroom. Groups are already sorted
+  // newest-first by `updatedAt`, so slicing keeps exactly the most-recent activity.
+  return unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, UNIFIED_FEED_MAX_GROUPS);
 }
 
 function getProposalIdFromAudit(event: SourceAuditEvent): string | undefined {

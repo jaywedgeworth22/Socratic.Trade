@@ -728,6 +728,11 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
   const netChange = quote.price - prevClose;
   const intradayChangePct = prevClose > 0 ? Math.round((netChange / prevClose) * 10_000) / 100 : 0;
   const position = positions.find((p) => normalizeSymbol(p.symbol) === symbol);
+  // The chart endpoint has no real bid/ask; when the spread is synthesized from price, tag its
+  // provenance as "yahoo-finance-synthetic" so downstream real-vs-synthetic checks (hasAskData,
+  // marketable-limit pricing) never treat it as a real quoted ask. Real batch-quote spreads keep
+  // the plain "yahoo-finance" attribution.
+  const spreadSource = quote.syntheticSpread ? "yahoo-finance-synthetic" : "yahoo-finance";
   return {
     symbol,
     price: quote.price,
@@ -744,8 +749,8 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
     asOf: new Date().toISOString(),
     sources: {
       price: "yahoo-finance",
-      bid: "yahoo-finance",
-      ask: "yahoo-finance",
+      bid: spreadSource,
+      ask: spreadSource,
       volume: "yahoo-finance",
       intradayChangePct: "yahoo-finance",
       asOf: "yahoo-finance"
@@ -789,10 +794,19 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     debtToEquity: extra.debtToEquity ?? quote.debtToEquity,
     epsGrowth: extra.epsGrowth ?? quote.epsGrowth,
     senateTrades: extra.senateTrades ?? quote.senateTrades,
+    daysToEarnings: extra.daysToEarnings ?? quote.daysToEarnings,
+    institutionOwnershipPct: extra.institutionOwnershipPct ?? quote.institutionOwnershipPct,
+    nearTheMoneyIv: extra.nearTheMoneyIv ?? quote.nearTheMoneyIv,
+    putCallRatio: extra.putCallRatio ?? quote.putCallRatio,
     targetMean: extra.targetMean ?? quote.targetMean,
     targetHigh: extra.targetHigh ?? quote.targetHigh,
     targetLow: extra.targetLow ?? quote.targetLow,
     targetMedian: extra.targetMedian ?? quote.targetMedian,
+    // Surface a short-interest source disagreement as an evidence bulletin (deduped) so the prompt
+    // and dashboard don't silently trust one source. Kept out of the sourced-field cascade.
+    evidenceBulletins: extra.shortInterestDisagreement
+      ? Array.from(new Set([...(quote.evidenceBulletins ?? []), extra.shortInterestDisagreement]))
+      : quote.evidenceBulletins,
     sources: mergeSources(quote, extra)
   };
 }
@@ -801,6 +815,18 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
 // displayed cell can name the single provider its value came from.
 function mergeSources(quote: MarketQuote, extra: SymbolEnrichment): EnrichmentSources {
   const sources: EnrichmentSources = { ...(extra.sources ?? {}) };
+  // Preserve the ORIGINAL quote's price-family provenance (incl. the "yahoo-finance-synthetic"
+  // bid/ask tag from the quote-only fallback) whenever enrichment did NOT override that value —
+  // applyEnrichment only takes extra.{price,bid,ask,volume} when they are > 0. Losing this tag
+  // here would make a synthesized spread look like a real quoted ask to downstream limit-price math.
+  const carryPriceFamilySource = (field: "price" | "bid" | "ask" | "volume", extraValue: number | undefined) => {
+    const overrode = typeof extraValue === "number" && extraValue > 0;
+    if (!overrode && !sources[field] && quote.sources?.[field]) sources[field] = quote.sources[field];
+  };
+  carryPriceFamilySource("price", extra.price);
+  carryPriceFamilySource("bid", extra.bid);
+  carryPriceFamilySource("ask", extra.ask);
+  carryPriceFamilySource("volume", extra.volume);
   // Fields the screener supplies when enrichment didn't override them.
   if (!sources.companyName && extra.companyName === undefined && quote.companyName) {
     sources.companyName = nasdaqDelayedProvider.name;
@@ -1015,6 +1041,10 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         debtToEquity: quote.debtToEquity,
         epsGrowth: quote.epsGrowth,
         senateTrades: quote.senateTrades,
+        daysToEarnings: quote.daysToEarnings,
+        institutionOwnershipPct: quote.institutionOwnershipPct,
+        nearTheMoneyIv: quote.nearTheMoneyIv,
+        putCallRatio: quote.putCallRatio,
         targetMean: quote.targetMean,
         targetHigh: quote.targetHigh,
         targetLow: quote.targetLow,

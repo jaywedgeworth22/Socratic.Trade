@@ -6,6 +6,10 @@ export interface YahooFinanceQuote {
   volume: number;
   /** ISO timestamp of the quote (from meta.regularMarketTime) — the real "as of", not a daily-bar date. */
   asOf?: string;
+  /** true when bid/ask were SYNTHESIZED from price (the chart endpoint has no real quote spread) rather
+   *  than reported by Yahoo. Consumers must not treat a synthetic ask as a real quoted ask (e.g. for
+   *  ask-relative limit pricing) — it is only a rough placeholder derived from the last price. */
+  syntheticSpread?: boolean;
 }
 
 export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinanceQuote | undefined> {
@@ -28,13 +32,17 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
     // regularMarketTime is Unix seconds; convert to ISO for a real "as of" timestamp.
     const t = Number(meta.regularMarketTime);
     const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+    // The chart endpoint returns NO real bid/ask. We derive a rough spread from price ONLY so
+    // downstream code has a placeholder, and mark it synthetic so it is never mistaken for a real
+    // quoted ask (which would wrongly anchor ask-relative limit-price math).
     return {
       price,
       bid: price * 0.999,
       ask: price * 1.001,
       prevClose,
       volume,
-      asOf
+      asOf,
+      syntheticSpread: true
     };
   } catch {
     clearTimeout(timeout);
@@ -81,6 +89,7 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
         const price = Number(item.regularMarketPrice);
         if (!Number.isFinite(price) || price <= 0) continue;
         const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
+        const hasRealSpread = Boolean(item.bid && item.bid > 0 && item.ask && item.ask > 0);
         const bid = item.bid && item.bid > 0 ? Number(item.bid) : price * 0.999;
         const ask = item.ask && item.ask > 0 ? Number(item.ask) : price * 1.001;
         const volume = Number(item.regularMarketVolume ?? 0);
@@ -93,7 +102,9 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
           ask,
           prevClose,
           volume,
-          asOf
+          asOf,
+          // Only mark synthetic when we had to derive BOTH sides from price.
+          ...(hasRealSpread ? {} : { syntheticSpread: true })
         });
       }
     } catch (err) {

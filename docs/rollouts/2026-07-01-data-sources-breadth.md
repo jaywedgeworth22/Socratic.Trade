@@ -1,0 +1,129 @@
+# 2026-07-01 — Data sources & breadth (Chat D)
+
+## Summary
+Implemented all six items of the audit work-split "Chat D — Data sources & breadth"
+(`docs/reviews/2026-07-01-audit-work-split.md`, lines ~128–154): earnings-calendar
+signal, a correctness fix for synthetic bid/ask, institutional ownership, a
+Robinhood options/IV enrichment tier, an active per-provider circuit breaker, and
+FMP as a second short-interest source with a material-disagreement flag. New
+behavior (items 4, 5, and item 6's second short-interest call is always-on but the
+disagreement flag is derived, not routed) is default-safe; the two behavior-changing
+tiers (options, circuit breaker) are behind default-off env flags.
+
+## Why
+The audit found real, additive holes in the otherwise best-scoring data-source
+dimension: no next-earnings signal, a synthetic bid/ask masquerading as a real
+quoted spread that anchored live limit-price math (a correctness/safety bug), no
+institutional ownership despite an already-authenticated Yahoo call, no options/IV
+despite a connected Robinhood MCP, an inert circuit breaker, and single-sourced
+short interest.
+
+## Items (status)
+1. **`daysToEarnings`** — DONE. Added Yahoo `calendarEvents` to the `quoteSummary`
+   modules string; `parseDaysToEarnings` returns whole days to the earliest FUTURE
+   earnings date and degrades to `undefined` (never 0/guess). Threaded through the
+   full enrichment checklist; surfaced as `earnIn` in `compactCandidateForPrompt`.
+   Zero-cost (same call), default-on.
+2. **Synthetic bid/ask fix** — DONE (approach b: provenance-tagged). `yahoo-finance.ts`
+   now marks price-derived spreads with `syntheticSpread`; `toQuoteOnlyMarketQuote`
+   tags `sources.bid`/`sources.ask` as `yahoo-finance-synthetic`. `mergeSources`
+   preserves that tag through enrichment. `strategy.ts` `hasAskData` (via new
+   `hasRealAsk`) and the marketable-limit calc now exclude a synthetic ask, degrading
+   to `refPrice`-based limits. Correctness/safety fix, default-on.
+3. **Institutional/13F ownership** — DONE. Widened the SAME Yahoo `quoteSummary`
+   modules (`institutionOwnership`,`majorHoldersBreakdown`); `parseInstitutionOwnershipPct`
+   prefers `majorHoldersBreakdown.institutionsPercentHeld`, falls back to summing the
+   ownership list. Threaded through the full checklist. Zero additional API cost,
+   default-on.
+4. **Robinhood options/IV tier** — DONE, default-off. Added `fetchRobinhoodOptionChain`
+   (`get_option_chains`/`get_option_instruments`) to `robinhood.ts` and a new
+   low-frequency, long-TTL provider `src/lib/robinhood-options.ts`
+   (`RobinhoodOptionsEnrichmentProvider`) deriving near-the-money IV + put/call ratio.
+   Gated behind `ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED` (default off) AND a connected
+   Robinhood MCP. Tests mock the gateway parser; no live MCP.
+5. **Active per-provider circuit breaker** — DONE, default-off. `applyCircuitBreaker`
+   consults `getServiceHealthSummaries()` and no-ops a lane whose health is
+   `stoppedWorking` (all its credential lanes), re-probing only after a backoff window.
+   Gated behind `ENRICHMENT_CIRCUIT_BREAKER_ENABLED` (default off). Existing
+   provider happy-path tests pass unmodified.
+6. **FMP 2nd short-interest source + disagreement flag** — DONE. Added an FMP
+   `short_interest` sub-call carried alongside Yahoo's read (not first-wins); the
+   cascade flags a material (≥5pp, `SHORT_INTEREST_DISAGREEMENT_PCT_PT`) Yahoo-vs-FMP
+   disagreement as an evidence bulletin. `MarketScan.source` includes `fmp` only when
+   FMP actually contributed (existing `contributingNames` crediting) — never hardcoded.
+
+## New env flags (all defaults preserve today's behavior)
+- `ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED` — default **off**. Enables the options/IV tier
+  (also requires `ROBINHOOD_ADAPTER=mcp`). `ROBINHOOD_OPTIONS_TTL_MS` tunes its cache
+  (default 6h).
+- `ENRICHMENT_CIRCUIT_BREAKER_ENABLED` — default **off**. Enables skipping
+  `stoppedWorking` lanes. `ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN` (default 15) is the
+  re-probe window.
+- `SHORT_INTEREST_DISAGREEMENT_PCT_PT` — default **5**. Percentage-point threshold for
+  the short-interest disagreement flag. (The FMP short-interest sub-call itself is
+  always issued; a non-premium 403 is tolerated/suppressed like insider/senate.)
+
+## Files
+Source (owned):
+- `src/lib/types.ts` — `MarketQuote`/`MarketQuoteSummary`/`EnrichmentSources` new fields.
+- `src/lib/data-providers.ts` — `SymbolEnrichment`/`EnrichmentSourcedField`/`EMPTY_SOURCED`
+  additions; `takeScalar` wiring; Yahoo modules + parsers (`parseDaysToEarnings`,
+  `parseInstitutionOwnershipPct`); FMP `short_interest` sub-call; short-interest
+  disagreement in the cascade; `applyCircuitBreaker`/`SkippedEnrichmentProvider`;
+  options-tier + circuit-breaker + disagreement flag helpers; provider wiring.
+- `src/lib/yahoo-finance.ts` — `syntheticSpread` flag on synthesized bid/ask.
+- `src/lib/market.ts` — `toQuoteOnlyMarketQuote` synthetic provenance tag;
+  `applyEnrichment`/`quotesBySymbol` new fields + disagreement bulletin; `mergeSources`
+  preserves price-family provenance.
+- `src/lib/strategy.ts` — `hasRealAsk`, `hasAskData` + marketable-limit exclude synthetic
+  ask; `compactCandidateForPrompt` new fields (`earnIn`,`instOwn`,`iv`,`putCall`).
+- `src/lib/robinhood.ts` — `fetchRobinhoodOptionChain`.
+- `src/lib/robinhood-options.ts` — NEW options-IV enrichment provider + pure parsers.
+
+Tests (owned):
+- `test/data-sources-breadth.test.ts` — NEW: items 1,3,4,5 (parsers, cascade threading,
+  options metrics, circuit-breaker skip/re-probe).
+- `test/data-providers.test.ts` — extended: FMP short-interest disagreement (+ agreement)
+  cases; updated FMP sub-call counts 4→5.
+- `test/market.test.ts` — extended: new-field `applyEnrichment` merge + disagreement bulletin.
+- `test/market-custom-symbol.test.ts` — extended: synthetic bid/ask provenance tag.
+- `test/strategy-hardening.test.ts` — extended: marketable-limit uses real ask, degrades on synthetic.
+- `test/milestone-4-challenger.test.ts` — updated FMP sub-call count 4→5 (short_interest added).
+
+Also touched (sandbox only, do NOT land): `package.json`/`package-lock.json` were
+repointed to the local `congress-trading-shared` file: stub so deps install in this
+environment. The orchestrator should discard/reconcile these — they are not part of
+the feature.
+
+## Verification
+- `npx tsc --noEmit` — clean for all owned files (0 errors). The only 3 repo-wide tsc
+  errors are in congress files (`congress-share.ts`, `congress-trade-client.ts`,
+  `congress-analytics.ts`) caused by the sandbox `congress-trading-shared` stub's
+  `safeParse` shape — not this workstream and outside ownership.
+- `npx eslint <owned files>` — 0 errors (only pre-existing grandfathered "warn" backlog).
+- Targeted tests green: `npm test -- test/data-sources-breadth.test.ts
+  test/data-providers.test.ts test/market.test.ts test/market-custom-symbol.test.ts
+  test/strategy-hardening.test.ts test/milestone-4-challenger.test.ts` → 161 passed.
+- Full `npm test`: remaining failures are all NON-owned: 8 congress-* tests (sandbox
+  stub `API_PATHS = {}`) and 1 `dashboard-fill-batching.test.ts` (the concurrent Chat E
+  agent's in-progress dashboard.ts work). None are caused by this workstream.
+- `npm run build` NOT run (would wipe `.next/` and break the concurrent agent, per
+  instructions).
+
+## Follow-ups / risks
+- The concurrent Chat E agent is editing `dashboard.ts`/`dashboard-feed.ts`/`db*.ts`/
+  `tax.ts`/`performance.ts`/`dashboard-client.tsx` in the same tree; its
+  `dashboard-fill-batching.test.ts` was failing at hand-off (its own item, not mine).
+- FMP `short_interest` response shape is provider-defined; the parser tolerates
+  `shortPercentOfFloat`/`shortPercentFloat`/`shortInterestPercent`/`percentOfFloat` and
+  fraction-vs-percent. Verify against a live FMP key before trusting the disagreement
+  flag in production; a non-premium key returns 403 (suppressed) and simply yields no
+  second source (no flag), which is safe.
+- Options-tier + circuit-breaker are default-off; enable + verify against a live
+  Robinhood MCP / real health data before relying on them.
+- UI surfacing of the new fields (earnings, institution %, IV, put/call, disagreement
+  bulletin) is intentionally out of scope — data reaches `MarketQuote`/the prompt
+  correctly attributed; dashboard wiring is a follow-up.
+- `package.json`/`package-lock.json` sandbox edits must be reverted/reconciled by the
+  orchestrator (private-dep stub only).
+```

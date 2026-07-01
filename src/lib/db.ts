@@ -28,6 +28,11 @@ export function getDb(): Database.Database {
   // up to 5s for the lock instead. NORMAL durability is the WAL-recommended pairing.
   db.pragma("busy_timeout = 5000");
   db.pragma("synchronous = NORMAL");
+  // Larger page cache + memory-mapped I/O: the dashboard replays fill/proposal history on every
+  // request, so a ~20MB page cache (negative = KB) and 256MB mmap keep those hot reads off the
+  // syscall path with a fixed, modest memory ceiling.
+  db.pragma("cache_size = -20000");
+  db.pragma("mmap_size = 268435456");
   // Enforce declared foreign keys (SQLite leaves this off by default). Inert today (no FKs are
   // declared) but the correct default so any future FK constraint actually enforces.
   db.pragma("foreign_keys = ON");

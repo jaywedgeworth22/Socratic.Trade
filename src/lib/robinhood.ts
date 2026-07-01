@@ -928,6 +928,43 @@ export async function fetchRobinhoodFundamentals(symbols: string[], userId: stri
   }
 }
 
+/**
+ * Fetch the option chain for a symbol via Robinhood MCP `get_option_chains`, optionally narrowing to
+ * specific instruments via `get_option_instruments`. Returns the raw MCP payloads for a caller-side
+ * parser (see robinhood-options.ts). Returns null when Robinhood isn't connected or the call fails —
+ * so the options enrichment tier degrades to contributing nothing, exactly like other optional tiers.
+ *
+ * SECURITY: `userId` is REQUIRED (per-user OAuth token). No 'local' fallback — a missing userId must
+ * not resolve the operator's broker token for a shared/background scan.
+ */
+export async function fetchRobinhoodOptionChain(
+  symbol: string,
+  userId: string,
+  opts: { expiration?: string; type?: "call" | "put" } = {}
+): Promise<{ chains: unknown; instruments: unknown } | null> {
+  if (!robinhoodMcpDataEnabled()) return null;
+  const sym = normalizeSymbol(symbol);
+  if (!sym || !userId) return null;
+  try {
+    const chains = await callRobinhoodMcpTool(userId, "get_option_chains", { symbol: sym, symbols: [sym] });
+    let instruments: unknown = undefined;
+    try {
+      instruments = await callRobinhoodMcpTool(userId, "get_option_instruments", {
+        symbol: sym,
+        symbols: [sym],
+        ...(opts.expiration ? { expiration_date: opts.expiration } : {}),
+        ...(opts.type ? { type: opts.type } : {})
+      });
+    } catch {
+      // get_option_instruments is best-effort; the chain payload often already carries what we need.
+      instruments = undefined;
+    }
+    return { chains, instruments };
+  } catch {
+    return null;
+  }
+}
+
 function firstNum(row: Record<string, unknown>, keys: string[]): number | undefined {
   for (const key of keys) {
     const value = row[key];

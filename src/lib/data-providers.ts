@@ -19,7 +19,9 @@ import {
   type AppAAnalyst,
 } from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
-import { logApiHealth } from "./db-health";
+import { logApiHealth, getServiceHealthSummaries } from "./db-health";
+import { robinhoodMcpDataEnabled } from "./robinhood";
+import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
@@ -111,6 +113,13 @@ export interface SymbolEnrichment {
   companyName?: string;
   pbRatio?: number;
   shortPercentOfFloat?: number;
+  // FMP's independent short-interest read, carried alongside the primary (Yahoo-first) value
+  // ONLY so the cascade can flag a material Yahoo-vs-FMP disagreement. Not a first-wins sourced
+  // field: the winning shortPercentOfFloat is still chosen by registration order via takeScalar.
+  shortPercentOfFloatFmp?: number;
+  // Set by the cascade when Yahoo and FMP short interest disagree beyond the threshold. Surfaced
+  // as an evidence bulletin rather than silently picking one source.
+  shortInterestDisagreement?: string;
   beta?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
@@ -119,6 +128,15 @@ export interface SymbolEnrichment {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  // Trading days until the next scheduled earnings date (Yahoo calendarEvents). Undefined when
+  // the API returns no future earnings date — never fabricated to 0 / a guess.
+  daysToEarnings?: number;
+  // % of shares held by institutions (Yahoo institutionOwnership / majorHoldersBreakdown), 0–100.
+  institutionOwnershipPct?: number;
+  // Near-the-money implied volatility (%) from the opt-in Robinhood option-chain tier.
+  nearTheMoneyIv?: number;
+  // Put/call open-interest ratio around the money (opt-in Robinhood option-chain tier).
+  putCallRatio?: number;
   // Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED).
   targetMean?: number;
   targetHigh?: number;
@@ -156,6 +174,10 @@ export type EnrichmentSourcedField =
   | "debtToEquity"
   | "epsGrowth"
   | "senateTrades"
+  | "daysToEarnings"
+  | "institutionOwnershipPct"
+  | "nearTheMoneyIv"
+  | "putCallRatio"
   | "targetMean"
   | "targetHigh"
   | "targetLow"
@@ -646,10 +668,76 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values when enabled.
   if (secXbrlEnrichmentEnabled()) providers.push(new SecXbrlEnrichmentProvider());
+  // Opt-in Robinhood option-chain tier (near-the-money IV + put/call ratio). Default OFF and inert
+  // unless Robinhood MCP is connected — a long-TTL, low-frequency source with its own cache. Seated
+  // late so it only fills the options-specific fields nothing else supplies.
+  if (robinhoodOptionsEnrichmentEnabled() && robinhoodMcpDataEnabled()) {
+    providers.push(new RobinhoodOptionsEnrichmentProvider(userId));
+  }
   providers.push(new YahooFinanceEnrichmentProvider());
+  // Opt-in active circuit breaker: skip a lane whose db-health lane is currently `stoppedWorking`,
+  // re-probing only after the backoff window. Default OFF so it can't silently black out a
+  // currently-working provider. When off, the raw provider list runs exactly as before.
+  const effective = enrichmentCircuitBreakerEnabled() ? applyCircuitBreaker(providers) : providers;
   // Always wrap in the cascade — even for a single provider — so per-field source
   // stamping and analyst blending happen uniformly.
-  return new CascadingEnrichmentProvider(providers);
+  return new CascadingEnrichmentProvider(effective);
+}
+
+// A provider that contributes NOTHING (used to no-op a lane the circuit breaker has tripped). It keeps
+// the lane's NAME so MarketScan.source attribution and cascade ordering are unaffected structurally,
+// but returns empty enrichment so no failing call is issued this scan.
+class SkippedEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly configured = true;
+  constructor(readonly name: string, private readonly reason: string) {}
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const out: Record<string, SymbolEnrichment> = {};
+    for (const s of symbols) out[normalizeSymbol(s)] = {};
+    return out;
+  }
+  get skipReason(): string {
+    return this.reason;
+  }
+}
+
+// Consult db-health and replace any lane currently flagged `stoppedWorking` (5 consecutive failures,
+// scoped per credential lane) with a no-op — UNLESS the backoff window has elapsed since its last
+// failure, in which case we let it re-probe once. Maps provider names to the `service` names used by
+// logApiHealth so the two line up (e.g. "robinhood-fundamentals" logs under "robinhood-broker").
+export function applyCircuitBreaker(providers: MarketEnrichmentProvider[]): MarketEnrichmentProvider[] {
+  let summaries: ReturnType<typeof getServiceHealthSummaries>;
+  try {
+    summaries = getServiceHealthSummaries();
+  } catch {
+    return providers; // health read must never break a scan — fail open.
+  }
+  if (summaries.length === 0) return providers;
+  const backoffMs = enrichmentCircuitBreakerBackoffMinutes() * 60_000;
+  const now = Date.now();
+  return providers.map((p) => {
+    const service = healthServiceForProvider(p.name);
+    // A provider maps to one or more health lanes (credential lanes). Trip only when EVERY lane for
+    // that service is stopped — a working lane means the provider can still serve someone.
+    const lanes = summaries.filter((s) => s.service === service);
+    if (lanes.length === 0) return p;
+    const allStopped = lanes.every((s) => s.stoppedWorking);
+    if (!allStopped) return p;
+    // Re-probe if enough time has passed since the most recent failure across the stopped lanes.
+    const lastFailureTs = lanes
+      .map((s) => (s.lastFailureTs ? Date.parse(s.lastFailureTs) : 0))
+      .reduce((a, b) => Math.max(a, b), 0);
+    if (lastFailureTs > 0 && now - lastFailureTs >= backoffMs) return p; // backoff elapsed → let it try.
+    const reason = lanes.find((s) => s.stoppedReason)?.stoppedReason ?? "stopped working";
+    console.warn(`[data-providers] circuit breaker: skipping "${p.name}" (health service "${service}") — ${reason}`);
+    return new SkippedEnrichmentProvider(p.name, reason);
+  });
+}
+
+// Map an enrichment provider name to the db-health `service` name its calls log under. Most match 1:1;
+// the Robinhood fundamentals/options tiers both funnel through the "robinhood-broker" MCP lane.
+function healthServiceForProvider(providerName: string): string {
+  if (providerName === "robinhood-fundamentals" || providerName === "robinhood-options") return "robinhood-broker";
+  return providerName;
 }
 
 // ── Mock / fallback provider (always configured) ────────────────────────────
@@ -798,6 +886,14 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("debtToEquity", name, r.debtToEquity);
         takeScalar("epsGrowth", name, r.epsGrowth);
         takeScalar("senateTrades", name, r.senateTrades);
+        takeScalar("daysToEarnings", name, r.daysToEarnings);
+        takeScalar("institutionOwnershipPct", name, r.institutionOwnershipPct);
+        takeScalar("nearTheMoneyIv", name, r.nearTheMoneyIv);
+        takeScalar("putCallRatio", name, r.putCallRatio);
+        // FMP's independent short read is carried (not first-wins) so we can flag disagreement below.
+        if (base.shortPercentOfFloatFmp === undefined && r.shortPercentOfFloatFmp !== undefined) {
+          base.shortPercentOfFloatFmp = r.shortPercentOfFloatFmp;
+        }
         takeScalar("targetMean", name, r.targetMean);
         takeScalar("targetHigh", name, r.targetHigh);
         takeScalar("targetLow", name, r.targetLow);
@@ -850,6 +946,27 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         this.contributingNames.add("alpha-vantage");
       }
 
+      // Short-interest cross-check: when the primary (Yahoo-first) shortPercentOfFloat and FMP's
+      // independent read disagree by more than SHORT_INTEREST_DISAGREEMENT_PCT_PT percentage points,
+      // record a disagreement note. We keep the first-wins primary value but flag it so the prompt
+      // and dashboard don't trust a single source silently. Both must be present for a comparison.
+      if (
+        typeof base.shortPercentOfFloat === "number" &&
+        typeof base.shortPercentOfFloatFmp === "number" &&
+        base.sources?.shortPercentOfFloat !== "fmp"
+      ) {
+        const delta = Math.abs(base.shortPercentOfFloat - base.shortPercentOfFloatFmp);
+        if (delta >= shortInterestDisagreementThresholdPct()) {
+          const primarySrc = sources.shortPercentOfFloat ?? "primary";
+          base.shortInterestDisagreement =
+            `Short interest disagreement: ${primarySrc} ${base.shortPercentOfFloat.toFixed(1)}% vs ` +
+            `fmp ${base.shortPercentOfFloatFmp.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
+          this.contributingNames.add("fmp");
+        }
+      }
+      // The carrier field never leaves the cascade — it exists only to compute the flag above.
+      delete base.shortPercentOfFloatFmp;
+
       base.sources = sources;
       merged[symbol] = base;
     }
@@ -884,6 +1001,10 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   debtToEquity: true,
   epsGrowth: true,
   senateTrades: true,
+  daysToEarnings: true,
+  institutionOwnershipPct: true,
+  nearTheMoneyIv: true,
+  putCallRatio: true,
   targetMean: true,
   targetHigh: true,
   targetLow: true,
@@ -904,6 +1025,40 @@ export function webullUnofficialEnabled(): boolean {
 
 export function secXbrlEnrichmentEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(String(process.env.SEC_XBRL_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
+}
+
+// Opt-in Robinhood option-chain enrichment tier (near-the-money IV + put/call ratio). Default OFF —
+// Robinhood MCP calls are rate/session sensitive, so this is only wired in on explicit opt-in AND
+// when Robinhood is connected (ROBINHOOD_ADAPTER=mcp). Long-TTL, low-frequency by design.
+export function robinhoodOptionsEnrichmentEnabled(): boolean {
+  return flagEnabled(process.env.ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED);
+}
+
+// Opt-in active per-provider circuit breaker: skip an enrichment lane whose db-health status is
+// `stoppedWorking`, re-probing only after a backoff window. Default OFF so a bad interaction with a
+// currently-working provider can't silently black out data.
+export function enrichmentCircuitBreakerEnabled(): boolean {
+  return flagEnabled(process.env.ENRICHMENT_CIRCUIT_BREAKER_ENABLED);
+}
+
+/** Minutes between re-probe attempts for a lane the circuit breaker has tripped. */
+export function enrichmentCircuitBreakerBackoffMinutes(): number {
+  const value = Number(process.env.ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN ?? 15);
+  return Number.isFinite(value) && value > 0 ? value : 15;
+}
+
+/** Percentage-point delta at/above which Yahoo and FMP short interest are "materially" disagreeing. */
+export function shortInterestDisagreementThresholdPct(): number {
+  const value = Number(process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT ?? 5);
+  return Number.isFinite(value) && value > 0 ? value : 5;
+}
+
+// Opt-in: drop Finnhub's per-symbol `stock/recommendation` REST call (5 sub-calls → 4). Analyst ratings
+// are already backstopped elsewhere in the cascade (Yahoo `recommendationMean` on the keyless floor, plus
+// FMP grades-consensus / Alpha Vantage), so with this on a symbol still gets a blended analyst score from
+// other tiers — never a fabricated one. Default OFF so existing scans stay byte-identical (5 calls/symbol).
+export function finnhubDropRecommendationEnabled(): boolean {
+  return flagEnabled(process.env.FINNHUB_DROP_RECOMMENDATION);
 }
 
 function webullUnofficialMaxSymbols(): number {
@@ -1471,7 +1626,11 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   private async fetchSymbol(symbol: string, creds: YfCreds): Promise<SymbolEnrichment> {
-    const modules = "summaryDetail,defaultKeyStatistics,financialData,assetProfile";
+    // calendarEvents → next earnings date (daysToEarnings); institutionOwnership +
+    // majorHoldersBreakdown → institutional ownership %. Both ride the SAME authenticated
+    // quoteSummary call (zero additional API cost) and degrade to undefined when Yahoo omits them.
+    const modules =
+      "summaryDetail,defaultKeyStatistics,financialData,assetProfile,calendarEvents,institutionOwnership,majorHoldersBreakdown";
     const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=${modules}&crumb=${encodeURIComponent(creds.crumb)}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -1490,6 +1649,9 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const ks = (r.defaultKeyStatistics ?? {}) as Record<string, { raw?: number }>;
       const fd = (r.financialData ?? {}) as Record<string, { raw?: number } | string>;
       const ap = (r.assetProfile ?? {}) as Record<string, unknown>;
+      const ce = (r.calendarEvents ?? {}) as Record<string, unknown>;
+      const io = (r.institutionOwnership ?? {}) as Record<string, unknown>;
+      const mh = (r.majorHoldersBreakdown ?? {}) as Record<string, { raw?: number }>;
 
       const rawPe = (sd.trailingPE as { raw?: number })?.raw;
       const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
@@ -1523,6 +1685,15 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
       const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
       const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
 
+      // Next-earnings signal: calendarEvents.earnings.earningsDate is an array of {raw:<unix seconds>}
+      // ranges (sometimes a single point, sometimes a lo/hi window). Take the EARLIEST future date
+      // and convert to whole calendar days out. Undefined when there is no future date — never 0/guess.
+      const daysToEarnings = parseDaysToEarnings(ce);
+
+      // Institutional ownership %: prefer majorHoldersBreakdown.institutionsPercentHeld (0–1 fraction);
+      // fall back to summing institutionOwnership.ownershipList[].pctHeld. Stored as 0–100 percentage.
+      const institutionOwnershipPct = parseInstitutionOwnershipPct(mh, io);
+
       // Analyst rating comes from the 1–5 recommendation mean → blended by the cascade.
       let analystBySource: Record<string, AnalystRatingDetail> | undefined;
       if (typeof rawRecMean === "number" && rawRecMean > 0) {
@@ -1546,12 +1717,66 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
         ...(debtToEquity !== undefined && { debtToEquity }),
         ...(epsGrowth !== undefined && { epsGrowth }),
         ...(fcfYield !== undefined && { fcfYield }),
+        ...(daysToEarnings !== undefined && { daysToEarnings }),
+        ...(institutionOwnershipPct !== undefined && { institutionOwnershipPct }),
         ...(analystBySource !== undefined && { analystBySource })
       };
     } finally {
       clearTimeout(timeout);
     }
   }
+}
+
+// ── Yahoo quoteSummary parsers (calendarEvents / institution ownership) ──────
+// Kept as pure functions so tests can exercise the shape-tolerance without a live call.
+
+/** Earliest FUTURE earnings date from Yahoo calendarEvents → whole days out. Undefined when
+ *  no future date is present (never fabricated to 0). Accepts both the single-date and the
+ *  lo/hi window shapes Yahoo returns. */
+export function parseDaysToEarnings(calendarEvents: Record<string, unknown>, now: number = Date.now()): number | undefined {
+  const earnings = (calendarEvents?.earnings ?? {}) as Record<string, unknown>;
+  const rawDates = earnings?.earningsDate;
+  if (!Array.isArray(rawDates)) return undefined;
+  const futureSeconds: number[] = [];
+  for (const entry of rawDates) {
+    const raw = (entry as { raw?: number } | undefined)?.raw ?? (typeof entry === "number" ? entry : undefined);
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) futureSeconds.push(raw);
+  }
+  if (futureSeconds.length === 0) return undefined;
+  const nowSec = now / 1000;
+  // Earliest date at/after now; ignore past dates (a just-reported earnings).
+  const future = futureSeconds.filter((s) => s >= nowSec - 86_400); // 1-day grace for "today"
+  if (future.length === 0) return undefined;
+  const earliest = Math.min(...future);
+  const days = Math.round((earliest - nowSec) / 86_400);
+  return days >= 0 ? days : undefined;
+}
+
+/** Institutional ownership % (0–100) from majorHoldersBreakdown (preferred) or a summed
+ *  institutionOwnership list. Undefined when neither is present. */
+export function parseInstitutionOwnershipPct(
+  majorHolders: Record<string, { raw?: number }>,
+  institutionOwnership: Record<string, unknown>
+): number | undefined {
+  const pctHeld = majorHolders?.institutionsPercentHeld?.raw;
+  if (typeof pctHeld === "number" && Number.isFinite(pctHeld) && pctHeld >= 0) {
+    // Yahoo returns a 0–1 fraction; clamp to a sane 0–100 range.
+    return Math.round(Math.min(pctHeld, 1) * 10000) / 100;
+  }
+  const list = (institutionOwnership?.ownershipList ?? []) as Array<{ pctHeld?: { raw?: number } }>;
+  if (Array.isArray(list) && list.length > 0) {
+    let sum = 0;
+    let any = false;
+    for (const row of list) {
+      const v = row?.pctHeld?.raw;
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+        sum += v;
+        any = true;
+      }
+    }
+    if (any) return Math.round(Math.min(sum, 1) * 10000) / 100;
+  }
+  return undefined;
 }
 
 // ── Finnhub provider ─────────────────────────────────────────────────────────
@@ -1587,6 +1812,7 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
 
     const now = Date.now();
     const consented = hasDataPoolConsent(this.userId ?? "local");
+    const dropRecommendation = finnhubDropRecommendationEnabled();
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
     for (const symbol of normalized) {
@@ -1603,11 +1829,16 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
       await Promise.all(
         chunk.map(async (symbol) => {
           try {
-            // Run all Finnhub calls in parallel per symbol.
+            // Run all Finnhub calls in parallel per symbol. When FINNHUB_DROP_RECOMMENDATION is on we skip
+            // issuing the `stock/recommendation` HTTP call entirely (4 calls/symbol instead of 5); recRaw
+            // resolves to null so no analyst rating is derived from Finnhub and the cascade backstops it.
+            const recCall = dropRecommendation
+              ? Promise.resolve(null)
+              : this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`);
             const [newsRaw, quoteRaw, recRaw, profileRaw, metricRaw] = await Promise.allSettled([
               this.getJson(`${this.base}/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.apiKey}`),
               this.getJson(`${this.base}/quote?symbol=${symbol}&token=${this.apiKey}`),
-              this.getJson(`${this.base}/stock/recommendation?symbol=${symbol}&token=${this.apiKey}`),
+              recCall,
               this.getJson(`${this.base}/stock/profile2?symbol=${symbol}&token=${this.apiKey}`),
               this.getJson(`${this.base}/stock/metric?symbol=${symbol}&metric=all&token=${this.apiKey}`)
             ]);
@@ -1811,7 +2042,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
           const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;
-          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
+          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw, shortRaw] = await Promise.allSettled([
             skipPe
               ? Promise.resolve(undefined)
               : this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
@@ -1822,7 +2053,11 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
             wantTargets
               ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
-              : Promise.resolve(undefined)
+              : Promise.resolve(undefined),
+            // Second short-interest source: FMP's short-interest endpoint. Carried alongside Yahoo's
+            // read so the cascade can flag a material disagreement (403 on non-premium keys is expected
+            // and suppressed like the insider/senate optional calls).
+            this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false)
           ]);
 
           let peRatio: number | undefined;
@@ -1900,11 +2135,26 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             }
           }
 
+          // Short interest → percent of float. FMP shapes vary; accept shortPercentOfFloat /
+          // shortInterestRatio-style fields and normalize a 0–1 fraction to 0–100 percentage points.
+          let shortPercentOfFloatFmp: number | undefined;
+          if (shortRaw.status === "fulfilled" && Array.isArray(shortRaw.value)) {
+            const row = (shortRaw.value as Array<Record<string, unknown>>)[0];
+            const raw = Number(
+              row?.shortPercentOfFloat ?? row?.shortPercentFloat ?? row?.shortInterestPercent ?? row?.percentOfFloat
+            );
+            if (Number.isFinite(raw) && raw >= 0) {
+              // Values ≤ 1 are treated as a fraction (0.08 → 8%); larger values are already percent.
+              shortPercentOfFloatFmp = raw <= 1 ? Math.round(raw * 10000) / 100 : Math.round(raw * 100) / 100;
+            }
+          }
+
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
             ...(analystBySource !== undefined && { analystBySource }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
             ...(senateTrades !== undefined && { senateTrades }),
+            ...(shortPercentOfFloatFmp !== undefined && { shortPercentOfFloatFmp }),
             ...(targetMean !== undefined && { targetMean }),
             ...(targetHigh !== undefined && { targetHigh }),
             ...(targetLow !== undefined && { targetLow }),

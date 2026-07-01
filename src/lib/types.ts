@@ -626,7 +626,7 @@ export interface TradeProposal {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
     string
   >
 >;
@@ -677,6 +677,15 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Trading days until the next scheduled earnings date (Yahoo calendarEvents). Source-provided
+   *  only; undefined when the API does not return a future earnings date — never fabricated to 0. */
+  daysToEarnings?: number;
+  /** Percentage of shares held by institutions (Yahoo institutionOwnership / majorHoldersBreakdown). */
+  institutionOwnershipPct?: number;
+  /** Near-the-money implied volatility (%) derived from the Robinhood option chain (opt-in tier). */
+  nearTheMoneyIv?: number;
+  /** Put/call open-interest ratio around the money (Robinhood option chain; opt-in tier). */
+  putCallRatio?: number;
   /** Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED). */
   targetMean?: number;
   targetHigh?: number;
@@ -811,6 +820,10 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  daysToEarnings?: number;
+  institutionOwnershipPct?: number;
+  nearTheMoneyIv?: number;
+  putCallRatio?: number;
   targetMean?: number;
   targetHigh?: number;
   targetLow?: number;

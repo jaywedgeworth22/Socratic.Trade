@@ -327,12 +327,14 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     const res1 = await provider.enrich(["AAPL"]);
 
     expect(res1.AAPL).toEqual({ insiderSentiment: 100 });
-    expect(mockFetch).toHaveBeenCalledTimes(4); // FMP calls 4 endpoints
+    // FMP now calls 5 endpoints: ratios-ttm, grades-consensus, insider-trading, senate-trading,
+    // short_interest (the second short-interest source added for the disagreement flag).
+    expect(mockFetch).toHaveBeenCalledTimes(5);
 
     // Call second time to ensure cache bypass
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ insiderSentiment: 100 });
-    expect(mockFetch).toHaveBeenCalledTimes(8); // Bypassed cache!
+    expect(mockFetch).toHaveBeenCalledTimes(10); // Bypassed cache!
   });
 
   it("caches normally on Finnhub when all queries are successful or have non-transient errors", async () => {

@@ -221,9 +221,44 @@ export function recordFillFromProposal(input: {
   return fill;
 }
 
-export function getPerformanceSummary(accountNumber: string, currentPrices: Record<string, number> = {}, userId: string = "local"): PerformanceSummary {
-  const liveFills = listFillEvents(accountNumber, "live", 500, userId);
-  const paperFills = listFillEvents(accountNumber, "paper", 500, userId);
+/**
+ * Optional pre-fetched fill arrays so a single request (e.g. the dashboard snapshot) can fetch
+ * live + paper fills ONCE and thread them into every consumer instead of each function re-issuing
+ * its own `listFillEvents` SELECT + JSON.parse + FIFO replay. When omitted, each function fetches
+ * internally exactly as before — so every other caller keeps working unchanged.
+ */
+export interface PrefetchedFills {
+  liveFills?: FillEvent[];
+  paperFills?: FillEvent[];
+}
+
+/** Resolve the fills for a single `FillSource`, preferring pre-fetched arrays when supplied. */
+function fillsForSource(
+  accountNumber: string,
+  source: FillSource | undefined,
+  userId: string,
+  prefetched?: PrefetchedFills
+): FillEvent[] {
+  if (prefetched) {
+    if (source === "live") return prefetched.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
+    if (source === "paper") return prefetched.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
+    // No source filter: combine both pre-fetched arrays only when BOTH are present, so the result
+    // is identical to the unfiltered SELECT for the common (well under 500 rows per source) case.
+    if (prefetched.liveFills && prefetched.paperFills) {
+      return [...prefetched.liveFills, ...prefetched.paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
+    }
+  }
+  return listFillEvents(accountNumber, source, 500, userId);
+}
+
+export function getPerformanceSummary(
+  accountNumber: string,
+  currentPrices: Record<string, number> = {},
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): PerformanceSummary {
+  const liveFills = prefetched?.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
+  const paperFills = prefetched?.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
   const allFills = [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
   const livePnl = calculatePnl(liveFills, currentPrices);
   const paperPnl = calculatePnl(paperFills, currentPrices);
@@ -261,8 +296,10 @@ export function getPaperPortfolioProjection(input: {
   startingCash: number;
   currentPrices?: Record<string, number>;
   userId?: string;
+  /** Optional pre-fetched paper fills (unfiltered) — defaults to fetching internally when omitted. */
+  paperFills?: FillEvent[];
 }): { portfolio: Portfolio; positions: EquityPosition[] } {
-  const paperFills = listFillEvents(input.accountNumber, "paper", 500, input.userId ?? "local").filter(isAccountingFill);
+  const paperFills = (input.paperFills ?? listFillEvents(input.accountNumber, "paper", 500, input.userId ?? "local")).filter(isAccountingFill);
   const prices = input.currentPrices ?? {};
   const positions = new Map<string, EquityPosition>();
   let cash = input.startingCash;
@@ -464,9 +501,10 @@ export function getThesisScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ThesisStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"),
@@ -478,9 +516,10 @@ export function getRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): RegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"),
@@ -516,8 +555,13 @@ export function getSectorScorecard(
 }
 
 /** Closed lots with entry/exit context, oldest-first, for excursion (MAE/MFE) analysis. */
-export function getClosedLotsDetailed(accountNumber: string, source?: FillSource, userId: string = "local"): ClosedLot[] {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots;
+export function getClosedLotsDetailed(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): ClosedLot[] {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots;
 }
 
 /**
@@ -848,8 +892,13 @@ export function getConfidenceCalibration(
 }
 
 /** Open (unclosed) lots with entry dates, for holding-period and tax analysis. */
-export function getOpenLots(accountNumber: string, source?: FillSource, userId: string = "local"): OpenLot[] {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).openLots;
+export function getOpenLots(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): OpenLot[] {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).openLots;
 }
 
 /**
