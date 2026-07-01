@@ -1,10 +1,11 @@
-// Round-3 Codex fixes verified at the two choke points:
-//   X — the hard per-user/day LLM budget ceiling is enforced inside runStrategyOnce itself, so it
-//       covers EVERY entry (event trigger, interval scheduler, manual "Run once" API, mobile command),
-//       not just the trigger path.
-//   Y — getBrokerGateway wraps placeEquityOrder with the live pre-flight guard, so every real-order
-//       path (strategy, synthetic stops, protective stops, order replacement, future callers) is
-//       covered by one shared wrapper.
+// Y — getBrokerGateway wraps placeEquityOrder with the live pre-flight guard, so every real-order
+// path (strategy, synthetic stops, protective stops, order replacement, future callers) is covered by
+// one shared wrapper. cancelEquityOrder is deliberately NOT guarded (risk-reducing cancels must keep
+// working when live trading is disabled — see order-replacement / protective-stops for the
+// cancel-and-replace workflows that guard before their own cancel phase).
+//
+// The LLM-budget choke point is exercised end-to-end in test/strategy-money-path-f-g.test.ts (it now
+// gates LLM generation AFTER the non-LLM risk breakers, so a full run is needed to reach it).
 // Temp SQLite per run per CLAUDE.md convention; no network (the guard throws before any broker call).
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -13,44 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 beforeEach(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-choke-${randomUUID()}.db`)}`;
-  delete process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET;
-  delete process.env.TRIGGER_LLM_DAILY_COST_BUDGET_USD;
   delete process.env.ALLOW_LIVE_TRADING;
 });
 afterEach(() => {
-  delete process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET;
-  delete process.env.TRIGGER_LLM_DAILY_COST_BUDGET_USD;
   delete process.env.ALLOW_LIVE_TRADING;
-});
-
-async function seedUsage(userId: string, totalTokens: number): Promise<void> {
-  const { getDb } = await import("../src/lib/db");
-  getDb()
-    .prepare(
-      `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
-       VALUES (?, ?, 'openai', 'gpt-4o', 'strategy', 'user', NULL, 0, ?, ?, NULL, ?)`
-    )
-    .run(randomUUID(), userId, totalTokens, totalTokens, new Date().toISOString());
-}
-
-describe("X — runStrategyOnce enforces the daily LLM budget at the choke point", () => {
-  it("is a hard no-op (skips before lock/account/LLM) when over the configured token budget", async () => {
-    process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "1000";
-    await seedUsage("local", 1200);
-    // manual:true is the "Run once" / mobile path — it must ALSO be gated by a hard ceiling.
-    const { runStrategyOnce } = await import("../src/lib/strategy");
-    const result = await runStrategyOnce("local", { manual: true });
-    expect(result.status).toBe("failed");
-    expect((result.summary ?? "").toLowerCase()).toContain("budget");
-
-    const { getDb } = await import("../src/lib/db");
-    const n = (
-      getDb()
-        .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'strategy_run_suppressed_budget'")
-        .get() as { n: number }
-    ).n;
-    expect(n).toBe(1);
-  });
 });
 
 describe("Y — getBrokerGateway guards every real-order path", () => {
@@ -86,10 +53,20 @@ describe("Y — getBrokerGateway guards every real-order path", () => {
     await expect(
       gateway.placeEquityOrder({ accountNumber: "LIVE-1", symbol: "AAPL", side: "buy", type: "market", quantity: 1, timeInForce: "gtc", marketHours: "regular_hours", refId: "guard-2" })
     ).rejects.toMatchObject({ name: "LivePreflightError" });
+  });
 
-    // cancelEquityOrder is guarded too — cancel-then-place flows (order replacement, protective-stop
-    // reconcile) must fail BEFORE the live cancel, or they'd leave an order cancelled with no
-    // replacement / an unprotected position.
-    await expect(gateway.cancelEquityOrder("LIVE-1", "order-xyz")).rejects.toThrow(/pre-flight BLOCKED/i);
+  it("does NOT block a standalone cancel (risk-reducing) — cancels must work even with live trading off", async () => {
+    // A cancel reaching the underlying test gateway may reject for its own reasons (unknown order),
+    // but it must NEVER be blocked by the live pre-flight guard — the operator must be able to cancel.
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    const acctId = "acct-live-2";
+    upsertConnectedAccount({ id: acctId, userId: "local", broker: "robinhood", environment: "live", accountNumber: "LIVE-2", label: "Live", isActive: true });
+    const { getBrokerGateway } = await import("../src/lib/broker");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const policy = { ...DEFAULT_POLICY, paperMode: false, activeBroker: "robinhood" as const, connectedAccountId: acctId, accountNumber: "LIVE-2" };
+    const gateway = getBrokerGateway(policy, "local");
+    await gateway.cancelEquityOrder("LIVE-2", "order-xyz").catch((e: unknown) => {
+      expect(String((e as Error)?.message ?? "")).not.toMatch(/pre-flight BLOCKED/i);
+    });
   });
 });

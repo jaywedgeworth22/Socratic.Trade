@@ -165,6 +165,40 @@ describe("strategy money-path (Test/paper mode) — G7 + F1", () => {
   }, 30_000);
 });
 
+describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () => {
+  it("skips LLM generation (no OpenAI call, no fill) but still COMPLETES when over the daily budget", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubEnv("TRIGGER_LLM_DAILY_TOKEN_BUDGET", "1000");
+    let openAiCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      makeFetchStub({ redTeamVerdict: { rejected: false, reason: "n/a" }, onOpenAiBody: () => { openAiCalled = true; } })
+    );
+
+    await seedTestAccountAndPolicy();
+    const { getDb, listFillEvents, listAudit } = await import("../src/lib/db");
+    // Seed today's usage OVER the 1000-token ceiling for this user.
+    getDb()
+      .prepare(
+        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
+         VALUES (?, 'local', 'openai', 'gpt-4o', 'strategy', 'user', NULL, 0, 1200, 1200, NULL, ?)`
+      )
+      .run(randomUUID(), new Date().toISOString());
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce();
+
+    // The run still COMPLETES — non-LLM safety maintenance (reconcile + drawdown breaker) ran; only
+    // the LLM proposal generation was skipped by the budget gate.
+    expect(result.status).toBe("completed");
+    expect(listAudit(500).filter((e) => e.kind === "strategy_run_suppressed_budget").length).toBeGreaterThanOrEqual(1);
+    // The Bull/Bear model call never fired.
+    expect(openAiCalled).toBe(false);
+    // No proposal → no AAPL fill.
+    expect(listFillEvents("TEST", undefined, 100, "local").find((f) => f.symbol === "AAPL")).toBeUndefined();
+  }, 30_000);
+});
+
 describe("strategy Red Team rejection — F2 audit", () => {
   it("writes an audit('proposal_rejected_by_red_team') row and drops the proposal on a Bear veto", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";

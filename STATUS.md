@@ -25,8 +25,12 @@ strategy↔triggers cycle), so ALL run entries (trigger, scheduler, manual API, 
 4** (1 P1 fixed, 1 P2 documented): the `getBrokerGateway` Proxy now also guards `cancelEquityOrder`, so
 cancel-then-place flows (order replacement, protective-stop reconcile) fail BEFORE the live cancel (no
 orphaned/unprotected side effects); and the budget ceiling's concurrent-multi-account TOCTOU overshoot
-is documented as a bounded, deferred limitation (a true per-user reservation is a follow-up). Verify
-quartet green (1730 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+is documented as a bounded, deferred limitation (a true per-user reservation is a follow-up). **Round 5**
+(2 findings correcting earlier rounds): reverted the round-4 blanket cancel guard (it blocked
+risk-reducing/emergency cancels) — now only cancel-then-place WORKFLOWS guard before their own cancel
+phase, so standalone cancels always work; and moved the budget gate from the top of `runStrategyOnce`
+to just before LLM generation, AFTER the drawdown breaker + reconciliation, so a cost cap can't disable
+non-LLM safety. Verify quartet green (1731 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 
 ## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
 Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G

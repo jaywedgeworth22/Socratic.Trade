@@ -84,3 +84,18 @@ export function assertLivePreflight(input: LivePreflightInput): void {
     );
   }
 }
+
+/**
+ * Non-throwing form of {@link assertLivePreflight}: returns `true` when placing a live order would be
+ * blocked, `false` otherwise (incl. paper/test — never blocks). Use in cancel-THEN-place workflows to
+ * skip the CANCEL phase when the subsequent place would be blocked, so the operation fails with no
+ * orphaned cancel — WITHOUT blocking standalone risk-reducing cancels.
+ */
+export function livePreflightBlocks(input: LivePreflightInput): boolean {
+  try {
+    assertLivePreflight(input);
+    return false;
+  } catch {
+    return true;
+  }
+}

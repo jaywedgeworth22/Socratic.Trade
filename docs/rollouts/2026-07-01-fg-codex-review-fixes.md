@@ -109,17 +109,43 @@ audit; `getBrokerGateway` blocks a broker/live order when `ALLOW_LIVE_TRADING` i
     cost-cap overshoot, so it is DEFERRED and documented (comment at the `runStrategyOnce` check +
     here). The wording elsewhere is softened from "hard ceiling" to "per-run-entry ceiling."
 
+## Round 5 (commit after 8e895d3) — 2 findings, both CORRECTING earlier rounds
+
+14. **P1 — don't block risk-reducing live cancels (corrects item 12).** Item 12's blanket gateway
+    `cancelEquityOrder` guard over-corrected: it blocked ALL live cancels, including the manual
+    `/api/orders/cancel` route and cancel-on-close cleanup — so an operator who disables live trading
+    in an emergency could no longer cancel outstanding live orders / stale stops. Reverted the gateway
+    cancel guard (place-only again) and instead guard the cancel-THEN-place WORKFLOWS before their own
+    cancel phase: `replaceStaleLimitOrderWithMarket` runs `assertLivePreflight` before its cancel
+    (throws → no orphan); `broker-protective-stops` skips its mismatch-cancel when a live re-place
+    would be blocked (via new non-throwing `livePreflightBlocks`), keeping the existing stop. Standalone
+    risk-reducing cancels now always work. (`broker.ts`, `preflight-live-guard.ts`, `order-replacement.ts`,
+    `broker-protective-stops.ts`.)
+15. **P2 — budget gate must not disable non-LLM safety (corrects item 11 placement).** Item 11 put the
+    budget check at the TOP of `runStrategyOnce`, so an over-budget run returned before the account
+    drawdown/volatility breakers + pending-fill reconciliation — a cost cap silently disabled risk
+    maintenance. Moved the gate to just BEFORE LLM proposal generation (`proposeTrades`), AFTER those
+    non-LLM safety steps: it now skips only the LLM part (like the score-threshold skip) and the run
+    still completes, so breakers/reconciliation always run. Still the single choke point for all
+    entries; still default-OFF. (`src/lib/strategy.ts`.)
+
+Tests: `strategy-money-path-f-g.test.ts` gains a budget-skip case (LLM skipped + `strategy_run_suppressed_budget`
+audit, run still completes, no OpenAI call); `run-budget-and-live-guard.test.ts` now asserts a standalone
+live cancel is NOT blocked (and the place still is). The concurrent-run reservation (item 13) remains a
+documented, deferred follow-up.
+
 ## Verification
 
-`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1730/1730** · `npm run build` ok.
+`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1731/1731** · `npm run build` ok.
 (Private `@jaywedgeworth22/congress-trading-shared` dep stubbed locally as before; CI `verify` uses the
 real package.)
 
 ## Follow-ups
 
-- Deferred: the `strategy.ts` god-module split. The LLM budget ceiling now covers ALL run entries
-  (trigger, scheduler, manual API, mobile) via the `runStrategyOnce` choke point, and the live
-  pre-flight guard covers ALL real-order mutations (place + cancel) via the `getBrokerGateway` wrapper.
+- Deferred: the `strategy.ts` god-module split. The LLM budget ceiling covers ALL run entries
+  (trigger, scheduler, manual API, mobile) via the `runStrategyOnce` choke point (gated after the
+  non-LLM risk breakers); the live pre-flight guard covers ALL real-order PLACEMENTS via the
+  `getBrokerGateway` wrapper, with cancel-then-place workflows guarded before their own cancel phase.
 - Deferred: a per-user LLM-budget **reservation / run serialization** so the daily ceiling is truly
   hard under concurrent multi-account scheduling (today's bounded overshoot is documented at the
   `runStrategyOnce` check, item 13).

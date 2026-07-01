@@ -19,6 +19,7 @@ import {
   upsertBrokerProtectiveStop
 } from "./db";
 import { normalizeSymbol } from "./money";
+import { livePreflightBlocks } from "./preflight-live-guard";
 import type { BrokerGateway, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
 
 function round2(n: number): number {
@@ -126,7 +127,15 @@ export async function reconcileBrokerProtectiveStops(args: {
   if (!running) return out;
 
   // 3. Mismatch detection: if quantity or stop price has drifted, cancel the existing stop.
-  // On the next loop, it will be re-placed with correct values.
+  // On the next loop, it will be re-placed with correct values. This is a cancel-THEN-place: if the
+  // re-place (section 4) would be blocked (broker/live without ALLOW_LIVE_TRADING), skip the cancel so
+  // we KEEP the existing (slightly-mismatched) protective stop rather than orphaning the position.
+  // Standalone risk-reducing cancels (sections 1-2, /api/orders/cancel) are unaffected by this.
+  const liveReplaceBlocked = livePreflightBlocks({
+    mode: executionMode,
+    usesLocalSimulation: executionMode === "test/local",
+    paperMode: policy.paperMode
+  });
   const existingStops = listBrokerProtectiveStops(accountNumber, userId);
   for (const [sym, pos] of liveLongs) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
@@ -137,7 +146,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       const qtyMismatch = Math.abs(existingStop.quantity - qty) > 0.000001;
       const priceMismatch = Math.abs(existingStop.stopPrice - targetStopPrice) > 0.02;
 
-      if (qtyMismatch || priceMismatch) {
+      if ((qtyMismatch || priceMismatch) && !liveReplaceBlocked) {
         audit("broker_protective_stop_mismatch", {
           symbol: sym,
           oldQty: existingStop.quantity,

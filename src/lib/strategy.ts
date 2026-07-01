@@ -160,27 +160,6 @@ export async function runStrategyOnce(
   userId: string = "local",
   options: { manual?: boolean; connectedAccountId?: string } = {}
 ): Promise<StrategyResult> {
-  // Per-user/day LLM budget ceiling — enforced HERE, the single choke point for EVERY run entry
-  // (event trigger, interval scheduler, manual "Run once" API, mobile command, and any future
-  // caller). Default OFF (no ceiling) unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET /
-  // _COST_BUDGET_USD. Checked before the run lock + run row so an over-budget call is a clean no-op.
-  //
-  // Known limitation (bounded, documented — see docs/rollouts/2026-07-01-fg-codex-review-fixes.md):
-  // this is a read-of-the-ledger admission check, NOT a reservation. When one user has multiple
-  // accounts due and the scheduler launches their runs concurrently, two runs just under the limit
-  // can both pass here and then both spend, overshooting the ceiling by up to the in-flight runs'
-  // spend. The overshoot is bounded by the per-user concurrency (scheduler cap 3); a true hard cap
-  // would need a per-user token reservation / run serialization, deferred as a follow-up.
-  const budget = checkLlmDailyBudget(userId);
-  if (!budget.ok) {
-    audit(
-      "strategy_run_suppressed_budget",
-      { userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
-      userId
-    );
-    return { runId: "", status: "failed", summary: "Daily LLM budget ceiling reached; run skipped.", proposals: [] };
-  }
-
   // Target account: an explicit override (scheduler running a non-active account) or the active
   // account. Everything below derives from this account's policy, so a single override here runs
   // the whole loop against the targeted account.
@@ -427,8 +406,30 @@ export async function runStrategyOnce(
       }
     }
 
+    // ── Per-user/day LLM budget ceiling ────────────────────────────────────
+    // Gate LLM proposal generation on the daily token/$ budget — the single choke point for EVERY run
+    // entry (event trigger, interval scheduler, manual "Run once" API, mobile command, future). Placed
+    // HERE, AFTER the non-LLM safety work (drawdown/volatility breakers, pending-fill reconciliation
+    // above) and BEFORE the model call, so a spend cap NEVER disables risk maintenance — it only skips
+    // the LLM part, exactly like the score-threshold skip. Default OFF unless an operator sets
+    // TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
+    //
+    // Known limitation (bounded, documented — see docs/rollouts/2026-07-01-fg-codex-review-fixes.md):
+    // this is a read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account
+    // runs can overshoot by up to the in-flight runs' spend (bounded by the scheduler's concurrency
+    // cap). A true hard cap needs a per-user reservation / run serialization — deferred as a follow-up.
+    const budget = checkLlmDailyBudget(userId);
+    const skipLlmDueToBudget = !budget.ok;
+    if (skipLlmDueToBudget) {
+      audit(
+        "strategy_run_suppressed_budget",
+        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+        userId
+      );
+    }
+
     let llmProposals: TradeProposal[] = [];
-    if (!skipLlmDueToScoreThreshold) {
+    if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
       const proposed = await proposeTrades({
         runId,
         userId,

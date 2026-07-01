@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { audit, insertFillEvent } from "./db";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
+import { assertLivePreflight } from "./preflight-live-guard";
 import { isActiveBrokerOrderState } from "./broker-held-orders";
 import { listStaleLimitOrders } from "./stale-limit-orders";
 import { normalizeSymbol } from "./money";
@@ -85,6 +86,17 @@ export async function replaceStaleLimitOrderWithMarket(input: {
     order: original,
     accountNumber: input.policy.accountNumber,
     remainingQuantity: stale.remainingQuantity
+  });
+
+  // Live pre-flight BEFORE the cancel phase: this is a cancel-then-place workflow, so if the market
+  // replacement would be blocked (broker/live without ALLOW_LIVE_TRADING), fail HERE — before the
+  // live cancel — so we never leave the stale order cancelled with no replacement.
+  assertLivePreflight({
+    mode: executionState.mode,
+    usesLocalSimulation: executionState.usesLocalSimulation,
+    paperMode: input.policy.paperMode,
+    symbol: original.symbol,
+    side: original.side
   });
 
   const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, original.id);
