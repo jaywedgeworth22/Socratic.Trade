@@ -4,13 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
-## 2026-07-01 — Durable budget: follow-up Codex review (2 fixes + 1 doc) (Claude)
-On PR #293. Second Codex pass on `de66edc`: **fixed in code** (with tests) — (1) an explicit per-user
-policy budget of `0` now opts OUT of an operator env default (`resolveLimit` only inherits env on
+## 2026-07-01 — Durable budget: follow-up Codex review (3 fixes + 2 docs) (Claude)
+On PR #293. Codex passes on `de66edc` / `1e14e848fb`: **fixed in code** (with tests) — (1) an explicit
+per-user policy budget of `0` now opts OUT of an operator env default (`resolveLimit` only inherits env on
 `undefined`/blank; `0`/≤0 = no limit); (2) RAG (`rag_usage`) spend now counts toward the same ceiling as
-`llm_usage`, so RAG-only usage can trip the cap. **Documented as future considerations** (not
-implemented, per owner's deferral): chat-path (`/api/chat`) coverage and per-account (vs per-user) budget
-targeting — see PLAN.md top + the rollout note. `test/llm-budget-enforcement.test.ts` now 10 tests.
+`llm_usage`, so RAG-only usage can trip the cap; (3) **retrieval RAG meters now book under the requesting
+`userId`** — `meterEmbed`/`meterPineconeQuery`/`meterRerank` in `retrieveContextDetailed` were defaulting
+to `"local"`, so a non-`local` user's retrieval spend never counted against *their* ceiling (silently
+defeated fix #2 for multi-user). Threaded `userId` through the meter helpers + call sites.
+**Documented as future considerations** (not implemented, per owner's deferral): chat-path (`/api/chat`)
+coverage and per-account (vs per-user) budget targeting — see PLAN.md top + the rollout note. Also merged
+`origin/main` twice (learning-loop #296/#297/#299, usage-monitor #294) — one additive `types.ts` conflict
+resolved (kept both field sets). Verify quartet green: tsc 0, lint 0 errors, **1883 tests**, build ok.
 
 ## 2026-07-01 — Durable per-user LLM budget: modifiable config + spend-primitive enforcement (Claude)
 On PR #293. Replaced call-site budget gating (Codex kept finding new bypass sites) with a durable

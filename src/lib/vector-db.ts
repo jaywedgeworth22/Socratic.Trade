@@ -423,7 +423,7 @@ async function embedQueryCached(
  * plain field on a shallow copy of the match, so callers that only read `.score`/`.metadata` are
  * unaffected. `matchToChunk` reads `_rerankScore` into `RetrievedChunk.relevanceScore`.
  */
-export async function rerankMatches(voyage: VoyageAIClient, query: string, matches: any[], topK: number): Promise<any[]> {
+export async function rerankMatches(voyage: VoyageAIClient, query: string, matches: any[], topK: number, userId?: string): Promise<any[]> {
   if (matches.length <= 1) return matches;
   const documents = matches.map((m) => {
     const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
@@ -438,7 +438,7 @@ export async function rerankMatches(voyage: VoyageAIClient, query: string, match
       topK: Math.min(topK, matches.length),
       truncation: true
     });
-    meterRerank(query, documents, rerankModel());
+    meterRerank(query, documents, rerankModel(), userId);
     const data = resp.data ?? [];
     if (data.length === 0) return matches;
     const reordered: any[] = [];
@@ -866,8 +866,9 @@ export async function retrieveContextDetailed(
   try {
     const { response, cached } = await embedQueryCached(voyage, query);
     // Only meter a real Voyage embed request — a cache hit made no call, so metering it would
-    // record phantom usage/cost and defeat the point of the cache.
-    if (!cached) meterEmbed([query]);
+    // record phantom usage/cost and defeat the point of the cache. Book it under the REQUESTING
+    // userId so this retrieval spend counts toward that user's daily LLM/RAG budget (not "local").
+    if (!cached) meterEmbed([query], undefined, userId);
 
     const embedding = response.data?.[0]?.embedding;
     // R2 integrity guard applies to the query embedding too: a malformed vector (wrong dimension,
@@ -908,7 +909,7 @@ export async function retrieveContextDetailed(
         includeMetadata: true,
       });
       matches = results.matches || [];
-      meterPineconeQuery(fetchK);
+      meterPineconeQuery(fetchK, userId);
     } else {
       const [userResults, localResults] = await Promise.all([
         index.query({
@@ -928,7 +929,7 @@ export async function retrieveContextDetailed(
           includeMetadata: true,
         })
       ]);
-      meterPineconeQuery(fetchK * 2);
+      meterPineconeQuery(fetchK * 2, userId);
 
       const combined = [...(userResults.matches || []), ...(localResults.matches || [])];
       combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
@@ -957,7 +958,7 @@ export async function retrieveContextDetailed(
       asOf: options?.asOf,
       minRelevanceScore: options?.minRelevanceScore,
       hybrid: hybridRetrievalEnabled(),
-      rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k) : undefined,
+      rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId) : undefined,
       strictAsOf: asOfStrictEnabled(),
       userId
     });

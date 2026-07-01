@@ -6,11 +6,15 @@ as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
 > 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Follow-up Codex review on the durable budget** —
-> two findings were **fixed in code with tests** (not deferred): (a) an EXPLICIT per-user policy budget
+> three findings were **fixed in code with tests** (not deferred): (a) an EXPLICIT per-user policy budget
 > of `0` now opts OUT of an operator env default (`0` = no limit, not "block everything") — `resolveLimit`
 > only inherits the env default on `undefined`/blank; (b) RAG (Voyage/Pinecone) spend from the
 > `rag_usage` ledger now counts toward the same ceiling as `llm_usage`, so RAG-only spend can trip the
-> cap (previously it could not). Covered by `test/llm-budget-enforcement.test.ts`.
+> cap (previously it could not); (c) the retrieval RAG meters (`meterEmbed`/`meterPineconeQuery`/
+> `meterRerank` in `retrieveContextDetailed`) now book under the requesting `userId` instead of defaulting
+> to `"local"` — otherwise a non-`local` user's retrieval spend was never counted against *their* ceiling,
+> silently defeating (b) for the multi-user case. Covered by `test/llm-budget-enforcement.test.ts` and
+> `test/rag-metering.test.ts`.
 >
 > **Future considerations (deferred, not blocking PR #293)** — the durable per-user LLM budget now
 > enforces at the spend primitives and is user-editable in Settings; known limitations left for a

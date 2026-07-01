@@ -72,6 +72,15 @@ and are **fixed here** (not deferred):
 
 Both are covered by new cases in `test/llm-budget-enforcement.test.ts` (10 tests total).
 
+A third finding surfaced *by* fix #2 was then fixed: **retrieval RAG meters now book under the requesting
+`userId`.** `checkLlmDailyBudget(userId)` filters `rag_usage` by user, but `retrieveContextDetailed`'s
+`meterEmbed`/`meterPineconeQuery`/`meterRerank` calls omitted `userId`, so `recordRagUsage` defaulted
+them to `"local"` — a non-`local` user's retrieval spend was booked under `local` and never counted
+against their own ceiling, silently defeating fix #2 for the multi-user case it exists to protect.
+Threaded `userId` through the four meter helpers (`src/lib/rag-metering.ts`, optional param) and the
+retrieval call sites + `rerankMatches` (`src/lib/vector-db.ts`). Covered by a new case in
+`test/rag-metering.test.ts` (meters attribute to the requesting user, nothing leaks to `local`).
+
 ## Follow-ups (deferred future considerations)
 
 - The per-user **concurrent-run reservation** (two same-user account runs both passing the read-based
