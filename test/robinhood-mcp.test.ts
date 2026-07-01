@@ -232,6 +232,75 @@ describe("robinhood mcp transport", () => {
   });
 });
 
+describe("toMcpOrder — fractional/notional routing", () => {
+  const base = {
+    accountNumber: "RH123",
+    symbol: "GOOG",
+    side: "buy",
+    timeInForce: "gfd",
+    marketHours: "regular_hours"
+  } as const;
+
+  it("coerces a dollar-routed limit order into a regular-hours MARKET order (Robinhood fractional is market-only)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    // $1 GOOG (~$180) is a sub-share/fractional buy the LLM had shaped as a limit in extended hours.
+    const order = toMcpOrder({ ...base, type: "limit", dollarAmount: 1, limitPrice: 180.12, marketHours: "extended_hours" });
+    expect(order.type).toBe("market");
+    expect(order.dollar_amount).toBe("1.00");
+    expect(order.limit_price).toBeUndefined();
+    expect(order.stop_price).toBeUndefined();
+    expect(order.market_hours).toBe("regular_hours");
+    expect(order.time_in_force).toBe("gfd");
+    expect(order.quantity).toBeUndefined();
+  });
+
+  it("preserves a dollar-routed SELL limit instead of liquidating immediately", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, side: "sell", type: "limit", dollarAmount: 5, limitPrice: 12.3, timeInForce: "gtc" });
+    expect(order.type).toBe("limit");
+    expect(order.dollar_amount).toBe("5.00");
+    expect(order.limit_price).toBe("12.30");
+    expect(order.time_in_force).toBe("gtc");
+  });
+
+  it("preserves a whole-share limit order unchanged (marketable-limit entries still work)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, type: "limit", quantity: 3, limitPrice: 180.5 });
+    expect(order.type).toBe("limit");
+    expect(order.quantity).toBe("3");
+    expect(order.limit_price).toBe("180.50");
+    expect(order.dollar_amount).toBeUndefined();
+  });
+
+  it("leaves a whole-share market order as market", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, type: "market", quantity: 2 });
+    expect(order.type).toBe("market");
+    expect(order.quantity).toBe("2");
+  });
+
+  it("does NOT coerce a dollar-sized STOP into an immediate market order (keeps stop semantics)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const stopMarket = toMcpOrder({ ...base, side: "sell", type: "stop_market", dollarAmount: 5, stopPrice: 150 });
+    expect(stopMarket.type).toBe("stop_market");
+    expect(stopMarket.stop_price).toBe("150.00");
+    const stopLimit = toMcpOrder({ ...base, side: "sell", type: "stop_limit", dollarAmount: 5, stopPrice: 150, limitPrice: 149.5 });
+    expect(stopLimit.type).toBe("stop_limit");
+    expect(stopLimit.stop_price).toBe("150.00");
+    expect(stopLimit.limit_price).toBe("149.50");
+  });
+
+  it("coerces a fractional BUY quantity-only limit to GFD market too (not just dollar-routed)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, side: "buy", type: "limit", quantity: 0.5, limitPrice: 180.4, timeInForce: "gtc" });
+    expect(order.type).toBe("market");
+    expect(order.limit_price).toBeUndefined();
+    expect(order.market_hours).toBe("regular_hours");
+    expect(order.time_in_force).toBe("gfd");
+    expect(order.quantity).toBe("0.5");
+  });
+});
+
 describe("HttpMcpRobinhoodGateway.placeEquityOrder — order confirmation", () => {
   const equityOrder = {
     accountNumber: "RH-ACCOUNT",

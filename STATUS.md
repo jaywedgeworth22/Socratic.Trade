@@ -30,6 +30,63 @@ duplicating it. This session's work stayed in the "use Alpaca/Robinhood more ful
 per `docs/broker-capability-plan.md`, not new-broker integration, specifically to avoid
 collision.
 
+## 2026-06-30 — Full app review, PR review-fixes, and worktree/branch cleanup (Claude)
+Branch `docs/improvement-audit-2026-06-30`. Ran an 11-expert read-only audit across
+all 8 owner dimensions + architecture/security + both cross-app integrations
+(Congress.Trade, API Usage Monitor); results in
+`docs/reviews/2026-06-30-improvement-audit.md` (scorecard, ranked top-10, quick wins,
+strategic bets, per-dimension tables, completeness critic). **Headline: the historical
+critical auth IDOR is verified RESOLVED** (fail-closed edge auth, client-identity-header
+stripping, AES-256-GCM keys, 16-assertion regression suite); residual security items are
+non-P0 (chat rate-limit, Robinhood OAuth tokens unencrypted at rest, admin-token `===`).
+Recurring theme across reviewers: **built-but-unwired rigor** — factor-weight tuner,
+congress-score go/no-go, rationale-diversity collapse detector, correlation gate, and the
+usage-telemetry push client are all computed/built but not wired into the path they protect.
+
+Merge/deploy: PR #277 merged + auto-deployed to production. PR #278 (strategy timeout/sizing)
+and #279 (GitHub Packages dep) had their Codex P1/P2 review feedback fixed across two rounds
+(incl. #279's production token-leak via `pm2 --update-env`, and #278's Red-Team/revalidation
+reasoning-clamp bypass) — auto-merge armed. Pruned merged-only worktrees/branches: removed
+38 worktrees + 128 branches, **kept every dirty/unmerged worktree** and the protected lanes
+(main, agent previews, production, open-PR worktrees).
+
+Open item was promoted into active work: the orphaned Robinhood small-dollar routing
+diagnosis became PR #282 (`fix/robinhood-fractional-market`), which implements and verifies
+the `toMcpOrder` guard instead of leaving a missing rollout-note reference in this docs PR.
+## 2026-07-01 - [codex-autofix] Congress bare-tx envelope-field strip (PR #283)
+Branch `agent/claude-congress-webhook-parity`. Addressed both Codex review
+threads on PR #283. (1) P2 correctness: the "envelope itself is one trade"
+last-resort branch in `applyCongressEvent` pushed the whole `raw` envelope into
+`coerceCongressTrade`; since `applySseMessage` stamps the SSE event name onto
+`env.type` and the coercer reads `type` before `txType`, a bare App A
+transaction over SSE had its side shadowed and was dropped as `no-trades`. Fixed
+by stripping envelope keys (`type`/`event`/`id`/`data`) before coercing, plus a
+regression test. (2) P2 handoff: updated this file, `PLAN.md`, and the rollout
+note. Verification is constrained by the sandbox (the private
+`@jaywedgeworth22/congress-trading-shared` git dep is not fetchable — the token
+404s — so a full `npm install`/`tsc`/`build` can't run here); verified via a
+local stub: `vitest` on the two congress event suites → 25 passed (the new test
+fails on the pre-fix code), `eslint` clean, `tsc` shows no errors in the touched
+files. The `verify` CI gate runs the full trio with real registry access on
+push. See `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+
+## 2026-07-01 - PR #283 webhook health review fix
+Branch `agent/claude-congress-webhook-parity`. Authenticated Congress webhook
+requests now log `congress.trade:webhook` health after applying the payload:
+unsupported single events record ok:false with the apply reason, and batches
+record ok:false when any item is rejected. Regression drives the real route
+handler and checks the admin health summary. Verification:
+`npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
+(26 tests pass) and `npx tsc --noEmit`.
+
+## 2026-07-01 - PR #283 bare transaction event-name precedence
+Branch `agent/claude-congress-webhook-parity`. Review follow-up fixed bare App A
+transactions that carry `event: "trade.new"` plus a transaction-side `type`
+alias such as `"purchase"`: event resolution now treats `type` as the event
+only when it is a known event name, otherwise `event` supplies the event and
+`type` remains available to `coerceCongressTrade` as the side alias. Verification:
+`npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
+(27 tests pass) and `npx tsc --noEmit`.
 ## 2026-06-30 - Broker reliability + capability audit (order confirmation, Alpaca news root cause, 5-broker plan)
 Branch `claude/affectionate-franklin-a52935` (same branch/PR as the share-class fix
 below). Three code fixes plus a diagnosis plus a research-backed plan, from a user
@@ -149,6 +206,21 @@ green (tsc / 1578 tests / build); scripts ASCII-clean. See
 Round 5 review fix: `scripts/npm-ci-with-shared-deps.sh` now includes `GH_TOKEN`
 in the package-auth fallback chain, matching the script fetch paths used by
 manual/operator preview syncs.
+
+## 2026-07-01 - PR #282 Robinhood fractional routing review fixes
+Branch `fix/robinhood-fractional-market`. Round-3 review tightened the Robinhood
+small-dollar routing fix: entry-drift policy now treats fractional opening
+limits as market-routed for Robinhood, fractional opening coercion forces GFD,
+and sell/exit limits preserve their requested limit semantics instead of being
+converted into immediate market sells. See
+`docs/rollouts/2026-06-30-robinhood-fractional-market-fix.md`.
+
+## 2026-07-01 - PR #282 Robinhood fractional drift scoping
+Branch `fix/robinhood-fractional-market`. Round-4 review narrowed the
+fractional-limit entry-drift special case to `policy.activeBroker ===
+"robinhood"` so brokers that preserve fractional limit orders keep broker-side
+limit-price protection. Verification: `npx vitest run test/robinhood-mcp.test.ts
+test/strategy-hardening.test.ts` (54 tests pass) and `npx tsc --noEmit`.
 
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
