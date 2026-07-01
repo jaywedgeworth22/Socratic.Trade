@@ -1,0 +1,56 @@
+# 2026-06-30 — Robinhood fractional/small-dollar orders route as MARKET, not LIMIT
+
+## Summary
+
+`toMcpOrder` (`src/lib/robinhood.ts`) now coerces any **dollar-routed** (fractional /
+notional) equity order into a **regular-hours market** order and drops the limit/stop
+price modifiers. Whole-share limit orders (integer quantity + `limit_price`, no
+`dollar_amount`) are preserved unchanged, so marketable-limit entries still work.
+
+## Why
+
+Small-dollar buys (e.g. `$1` GOOG/AMAT on a ~$20 Robinhood account — intentional, given
+the balance) showed as broker `Placed` in the UI but the account stayed cash-only: the
+orders never filled. Root cause, confirmed in code: a dollar-routed order could reach
+Robinhood's MCP `place_equity_order` as a **limit** order (and/or in extended hours) —
+`toMcpOrder` forwarded `type`, `dollar_amount`, and `limit_price` together. Robinhood only
+fills fractional/notional orders as **regular-hours market** orders; a fractional limit is
+accepted by the API but sits working forever (shows "Placed", never spends cash). This is
+exactly the symptom observed.
+
+An earlier orphaned rollout note (`docs/rollouts/2026-06-30-robinhood-small-dollar-routing.md`,
+left untracked in the integration worktree) reached the same diagnosis but its code was
+never committed and its verification was blocked. This PR implements and verifies the fix
+at the broker boundary, where it holds regardless of how upstream shaped the order.
+
+## What changed
+
+- `src/lib/robinhood.ts` — `toMcpOrder`: compute `isDollarRouted = dollarAmount > 0 && not a
+  whole-share quantity`; when true → `type: "market"`, `limit_price`/`stop_price` omitted,
+  `market_hours: "regular_hours"`. Applies to buys and sells; short/cover still throw.
+- `test/robinhood-mcp.test.ts` — 4 regression tests: dollar-routed limit→market (buy, from
+  extended hours), dollar-routed sell→market, whole-share limit preserved, whole-share market
+  unchanged.
+
+## Files
+
+- `src/lib/robinhood.ts`
+- `test/robinhood-mcp.test.ts`
+- `docs/rollouts/2026-06-30-robinhood-fractional-market-fix.md`
+
+(STATUS for this session is recorded in PR #281's `STATUS.md` entry; this PR is a scoped
+code fix and adds only its rollout note to avoid a duplicate STATUS insert conflicting with #281.)
+
+## Verification
+
+- `npx vitest run test/robinhood-mcp.test.ts` — 13 tests pass (4 new + 9 existing).
+- `npx tsc --noEmit` — clean.
+- Full `verify` + `smoke` + `gitleaks` CI gates the merge.
+
+## Follow-ups
+
+- Any Robinhood orders already accepted as stale fractional-limit probes may need manual
+  cancel/replace (or the existing `limit_order_stale` alert flow); this change affects newly
+  submitted approvals/runs only.
+- Owner may delete the now-superseded orphaned note
+  `docs/rollouts/2026-06-30-robinhood-small-dollar-routing.md` in the integration worktree.

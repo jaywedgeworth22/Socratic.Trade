@@ -753,17 +753,28 @@ export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
       `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
     );
   }
+  // FRACTIONAL / NOTIONAL ORDERS ARE MARKET-ONLY ON ROBINHOOD. A dollar-routed order (a
+  // `dollar_amount` buy/sell that is not a whole-share quantity) sent as a LIMIT order -- or in
+  // extended hours -- is accepted by the API but never fills: it shows as "Placed"/working while the
+  // cash is never spent (the exact symptom seen with $1 GOOG/AMAT buys). Robinhood only fills
+  // fractional/notional orders as regular-hours MARKET orders. So when an order is dollar-routed and
+  // is NOT a whole-share quantity, coerce it to a regular-hours market order and drop the limit/stop
+  // modifiers. Whole-share limit orders (integer quantity + limit_price, no dollar_amount) are
+  // preserved unchanged so marketable-limit entries still work.
+  const wholeShare = input.quantity != null && Number.isInteger(input.quantity) && input.quantity >= 1;
+  const isDollarRouted = input.dollarAmount != null && input.dollarAmount > 0 && !wholeShare;
+
   return {
     account_number: input.accountNumber,
     symbol: normalizeSymbol(input.symbol),
     side: input.side,
-    type: input.type,
+    type: isDollarRouted ? "market" : input.type,
     quantity: input.quantity?.toString(),
     dollar_amount: input.dollarAmount?.toFixed(2),
-    limit_price: input.limitPrice?.toFixed(2),
-    stop_price: input.stopPrice?.toFixed(2),
+    limit_price: isDollarRouted ? undefined : input.limitPrice?.toFixed(2),
+    stop_price: isDollarRouted ? undefined : input.stopPrice?.toFixed(2),
     time_in_force: input.timeInForce,
-    market_hours: input.marketHours
+    market_hours: isDollarRouted ? "regular_hours" : input.marketHours
   };
 }
 

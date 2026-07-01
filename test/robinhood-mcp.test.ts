@@ -231,3 +231,49 @@ describe("robinhood mcp transport", () => {
     expect(portfolio.cash).toBe(100);
   });
 });
+
+describe("toMcpOrder — fractional/notional routing", () => {
+  const base = {
+    accountNumber: "RH123",
+    symbol: "GOOG",
+    side: "buy",
+    timeInForce: "gfd",
+    marketHours: "regular_hours"
+  } as const;
+
+  it("coerces a dollar-routed limit order into a regular-hours MARKET order (Robinhood fractional is market-only)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    // $1 GOOG (~$180) is a sub-share/fractional buy the LLM had shaped as a limit in extended hours.
+    const order = toMcpOrder({ ...base, type: "limit", dollarAmount: 1, limitPrice: 180.12, marketHours: "extended_hours" });
+    expect(order.type).toBe("market");
+    expect(order.dollar_amount).toBe("1.00");
+    expect(order.limit_price).toBeUndefined();
+    expect(order.stop_price).toBeUndefined();
+    expect(order.market_hours).toBe("regular_hours");
+    expect(order.quantity).toBeUndefined();
+  });
+
+  it("routes a dollar-routed SELL as a market order too", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, side: "sell", type: "limit", dollarAmount: 5, limitPrice: 12.3 });
+    expect(order.type).toBe("market");
+    expect(order.dollar_amount).toBe("5.00");
+    expect(order.limit_price).toBeUndefined();
+  });
+
+  it("preserves a whole-share limit order unchanged (marketable-limit entries still work)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, type: "limit", quantity: 3, limitPrice: 180.5 });
+    expect(order.type).toBe("limit");
+    expect(order.quantity).toBe("3");
+    expect(order.limit_price).toBe("180.50");
+    expect(order.dollar_amount).toBeUndefined();
+  });
+
+  it("leaves a whole-share market order as market", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, type: "market", quantity: 2 });
+    expect(order.type).toBe("market");
+    expect(order.quantity).toBe("2");
+  });
+});
