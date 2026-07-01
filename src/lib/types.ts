@@ -317,6 +317,63 @@ export interface TuningSettings {
    * leaves application off regardless of this flag.
    */
   perRegimeWeights?: boolean;
+
+  // ── Broader backlog (Chat B, 2026-07-01) — all DEFAULT OFF / no-op ─────────────
+  /**
+   * OPT-IN (DEFAULT false, panel P1-2): when true, `runWalkForwardOOS`'s chronological train/test split
+   * additionally PURGES train rows whose forward-return window `[date, date+horizonDays]` overlaps the first
+   * test date (they share realized bars with the test fold → leakage that inflates OOS IC). The embargo of
+   * `horizonDays` snapshot-date buckets after the boundary is applied EITHER way (it predates this flag); this
+   * flag only adds the purge. Off by default → the split is byte-identical to today (embargo only, no purge).
+   */
+  oosPurgeEmbargo?: boolean;
+  /**
+   * OPT-IN (DEFAULT false, panel P1-3): when true, each autonomous-tuning EVALUATION records a SHADOW ledger
+   * row — what the tuner WOULD have applied and the OOS readout — WITHOUT applying it (never touches policy).
+   * A forward-A/B audit trail so an operator can watch the tuner's decisions accrue before trusting autonomy.
+   * Off by default → no shadow rows are written. Independent of `autoApplyWeights` (works whether or not real
+   * auto-apply is on); when both are on, a real apply is recorded in the ledger as usual and no duplicate
+   * shadow row is written for that same evaluation.
+   */
+  shadowWeightLedger?: boolean;
+  /**
+   * OPT-IN (DEFAULT false, panel P2-1): when true, `summarizeMissedOpportunities` only flags a recurring
+   * factor when, among ALL matured skipped candidates (winners AND losers), that factor's benchmark-beating
+   * hit rate — SHRUNK toward the overall skipped hit rate — clears the base rate with a minimum denominator.
+   * Off by default → recurring-factor flagging uses the winners-only count exactly as today. Sequence AFTER
+   * `benchmarkRelativeMisses` (it reuses the same benchmark-relative winner test).
+   */
+  missedOpportunityRequireHitRate?: boolean;
+  /**
+   * OPT-IN (DEFAULT false, panel P2-3): when true AND `congressGoNoGoGating` is on, the congress go/no-go
+   * verdict additionally requires the TOP score bucket's own excess return (over the bottom bucket) to be
+   * positive with a minimum observation floor before it may PASS. A symmetric top-minus-bottom spread whose
+   * edge lives entirely in the (unused) short leg no longer promotes a long-biased congress signal. Off by
+   * default and inert unless the congress gate is evaluated → default verdicts are unchanged.
+   */
+  congressRequireTopBucketPositive?: boolean;
+  /**
+   * OPT-IN (DEFAULT 0 = no shrinkage, panel P2-4): shrinkage λ (0–1) applied when the OOS harness derives
+   * weights from ICs — `w_final = λ·w_IC + (1−λ)·w_default`. 0 keeps today's pure-IC derivation (byte-
+   * identical); a positive λ pulls the derived vector toward `DEFAULT_SCORING_WEIGHTS`, damping a single
+   * high-IC factor on a thin fold. Applied BEFORE the MAX_WEIGHT_STEP clamp on the apply path.
+   */
+  icWeightShrinkage?: number;
+  /**
+   * OPT-IN (DEFAULT false, panel P2-5): when true (and `autoApplyWeights` is on), the autonomous apply is
+   * BLOCKED when the candidate's OOS max-drawdown exceeds the baseline's beyond a small tolerance — but only
+   * when the OOS test fold has at least `minOosTestDates` (or the panel's floor) distinct dates; below that,
+   * the drawdown guard is skipped and the IC/paired-t gate governs alone. Off by default → autonomy is
+   * governed purely by the IC + paired-t gate as today.
+   */
+  autoApplyDrawdownGuard?: boolean;
+  /**
+   * OPT-IN (DEFAULT 0 = OFF, panel P2-6): minimum number of DISTINCT OOS test-fold dates the autonomous apply
+   * path requires before it may persist (a starvation guard so a thin fixed 500-row window that spans only a
+   * few dates can't pass the gate). 0 keeps the existing behavior (the env `AUTO_TUNE_MIN_TEST_DATES`, default
+   * 4, still supplies a floor). A positive value raises the distinct-test-date floor above that env default.
+   */
+  minOosTestDates?: number;
 }
 
 export interface RiskRules {

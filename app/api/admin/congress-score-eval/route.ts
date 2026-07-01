@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildCongressScoreObservations, evaluateCongressScore } from "@/lib/congress-score-eval";
 import { storeCongressScoreVerdict, readCongressScoreVerdict } from "@/lib/congress-score-gate";
+import { getPolicy } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { requireAdmin } from "@/lib/auth/admin";
 
@@ -36,8 +37,14 @@ export async function POST(request: Request) {
   const placeboSeedRaw = url.searchParams.get("placeboSeed");
   const placeboSeed = placeboSeedRaw != null && placeboSeedRaw !== "" ? Number(placeboSeedRaw) : undefined;
 
+  // P2-3: honor the operator's `congressRequireTopBucketPositive` flag so the cached verdict reflects the
+  // long-leg-positive requirement (default off → unchanged verdict).
+  const requireTopBucketPositive = getPolicy(userId).tuning?.congressRequireTopBucketPositive ?? false;
   const observations = await buildCongressScoreObservations(userId, { horizonDays, auditLimit });
-  const evaluation = evaluateCongressScore(observations, placeboSeed !== undefined ? { placeboSeed } : {});
+  const evaluation = evaluateCongressScore(observations, {
+    ...(placeboSeed !== undefined ? { placeboSeed } : {}),
+    requireTopBucketPositive
+  });
   const verdict = storeCongressScoreVerdict(userId, evaluation);
 
   return NextResponse.json({

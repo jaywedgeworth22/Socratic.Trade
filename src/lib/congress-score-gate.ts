@@ -11,7 +11,13 @@
 // never runs inside a scan cycle.
 
 import { getInternalSetting, setInternalSetting } from "./db-settings";
-import type { CongressScoreEvaluation } from "./congress-score-eval";
+import {
+  buildCongressScoreObservations,
+  evaluateCongressScore,
+  type CongressScoreEvaluation,
+  type CongressScoreOHLCFetcher
+} from "./congress-score-eval";
+import { getPolicy } from "./db";
 
 /** How stale a cached verdict may be before it is treated as absent (fail-open: no gating). */
 export const CONGRESS_VERDICT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
@@ -133,4 +139,41 @@ export function resolveCongressGateMultiplier(userId: string, gatingEnabled: boo
   if (!gatingEnabled) return { multiplier: 1 };
   const verdict = readCongressScoreVerdict(userId, now);
   return { multiplier: congressGateMultiplier(verdict, gatingEnabled), verdict };
+}
+
+export interface RefreshCongressScoreVerdictOptions {
+  horizonDays?: number;
+  auditLimit?: number;
+  now?: number;
+  /** Fixed placebo seed so the placebo control always fires (deterministic in tests). */
+  placeboSeed?: number;
+  /** Injectable OHLC fetcher (for offline/fixture use). Defaults to the real daily fetch. */
+  fetchOHLC?: CongressScoreOHLCFetcher;
+}
+
+/**
+ * P2-8: cadence-callable refresher that moves the expensive OHLC-backed congress evaluation OFF the scan hot
+ * path. Computes `evaluateCongressScore` from `buildCongressScoreObservations` and PERSISTS the go/no-go
+ * verdict (via `storeCongressScoreVerdict`) so `market.ts` reads the cached verdict cheaply. Honors the
+ * operator's `congressRequireTopBucketPositive` flag (P2-3). A scheduler/cron or admin refresh calls this; the
+ * scan cycle never triggers the eval inline. Returns the stored verdict. This does NOT itself gate anything —
+ * gating is governed by `policy.tuning.congressGoNoGoGating` at read time.
+ */
+export async function refreshCongressScoreVerdict(
+  userId: string = "local",
+  options: RefreshCongressScoreVerdictOptions = {}
+): Promise<CongressScoreVerdict> {
+  const now = options.now ?? Date.now();
+  const requireTopBucketPositive = getPolicy(userId).tuning?.congressRequireTopBucketPositive ?? false;
+  const observations = await buildCongressScoreObservations(userId, {
+    horizonDays: options.horizonDays,
+    auditLimit: options.auditLimit,
+    now,
+    ...(options.fetchOHLC ? { fetchOHLC: options.fetchOHLC } : {})
+  });
+  const evaluation = evaluateCongressScore(observations, {
+    ...(options.placeboSeed !== undefined ? { placeboSeed: options.placeboSeed } : {}),
+    requireTopBucketPositive
+  });
+  return storeCongressScoreVerdict(userId, evaluation, now);
 }
