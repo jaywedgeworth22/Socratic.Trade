@@ -111,6 +111,15 @@ import {
   type SettingsSection,
   type SettingsTier
 } from "./settings-scope";
+import {
+  FEED_TAB_KEY,
+  WORKSPACE_TAB_KEY,
+  isFeedTab,
+  isWorkspaceTab,
+  migrateNavKeysToDestinations,
+  type FeedTab,
+  type WorkspaceTab
+} from "./nav-destinations";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
@@ -151,7 +160,6 @@ import {
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 
 function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode {
   return CURATED_LLM_MODEL_GROUPS.map((group) => (
@@ -164,7 +172,6 @@ function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode
     </optgroup>
   ));
 }
-type FeedTab = "activity" | "runs" | "notifications" | "audit";
 
 type MarketReplaceCandidate = {
   order: EquityOrder;
@@ -192,8 +199,6 @@ const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
 const EXECUTION_BANNER_MODE_KEY = "execution-banner-mode";
 type ExecutionBannerMode = "full" | "compact" | "hidden";
 const HIDE_TEST_ACCOUNT_KEY = "hide-test-account";
-const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
-const FEED_TAB_KEY = "dashboard-feed-tab";
 const STRATEGY_TUNING_STORAGE_KEY = "strategy-tuning-proposal";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
 const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets";
@@ -262,14 +267,6 @@ function safeJson(value: string): unknown {
   } catch {
     return {};
   }
-}
-
-function isWorkspaceTab(value: unknown): value is WorkspaceTab {
-  return value === "decision" || value === "assistant" || value === "market" || value === "macro" || value === "performance" || value === "tax" || value === "strategy";
-}
-
-function isFeedTab(value: unknown): value is FeedTab {
-  return value === "activity" || value === "runs" || value === "notifications" || value === "audit";
 }
 
 function readStoredWorkspaceTab(): WorkspaceTab {
@@ -1025,6 +1022,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // NAV_V2 PR #2: one-time, flag-INDEPENDENT migration of the legacy tab keys to
+  // the new destination keys. Additive (legacy keys are left intact so a flag-off
+  // render path still finds them) and idempotent (no-op once the new keys exist),
+  // so it is safe to run on every mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    migrateNavKeysToDestinations(window.localStorage);
+  }, []);
 
   useEffect(() => {
     try {
