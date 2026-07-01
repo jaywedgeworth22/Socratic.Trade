@@ -16,7 +16,7 @@ import type {
   BrokerGateway,
   EquityOrderInput
 } from "./types";
-import { normalizeSymbol } from "./money";
+import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { fetchDailyOHLC } from "./history";
@@ -51,6 +51,11 @@ export async function fillMissingQuotesWithClose(
 export function getAlpacaGateway(userId: string = "local", connectedAccountId?: string): BrokerGateway {
   return new AlpacaBrokerGateway(userId, connectedAccountId);
 }
+
+// Re-exported for existing callers/tests that import symbol conversion from this module — the
+// canonical definitions now live in ./money alongside normalizeSymbol so data-providers.ts and
+// the Alpaca stream workers can share them without importing this (much heavier) gateway module.
+export { toAlpacaSymbol, fromAlpacaSymbol };
 
 export function classifyAlpacaAccountType(account: Record<string, unknown>): AccountCapabilities["accountType"] {
   const rawType = String(account.account_type ?? account.accountType ?? "").toLowerCase();
@@ -351,11 +356,22 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
     // Standard quotes method: fall back to REST directly to avoid multi-ticker latency
-    const normalizedSymbols = symbols.map(normalizeSymbol);
+    const aliasesByCanonical = new Map<string, Set<string>>();
+    for (const rawSymbol of symbols) {
+      const requested = normalizeSymbol(rawSymbol);
+      const canonical = fromAlpacaSymbol(toAlpacaSymbol(requested));
+      if (!canonical) continue;
+      const aliases = aliasesByCanonical.get(canonical) ?? new Set<string>();
+      aliases.add(canonical);
+      if (requested) aliases.add(requested);
+      aliasesByCanonical.set(canonical, aliases);
+    }
+    const normalizedSymbols = Array.from(aliasesByCanonical.keys());
     const quotes: Record<string, BrokerQuote> = {};
     try {
-      const response = await this.alpaca.getLatestQuotes(normalizedSymbols);
-      for (const [symbol, q] of Object.entries(response)) {
+      const response = await this.alpaca.getLatestQuotes(normalizedSymbols.map(toAlpacaSymbol));
+      for (const [rawSymbol, q] of Object.entries(response)) {
+        const symbol = fromAlpacaSymbol(rawSymbol);
         const anyQ = q as Record<string, number | string>;
         const bid = optionalNumber(anyQ.bp);
         const ask = optionalNumber(anyQ.ap);
@@ -381,6 +397,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const last = bars && bars.length ? bars[bars.length - 1] : undefined;
       return last && typeof last.close === "number" ? { price: last.close, asOf: last.time != null ? String(last.time) : undefined } : undefined;
     });
+    for (const [canonical, aliases] of aliasesByCanonical) {
+      const quote = quotes[canonical];
+      if (!quote) continue;
+      for (const alias of aliases) {
+        if (!quotes[alias]) quotes[alias] = { ...quote, symbol: alias };
+      }
+    }
     return quotes;
   }
 
@@ -417,7 +440,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const fallbackFn = async () => {
       try {
         const orderOptions: Record<string, unknown> = {
-          symbol: input.symbol,
+          symbol: toAlpacaSymbol(input.symbol),
           side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
           type: input.type,
           // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
@@ -475,7 +498,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : "place_market_order";
 
     const orderArgs: Record<string, any> = {
-      symbol: input.symbol,
+      symbol: toAlpacaSymbol(input.symbol),
       side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
       type: input.type,
       // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
@@ -564,7 +587,7 @@ export function mapAlpacaOrderType(raw: unknown): OrderType {
 export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
   return {
     id: String(o.id),
-    symbol: normalizeSymbol(String(o.symbol)),
+    symbol: fromAlpacaSymbol(String(o.symbol)),
     side: o.side as OrderSide,
     type: mapAlpacaOrderType(o.type),
     state: String(o.status),
@@ -581,7 +604,7 @@ export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
 
 export function parseAlpacaPosition(p: Record<string, unknown>): EquityPosition {
   return {
-    symbol: normalizeSymbol(String(p.symbol)),
+    symbol: fromAlpacaSymbol(String(p.symbol)),
     quantity: number(p.qty ?? p.quantity),
     averageCost: number(p.avg_entry_price ?? p.average_entry_price ?? p.averageCost),
     marketValue: number(p.market_value ?? p.marketValue),

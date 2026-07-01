@@ -39,6 +39,7 @@ import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { planFundingSells } from "./sell-to-fund";
+import { isRejectedOrCanceledState } from "./broker-side";
 import {
   getConfidenceCalibration,
   getFactorScorecard,
@@ -737,6 +738,24 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${message}`] });
+        continue;
+      }
+
+      // A broker call that doesn't throw is NOT the same as "the broker accepted the order" —
+      // Alpaca and Robinhood can both return HTTP 200 with a synchronous rejected/canceled state
+      // (e.g. a risk check, PDT block, or unsupported extended-hours order). Recording this as
+      // "placed" would tell the user/dashboard a live order exists when the broker already
+      // declined it — broker-agnostic via isRejectedOrCanceledState (handles both spellings and
+      // known terminal-decline states across brokers).
+      if (isRejectedOrCanceledState(execution.state)) {
+        const message = `Broker declined the order (state: ${execution.state}).`;
+        updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+        audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
         continue;
       }
 
@@ -1665,6 +1684,21 @@ export async function executeProposal(
       );
       return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
     }
+
+    // See the matching comment in the autonomous run-loop placement path above: a non-throwing
+    // broker response can still be a synchronous rejection/cancellation, and that must not be
+    // recorded as "placed".
+    if (isRejectedOrCanceledState(execution.state)) {
+      const message = `Broker declined the order (state: ${execution.state}).`;
+      updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+      await sendNotification(
+        { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
+        { policy, userId }
+      );
+      return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
+    }
+
     updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
     const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
     const fill = recordFillFromProposal({
@@ -2588,7 +2622,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
         if (execQty > 0) bookExecuted("partially_filled");
-      } else if (["cancelled", "canceled", "rejected", "failed"].includes(matched.state)) {
+      } else if (isRejectedOrCanceledState(matched.state)) {
         if (execQty > 0) {
           // Order terminated AFTER a partial execution — book the executed shares
           // rather than marking the whole fill cancelled and losing them.

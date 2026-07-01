@@ -868,6 +868,82 @@ describe("AlpacaSnapshotEnrichmentProvider", () => {
     expect(result.TSLA).not.toHaveProperty("bid");
     expect(result.TSLA).not.toHaveProperty("ask");
   });
+
+  it("converts a hyphenated share-class symbol (BRK-B) to Alpaca's dot notation in the request and maps the response back", async () => {
+    // Regression: Alpaca's snapshots endpoint 400s an entire batch when it contains an
+    // unconverted hyphenated symbol — confirmed in production (~97% failure rate on batches
+    // that included BRK-B from the S&P 500 scan universe) before this fix.
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          "BRK.B": {
+            latestTrade: { p: 410.00 },
+            dailyBar: { c: 409.50, v: 1_000_000 },
+            prevDailyBar: { c: 408.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    const result = await provider.enrich(["BRK-B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(capturedUrl).not.toContain("BRK-B");
+    expect(result["BRK-B"]?.price).toBe(410.00);
+  });
+});
+
+describe("AlpacaNewsEnrichmentProvider", () => {
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("converts a hyphenated share-class symbol to Alpaca's dot notation in the request and maps tagged articles back", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire posts strong quarter", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK-B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(capturedUrl).not.toContain("BRK-B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire posts strong quarter");
+  });
+
+  it("matches Alpaca news tags when the requested share-class symbol is already dot-form", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire stays active in markets", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK.B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire stays active in markets");
+    expect(result["BRK.B"]?.headlines).toContain("Berkshire stays active in markets");
+  });
 });
 
 // Freshness-tier ordering: the real-time Alpaca snapshot must win the price-family
