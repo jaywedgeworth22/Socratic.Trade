@@ -33,6 +33,23 @@ filling the missing pieces.
 > `docs/usage-monitor-integration.md` +
 > `docs/rollouts/2026-07-01-usage-monitor-integration.md`.
 
+> 2026-07-01 (`agent/claude-backlog-c-rag`): RAG expansion backlog, broader pass - implemented
+> all remaining P1/P2 items from `docs/reviews/2026-07-01-rag-knowledge-expansion.md`: **R5**
+> consolidated per-retrieval telemetry (`recordRetrievalQuality()`, hashed query, default off);
+> **R6** shared `envFlagOn` parser (fixes `RAG_EMBED_DISCLOSURES` to accept `true/1/yes`); **R7**
+> index-metric assertion at bootstrap (warn+audit only, never throws); **R9** query-embedding LRU
+> (vector-only, never Pinecone results, default off); **R10** `content_hash` dedup for
+> `storeContexts` (opt-in `dedupKeyPrefix`, wired into 8-K summary + disclosure ingesters);
+> **R11** faithfulness/citation-grounding eval (`scripts/eval/faithfulness.ts`, deterministic +
+> optional off-by-default LLM judge); **R12** centralized default cosine floor
+> (`applyDefaultFloors`); **R13** provenance-complete citations (additive `doc_type`/`section`) +
+> optional advisory `isStale` label, backend/payload only; **R14** near-duplicate suppression
+> (Jaccard-shingle, opt-in); **R15** offline corpus coverage & freshness report
+> (`scripts/eval/corpus-coverage.ts`); **R16** per-run RAG budget ceiling (degrades rerank/hybrid
+> only, never core recall); **R17** fixed train/serve text skew (`VECTOR_EMBED_CLEAN_TEXT`,
+> embeds clean text, stored/cited text unchanged). R3/R8 already shipped (#297/#299), verified not
+> re-implemented. Every item default-off/opt-in, proven byte-identical when unset. Read/
+> retrieval-only, no UI touched. See `docs/rollouts/2026-07-01-rag-backlog.md`.
 > 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
 > Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
 > `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised
