@@ -1,10 +1,13 @@
 name: Shared package pin check
 
-# Agentic Trading depends on @jaywedgeworth22/congress-trading-shared via a
-# git-commit-pinned dependency (not the published GitHub Packages registry),
-# so nothing normally tells us when our pin falls behind that repo's main.
-# This workflow checks weekly (and on demand) and posts a warning annotation
-# if we're behind — it never fails the build, it just makes drift visible.
+# Some consumers of @jaywedgeworth22/congress-trading-shared depend on it via a
+# git-commit-pinned dependency (git+https://...#sha) rather than the published
+# GitHub Packages registry, so nothing normally tells them when their pin falls
+# behind that repo's main. This workflow checks weekly (and on demand) and
+# posts a warning annotation if we're behind — it never fails the build, it
+# just makes drift visible. When this repo's own dependency isn't git-pinned
+# (e.g. it tracks a semver range from the registry instead), the check is a
+# no-op: npm/the registry already handles picking up new compatible versions.
 #
 # Uses the existing GH_PACKAGES_TOKEN secret (a PAT with read access to
 # jaywedgeworth22/congress-trading-shared, also used for the registry/git
@@ -32,9 +35,20 @@ jobs:
             exit 0
           fi
 
-          PINNED_SHA=$(node -p "require('./package.json').dependencies['@jaywedgeworth22/congress-trading-shared'].split('#')[1]")
+          DEP_SPEC=$(node -p "require('./package.json').dependencies['@jaywedgeworth22/congress-trading-shared'] ?? ''")
+          if [ -z "$DEP_SPEC" ]; then
+            echo "::warning::Could not find @jaywedgeworth22/congress-trading-shared in package.json dependencies"
+            exit 0
+          fi
+          case "$DEP_SPEC" in
+            *"#"*) PINNED_SHA="${DEP_SPEC##*#}" ;;
+            *)
+              echo "::notice::Dependency is not git-pinned (value: $DEP_SPEC) — this repo tracks a semver range from the registry, so there's no commit SHA to compare. Skipping."
+              exit 0
+              ;;
+          esac
           if [ -z "$PINNED_SHA" ]; then
-            echo "::warning::Could not extract pinned commit SHA from package.json"
+            echo "::warning::Could not extract pinned commit SHA from package.json (value: $DEP_SPEC)"
             exit 0
           fi
 
