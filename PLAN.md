@@ -5,6 +5,21 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
+> Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
+> (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
+> `db-learning-ledger.ts` CRUD + `learning-ledger.ts` record/revert) that GENERALIZES #296's
+> tuning-specific audited revert into one ledger + one `requireAdmin` revert route
+> (`/api/admin/learning-ledger`); (P0-2) effect-size + PAIRED-t significance on the autonomous
+> OOS gate (pure `pairedICDiffStats` on the shared-fold per-date IC-difference series;
+> `policy.tuning.minOosICImprovement` + `minOosPairedTStat`, both default no-op); (P0-3) a
+> FAIL-CLOSED tuning-config invariant guard (`tuning-invariants.ts`) that skips (never throws)
+> the autonomous apply on a bad config and warns (never blocks) the manual tune route. Ledger
+> RECORDING is passive/always-on (audit trail only); every behavior-changing knob defaults
+> off/no-op. Red-team/inline-Bear untouched. Verify quartet green (tsc / lint 0-err / 1793
+> tests / build). See `docs/rollouts/2026-07-01-learning-loop-followon.md` +
+> `docs/phase-7-strategy.md` §3.E.5–E.7.
+>
 > 2026-07-01 (`agent/claude-workstream-c-rag-v2`): RAG/embedding Workstream C - closed the 3
 > highest-leverage gaps the 2026-06-30 audit found in the RAG pipeline (no retrieval-quality
 > eval, reranker discarding its own relevance score, char-cap/doc_type/salience hygiene

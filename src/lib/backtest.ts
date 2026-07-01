@@ -469,6 +469,13 @@ export interface OOSResult {
   /** OOS composite IC of `options.baselineWeights` (the status-quo weights), when supplied. */
   oosICBaseline?: number;
   /**
+   * Paired per-date IC-difference statistics (candidate − baseline) over the SAME OOS test fold.
+   * Present only when BOTH `candidateWeights` and `baselineWeights` are supplied. This is the correct
+   * SE source for a significance test on the candidate-vs-baseline edge (the two ICs are correlated
+   * because they share the same fold), used by the autonomous paired-t gate (panel P0-2).
+   */
+  pairedICDiff?: PairedICDiffStats;
+  /**
    * OOS IC information ratio (mean / sample-std of per-date ICs).
    * Values > 0.5 are conventionally considered evidence of a real signal.
    */
@@ -580,6 +587,73 @@ export function computeCompositeIC(
   const sampleVar = perDateICs.reduce((s, x) => s + (x - mean) ** 2, 0) / (n - 1);
   const std = Math.sqrt(sampleVar);
   return { meanIC: mean, icIR: std > 0 ? mean / std : 0 };
+}
+
+/** Paired per-date IC-difference statistics for candidate-vs-baseline weights (panel P0-2). */
+export interface PairedICDiffStats {
+  /** Number of dates that produced a valid IC for BOTH weight vectors (the paired sample size). */
+  n: number;
+  /** Mean of the per-date (candidateIC − baselineIC) series. */
+  meanDiff: number;
+  /** Sample standard deviation of the per-date difference series (n−1 denominator). */
+  stdDiff: number;
+  /** Standard error of the mean difference (stdDiff / sqrt(n)). */
+  seDiff: number;
+  /** Paired t-statistic: meanDiff / seDiff (0 when SE is 0 / n<2). Positive ⇒ candidate beats baseline. */
+  tStat: number;
+}
+
+/**
+ * PURE (panel P0-2). Compute the PAIRED per-date IC-difference series between two weight vectors on
+ * the SAME observations, then summarize it. Because both composite ICs are measured on the identical
+ * test fold and are highly correlated, the difference's standard error MUST come from this paired
+ * per-date difference series — NOT from differencing two independently-estimated ICIRs. Only dates that
+ * yield a finite IC for BOTH vectors contribute a paired point (a date with <2 valid names for either
+ * side is dropped from the pair). Returns `n=0` stats when no date pairs.
+ */
+export function pairedICDiffStats(
+  observations: FactorObservation[],
+  candidateWeights: ScoringWeights,
+  baselineWeights: ScoringWeights
+): PairedICDiffStats {
+  const byDate = new Map<string, FactorObservation[]>();
+  for (const obs of observations) {
+    const bucket = byDate.get(obs.date);
+    if (bucket) bucket.push(obs);
+    else byDate.set(obs.date, [obs]);
+  }
+
+  const diffs: number[] = [];
+  for (const group of byDate.values()) {
+    const candScores: number[] = [];
+    const baseScores: number[] = [];
+    const returns: number[] = [];
+    for (const obs of group) {
+      const cs = compositeScore(obs, candidateWeights);
+      const bs = compositeScore(obs, baselineWeights);
+      const r = obs.forwardReturn;
+      if (Number.isFinite(cs) && Number.isFinite(bs) && Number.isFinite(r)) {
+        candScores.push(cs);
+        baseScores.push(bs);
+        returns.push(r);
+      }
+    }
+    if (returns.length < 2) continue;
+    const candIC = spearmanRankIC(candScores, returns);
+    const baseIC = spearmanRankIC(baseScores, returns);
+    if (candIC === undefined || baseIC === undefined) continue;
+    diffs.push(candIC - baseIC);
+  }
+
+  const n = diffs.length;
+  if (n === 0) return { n: 0, meanDiff: 0, stdDiff: 0, seDiff: 0, tStat: 0 };
+  const meanDiff = diffs.reduce((s, x) => s + x, 0) / n;
+  if (n === 1) return { n, meanDiff, stdDiff: 0, seDiff: 0, tStat: 0 };
+  const sampleVar = diffs.reduce((s, x) => s + (x - meanDiff) ** 2, 0) / (n - 1);
+  const stdDiff = Math.sqrt(sampleVar);
+  const seDiff = stdDiff / Math.sqrt(n);
+  const tStat = seDiff > 0 ? meanDiff / seDiff : 0;
+  return { n, meanDiff, stdDiff, seDiff, tStat };
 }
 
 /**
@@ -759,6 +833,12 @@ export async function runWalkForwardOOS(
   const oosICBaseline = options.baselineWeights
     ? computeCompositeIC(adjustedTest, options.baselineWeights).meanIC
     : undefined;
+  // Panel P0-2: when BOTH candidate and baseline weights are supplied, compute the paired per-date IC
+  // difference series on the same fold. Its SE (not a difference of independent ICIRs) is the correct
+  // basis for a significance test on the candidate-vs-baseline edge.
+  const pairedICDiff = options.candidateWeights && options.baselineWeights
+    ? pairedICDiffStats(adjustedTest, options.candidateWeights, options.baselineWeights)
+    : undefined;
 
   const oosDates = [...new Set(adjustedTest.map((o) => o.date))];
   const spyReturnByDate = await buildSpyReturnMap(oosDates, horizonDays, now, fetchOHLC);
@@ -816,6 +896,7 @@ export async function runWalkForwardOOS(
     oosICDefault,
     oosICCandidate,
     oosICBaseline,
+    pairedICDiff,
     equityCurve,
     annualizedReturn,
     benchmarkAnnualizedReturn,
