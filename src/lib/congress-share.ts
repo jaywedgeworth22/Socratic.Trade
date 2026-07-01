@@ -26,6 +26,7 @@ import {
   type FundamentalRow,
   type AnalystRow,
   resolveTickerAlias,
+  TICKER_ALIASES,
   SecurityRefInputSchema,
   PriceSeriesSchema,
   PriceCloseSchema,
@@ -203,6 +204,33 @@ export function canonicalOutboundSymbol(symbol: string): string {
   return resolveTickerAlias(normalizeSymbol(symbol));
 }
 
+// Corporate-action classification for outbound aliasing. The shared `resolveTickerAlias` map mixes two
+// cases that MUST NOT be treated the same for MARKET DATA (price/fundamentals/analyst/insider/short-vol):
+//   - RENAMES: the SAME continuing security, ticker changed (FB->META, SQ->XYZ, GEHCV->GEHC). Its
+//     price/fundamental/analyst history carries over to the new ticker — aliasing is correct.
+//   - ACQUISITIONS/delistings: the source security was acquired and delisted; its history is NOT the
+//     acquirer's (ATVI acquired by MSFT, TWX->WBD, RHT->IBM). Relabeling ATVI's closes/PE/targets onto
+//     MSFT pollutes MSFT's real series on App A. For market data these must be DROPPED, not relabeled.
+// (Company-identity refs may still point at the acquirer — that's `canonicalOutboundSymbol`, unchanged.)
+const ACQUISITION_SOURCES = new Set<string>(["ATVI", "TWX", "RHT"]);
+// Derive the renames-only submap from the shared map so a future shared-map entry is classified here,
+// not silently missing from both buckets (a new alias is a rename unless added to ACQUISITION_SOURCES).
+const TICKER_RENAMES: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(TICKER_ALIASES).filter(([source]) => !ACQUISITION_SOURCES.has(source))
+);
+
+/**
+ * Canonicalize a symbol for MARKET-DATA rows (price / fundamentals / analyst / insider / short-volume).
+ * Applies RENAMES only; returns `null` for an ACQUISITION source so the caller DROPS the row — an
+ * acquired ticker's numbers must never be relabeled onto the acquirer. Well-formed non-aliased symbols
+ * (incl. share-class hyphens like BRK-B) pass through unchanged.
+ */
+export function canonicalMarketDataSymbol(symbol: string): string | null {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized || ACQUISITION_SOURCES.has(normalized)) return null;
+  return resolveTickerAlias(normalized, TICKER_RENAMES);
+}
+
 /**
  * Map an app MarketQuote/summary to a (partial) company ref. This app only knows
  * name/sector/industry/market-cap — never CIK, exchange, country, ipoDate, etc. — and every name
@@ -237,7 +265,7 @@ export function marketQuoteToFundamentals(
   q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
   date: string
 ): CongressFundamental | null {
-  const ticker = canonicalOutboundSymbol(q.symbol);
+  const ticker = canonicalMarketDataSymbol(q.symbol); // renames only; drops acquired tickers
   if (!ticker) return null;
   const row: CongressFundamental = { ticker, date };
   const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
@@ -262,7 +290,7 @@ export function marketQuoteToAnalyst(
   q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian">,
   date: string
 ): CongressAnalyst | null {
-  const ticker = canonicalOutboundSymbol(q.symbol);
+  const ticker = canonicalMarketDataSymbol(q.symbol); // renames only; drops acquired tickers
   if (!ticker) return null;
   const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
   let haveCounts = false;
@@ -308,7 +336,7 @@ export function ohlcBarsToCloses(bars: OHLCBar[] | null | undefined): CongressCl
 
 /** Build a per-ticker price entry from OHLC bars. currentPrice/currentPriceDate = most recent close. */
 export function ohlcBarsToPriceEntry(symbol: string, bars: OHLCBar[] | null | undefined): CongressPrice | null {
-  const ticker = canonicalOutboundSymbol(symbol);
+  const ticker = canonicalMarketDataSymbol(symbol); // renames only; drops acquired tickers (never relabel bars onto the acquirer)
   if (!ticker) return null;
   const closes = ohlcBarsToCloses(bars);
   if (closes.length === 0) return null;
@@ -339,8 +367,10 @@ export function buildInsiderImport(): CongressInsider[] {
     const sig = signals[sym];
     const a = agg.get(sym);
     if (!sig || !a) continue;
+    const ticker = canonicalMarketDataSymbol(sym);
+    if (!ticker) continue; // acquired ticker — drop the insider row rather than relabel onto the acquirer
     out.push({
-      ticker: canonicalOutboundSymbol(sym),
+      ticker,
       date: a.date,
       sentiment: sig.insiderSentiment,
       buyFilings: sig.buyFilings,
@@ -365,7 +395,9 @@ export function buildShortVolumeImport(): CongressShortVol[] {
     if (!sig) continue;
     const date = sig.asOf ?? ds?.asOf;
     if (!date) continue;
-    out.push({ ticker: canonicalOutboundSymbol(sym), date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
+    const ticker = canonicalMarketDataSymbol(sym);
+    if (!ticker) continue; // acquired ticker — drop the short-volume row rather than relabel onto the acquirer
+    out.push({ ticker, date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
   }
   return out.slice(0, maxDailyTickers());
 }

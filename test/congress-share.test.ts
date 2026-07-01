@@ -16,6 +16,7 @@ import { setInternalSetting } from "../src/lib/db";
 import {
   buildInsiderImport,
   buildShortVolumeImport,
+  canonicalMarketDataSymbol,
   canonicalOutboundSymbol,
   chunkPrices,
   dropInvalidShareRows,
@@ -74,6 +75,23 @@ describe("canonicalOutboundSymbol + alias-resolved outbound tickers", () => {
     expect(marketQuoteToRef({ symbol: "FB" } as unknown as RefArg)?.ticker).toBe("META");
     expect(marketQuoteToFundamentals({ symbol: "FB", peRatio: 20 } as unknown as FundArg, recentDate(0))?.ticker).toBe("META");
     expect(marketQuoteToAnalyst({ symbol: "FB", analystRating: "Buy" } as unknown as AnalystArg, recentDate(0))?.ticker).toBe("META");
+  });
+
+  it("splits renames from acquisitions: renames alias market data, acquisitions DROP it (no relabel onto acquirer)", () => {
+    type FundArg = Parameters<typeof marketQuoteToFundamentals>[0];
+    type AnalystArg = Parameters<typeof marketQuoteToAnalyst>[0];
+    // Rename (FB->META): market data carries over under the new ticker.
+    expect(canonicalMarketDataSymbol("FB")).toBe("META");
+    expect(canonicalMarketDataSymbol("AAPL")).toBe("AAPL"); // non-aliased passes through
+    // Acquisition (ATVI acquired by MSFT): market-data builders must DROP the row, never relabel to MSFT.
+    expect(canonicalMarketDataSymbol("ATVI")).toBeNull();
+    expect(canonicalMarketDataSymbol("TWX")).toBeNull(); // acquired -> WBD
+    expect(canonicalMarketDataSymbol("RHT")).toBeNull(); // acquired -> IBM
+    expect(marketQuoteToFundamentals({ symbol: "ATVI", peRatio: 20 } as unknown as FundArg, recentDate(0))).toBeNull();
+    expect(marketQuoteToAnalyst({ symbol: "ATVI", analystRating: "Buy" } as unknown as AnalystArg, recentDate(0))).toBeNull();
+    expect(ohlcBarsToPriceEntry("ATVI", [{ time: "2026-06-16", close: 100 }])).toBeNull();
+    // Company-IDENTITY refs may still point at the acquirer (that's canonicalOutboundSymbol, unchanged).
+    expect(canonicalOutboundSymbol("ATVI")).toBe("MSFT");
   });
 });
 
