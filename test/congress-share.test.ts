@@ -16,7 +16,9 @@ import { setInternalSetting } from "../src/lib/db";
 import {
   buildInsiderImport,
   buildShortVolumeImport,
+  canonicalOutboundSymbol,
   chunkPrices,
+  dropInvalidShareRows,
   isCongressDailyShareDue,
   isCongressShareAutoEnabled,
   marketQuoteToAnalyst,
@@ -52,6 +54,57 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+// ── Ticker aliasing (item 4) ──────────────────────────────────────────────────────
+
+describe("canonicalOutboundSymbol + alias-resolved outbound tickers", () => {
+  it("resolves shared corporate-action aliases (FB->META, ATVI->MSFT, SQ->XYZ)", () => {
+    expect(canonicalOutboundSymbol("fb")).toBe("META");
+    expect(canonicalOutboundSymbol("ATVI")).toBe("MSFT");
+    expect(canonicalOutboundSymbol(" sq ")).toBe("XYZ");
+    expect(canonicalOutboundSymbol("AAPL")).toBe("AAPL"); // non-aliased passes through
+    expect(canonicalOutboundSymbol("BRK-B")).toBe("BRK-B"); // share-class hyphen preserved
+  });
+
+  it("stamps the canonical ticker on outbound ref / fundamentals / analyst rows", () => {
+    type RefArg = Parameters<typeof marketQuoteToRef>[0];
+    type FundArg = Parameters<typeof marketQuoteToFundamentals>[0];
+    type AnalystArg = Parameters<typeof marketQuoteToAnalyst>[0];
+    expect(marketQuoteToRef({ symbol: "FB" } as unknown as RefArg)?.ticker).toBe("META");
+    expect(marketQuoteToFundamentals({ symbol: "FB", peRatio: 20 } as unknown as FundArg, recentDate(0))?.ticker).toBe("META");
+    expect(marketQuoteToAnalyst({ symbol: "FB", analystRating: "Buy" } as unknown as AnalystArg, recentDate(0))?.ticker).toBe("META");
+  });
+});
+
+// ── Outbound payload validation (item 5) ──────────────────────────────────────────
+
+describe("dropInvalidShareRows — drop malformed rows instead of sending them", () => {
+  it("drops schema-invalid rows per dataset and keeps the valid ones", () => {
+    const { payload, dropped } = dropInvalidShareRows({
+      refs: [{ ticker: "AAPL" }, { ticker: "" }], // "" fails ticker.min(1)
+      spx: [{ date: "2026-06-15", close: 100 }, { date: "not-a-date", close: 1 }], // bad date dropped
+      insider: [{ ticker: "AAPL", date: "2026-06-15", sentiment: 60, buyFilings: 1, sellFilings: 0, buyShares: 1, sellShares: 0, owners: [] }],
+    });
+    expect(payload.refs).toEqual([{ ticker: "AAPL" }]);
+    expect(payload.spx).toEqual([{ date: "2026-06-15", close: 100 }]);
+    expect(payload.insider).toHaveLength(1); // all valid -> untouched
+    expect(dropped).toMatchObject({ refs: 1, spx: 1 });
+    expect(dropped.insider).toBeUndefined();
+  });
+
+  it("shareWithCongressTrade excludes invalid rows from the POST body and counts only what's sent", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "t";
+    let posted: { refs?: unknown[]; origin?: string } | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      posted = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }));
+    const res = await shareWithCongressTrade({ refs: [{ ticker: "AAPL" }, { ticker: "" }] });
+    expect(res.ok).toBe(true);
+    expect(res.sent.refs).toBe(1);
+    expect(posted?.refs).toEqual([{ ticker: "AAPL" }]);
+  });
 });
 
 // ── Mappers ─────────────────────────────────────────────────────────────────────

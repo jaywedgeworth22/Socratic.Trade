@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent, StrategyDecision } from "../app/dashboard-types";
-import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "../src/lib/dashboard-feed";
+import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed, UNIFIED_FEED_MAX_GROUPS } from "../src/lib/dashboard-feed";
+import type { FillEvent } from "../src/lib/types";
 import { enrichPositionsForDisplay, formatNotificationDisplay, formatShareQuantity, ratingTitle, sentimentTitle } from "../src/lib/dashboard-ui";
 import type { EquityPosition, MarketQuote, NotificationEvent } from "../src/lib/types";
 
@@ -479,6 +480,90 @@ describe("dashboard feed helpers", () => {
     expect(tradeGroup!.detail).toContain("Broker state Rejected");
     expect(tradeGroup!.detail).toContain("alpaca-order-rejected");
     expect(tradeGroup!.detail).not.toContain("Rejected manually");
+  });
+
+  it("caps buildUnifiedFeed output at the source-level limit, newest-first", () => {
+    // 200 independent (ungrouped) fills — well above the client's 50-group render slice — so the
+    // only thing keeping the payload bounded is the source-level cap inside buildUnifiedFeed.
+    const total = 200;
+    const fills: FillEvent[] = Array.from({ length: total }, (_, i) => ({
+      id: `f${i}`,
+      accountNumber: "CAP1",
+      source: "paper",
+      symbol: "AAA",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "filled",
+      // Ascending timestamps so the newest is the highest index.
+      filledAt: `2026-06-15T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`
+    }));
+
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [],
+      fills,
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+
+    expect(feed.length).toBe(UNIFIED_FEED_MAX_GROUPS);
+    expect(UNIFIED_FEED_MAX_GROUPS).toBe(60);
+    // Newest-first: the very latest fill must survive the cap and lead the feed.
+    expect(feed[0]!.updatedAt).toBe(fills[total - 1]!.filledAt);
+    // Sorted strictly newest-first across the whole capped array.
+    for (let i = 1; i < feed.length; i++) {
+      expect(feed[i - 1]!.updatedAt >= feed[i]!.updatedAt).toBe(true);
+    }
+  });
+
+  it("never caps proposal-bearing groups (ledger reconciliation) — only the proposal-less tail", () => {
+    // 80 fills with distinct proposalIds → 80 proposal-bearing groups. The decision ledger reconciles
+    // statuses for up to 100 recent proposals from this feed, so none may be dropped even though 80 > 60.
+    const proposalFills: FillEvent[] = Array.from({ length: 80 }, (_, i) => ({
+      id: `pf${i}`,
+      accountNumber: "CAP2",
+      source: "paper",
+      symbol: "AAA",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "filled",
+      proposalId: `prop-${i}`,
+      filledAt: `2026-06-15T01:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`
+    }));
+    // 100 proposal-less fills → render-only, capped.
+    const looseFills: FillEvent[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `lf${i}`,
+      accountNumber: "CAP2",
+      source: "paper",
+      symbol: "BBB",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "filled",
+      filledAt: `2026-06-15T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`
+    }));
+
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [],
+      fills: [...proposalFills, ...looseFills],
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+
+    const proposalGroups = feed.filter((g) => g.proposalId);
+    const looseGroups = feed.filter((g) => !g.proposalId);
+    expect(proposalGroups.length).toBe(80); // every proposal group survives — reconciliation stays complete
+    expect(new Set(proposalGroups.map((g) => g.proposalId)).size).toBe(80);
+    expect(looseGroups.length).toBe(UNIFIED_FEED_MAX_GROUPS); // only the render-only tail is capped
+    for (let i = 1; i < feed.length; i++) {
+      expect(feed[i - 1]!.updatedAt >= feed[i]!.updatedAt).toBe(true); // still globally newest-first
+    }
   });
 });
 

@@ -1,0 +1,11 @@
+# gitleaks accepted false positives (fingerprint = commit:file:rule:line).
+#
+# These three are FAKE SSE-subscription-token fixtures in test/congress-stream.test.ts flagged by the
+# generic-api-key rule on their introducing commit's diff (Workstream C1 / PR #291). They are not real
+# secrets -- placeholder values used only to assert the App A subscription-model connect contract -- and
+# were shortened to <10-char values in a follow-up commit, so they no longer appear in the current tree.
+# gitleaks scans commit history, so it still flags the original introduction; these fingerprints suppress
+# that. (The PR squash-merges, so the intermediate commit never reaches main.)
+63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:80
+63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:81
+63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:98

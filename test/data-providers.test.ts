@@ -241,6 +241,85 @@ describe("enrichment cache consent gate", () => {
     expect(resB.AAPL?.companyName).toBeUndefined();
   });
 
+  it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    const runAndCount = async () => {
+      clearEnrichmentCache();
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        urls.push(String(url));
+        if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+        if (String(url).includes("recommendation")) {
+          return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+        }
+        return new Response(JSON.stringify({}));
+      });
+      const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+      const res = await provider.enrich(["AAPL"]);
+      return { urls, res };
+    };
+
+    // Flag OFF (default) → 5 calls, recommendation IS fetched and yields an analyst score.
+    delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    const off = await runAndCount();
+    expect(off.urls.length).toBe(5);
+    expect(off.urls.some((u) => u.includes("recommendation"))).toBe(true);
+    expect(off.res.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+
+    // Flag ON → 4 calls, recommendation NOT fetched, no fabricated Finnhub analyst rating.
+    process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+    const on = await runAndCount();
+    expect(on.urls.length).toBe(4);
+    expect(on.urls.some((u) => u.includes("recommendation"))).toBe(false);
+    expect(on.res.AAPL?.analystBySource?.finnhub).toBeUndefined();
+    // Non-analyst fields still populate from the remaining calls.
+    expect(on.res.AAPL?.companyName).toBe("Acme Corp");
+
+    if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+    else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+  });
+
+  it("keys the Finnhub cache by FINNHUB_DROP_RECOMMENDATION so flipping the flag refetches (not a stale no-rec row)", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    let recFetches = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("recommendation")) {
+        recFetches++;
+        return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+      }
+      if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+      return new Response(JSON.stringify({}));
+    });
+
+    try {
+      // Flag ON: recommendation dropped, row cached under the flag-specific namespace.
+      process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+      const onProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const on1 = await onProvider.enrich(["AAPL"]);
+      expect(on1.AAPL?.analystBySource?.finnhub).toBeUndefined();
+      expect(recFetches).toBe(0);
+      // Same flag again → cache hit, still no recommendation fetch.
+      await onProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(0);
+
+      // Flag OFF: distinct cache namespace → MISS → refetch, now including the recommendation, so the
+      // blended analyst rating regains Finnhub's vote instead of serving the stale no-rec row until TTL.
+      delete process.env.FINNHUB_DROP_RECOMMENDATION;
+      const offProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const off1 = await offProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(1);
+      expect(off1.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+    } finally {
+      if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+      else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    }
+  });
+
   it("user-keyed data is shared via pool to a consenting second user", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
@@ -397,11 +476,82 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({});
-    expect(fetchCount).toBe(4);
+    // 5 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading, short_interest.
+    expect(fetchCount).toBe(5);
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({});
-    expect(fetchCount).toBe(8);
+    expect(fetchCount).toBe(10);
+  });
+
+  it("does not cache the FMP row when short_interest transiently fails (429) but core calls succeed", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("short_interest")) return new Response("Too Many Requests", { status: 429 });
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: 20 }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 20 }); // core field present…
+    // 5 sub-calls + 1 retry on the 429'd short_interest = 6.
+    expect(fetchCount).toBe(6);
+    // …but the transient short_interest failure blocks caching, so the next scan re-fetches and the
+    // Yahoo-vs-FMP disagreement signal can appear once FMP recovers (not suppressed until TTL).
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBe(12);
+  });
+
+  it("still caches the FMP row when short_interest returns a non-premium 403 (not transient)", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("short_interest")) return new Response("premium endpoint", { status: 403 });
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: 20 }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBe(5);
+    // 403 is a permanent "not entitled" state, not transient → the row still caches (second call hits).
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBe(5);
+  });
+
+  it("does not cache the FMP row when short_interest returns HTTP 500 (recoverable server error)", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      // HTTP 500 is not matched by isTransientError (only 502/503/504 are), but it is recoverable and
+      // must still block caching so the disagreement input isn't frozen for a full TTL.
+      if (url.includes("short_interest")) return new Response("Internal Server Error", { status: 500 });
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: 20 }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    const res1 = await provider.enrich(["AAPL"]);
+    expect(res1.AAPL).toEqual({ peRatio: 20 });
+    const afterFirst = fetchCount;
+    // Not cached → the next scan re-fetches (asserted without relying on exact retry counts).
+    const res2 = await provider.enrich(["AAPL"]);
+    expect(res2.AAPL).toEqual({ peRatio: 20 });
+    expect(fetchCount).toBeGreaterThan(afterFirst);
   });
 
   it("logs non-premium optional FMP failures while suppressing expected premium 403s", async () => {
@@ -446,11 +596,73 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({ peRatio: 25.5 });
-    expect(fetchCount).toBe(4);
+    // 5 sub-calls now: ratios-ttm, grades-consensus, insider-trading, senate-trading, short_interest.
+    expect(fetchCount).toBe(5);
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ peRatio: 25.5 });
-    expect(fetchCount).toBe(4);
+    expect(fetchCount).toBe(5);
+  });
+
+  it("carries FMP short interest and flags a material Yahoo-vs-FMP disagreement", async () => {
+    const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
+      "../src/lib/data-providers"
+    );
+    clearEnrichmentCache();
+
+    // Yahoo-shaped provider (registered first → wins the primary shortPercentOfFloat).
+    const yahooish: MarketEnrichmentProvider = {
+      name: "yahoo-finance",
+      configured: true,
+      async enrich() {
+        return { AAPL: { shortPercentOfFloat: 3 } };
+      }
+    };
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("short_interest")) {
+        return new Response(JSON.stringify([{ shortPercentOfFloat: 0.12 }])); // 12% → >5pp apart
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const fmp = new FmpEnrichmentProvider("test-key");
+    const cascade = new CascadingEnrichmentProvider([yahooish, fmp]);
+    const out = await cascade.enrich(["AAPL"]);
+
+    // Primary value stays first-wins (yahoo's 3%); carrier field never leaks out.
+    expect(out.AAPL.shortPercentOfFloat).toBe(3);
+    expect(out.AAPL.shortPercentOfFloatFmp).toBeUndefined();
+    expect(out.AAPL.shortInterestDisagreement).toContain("fmp 12.0%");
+    // fmp contributed the disagreement flag, so it must appear in the source list.
+    expect(cascade.activeSources).toContain("fmp");
+  });
+
+  it("does not flag short-interest disagreement when the two sources agree", async () => {
+    const { CascadingEnrichmentProvider, FmpEnrichmentProvider, clearEnrichmentCache } = await import(
+      "../src/lib/data-providers"
+    );
+    clearEnrichmentCache();
+
+    const yahooish: MarketEnrichmentProvider = {
+      name: "yahoo-finance",
+      configured: true,
+      async enrich() {
+        return { AAPL: { shortPercentOfFloat: 8 } };
+      }
+    };
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("short_interest")) {
+        return new Response(JSON.stringify([{ shortPercentOfFloat: 0.09 }])); // 9% vs 8% → within 5pp
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const fmp = new FmpEnrichmentProvider("test-key");
+    const out = await new CascadingEnrichmentProvider([yahooish, fmp]).enrich(["AAPL"]);
+    expect(out.AAPL.shortPercentOfFloat).toBe(8);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
   });
 });
 

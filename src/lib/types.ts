@@ -499,6 +499,15 @@ export interface BrokerQuote {
   volume?: number;
   asOf?: string;
   provider?: string;
+  /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
+   *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
+   *  synthetic spread as a real quoted one. `syntheticSpread` stays true only when BOTH sides were
+   *  derived; the side-specific flags preserve the real side of a one-sided quote. */
+  syntheticSpread?: boolean;
+  /** True when only the BID was derived from price (the ask may be real). */
+  syntheticBid?: boolean;
+  /** True when only the ASK was derived from price (the bid may be real). */
+  syntheticAsk?: boolean;
 }
 
 /**
@@ -762,7 +771,7 @@ export interface TradeProposal {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
     string
   >
 >;
@@ -813,6 +822,15 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Trading days until the next scheduled earnings date (Yahoo calendarEvents). Source-provided
+   *  only; undefined when the API does not return a future earnings date — never fabricated to 0. */
+  daysToEarnings?: number;
+  /** Percentage of shares held by institutions (Yahoo institutionOwnership / majorHoldersBreakdown). */
+  institutionOwnershipPct?: number;
+  /** Near-the-money implied volatility (%) derived from the Robinhood option chain (opt-in tier). */
+  nearTheMoneyIv?: number;
+  /** Put/call open-interest ratio around the money (Robinhood option chain; opt-in tier). */
+  putCallRatio?: number;
   /** Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED). */
   targetMean?: number;
   targetHigh?: number;
@@ -947,6 +965,10 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  daysToEarnings?: number;
+  institutionOwnershipPct?: number;
+  nearTheMoneyIv?: number;
+  putCallRatio?: number;
   targetMean?: number;
   targetHigh?: number;
   targetLow?: number;

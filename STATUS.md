@@ -4,6 +4,116 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Congress.Trade integration repair (Workstream C1) (Claude)
+Branch `claude/elastic-rosalind-a2a48a`. Implements C1 from
+`docs/reviews/2026-07-01-audit-work-split.md`. **App B side (this PR):**
+(1) **Push/SSE** — rewrote `src/lib/congress-stream.ts` to App A's **subscription model**
+(`/api/stream` requires `?subscription=<id>` + a per-subscription secret; the old consumer
+connected without it and got `400`, so the push path was dead). Now resolves a subscription
+(env-provisioned or opt-in auto-create), connects with `?subscription=` + Bearer secret, maps
+App A's raw `trade.new` Transaction into a `congress.trade` envelope, and treats
+cursor/ping/reconnect/error control frames as no-ops (kills the per-heartbeat "dropped
+unparseable" spam). Still gated by `CONGRESS_STREAM_ENABLED` (default off) → inert until a
+subscription is provisioned.
+(2) **"drops 4 of 7"** — verified this is **correct-by-design** (App A persists all 7 inbound;
+App B is authoritative for insider/shortVolume and pulls fundamentals/analyst), NOT the bug the
+source docs implied. Trimming outbound would break the working donation; adding tables duplicates
+the pull tier. Fixed by making App B's inbound import receiver **explicitly acknowledge**
+non-persisted datasets (`acceptedNotPersisted`) + documenting the directional asymmetry.
+(3) **Pinning** — exact-pinned shared pkg to `1.0.0` (`package.json` + lockfile) and rewrote
+`shared-package-pin-check.yml` to fetch App A's peer spec and **fail on divergence** (the old
+check no-oped for semver pins). No shared-pkg source change needed for C1.
+(4) **Aliases** — applied shared `resolveTickerAlias` on all outbound row tickers
+(`congress-share.ts`, new `canonicalOutboundSymbol`) so FB→META etc. don't fragment rows.
+(5) **Validation** — `shareWithCongressTrade` now drops schema-invalid rows per-dataset instead
+of warn-and-send.
+**Verify:** tsc clean; lint 0 errors; `npm test` 1680/1680 pass; `npm run build` success. `node_modules`
+symlinked from parent worktree (no `read:packages` token for `npm ci` here).
+**Next / follow-up:** App A PR in `jaywedgeworth22/Congress.Trade` — exact-pin `app/package.json`
++ mirror the peer pin-check, and retire App A's local `TICKER_ALIASES` for the shared one (App A is
+on `chore/pin-check-latest-sha-guard`, which also edits the pin-check workflow — land on a separate
+branch, reconcile that file). Operator must provision an SSE subscription + set
+`CONGRESS_STREAM_ENABLED` to activate the push path. See
+`docs/rollouts/2026-07-01-congress-integration-repair.md`.
+## 2026-07-01 — Audit work-split Chats D + E implemented (Claude)
+Branch `claude/trading-audit-d-e-dpw0h7`. Implemented both single-repo workstreams from
+`docs/reviews/2026-07-01-audit-work-split.md` using two parallel agents (disjoint file sets)
+plus orchestrator integration (Finnhub item 4, env repair, full verify).
+
+**Chat D — data sources & breadth (all 6):** `daysToEarnings` + `institutionOwnershipPct`
+added to the existing authenticated Yahoo `quoteSummary` call (zero added API cost, threaded
+through the full per-field enrichment checklist, degrade to `undefined` — never fabricated);
+synthetic Yahoo bid/ask now provenance-tagged `yahoo-finance-synthetic`, and `hasAskData`
+(via new `hasRealAsk`) + the marketable-limit calc exclude it so a placeholder spread no
+longer anchors live limit prices (correctness/safety fix); new default-off Robinhood
+options/IV enrichment tier (`RobinhoodOptionsEnrichmentProvider`,
+`src/lib/robinhood-options.ts`); default-off active per-provider circuit breaker consulting
+`getServiceHealthSummaries()`; FMP added as a second short-interest source with a ≥5pp
+Yahoo-vs-FMP disagreement bulletin (`MarketScan.source` credits `fmp` only when it actually
+contributed).
+
+**Chat E — request-path & bundle performance (items 1,2,3,4,5,7,8; item 6 deferred):**
+`getDashboardSnapshot` fetches live+paper fills once and threads them through the perf/tax/feed
+functions (collapsing ~9 `listFillEvents` replays → 1 live + 1 paper; all new params optional/
+backward-compatible); batched proposal lookups (`getProposalsByIds`, one `IN (...)`); unified
+feed capped at 60; `next/dynamic` code-split of `StrategyFlow` + `SymbolDrilldown` (verified
+`@xyflow/react` is out of the dashboard first-load JS via the react-loadable manifest); sqlite
+`cache_size`/`mmap_size` pragmas; Playwright-CI `.next/cache` restore step. Item 4 (Finnhub
+5→4 REST calls) landed by the orchestrator as `FINNHUB_DROP_RECOMMENDATION` (default-off, drops
+`stock/recommendation`; analyst ratings still backstopped by Yahoo/FMP/Alpha-Vantage). E is a
+pure refactor — no user-visible number or trading behavior changes.
+
+**New env flags (all default-off / behavior-preserving):**
+`ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED` (+`ROBINHOOD_OPTIONS_TTL_MS`),
+`ENRICHMENT_CIRCUIT_BREAKER_ENABLED` (+`ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN`),
+`SHORT_INTEREST_DISAGREEMENT_PCT_PT` (default 5), `FINNHUB_DROP_RECOMMENDATION`.
+
+**Verification:** `npx tsc --noEmit` clean (0 errors); `npm run lint` 0 errors (258
+grandfathered warnings); `npm run build` clean (item-5 code-split confirmed in the build
+output); `npm test` = **1689 passed**, with **8 failures confined to `congress-*` test files
+only**. Those 8 are an environmental sandbox artifact: the private
+`@jaywedgeworth22/congress-trading-shared` GitHub Packages dep can't be authenticated here
+(no `read:packages` token — same limitation noted in the entry below), so a permissive local
+stub stands in for it and can't replicate the real package's exact Zod schemas / API-path
+constants. Those files are untouched by this change; the CI `verify` gate (real package) is
+authoritative. See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+`docs/rollouts/2026-07-01-performance-efficiency.md`.
+
+**Codex PR review (5 of 6 P2s fixed, tested):** options cache keyed per-user (no cross-user
+token-derived leak); underlying price threaded into option metrics (+`underlying_symbol` MCP
+arg); circuit breaker requires the 5-consecutive-failure condition (no single-cold-failure
+blackout); FMP transient short-interest failure no longer caches a row missing the disagreement
+input. Deferred: per-credential circuit-breaker lane (interface change across ~9 providers on a
+default-off feature) — tracked in the rollout note. gitleaks false positive (a `clearEnrichmentCache`
+identifier) resolved via a narrow `.gitleaks.toml` allowlist. **2nd review round (4 more P2s fixed):**
+unified-feed cap now keeps all proposal-bearing groups (ledger reconciliation was regressing for
+>60 groups) and caps only the render-only tail; marketable-limit prices each side independently
+(a synthetic ask no longer discards a real bid); `parseDaysToEarnings` keeps same-day/straddling
+windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envelope.
+
+**Next / follow-ups:** UI surfacing of the new D fields (earnings, institution %, IV, put/call,
+disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
+MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
+(monolithic-snapshot whole-tree re-render refactor, audit §6.1).
+## 2026-07-01 - Alpaca account-editor "Custom Endpoint" checkbox bug (base_url/environment drift)
+Branch `claude/affectionate-franklin-a52935`. User reported a newly-added live Alpaca
+account ("Alpaca Standard") failing with `Request failed with status code 401` on the
+readiness check, despite looking normal in the Accounts UI. Root cause: the account's
+`connected_accounts` row had `environment: "live"` (correctly inferred from the live API
+key) but `base_url` still pointing at Alpaca's PAPER endpoint — a live key rejected outright
+against the paper host. Traced to a real UI bug in `app/dashboard-client.tsx`'s account
+editor: checking "Use a Custom Alpaca Endpoint" copied whatever `baseUrl` currently held
+(the paper default, if checked before finishing the account number/API key fields) into
+the "custom" field with nothing typed by the user, and a checked box also disables the
+auto-derivation of `baseUrl` from the inferred paper/live environment as those fields are
+filled — so the stale paper URL got silently locked in and saved. Fixed: checking the box
+now starts the custom field EMPTY (safe — the save handler already falls back to the
+correct default endpoint when the custom field is blank). The user's specific account was
+also corrected directly in production (`base_url` -> `https://api.alpaca.markets`);
+confirmed via `api_health_log` that `alpaca-broker` calls succeed post-fix. No test
+infrastructure exists for `dashboard-client.tsx` (no `.tsx` tests / testing-library in this
+repo) — verified via `tsc` + manual code trace only. See
+`docs/rollouts/2026-07-01-alpaca-custom-endpoint-checkbox-fix.md`.
 ## 2026-07-01 — Learning-loop BROADER BACKLOG (P1 + P2), backend/API/tests only (Claude)
 Branch `agent/claude-backlog-b-learning-b` (off `origin/main` after #300 merged; base = #296 + #300 unified
 ledger / tuning-invariants / `pairedICDiffStats`). Implements the remaining P1 + P2 backlog from

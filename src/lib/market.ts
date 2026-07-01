@@ -473,26 +473,47 @@ export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAU
 
 export function mergeQuoteData(
   scan: MarketScan,
-  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string }>
+  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }>
 ): MarketScan {
+  // When a merge accepts a real broker bid/ask/volume, refresh THAT side's provenance too. Otherwise a
+  // "yahoo-finance-synthetic" tag from the quote-only fallback (toQuoteOnlyMarketQuote) would stick even
+  // after a real broker spread is merged in, making a genuine ask look synthetic to hasRealAsk and the
+  // marketable-limit calc (which would then wrongly fall back to refPrice).
+  const refreshSideProvenance = (
+    base: EnrichmentSources | undefined,
+    extra: { bid?: number; ask?: number; volume?: number; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }
+  ): EnrichmentSources | undefined => {
+    if (!extra.provider) return base;
+    const usedBid = positiveNumber(extra.bid) !== undefined;
+    const usedAsk = positiveNumber(extra.ask) !== undefined;
+    const usedVol = !!(extra.volume && extra.volume > 0);
+    if (!usedBid && !usedAsk && !usedVol) return base;
+    // A synthesized (price-derived) side — e.g. a Test-mode Yahoo batch quote with no real bid/ask —
+    // must KEEP synthetic provenance, not be relabeled as a real quoted spread. Tag EACH side by its
+    // own synthetic flag so a one-sided quote's real side stays labeled with the actual provider
+    // (falling back to the coarse syntheticSpread flag when the side-specific flags aren't set). Volume
+    // is a real datum even when the spread is synthetic, so it always takes the actual provider.
+    const bidSynthetic = extra.syntheticBid ?? extra.syntheticSpread ?? false;
+    const askSynthetic = extra.syntheticAsk ?? extra.syntheticSpread ?? false;
+    const next: EnrichmentSources = { ...(base ?? {}) };
+    if (usedBid) next.bid = bidSynthetic ? "yahoo-finance-synthetic" : extra.provider;
+    if (usedAsk) next.ask = askSynthetic ? "yahoo-finance-synthetic" : extra.provider;
+    if (usedVol) next.volume = extra.provider;
+    return next;
+  };
   const normalize = (quote: MarketQuote): MarketQuote => {
     const extra = quoteData[quote.symbol];
     if (!extra) return quote;
-    // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
-    const usedExtraVolume = !!(extra.volume && extra.volume > 0);
-    const sources: EnrichmentSources | undefined =
-      usedExtraVolume && extra.provider
-        ? { ...(quote.sources ?? {}), volume: extra.provider }
-        : quote.sources;
     return {
       ...quote,
       bid: positiveNumber(extra.bid) ?? quote.bid,
       ask: positiveNumber(extra.ask) ?? quote.ask,
       price: positiveNumber(extra.price) ?? quote.price,
-      volume: (usedExtraVolume ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
+      // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
+      volume: (extra.volume && extra.volume > 0 ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
       asOf: extra.asOf ?? quote.asOf,
       provider: extra.provider ?? quote.provider,
-      sources
+      sources: refreshSideProvenance(quote.sources, extra)
     };
   };
   const topCandidates = scan.topCandidates.map(normalize);
@@ -505,7 +526,8 @@ export function mergeQuoteData(
         ask: positiveNumber(extra?.ask) ?? quote.ask,
         price: positiveNumber(extra?.price) ?? quote.price,
         provider: extra?.provider ?? quote.provider,
-        asOf: extra?.asOf ?? quote.asOf
+        asOf: extra?.asOf ?? quote.asOf,
+        sources: extra ? refreshSideProvenance(quote.sources, extra) : quote.sources
       };
       return [quote.symbol, merged] as const;
     })
@@ -522,7 +544,10 @@ export function mergeQuoteData(
       ask: positiveNumber(quote.ask),
       score: 0,
       provider: quote.provider,
-      asOf: quote.asOf
+      asOf: quote.asOf,
+      // Seed per-side provenance for a NEWLY-added quote too — otherwise a synthetic bid/ask on an
+      // added row carries no sources and reads as a real quoted spread downstream (hasRealAsk etc.).
+      sources: refreshSideProvenance(undefined, quote)
     };
   }
   return {
@@ -743,6 +768,11 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
   const netChange = quote.price - prevClose;
   const intradayChangePct = prevClose > 0 ? Math.round((netChange / prevClose) * 10_000) / 100 : 0;
   const position = positions.find((p) => normalizeSymbol(p.symbol) === symbol);
+  // The chart endpoint has no real bid/ask; when the spread is synthesized from price, tag its
+  // provenance as "yahoo-finance-synthetic" so downstream real-vs-synthetic checks (hasAskData,
+  // marketable-limit pricing) never treat it as a real quoted ask. Real batch-quote spreads keep
+  // the plain "yahoo-finance" attribution.
+  const spreadSource = quote.syntheticSpread ? "yahoo-finance-synthetic" : "yahoo-finance";
   return {
     symbol,
     price: quote.price,
@@ -759,8 +789,8 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
     asOf: new Date().toISOString(),
     sources: {
       price: "yahoo-finance",
-      bid: "yahoo-finance",
-      ask: "yahoo-finance",
+      bid: spreadSource,
+      ask: spreadSource,
       volume: "yahoo-finance",
       intradayChangePct: "yahoo-finance",
       asOf: "yahoo-finance"
@@ -804,10 +834,19 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     debtToEquity: extra.debtToEquity ?? quote.debtToEquity,
     epsGrowth: extra.epsGrowth ?? quote.epsGrowth,
     senateTrades: extra.senateTrades ?? quote.senateTrades,
+    daysToEarnings: extra.daysToEarnings ?? quote.daysToEarnings,
+    institutionOwnershipPct: extra.institutionOwnershipPct ?? quote.institutionOwnershipPct,
+    nearTheMoneyIv: extra.nearTheMoneyIv ?? quote.nearTheMoneyIv,
+    putCallRatio: extra.putCallRatio ?? quote.putCallRatio,
     targetMean: extra.targetMean ?? quote.targetMean,
     targetHigh: extra.targetHigh ?? quote.targetHigh,
     targetLow: extra.targetLow ?? quote.targetLow,
     targetMedian: extra.targetMedian ?? quote.targetMedian,
+    // Surface a short-interest source disagreement as an evidence bulletin (deduped) so the prompt
+    // and dashboard don't silently trust one source. Kept out of the sourced-field cascade.
+    evidenceBulletins: extra.shortInterestDisagreement
+      ? Array.from(new Set([...(quote.evidenceBulletins ?? []), extra.shortInterestDisagreement]))
+      : quote.evidenceBulletins,
     sources: mergeSources(quote, extra)
   };
 }
@@ -816,6 +855,18 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
 // displayed cell can name the single provider its value came from.
 function mergeSources(quote: MarketQuote, extra: SymbolEnrichment): EnrichmentSources {
   const sources: EnrichmentSources = { ...(extra.sources ?? {}) };
+  // Preserve the ORIGINAL quote's price-family provenance (incl. the "yahoo-finance-synthetic"
+  // bid/ask tag from the quote-only fallback) whenever enrichment did NOT override that value —
+  // applyEnrichment only takes extra.{price,bid,ask,volume} when they are > 0. Losing this tag
+  // here would make a synthesized spread look like a real quoted ask to downstream limit-price math.
+  const carryPriceFamilySource = (field: "price" | "bid" | "ask" | "volume", extraValue: number | undefined) => {
+    const overrode = typeof extraValue === "number" && extraValue > 0;
+    if (!overrode && !sources[field] && quote.sources?.[field]) sources[field] = quote.sources[field];
+  };
+  carryPriceFamilySource("price", extra.price);
+  carryPriceFamilySource("bid", extra.bid);
+  carryPriceFamilySource("ask", extra.ask);
+  carryPriceFamilySource("volume", extra.volume);
   // Fields the screener supplies when enrichment didn't override them.
   if (!sources.companyName && extra.companyName === undefined && quote.companyName) {
     sources.companyName = nasdaqDelayedProvider.name;
@@ -1030,6 +1081,10 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         debtToEquity: quote.debtToEquity,
         epsGrowth: quote.epsGrowth,
         senateTrades: quote.senateTrades,
+        daysToEarnings: quote.daysToEarnings,
+        institutionOwnershipPct: quote.institutionOwnershipPct,
+        nearTheMoneyIv: quote.nearTheMoneyIv,
+        putCallRatio: quote.putCallRatio,
         targetMean: quote.targetMean,
         targetHigh: quote.targetHigh,
         targetLow: quote.targetLow,

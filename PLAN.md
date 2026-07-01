@@ -5,6 +5,36 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/trading-audit-d-e-dpw0h7`): audit work-split Chats D+E
+> (data-source breadth + request-path/bundle performance), two parallel agents +
+> orchestrator integration. **D (data sources):** `daysToEarnings` and
+> `institutionOwnershipPct` from the existing Yahoo `quoteSummary` call (zero added
+> cost); synthetic Yahoo bid/ask now provenance-tagged `yahoo-finance-synthetic` so
+> `hasAskData`/marketable-limit math no longer treats it as a real quoted ask
+> (correctness fix); a default-off Robinhood options/IV enrichment tier
+> (`RobinhoodOptionsEnrichmentProvider`); a default-off active per-provider circuit
+> breaker; FMP as a second short-interest source with a ≥5pp disagreement bulletin;
+> and a default-off Finnhub `stock/recommendation`-drop lever (5→4 calls/symbol).
+> **E (performance):** collapse ~9 redundant `listFillEvents` replays to one live +
+> one paper per dashboard request; batch proposal lookups (`getProposalsByIds`); cap
+> the unified feed at 60; `next/dynamic` code-split of `StrategyFlow`/`SymbolDrilldown`
+> (verified `@xyflow/react` out of the dashboard first-load JS); sqlite
+> `cache_size`/`mmap_size` pragmas; Playwright-CI `.next/cache` restore. All new
+> behavior behind default-off env flags; E is a pure refactor (identical outputs). The
+> monolithic-snapshot re-render refactor is tracked as a deferred follow-up. No roadmap
+> change; see `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+> `docs/rollouts/2026-07-01-performance-efficiency.md`.
+> 2026-07-01 (`claude/affectionate-franklin-a52935`): Alpaca account-editor
+> "Custom Endpoint" checkbox fix - a live Alpaca account (`environment: "live"`)
+> ended up with `base_url` stuck on Alpaca's paper endpoint, causing a
+> production 401 on the readiness check. Root cause: checking "Use a Custom
+> Alpaca Endpoint" in `dashboard-client.tsx`'s account editor copied the
+> current (possibly-stale-default) `baseUrl` into the custom field with
+> nothing typed, and also disabled the auto-derivation that keeps `baseUrl` in
+> sync with the inferred paper/live environment as the account
+> number/API key are filled in. Fixed to start the custom field empty on
+> check. No roadmap change; see
+> `docs/rollouts/2026-07-01-alpaca-custom-endpoint-checkbox-fix.md`.
 > 2026-07-01 (`agent/claude-backlog-b-learning-b`): **Learning-loop BROADER BACKLOG (P1 + P2).**
 > Backend/API/tests-only pass on `docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON
 > #300's ledger / tuning-invariants / `pairedICDiffStats` (no duplication). P1: (P1-1) read-only
@@ -148,6 +178,16 @@ filling the missing pieces.
 > eToro/Public.com/IBKR integration deliberately excluded — real feature work
 > and Codex-coordination-sensitive, respectively, not "cheap." No roadmap
 > change; see `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+> 2026-07-01 (`claude/elastic-rosalind-a2a48a`): Workstream C1 — Congress.Trade
+> integration repair (App B side). Adopted App A's subscription-model SSE
+> (`/api/stream?subscription=` — the old consumer never connected), made the
+> inbound import receiver explicitly acknowledge non-persisted datasets (the
+> "drops 4 of 7" is correct-by-design, not a bug), exact-pinned the shared pkg to
+> 1.0.0 with a real peer-divergence CI check, applied the shared `resolveTickerAlias`
+> on outbound rows, and made outbound payload validation drop-invalid-rows. App A
+> exact-pin + local-alias-retirement ship in a separate Congress.Trade PR. No
+> shared-pkg source/publish change needed. See
+> `docs/rollouts/2026-07-01-congress-integration-repair.md`.
 > 2026-07-01 (`docs/improvement-audit-2026-06-30`): comprehensive audit
 > re-baseline - historical auth IDOR is no longer the active P0; near-term
 > priorities shift to money-path correctness (Bear red-team fail-closed,

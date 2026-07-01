@@ -125,13 +125,12 @@ import {
 import { GLOSSARY_RULE_OF_THUMB, SETTINGS_GLOSSARY } from "./settings-search";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
+import dynamic from "next/dynamic";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
-import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
-import { SymbolDrilldown, SymbolDrilldownTitle } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
@@ -160,6 +159,30 @@ import {
   CUSTOM_MODEL_ID_SEED as CUSTOM_STRATEGY_MODEL_SEED,
   DEFAULT_LLM_MODEL
 } from "./ui/llm-model-catalog";
+
+// Code-split the two heaviest tab payloads out of the initial dashboard bundle:
+//  • StrategyFlow pulls in @xyflow/react (~3.9MB) + its CSS — only needed when the Strategy Flow
+//    modal opens.
+//  • SymbolDrilldown pulls in PriceChart (which lazy-loads lightweight-charts) — only needed when a
+//    symbol drilldown slide-over opens.
+// Both are client-only (`ssr: false`) with lightweight loading fallbacks matching our skeleton /
+// EmptyState conventions, so @xyflow/react and the drilldown chart boundary never ship on first load.
+const StrategyFlow = dynamic(() => import("./ui/strategy-flow").then((m) => m.StrategyFlow), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center py-10">
+      <EmptyState icon={<Network size={18} />} title="Loading strategy flow…" />
+    </div>
+  )
+});
+const SymbolDrilldown = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldown), {
+  ssr: false,
+  loading: () => <EmptyState title="Loading symbol details…" />
+});
+const SymbolDrilldownTitle = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldownTitle), {
+  ssr: false,
+  loading: () => <span className="text-sm font-medium text-muted">Symbol</span>
+});
 
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
@@ -250,6 +273,12 @@ function inferAlpacaEnvironment(input: { accountNumber?: string; apiKey?: string
   const accountNumber = input.accountNumber?.trim().toUpperCase() ?? "";
   const apiKey = input.apiKey?.trim().toUpperCase() ?? "";
   if (accountNumber.startsWith("PA") || apiKey.startsWith("PK")) return "paper";
+  // Credential-authoritative once creds are entered: non-PA/PK Alpaca creds are LIVE. This matches
+  // the server, which infers environment purely from the credentials and ignores body.environment —
+  // so the client must not stay stuck on a seeded "paper" (which previously made a live account fall
+  // back to the paper host / baseUrl and 401). Only fall back to the prior/seeded environment when NO
+  // credentials have been entered yet, so a brand-new draft still shows the paper default until typed.
+  if (accountNumber || apiKey) return "live";
   return input.environment === "paper" ? "paper" : "live";
 }
 
@@ -6636,9 +6665,16 @@ function IntegrationsSection({
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setShowCustomEndpoint(checked);
+                        // Start the custom field EMPTY on check, never copy in the current
+                        // (possibly stale/default) baseUrl — that silently locked in the wrong
+                        // endpoint for anyone who checked this before finishing the account
+                        // number/API key fields, since a checked box also stops those fields'
+                        // auto-derivation of baseUrl from the inferred paper/live environment.
+                        // An empty custom value still saves safely: the save handler falls back
+                        // to alpacaDefaultEndpointFor(environment) when baseUrl is blank.
                         setEditing({
                           ...editing,
-                          baseUrl: checked ? (editing.baseUrl || "") : defaultAlpacaEndpoint
+                          baseUrl: checked ? "" : defaultAlpacaEndpoint
                         });
                       }}
                     />

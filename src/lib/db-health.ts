@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from "crypto";
 import { getDb } from "./db";
 
+// `stoppedWorking` is set for a few distinct reasons (see getServiceHealthSummaries). This one is the
+// "5 consecutive failures" condition — the only one strong enough to act on automatically (e.g. the
+// enrichment circuit breaker), as opposed to the softer "no success yet this hour" heuristics that a
+// single cold failure can trip. Exported so consumers key off the condition, not a brittle string.
+export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all failed";
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ServiceHealthSummary {
@@ -182,7 +188,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
 
       if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
         stoppedWorking = true;
-        stoppedReason = "Last 5 consecutive calls all failed";
+        stoppedReason = HEALTH_REASON_CONSECUTIVE_FAILURES;
       } else if (callsLastHour > 0 && !lastSuccess) {
         stoppedWorking = true;
         stoppedReason = "Active in past hour but no successful call ever";
