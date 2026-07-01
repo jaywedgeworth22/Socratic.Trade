@@ -35,6 +35,17 @@ filling the missing pieces.
 > (`type`/`event`/`id`/`data`) before coercing, with a regression test. No
 > roadmap change; see `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
 
+> 2026-07-01 (`claude/stock-data-pricing-comparison-2wzg8u`): market-data
+> freshness decision + plan (docs-only). Recorded that the engine is
+> broker/strategy-neutral and already runs "delayed bulk + real-time hot-set on
+> demand"; real-time only matters at the 60s exit layer and the order-submission
+> instant. New deferred workstream: enable/tune the already-built but default-OFF
+> gates (`maxQuoteAgeSec`, `maxEntryDriftPct`, `marketableLimitEntries`), add a
+> hot-set quote-source router (broker → FMP real-time → stamped-stale DB
+> fallback), and an optional poll→push trailing-stop stream. No new data feed
+> required. See `docs/market-data-freshness-decision.md` +
+> `docs/market-data-freshness-implementation-plan.md`.
+
 > 2026-06-30 (`claude/affectionate-franklin-a52935`): broker reliability +
 > capability audit - broker-agnostic order-placement confirmation
 > (`isRejectedOrCanceledState` in `broker-side.ts`; a non-throwing but
