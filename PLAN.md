@@ -5,6 +5,20 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Future considerations (deferred, not
+> blocking PR #293)** — the durable per-user LLM budget now enforces at the spend primitives and is
+> user-editable in Settings; two known limitations are intentionally left for a follow-up:
+> 1. **Concurrent-run budget reservation.** The daily ceiling is a read-of-the-ledger admission
+>    check, not a reservation. Two of the same user's account runs launched concurrently by the
+>    scheduler can each start just under the limit and both spend, so the cap can be exceeded by up to
+>    the in-flight runs' spend (bounded by the scheduler's concurrency cap). A truly hard cap needs a
+>    per-user token reservation / run serialization — an architecturally-significant concurrency change.
+> 2. **Chat-path spend coverage.** `/api/chat` LLM spend does not route through `withLlmGeneration`, so
+>    it is outside the budget gate. If a *total* per-user/day ceiling (strategy + chat) is desired,
+>    wire the chat LLM path through the same `assertWithinLlmBudget(userId)` guard.
+> 3. **(Earlier-noted) `strategy.ts` god-module split** (~3k lines) remains a separate large refactor.
+> See `docs/rollouts/2026-07-01-llm-budget-durable-enforcement.md` and
+> `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 > 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): audit workstreams **F**
 > (UX/IA/aesthetics) and **G** (security/risk/testing/ops) implemented together via
 > 4 parallel agents on disjoint files. F: first-class `redTeamVerdict` + "Bear
