@@ -28,8 +28,10 @@ workflow (`wf_598c6d71-77d`: 16 agents) built the full **implementation-ready sp
 `spec/00-README.md`). Editor pass corrected key anchors (autonomy-reset primitive already exists at
 `scheduler.ts:66-97`; scheduler already fans out per-account; wash-sale real anchors `tax.ts:104/115/117`)
 and I made the open-item calls in `spec/00-README.md` (R1–R8). 3 forward-looking default-off fields folded
-into `spec/04`. **Still docs-only, no app code.** **Next:** clickable HTML prototype, then delivery-plan
-**PR #1 (relabels + scope-surfacing)** on the owner's word. Complementary to
+into `spec/04`. Also built a **clickable prototype** (`docs/settings-navigation-redesign/prototype/index.html`,
+vanilla HTML, mock data) — verified via headless Chromium across Dashboard / Live Approvals / Guardrails /
+Settings / Fleet. **Still docs-only, no app code.** **Next:** delivery-plan **PR #1 (relabels +
+scope-surfacing)** on the owner's word. Complementary to
 `docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
 See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
 

@@ -124,5 +124,18 @@ one release; localStorage shim runs flag-independently with a one-release read-f
 (optional Advanced); `trade_proposals.prompt_version` → optional provenance chip. See the
 "Forward-looking / optional fields" section in `04-settings-field-reference.md`.
 
-**Still no app code changed** — the spec is docs. Verify trio not required/run. **Next:** build the clickable
-HTML prototype, then start delivery-plan PR #1 (relabels + scope-surfacing) on the owner's word.
+**Still no app code changed** — the spec is docs. Verify trio not required/run.
+
+## Update 3 (2026-07-01) — clickable prototype
+
+Built a self-contained interactive prototype at `docs/settings-navigation-redesign/prototype/index.html`
+(vanilla HTML/CSS/JS, mock data, no deps) demonstrating the shell + all six destinations + account
+switcher + Fleet + Settings. Verified by rendering with the pre-installed headless Chromium
+(`/opt/pw-browsers/.../headless_shell`, `--screenshot`) across Dashboard, Live-account Approvals (red
+real-money treatment + mode-stamped Approve + wash-sale provenance card), Guardrails (Essentials→Advanced
++ scope pills), Settings (scope-split), and Fleet (STOP all Live+Paper, Test excluded). Fixed two render
+bugs found via screenshot (toggle `display:inline-block`; nav truncation vs risk strip). Deep-link params
+(`?acct=&dest=&adv=1`) added for sharing specific screens. See `prototype/README.md`.
+
+**Next:** start delivery-plan **PR #1** (relabels + scope-surfacing) on the owner's word — pure copy/UI,
+no data path, the safe first real-code step.
