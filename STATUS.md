@@ -69,6 +69,34 @@ keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
 redirects to `/login`, `/api/health` returns `ok:true`, and
 `https://trading.jays.services/` returns a 307 to `/login`.
 See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+## 2026-06-30 - Strategy timeout and sizing guardrails
+Branch `codex/strategy-timeout-sizing-guardrails-20260630`. Follow-up to the
+Green Team timeout and the Roth IRA AAPL approval block. The timed-out run took
+about 73.5s wall-clock from run start to failure, while the LLM HTTP call itself
+hit the existing 60s timeout; the fix keeps the interactive timeout bounded
+instead of extending it. `gpt-5.5` with `high` reasoning is now rejected in
+Settings for interactive strategy runs, and stale stored `gpt-5.5`/high configs
+are runtime-clamped to medium effort before building Green/Red request bodies.
+
+Opening proposal sizing and the policy gate now reserve a 5% execution buffer
+below the effective per-order policy cap (`maxOrderNotional` / `% NAV`). A
+`$4.99` max therefore produces a preferred opening cap of `$4.74`, while the
+hard max remains the final fail-safe. The strategy prompt exposes both
+`limits.maxOrderNotional` and `limits.preferredMaxOrderNotional`. Chat/Assistant
+draft promotion now refuses to stage an already blocked dry-run decision, so a
+policy-blocked draft cannot become a pending approval row and then fail only
+after confirmation. Focused verification:
+`npx vitest run test/llm-request.test.ts test/policy.test.ts test/conviction-size-cap.test.ts test/policy-notification-events.test.ts test/chat-draft-policy.test.ts`
+passed (68 tests). Full verification passed: `npm run lint` (0 errors, 254
+existing warnings), `npx tsc --noEmit`, `npm test` (166 files / 1582 tests),
+and `npm run build`; the first post-merge webpack build retry hit host
+`ENOSPC`, then passed after deleting this worktree's generated `.next`. See
+`docs/rollouts/2026-06-30-strategy-timeout-sizing-guardrails.md`.
+
+Round 5 review fix: deterministic opening sizing now includes
+`maxShortOrderNotional` in the 5% headroom path, and chat-draft policy previews
+pass `userId` so wash-sale lockouts block before staging.
+
 ## 2026-06-30 - Policy route export build fix
 Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270
 failed during `npm run build` because Next 16 route validation rejected

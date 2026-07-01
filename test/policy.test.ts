@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, evaluateTradeProposal } from "../src/lib/policy";
 import type { AccountCapabilities, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
 
@@ -240,6 +240,17 @@ describe("evaluateTradeProposal", () => {
     const decision = evaluateTradeProposal({ ...proposal, dollarAmount: 1200 }, context(1200));
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("exceeds the maximum order limit");
+  });
+
+  it("blocks opening orders that sit inside the max but leave no execution buffer", () => {
+    expect(applyOpeningOrderHeadroom(4.99)).toBe(4.74);
+    const decision = evaluateTradeProposal({ ...proposal, dollarAmount: 4.95 }, {
+      ...context(4.95),
+      policy: { ...enabledPolicy, maxOrderNotional: 4.99, maxOrderPctOfNav: undefined, maxDailyNotional: 100 }
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("less than 5% buffer");
+    expect(decision.reasons.join(" ")).toContain("$4.74");
   });
 
   it("blocks daily notional overflow", () => {

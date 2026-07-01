@@ -3,7 +3,9 @@ import {
   isReasoningModel,
   resolveOpenAiModel,
   withLlmRequestBounds,
-  DEFAULT_OPENAI_MODEL
+  DEFAULT_OPENAI_MODEL,
+  interactiveStrategyReasoningEffort,
+  isDisallowedInteractiveStrategyReasoningConfig
 } from "../src/lib/llm-request";
 
 describe("llm-request — model resolution", () => {
@@ -25,6 +27,15 @@ describe("llm-request — model resolution", () => {
     expect(resolveOpenAiModel(null)).toBe("gpt-4.1-mini");
     vi.unstubAllEnvs();
     expect(resolveOpenAiModel(null)).toBe(DEFAULT_OPENAI_MODEL);
+  });
+
+  it("disallows the slowest gpt-5.5 high-reasoning combo for interactive strategy runs", () => {
+    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "high")).toBe(true);
+    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "medium")).toBe(false);
+    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.4-mini", "high")).toBe(false);
+    expect(interactiveStrategyReasoningEffort("gpt-5.5", "high")).toBe("medium");
+    expect(interactiveStrategyReasoningEffort("gpt-5.5", "low")).toBe("low");
+    expect(interactiveStrategyReasoningEffort("gpt-4.1-mini", "high")).toBeUndefined();
   });
 });
 
