@@ -924,6 +924,26 @@ describe("AlpacaNewsEnrichmentProvider", () => {
     expect(capturedUrl).not.toContain("BRK-B");
     expect(result["BRK-B"]?.headlines).toContain("Berkshire posts strong quarter");
   });
+
+  it("matches Alpaca news tags when the requested share-class symbol is already dot-form", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire stays active in markets", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK.B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire stays active in markets");
+    expect(result["BRK.B"]?.headlines).toContain("Berkshire stays active in markets");
+  });
 });
 
 // Freshness-tier ordering: the real-time Alpaca snapshot must win the price-family

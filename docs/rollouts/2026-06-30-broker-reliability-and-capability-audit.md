@@ -109,6 +109,29 @@ Code fixes:
   logic bug, by re-running the isolated file cleanly both before and after load dropped.
 - `npm run build` — pending final run before merge (run it before landing).
 
+## 2026-07-01 — PR #284 review fixes
+
+Codex review follow-up tightened three edges in the broker/share-class work:
+
+- `src/lib/alpaca.ts`: `getEquityQuotes` canonicalizes requested share-class symbols to
+  internal hyphen form for Alpaca calls, then returns alias entries for both the internal
+  key (`BRK-B`) and any requested dot-form key (`BRK.B`) so caller lookups do not fall
+  through to delayed fallback data.
+- `src/lib/data-providers.ts`: `AlpacaNewsEnrichmentProvider` canonicalizes requested
+  dot-form share-class symbols before matching Alpaca article tags, and returns the
+  requested alias alongside the internal key.
+- `src/lib/dashboard-feed.ts`: `order_rejected_by_broker` audit events now render as
+  broker declines in the unified Activity feed instead of the generic manual-rejection
+  copy.
+
+Regression tests added in `test/order-confirmation-status.test.ts`,
+`test/data-providers.test.ts`, and `test/dashboard-feed.test.ts`.
+
+### Verification (this round)
+
+- `npx vitest run test/order-confirmation-status.test.ts test/data-providers.test.ts test/dashboard-feed.test.ts` — 79 tests pass.
+- `npx tsc --noEmit` — clean.
+
 ## Follow-ups
 
 See `docs/broker-capability-plan.md` §10 for the full prioritized list. Highlights:

@@ -47,6 +47,16 @@ not a logic bug — this repo has a documented history of this exact flake class
 see `approval-lock.test.ts`). `npm run build` — run before landing. See
 `docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md`.
 
+## 2026-07-01 - PR #284 broker/share-class review fixes
+Branch `claude/affectionate-franklin-a52935`. Addressed Codex review follow-up:
+Alpaca quotes/news now return requested share-class aliases such as `BRK.B`
+alongside internal `BRK-B`; `AlpacaNewsEnrichmentProvider` canonicalizes
+dot-form requests before matching article tags; and the unified Activity feed
+shows `order_rejected_by_broker` as a broker decline rather than a manual
+rejection. Verification:
+`npx vitest run test/order-confirmation-status.test.ts test/data-providers.test.ts
+test/dashboard-feed.test.ts` (79 tests pass) and `npx tsc --noEmit`.
+
 ## 2026-06-30 - Alpaca share-class symbol mapping fix
 Branch `claude/affectionate-franklin-a52935`. Fixed live orders for share-class
 tickers (e.g. `BRK-B`) failing with `Alpaca order failed: HTTP 422 — asset

@@ -35,7 +35,8 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
       async getOrders() {
         return [];
       }
-      async getLatestQuotes() {
+      async getLatestQuotes(symbols: string[]) {
+        if (symbols.includes("BRK.B")) return { "BRK.B": { bp: 409, ap: 410, t: new Date().toISOString() } };
         return { AAPL: { bp: 199, ap: 200, t: new Date().toISOString() } };
       }
       async createOrder(opts: Record<string, unknown>) {
@@ -149,4 +150,29 @@ describe("executeProposal — broker-agnostic order-placement confirmation", () 
     const row = getProposal(proposalId, userId);
     expect(row?.status).toBe("placed");
   }, 30000);
+
+  it("returns quotes under both canonical and requested share-class symbols", async () => {
+    const userId = `quote-alias-${randomUUID()}`;
+    const connectedAccountId = "acc-quote-alias";
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    upsertConnectedAccount({
+      id: connectedAccountId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: ACCOUNT,
+      baseUrl: "https://paper-api.alpaca.markets",
+      apiKey: "AK_TEST",
+      apiSecret: "secret",
+      isActive: true,
+      label: "Alpaca Paper Quote Alias Test"
+    });
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const quotes = await getAlpacaGateway(userId, connectedAccountId).getEquityQuotes(ACCOUNT, ["BRK.B"]);
+
+    expect(quotes["BRK-B"]?.price).toBe(410);
+    expect(quotes["BRK.B"]?.price).toBe(410);
+    expect(quotes["BRK.B"]?.symbol).toBe("BRK.B");
+  });
 });

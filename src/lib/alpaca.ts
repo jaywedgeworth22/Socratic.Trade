@@ -356,7 +356,17 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>> {
     // Standard quotes method: fall back to REST directly to avoid multi-ticker latency
-    const normalizedSymbols = symbols.map(normalizeSymbol);
+    const aliasesByCanonical = new Map<string, Set<string>>();
+    for (const rawSymbol of symbols) {
+      const requested = normalizeSymbol(rawSymbol);
+      const canonical = fromAlpacaSymbol(toAlpacaSymbol(requested));
+      if (!canonical) continue;
+      const aliases = aliasesByCanonical.get(canonical) ?? new Set<string>();
+      aliases.add(canonical);
+      if (requested) aliases.add(requested);
+      aliasesByCanonical.set(canonical, aliases);
+    }
+    const normalizedSymbols = Array.from(aliasesByCanonical.keys());
     const quotes: Record<string, BrokerQuote> = {};
     try {
       const response = await this.alpaca.getLatestQuotes(normalizedSymbols.map(toAlpacaSymbol));
@@ -387,6 +397,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
       const last = bars && bars.length ? bars[bars.length - 1] : undefined;
       return last && typeof last.close === "number" ? { price: last.close, asOf: last.time != null ? String(last.time) : undefined } : undefined;
     });
+    for (const [canonical, aliases] of aliasesByCanonical) {
+      const quote = quotes[canonical];
+      if (!quote) continue;
+      for (const alias of aliases) {
+        if (!quotes[alias]) quotes[alias] = { ...quote, symbol: alias };
+      }
+    }
     return quotes;
   }
 

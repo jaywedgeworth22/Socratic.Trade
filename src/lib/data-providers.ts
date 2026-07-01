@@ -1141,13 +1141,33 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    const aliasesByCanonical = new Map<string, Set<string>>();
+    for (const rawSymbol of symbols) {
+      const requested = normalizeSymbol(rawSymbol);
+      const canonical = fromAlpacaSymbol(toAlpacaSymbol(requested));
+      if (!canonical) continue;
+      const aliases = aliasesByCanonical.get(canonical) ?? new Set<string>();
+      aliases.add(canonical);
+      if (requested) aliases.add(requested);
+      aliasesByCanonical.set(canonical, aliases);
+    }
+    const normalized = Array.from(aliasesByCanonical.keys()).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
     const now = Date.now();
     const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
+    const addRequestedAliases = () => {
+      for (const [canonical, aliases] of aliasesByCanonical) {
+        const data = result[canonical];
+        if (!data) continue;
+        for (const alias of aliases) {
+          if (!result[alias]) result[alias] = data;
+        }
+      }
+      return result;
+    };
     for (const symbol of normalized) {
       const cached = readEnrichmentCache("alpaca-news", symbol, this.userId, consented, now);
       if (cached) {
@@ -1166,7 +1186,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
       }
       misses.push(symbol);
     }
-    if (misses.length === 0) return result;
+    if (misses.length === 0) return addRequestedAliases();
 
     try {
       // Single batched request: Alpaca tags every article with the symbols it mentions. Alpaca
@@ -1223,7 +1243,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
     } catch {
       for (const symbol of misses) result[symbol] = {};
     }
-    return result;
+    return addRequestedAliases();
   }
 }
 
