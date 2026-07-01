@@ -1,0 +1,77 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+import { STRATEGY_DATASET } from "../scripts/eval/strategy-dataset";
+import {
+  scoreStrategyCase,
+  scoreNoOffUniverse,
+  scoreShortsHaveStop,
+  scoreBuysMatchEvidence,
+  type ProposalFixture
+} from "../scripts/eval/strategy-score";
+
+// Gate the strategy offline-eval scorers (Chat A item 2). Proves (a) the shipped dataset all passes,
+// (b) each scorer actually FAILS a violating fixture (has teeth), and (c) the versioned prompts build.
+
+beforeAll(() => {
+  // strategy-prompts -> policy may transitively touch the db barrel; point it at a throwaway file.
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-eval-${randomUUID()}.db`)}`;
+});
+
+describe("strategy offline eval — dataset all-pass (Chat A item 2)", () => {
+  it("every shipped dataset case passes all three invariants", () => {
+    for (const c of STRATEGY_DATASET) {
+      const r = scoreStrategyCase(c);
+      expect(r.pass, `${c.id}: ${r.scorers.filter((s) => !s.result.pass).map((s) => `${s.name} — ${s.result.detail}`).join("; ")}`).toBe(true);
+      expect(r.score).toBe(1);
+    }
+  });
+});
+
+describe("strategy offline eval — scorers have teeth", () => {
+  const universe = ["AAPL", "MSFT"];
+
+  it("scorer 1 fails an OFF-UNIVERSE opening (but exempts an off-universe exit)", () => {
+    const offUniverseBuy: ProposalFixture[] = [{ symbol: "ZZZZ", side: "buy", type: "market" }];
+    expect(scoreNoOffUniverse(offUniverseBuy, universe).pass).toBe(false);
+    // A sell/exit of an off-universe held name is exempt.
+    const offUniverseSell: ProposalFixture[] = [{ symbol: "ZZZZ", side: "sell", type: "market" }];
+    expect(scoreNoOffUniverse(offUniverseSell, universe).pass).toBe(true);
+  });
+
+  it("scorer 2 fails a stopless short and a short emitted while shorting is disabled", () => {
+    const stoplessShort: ProposalFixture[] = [{ symbol: "AAPL", side: "short", type: "market" }];
+    expect(scoreShortsHaveStop(stoplessShort, true).pass).toBe(false);
+    const shortWithStop: ProposalFixture[] = [{ symbol: "AAPL", side: "short", type: "stop_market", stopPrice: 100 }];
+    expect(scoreShortsHaveStop(shortWithStop, true).pass).toBe(true);
+    // Short emitted while disabled fails even with a stop.
+    expect(scoreShortsHaveStop(shortWithStop, false).pass).toBe(false);
+  });
+
+  it("scorer 3 fails buys that contradict structured evidence", () => {
+    const buy: ProposalFixture[] = [{ symbol: "AAPL", side: "buy", type: "market" }];
+    // Cash-burning buy (fcfYield below floor).
+    expect(scoreBuysMatchEvidence(buy, { AAPL: { fcfYield: -2 } }, { fcfYieldFloorPct: 0 }, "Neutral").pass).toBe(false);
+    // Over-levered buy (debt/equity above ceiling).
+    expect(scoreBuysMatchEvidence(buy, { AAPL: { debtToEquity: 5 } }, { debtToEquityCeiling: 3 }, "Neutral").pass).toBe(false);
+    // Below-median buy in a risk-off regime.
+    expect(scoreBuysMatchEvidence(buy, { AAPL: { score: 40, medianScore: 60 } }, {}, "Risk-Off (High Volatility)").pass).toBe(false);
+    // A supported buy passes.
+    expect(scoreBuysMatchEvidence(buy, { AAPL: { fcfYield: 4, debtToEquity: 0.8, score: 80, medianScore: 60 } }, { fcfYieldFloorPct: 0, debtToEquityCeiling: 3 }, "Neutral").pass).toBe(true);
+  });
+});
+
+describe("strategy offline eval — versioned prompts build (Chat A item 2)", () => {
+  it("buildBullSystem/buildBearSystem reflect the short-selling flag and STRATEGY_PROMPT_VERSION is set", async () => {
+    const { buildBullSystem, buildBearSystem, STRATEGY_PROMPT_VERSION } = await import("../src/lib/strategy-prompts");
+    expect(typeof STRATEGY_PROMPT_VERSION).toBe("string");
+    expect(STRATEGY_PROMPT_VERSION.length).toBeGreaterThan(0);
+
+    const base = { executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: false, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    expect(buildBullSystem({ ...base, shortAllowed: false })).toContain("SHORT SELLING IS DISABLED");
+    expect(buildBullSystem({ ...base, shortAllowed: true })).toContain("SHORT SELLING IS ENABLED");
+    expect(buildBearSystem({ shortAllowed: false })).toContain("Bear Agent");
+    expect(buildBearSystem({ shortAllowed: true })).toContain("Short selling is enabled");
+  });
+});

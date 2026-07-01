@@ -4,6 +4,26 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Strategy LLM money-path hardening: Audit Chat A, all 8 items (Claude)
+Branch `chat-a-llm-money-path`. Implemented all of **Chat A — LLM & prompting
+(money-path)** from `docs/reviews/2026-07-01-audit-work-split.md`: (1) inline Bear
+red-team now fails CLOSED (routes un-critiqued Bull proposals to human in decide mode
+instead of auto-executing) — the only default-behavior change, in the fail-safe
+direction; (2) versioned Bull/Bear prompts extracted to `src/lib/strategy-prompts.ts`
+(`STRATEGY_PROMPT_VERSION`) + a deterministic offline eval (`npm run
+eval:strategy-offline`, 3 scorers) + a nullable `trade_proposals.prompt_version`
+column (db migration v9) stamped on every proposal; (3) Anthropic prompt caching on the
+strategy/red-team path; (4) ordered cross-provider Bull failover behind `policy.
+llmFallbackModels` (default-off, recorded via `strategy_llm_failover` audit); (5)
+truncation-aware Bull cap (`detectLlmTruncation` → distinct reason, never a silent
+no-op); (6) strict `json_schema` for the red-team on OpenAI-compatible providers; (7)
+rationale-collapse gate behind `policy.tuning.gateOnRationaleCollapse` (default-off);
+(8) deleted the dead/broken Anthropic branch in `resolveLlmEndpoint`. All behavior
+changes except item 1 are default-off flags (Phase-0 byte-identical when off).
+**Verified:** `tsc` clean, `lint` 0 errors, `npm test` green (178 files / 1692 tests),
+`npm run build` passes, `eval:strategy-offline` green. Next: open the PR (ready).
+See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
 analysis + sequenced plan: `docs/market-data-freshness-decision.md` +

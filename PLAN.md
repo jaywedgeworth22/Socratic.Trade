@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`chat-a-llm-money-path`): Audit Chat A — LLM & prompting (money-path),
+> all 8 items. Hardened the autonomous strategy path: inline Bear red-team now fails
+> CLOSED (un-critiqued Bull proposals route to human in decide mode, not auto-executed);
+> Bull/Bear prompts extracted to a versioned `strategy-prompts.ts` + deterministic
+> offline eval (`npm run eval:strategy-offline`) + `trade_proposals.prompt_version`
+> stamp; Anthropic prompt caching; default-off ordered cross-provider failover
+> (`policy.llmFallbackModels`); truncation-aware Bull cap; strict red-team `json_schema`;
+> default-off rationale-collapse gate; removed a dead Anthropic endpoint branch. All but
+> the fail-closed safety fix are default-off flags. Verified tsc/lint/test(1692)/build +
+> eval green. See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value

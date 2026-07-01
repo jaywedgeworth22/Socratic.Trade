@@ -22,6 +22,7 @@
     "litestream:dry-run": "litestream databases -config litestream.yml",
     "eval:offline": "tsx scripts/eval/run-offline.ts",
     "eval:congress-score": "tsx scripts/eval/run-congress-score.ts",
+    "eval:strategy-offline": "tsx scripts/eval/run-strategy-offline.ts",
     "ops:snapshot": "bash scripts/fetch-prod-ops-snapshot.sh"
   },
   "dependencies": {
