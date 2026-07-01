@@ -753,28 +753,34 @@ export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
       `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
     );
   }
-  // FRACTIONAL / NOTIONAL ORDERS ARE MARKET-ONLY ON ROBINHOOD. A dollar-routed order (a
-  // `dollar_amount` buy/sell that is not a whole-share quantity) sent as a LIMIT order -- or in
-  // extended hours -- is accepted by the API but never fills: it shows as "Placed"/working while the
-  // cash is never spent (the exact symptom seen with $1 GOOG/AMAT buys). Robinhood only fills
-  // fractional/notional orders as regular-hours MARKET orders. So when an order is dollar-routed and
-  // is NOT a whole-share quantity, coerce it to a regular-hours market order and drop the limit/stop
-  // modifiers. Whole-share limit orders (integer quantity + limit_price, no dollar_amount) are
-  // preserved unchanged so marketable-limit entries still work.
+  // FRACTIONAL / NOTIONAL ENTRIES ARE MARKET-ONLY ON ROBINHOOD. A fractional order -- a dollar_amount
+  // order OR a sub-whole-share quantity (e.g. 0.5 sh) -- sent as a LIMIT (or in extended hours) is
+  // accepted by the API but never fills: it shows "Placed"/working while the cash is never spent (the
+  // $1 GOOG/AMAT symptom). Robinhood fills fractional/notional orders only as regular-hours MARKET
+  // orders. So coerce a fractional ENTRY to a regular-hours market order and drop the limit modifier.
+  //
+  // Two things we deliberately do NOT coerce:
+  //   - STOPS (stop_market/stop_limit): converting a protective/trailing stop to a market order would
+  //     sell immediately instead of resting until the stop triggers. Robinhood can't place a notional
+  //     stop, so a dollar-sized stop must be caught upstream by policy, never silently reshaped here.
+  //   - Whole-share orders (integer quantity >= 1): preserved as-is so marketable-limit entries work.
   const wholeShare = input.quantity != null && Number.isInteger(input.quantity) && input.quantity >= 1;
-  const isDollarRouted = input.dollarAmount != null && input.dollarAmount > 0 && !wholeShare;
+  const fractional =
+    !wholeShare && ((input.dollarAmount != null && input.dollarAmount > 0) || (input.quantity != null && input.quantity > 0));
+  const isStop = input.type === "stop_market" || input.type === "stop_limit";
+  const coerceFractional = fractional && !isStop;
 
   return {
     account_number: input.accountNumber,
     symbol: normalizeSymbol(input.symbol),
     side: input.side,
-    type: isDollarRouted ? "market" : input.type,
+    type: coerceFractional ? "market" : input.type,
     quantity: input.quantity?.toString(),
     dollar_amount: input.dollarAmount?.toFixed(2),
-    limit_price: isDollarRouted ? undefined : input.limitPrice?.toFixed(2),
-    stop_price: isDollarRouted ? undefined : input.stopPrice?.toFixed(2),
+    limit_price: coerceFractional ? undefined : input.limitPrice?.toFixed(2),
+    stop_price: coerceFractional ? undefined : input.stopPrice?.toFixed(2),
     time_in_force: input.timeInForce,
-    market_hours: isDollarRouted ? "regular_hours" : input.marketHours
+    market_hours: coerceFractional ? "regular_hours" : input.marketHours
   };
 }
 

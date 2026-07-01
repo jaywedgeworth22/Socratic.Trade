@@ -41,9 +41,27 @@ at the broker boundary, where it holds regardless of how upstream shaped the ord
 (STATUS for this session is recorded in PR #281's `STATUS.md` entry; this PR is a scoped
 code fix and adds only its rollout note to avoid a duplicate STATUS insert conflicting with #281.)
 
+## Round 2 (Codex re-review)
+
+- **P1 — don't coerce dollar-sized STOPS.** The first pass coerced *any* fractional/dollar order to
+  market and stripped `stop_price`, which would turn a dollar-sized `stop_market`/`stop_limit`
+  protective/trailing exit into an immediate market sell. The coercion now excludes stop order types
+  (`isStop`): a fractional stop is left intact (Robinhood can't place a notional stop, so it must be
+  caught upstream by policy, not silently reshaped).
+- **P2 — cover fractional quantity-only orders.** A sub-whole-share `quantity` (e.g. `0.5` sh) with no
+  `dollarAmount` is also fractional and market-only on Robinhood; the guard now treats
+  `!wholeShare && (dollarAmount>0 || quantity>0)` as fractional, so a fractional-quantity limit is
+  coerced too.
+- **P2 — market-order-disabled interaction (acknowledged):** if a user disables `market` in
+  `permittedOrderTypes` but keeps `limit`, a fractional limit is still coerced to market here, which
+  bypasses that setting. `toMcpOrder` is the broker-payload layer and has no policy context; a
+  fractional order is unsatisfiable as a limit on Robinhood regardless, so honoring
+  `permittedOrderTypes` for that inherently-conflicting case belongs in upstream proposal
+  normalization/policy (follow-up). The coercion serves the user's explicit small-dollar intent.
+
 ## Verification
 
-- `npx vitest run test/robinhood-mcp.test.ts` — 13 tests pass (4 new + 9 existing).
+- `npx vitest run test/robinhood-mcp.test.ts` — 15 tests pass (6 new + 9 existing).
 - `npx tsc --noEmit` — clean.
 - Full `verify` + `smoke` + `gitleaks` CI gates the merge.
 

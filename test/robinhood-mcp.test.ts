@@ -276,4 +276,24 @@ describe("toMcpOrder — fractional/notional routing", () => {
     expect(order.type).toBe("market");
     expect(order.quantity).toBe("2");
   });
+
+  it("does NOT coerce a dollar-sized STOP into an immediate market order (keeps stop semantics)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const stopMarket = toMcpOrder({ ...base, side: "sell", type: "stop_market", dollarAmount: 5, stopPrice: 150 });
+    expect(stopMarket.type).toBe("stop_market");
+    expect(stopMarket.stop_price).toBe("150.00");
+    const stopLimit = toMcpOrder({ ...base, side: "sell", type: "stop_limit", dollarAmount: 5, stopPrice: 150, limitPrice: 149.5 });
+    expect(stopLimit.type).toBe("stop_limit");
+    expect(stopLimit.stop_price).toBe("150.00");
+    expect(stopLimit.limit_price).toBe("149.50");
+  });
+
+  it("coerces a fractional QUANTITY-only limit to market too (not just dollar-routed)", async () => {
+    const { toMcpOrder } = await import("../src/lib/robinhood");
+    const order = toMcpOrder({ ...base, side: "sell", type: "limit", quantity: 0.5, limitPrice: 180.4 });
+    expect(order.type).toBe("market");
+    expect(order.limit_price).toBeUndefined();
+    expect(order.market_hours).toBe("regular_hours");
+    expect(order.quantity).toBe("0.5");
+  });
 });
