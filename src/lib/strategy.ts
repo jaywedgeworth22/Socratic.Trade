@@ -564,6 +564,31 @@ export async function runStrategyOnce(
       debatedProposals.push(proposal);
     }
 
+    // Rationale-collapse gate (Chat A item 7) — evaluated on the OPENING proposals HERE, BEFORE the
+    // sell-to-fund planner below, so a collapse-gated buy (routed to human review) does NOT drive
+    // automated funding sells: intendedOpeningNotional excludes requiresHumanReview openings, and by
+    // gating first the collapsed buys are already in that set (same hazard the Bear-unavailable gate
+    // avoids). Gates on the openings' OWN diversity; default OFF (=== true). Exits are never gated. The
+    // full-set advisory warning stays below, after the final proposal set is assembled.
+    if (policy.tuning?.gateOnRationaleCollapse === true) {
+      const gatedOpenings = debatedProposals.filter((p) => p.side === "buy" || p.side === "short");
+      const openingDiversity = computeRationaleDiversity(gatedOpenings.map((p) => p.rationale));
+      if (openingDiversity.collapsed) {
+        for (const p of gatedOpenings) {
+          p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
+          requiresHumanReview.add(p);
+        }
+        if (gatedOpenings.length > 0) {
+          console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
+          audit(
+            "strategy_rationale_collapse_gated",
+            { runId, count: gatedOpenings.length, meanSimilarity: openingDiversity.meanPairwiseSimilarity, threshold: openingDiversity.threshold },
+            userId
+          );
+        }
+      }
+    }
+
     // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
     // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
     // Default "off" → no-op. "suggest" only records the plan (audit + run summary); "propose" queues
@@ -627,31 +652,9 @@ export async function runStrategyOnce(
         `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
       );
     }
-    // OPTIONAL GATE (default OFF via policy.tuning.gateOnRationaleCollapse): route a collapsed run's
-    // OPENING proposals (buy/short) to human review instead of auto-executing. The gate decision is
-    // computed over the OPENING rationales' OWN diversity — a deterministic funding-sell/exit
-    // rationale must not dilute the full-set mean and mask collapsed openings, and a full-set
-    // collapse (driven by exits) doesn't imply the openings collapsed. Exits (sell/cover) are never
-    // gated (routing a risk-reducing trade to a human is unsafe). Explicit `=== true` so a malformed
-    // stored non-boolean can't enable this default-off flag. Flag off = advisory only, unchanged.
-    if (policy.tuning?.gateOnRationaleCollapse === true) {
-      const gatedOpenings = proposals.filter((p) => p.side === "buy" || p.side === "short");
-      const openingDiversity = computeRationaleDiversity(gatedOpenings.map((p) => p.rationale));
-      if (openingDiversity.collapsed) {
-        for (const p of gatedOpenings) {
-          p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
-          requiresHumanReview.add(p);
-        }
-        if (gatedOpenings.length > 0) {
-          console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
-          audit(
-            "strategy_rationale_collapse_gated",
-            { runId, count: gatedOpenings.length, meanSimilarity: openingDiversity.meanPairwiseSimilarity, threshold: openingDiversity.threshold },
-            userId
-          );
-        }
-      }
-    }
+    // (The rationale-collapse GATE that routes collapsed openings to human review runs EARLIER — before
+    // sell-to-fund planning — so a gated buy can't drive automated funding sells. Only the advisory
+    // full-set warning above remains here.)
 
     const results: StrategyResult["proposals"] = [];
     for (const proposal of proposals) {
