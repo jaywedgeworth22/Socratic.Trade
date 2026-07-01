@@ -58,6 +58,25 @@ describe("applyCongressEvent — App A wire-shape parity", () => {
     expect(hasSymbol("PARITYD")).toBe(true);
   });
 
+  it("accepts a bare-tx SSE frame whose envelope `type` was stamped by applySseMessage", () => {
+    // Legacy bare-tx SSE: the `data:` line is one App A transaction (txType-keyed), and
+    // applySseMessage copies the SSE event name into `env.type`. Because coerceCongressTrade reads
+    // `type` BEFORE `txType` for the side, the stamped envelope `type` must be stripped before the
+    // envelope is coerced as a bare trade — otherwise the valid P/S row is dropped as no-trades.
+    const res = apply({
+      type: "congress.trade",
+      id: `evt-${randomUUID()}`,
+      ticker: "PARITYE",
+      txType: "P",
+      txDate: recent(5),
+      memberName: "Jane Doe",
+      chamber: "house",
+    });
+    expect(res).toMatchObject({ ok: true, type: "congress.trade" });
+    expect(res.applied).toBeGreaterThanOrEqual(1);
+    expect(hasSymbol("PARITYE")).toBe(true);
+  });
+
   it("rejects a payload with no resolvable type", () => {
     expect(apply({ foo: "bar" })).toMatchObject({ ok: false, applied: 0, reason: "invalid-event" });
   });

@@ -106,7 +106,19 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
       if (Array.isArray(raw.trades)) candidates.push(...(raw.trades as unknown[]));
       const single = raw.transaction ?? data?.transaction;
       if (single) candidates.push(single);
-      if (candidates.length === 0) candidates.push(raw);
+      if (candidates.length === 0) {
+        // Last resort: the envelope itself is one bare transaction (legacy bare-tx SSE). Strip the
+        // envelope-level fields first — applySseMessage copies the SSE event name into `raw.type`, and
+        // `coerceCongressTrade` reads `type` BEFORE `txType` for the side, so leaving `type` in place
+        // would shadow a valid `txType: "P"/"S"` row and reject it as no-trades. `event`/`id`/`data`
+        // are likewise envelope fields, never transaction-side data.
+        const bareTx: Record<string, unknown> = { ...raw };
+        delete bareTx.type;
+        delete bareTx.event;
+        delete bareTx.id;
+        delete bareTx.data;
+        candidates.push(bareTx);
+      }
       const trades = candidates.map(coerceCongressTrade).filter((t): t is CongressTrade => t !== null);
       if (trades.length === 0) return { ok: true, type, applied: 0, reason: "no-trades" };
       const { added } = upsertCongressTrades(trades);

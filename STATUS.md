@@ -4,6 +4,23 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - [codex-autofix] Congress bare-tx envelope-field strip (PR #283)
+Branch `agent/claude-congress-webhook-parity`. Addressed both Codex review
+threads on PR #283. (1) P2 correctness: the "envelope itself is one trade"
+last-resort branch in `applyCongressEvent` pushed the whole `raw` envelope into
+`coerceCongressTrade`; since `applySseMessage` stamps the SSE event name onto
+`env.type` and the coercer reads `type` before `txType`, a bare App A
+transaction over SSE had its side shadowed and was dropped as `no-trades`. Fixed
+by stripping envelope keys (`type`/`event`/`id`/`data`) before coercing, plus a
+regression test. (2) P2 handoff: updated this file, `PLAN.md`, and the rollout
+note. Verification is constrained by the sandbox (the private
+`@jaywedgeworth22/congress-trading-shared` git dep is not fetchable — the token
+404s — so a full `npm install`/`tsc`/`build` can't run here); verified via a
+local stub: `vitest` on the two congress event suites → 25 passed (the new test
+fails on the pre-fix code), `eslint` clean, `tsc` shows no errors in the touched
+files. The `verify` CI gate runs the full trio with real registry access on
+push. See `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
 Reconnect path without using browser secrets: production `/api/auth/robinhood/start`

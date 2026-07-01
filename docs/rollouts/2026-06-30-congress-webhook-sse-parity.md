@@ -59,3 +59,42 @@ makes App B robust regardless.
 - Align App A's webhook to emit `congress.trade` (Congress.Trade side).
 - Consider hoisting a shared "coerce trades from any envelope" helper into
   `congress-trading-shared` so both apps share one tolerant reader.
+
+## 2026-07-01 — [codex-autofix] bare-tx envelope-field strip + handoff docs
+
+Addresses the two Codex review threads on PR #283.
+
+**P2 correctness — strip envelope fields before coercing a bare payload.** The
+"last resort: the envelope itself is one trade" branch pushed the whole `raw`
+envelope into `coerceCongressTrade`. But `applySseMessage`
+(`src/lib/congress-stream.ts`) copies the SSE event name into `env.type`, and
+`coerceCongressTrade` reads `type` **before** `txType` when resolving the trade
+side. So a bare App A transaction arriving over SSE (top-level `txType: "P"/"S"`,
+no `trades` array) had its valid side shadowed by the envelope `type`
+(`"congress.trade"` / `"trade.new"`) → `side` unresolved → the row was dropped as
+`no-trades`. Fix: when treating the envelope as a bare transaction, shallow-copy
+`raw` and `delete` the envelope-level keys (`type`, `event`, `id`, `data`) so the
+transaction-side fields win. Files: `src/lib/congress-trade-events.ts`.
+
+Added a regression test to `test/congress-webhook-parity.test.ts` for the
+bare-tx SSE frame whose envelope `type` was stamped by `applySseMessage`;
+confirmed it fails (`applied` 0) on the pre-fix code and passes after.
+
+**P2 handoff docs.** Updated `STATUS.md` and `PLAN.md` alongside this note, per
+the AGENTS.md Pre-Commit / Handoff Protocol (the original commit added only this
+rollout note).
+
+### Verification (this round)
+
+The private `@jaywedgeworth22/congress-trading-shared` git dependency is not
+fetchable in the CI/autofix sandbox (the available GitHub token has no access —
+`git ls-remote`/`gh api` both 404), so a full `npm install` fails and the
+whole-project `tsc`/`build` cannot run here. Verified the change against a local
+stub package (pass-through schemas) that let the rest of the dep tree install:
+
+- `npx vitest run test/congress-webhook-parity.test.ts test/congress-trade-events.test.ts` → 25 passed (incl. new regression test; confirmed it fails on the pre-fix code)
+- `npx eslint src/lib/congress-trade-events.ts test/congress-webhook-parity.test.ts` → clean
+- `npx tsc --noEmit` → **no errors in the touched files**; the only errors reported are `no exported member` in files that import *types* from the shared package, which are artifacts of the minimal stub's `.d.ts`, not of this change.
+
+The `verify` CI job runs with real registry access and will exercise the full
+trio on push.
