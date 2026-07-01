@@ -50,6 +50,24 @@ run (it would be unaffected). If/when the implementation-plan workstreams are
 built, the full `npm run lint` → `npx tsc --noEmit` → `npm test` → `npm run build`
 trio applies before claiming complete.
 
+## Revision (same PR, 2026-07-01) — Codex review fixes + Twelve Data free tier
+Addressed two Codex P2 review comments on PR #288 and folded in the owner's
+Twelve-Data-free insight (all doc-only):
+- **Broker real-time is entitlement-dependent** (decision doc): corrected the
+  overstated "broker feeds = free real-time." Alpaca *free* REST (`getLatestQuotes`,
+  the path `getEquityQuotes` uses) is 15-min delayed; real-time needs WebSocket or a
+  paid feed. Qualified the vendor table, Decision #1, and the exit-layer
+  frequency bullet.
+- **Router must cover the autonomous run site** (plan doc): added `strategy.ts:217`
+  (run-cycle quote merge) to Workstream 2's router scope alongside the approval and
+  synthetic-stop sites, with a matching verify case. Without it, autonomous
+  Test/delayed-broker entries would keep consuming stale quotes.
+- **Twelve Data free Basic as a $0 real-time fallback**: added as an explicit tier in
+  the router precedence (`broker real-time → FMP → Twelve Data free → stamped-stale
+  DB`), gated to on-demand small-N pre-trade lookups (8 credits/min, 800/day; never
+  bulk), with two verify-once notes (genuine US real-time on Basic; per-credit quote
+  cost). This is most valuable precisely when the broker entitlement is delayed.
+
 ## Follow-ups
 - Workstream 1 (enable/tune `maxQuoteAgeSec`, `maxEntryDriftPct`,
   `marketableLimitEntries` + surface in settings UI) — recommended first.

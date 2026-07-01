@@ -43,7 +43,8 @@ that reversed earlier assumptions in this analysis:
 
 | Vendor | Real-time US quotes? | Cost | Role |
 |---|---|---|---|
-| **Broker feeds** (Alpaca/Robinhood/etc.) | Yes, for the connected venue | **Free** | Real-time hot-set quotes + the tape you fill on |
+| **Broker feeds** (Alpaca/Robinhood/etc.) | **Entitlement-dependent** — real-time only where the connected venue's API path is real-time (e.g. Robinhood REST; Alpaca via WebSocket or a paid feed). **Alpaca *free* REST — `getLatestQuotes`, the path `getEquityQuotes` uses — is 15-min delayed.** | Free–paid | Real-time hot-set quotes *on real-time entitlements*; the tape you fill on |
+| **Twelve Data** (free Basic) | Yes (Basic lists real-time US equities/ETFs) | **Free** | On-demand real-time for a few names when no real-time broker is wired (verify Basic US real-time is genuine, not trial-symbols/delayed) |
 | **FMP** (owner has ~$30 tier) | Yes (Starter+ includes real-time US) | ~$30/mo (owned) | Real-time REST quotes + fundamentals |
 | **Massive / Polygon** (owner has $30) | **No** — Starter $29 & Developer $79 are **15-min delayed**; real-time starts at **Advanced $199** | $30/mo (owned) | Deep historical/tick archive for backtests (delay irrelevant there) |
 | **Twelve Data** | Yes even on Grow $29 (real-time US listed on Basic/Grow) | Grow $29 / Pro $99 | Optional redundant real-time source. **Pro $99 is bad value here** — the $70 over Grow is EU/AU/fixed-income/mutual-fund data, useless for a US-equity engine. Production WebSocket streaming only exists at Pro (Grow has trial WS only). |
@@ -57,11 +58,14 @@ that reversed earlier assumptions in this analysis:
 
 ## Decision
 
-1. **Do not buy Twelve Data (or any new feed) for this.** The owner already has
-   what the engine needs: **FMP ~$30 (real-time REST) + broker feeds (free
-   real-time on traded names) + Massive $30 (deep history for backtests)**. Twelve
-   Data would be a redundant third real-time source; its only *new* capability
-   (production WebSocket streaming) lives in the bloated Pro $99 tier.
+1. **Do not buy a *paid* Twelve Data plan for this.** The owner already has what the
+   engine needs: **FMP ~$30 (real-time REST) + broker feeds (real-time on a real-time
+   entitlement — NOT Alpaca free REST) + Massive $30 (deep history for backtests)**,
+   with **Twelve Data's free Basic tier as a $0 on-demand real-time fallback** for the
+   exact case where no real-time broker is wired (Test mode, unconnected account, or a
+   delayed broker entitlement). A *paid* Twelve Data plan would be a redundant real-time
+   source; its only *new* capability (production WebSocket streaming) lives in the
+   bloated Pro $99 tier.
 2. **The lever is not a vendor — it is configuration + a small source-router.**
    The app already implements marketable-limit conversion, entry-drift, and a
    staleness gate; they are default-OFF and un-tuned, and the hot-set quote source
@@ -80,7 +84,11 @@ that reversed earlier assumptions in this analysis:
   and only if order types actually consume the live bid/ask.
 - **Exit layer:** benefits **occasionally but with high impact** (a fast move
   inside a 15-min window that a stop would have caught) — and the app already
-  polls real-time here, so the win is already largely captured at 60s.
+  polls this hot set every 60s, so the win is largely captured *provided the quote
+  source is actually real-time*. On a delayed broker entitlement (e.g. Alpaca free
+  REST) it is not, which is exactly why the hot-set router (Workstream 2) must route
+  to a real-time source — FMP or Twelve Data free — rather than trust the broker feed
+  blindly.
 
 Net: the marginal improvement is better bought with **configuration + a poll→push
 exit refactor** than with a new data subscription.

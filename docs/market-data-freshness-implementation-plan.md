@@ -57,37 +57,59 @@ confirm marketable-limit conversion fires only for opening orders and only when
 ## Workstream 2 — Hot-set quote-source router with a freshness SLA (the one real gap)
 
 **Problem:** `gateway.getEquityQuotes` routes to the connected broker. That is
-real-time for a connected live venue, but (a) in Test mode or with a delayed-only
-broker the hot-set quote may be delayed, and (b) there is no explicit fallback to
-a real-time source when the broker feed is missing/stale, and (c) `asOf` must be
-stamped honestly for the staleness gate to mean anything.
+real-time only on a **real-time entitlement/API path** — e.g. Alpaca *free* REST
+(`getLatestQuotes`, which this call uses) is 15-min delayed; real-time there needs
+WebSocket or a paid feed. So (a) in Test mode, with a delayed-only broker, or on a
+delayed broker entitlement the hot-set quote may be delayed, and (b) there is no
+explicit fallback to a real-time source when the broker feed is missing/stale, and
+(c) `asOf` must be stamped honestly for the staleness gate to mean anything.
 
 **Goal:** guarantee that the **hot set only** (open positions + approval
 candidates + the proposal symbol) is served by a real-time source, with an honest
 freshness stamp, without touching the bulk-scan path.
 
 Design:
-1. **Add a thin quote-source router** in front of the hot-set fetch (wrap the
-   `getEquityQuotes` calls at `strategy.ts:1510`, `synthetic-stops.ts:170`, and
-   approval `strategy.ts:1502-1511`). Order of precedence:
-   `connected real-time broker → FMP real-time REST → last-known DB price (stamped
-   stale)`. Bulk scan (`market.ts`) is explicitly **out of scope** and stays on
-   delayed/cached data.
+1. **Add a thin quote-source router** in front of **every hot-set fetch**. Wrap the
+   `getEquityQuotes` call sites:
+   - `strategy.ts:217` — **autonomous run-cycle** quote merge before LLM/deterministic
+     sizing (the primary buy path; easy to miss — without it, autonomous entries in
+     Test/delayed-broker mode keep consuming stale quotes while `maxQuoteAgeSec` and
+     marketable limits assume router-stamped freshness).
+   - `strategy.ts:1502-1511` / `1510` — **manual approval** re-quote.
+   - `synthetic-stops.ts:170` — **60s exit** monitor.
+
+   Order of precedence:
+   `connected real-time broker (only if the entitlement/path is real-time) → FMP
+   real-time REST → Twelve Data free Basic (on-demand, small-N) → last-known DB price
+   (stamped stale)`. Bulk scan (`market.ts`) is explicitly **out of scope** and stays
+   on delayed/cached data.
 2. **Stamp `asOf` truthfully** at every tier so `maxQuoteAgeSec` can do its job;
-   the DB-fallback tier must stamp the original quote time, never `now`.
+   the DB-fallback tier must stamp the original quote time, never `now`. Broker quotes
+   on a delayed entitlement must be stamped delayed (do not label delayed-REST as
+   real-time), so the router can fall through to FMP/Twelve Data.
 3. **Keep it small:** the hot set is single-digits to low-tens of names, so an
-   on-demand real-time pull (broker or FMP) is cheap and rate-limit-safe. Do **not**
-   route the 8k universe here.
-4. **Config:** a per-account "real-time hot-set source" preference
-   (auto → broker → FMP), defaulting to auto.
+   on-demand real-time pull (broker/FMP/Twelve Data free) is cheap and rate-limit-safe.
+   Do **not** route the 8k universe here. Twelve Data free is 8 credits/min (800/day) —
+   strictly hot-set/pre-trade lookups only; a single bulk call would exhaust it.
+4. **Twelve Data free — two things to verify once** before relying on it: that Basic's
+   US-equity quotes are genuine real-time (not 15-min or trial-symbols-only), and the
+   per-credit cost of the `/quote`|`/price` endpoint. It extends the existing keyed
+   Twelve Data adapter (`data-providers.ts`), so this is adding a quote endpoint, not a
+   new integration.
+5. **Config:** a per-account "real-time hot-set source" preference
+   (auto → broker → FMP → Twelve Data free), defaulting to auto.
 
 **Why this is the gap:** it is what makes "delayed bulk + 5–10 real-time on
 demand" a guarantee rather than an accident of which broker happens to be wired.
 
 **Verify:** tests that (a) a delayed broker + keyed FMP yields a real-time-sourced
-hot-set quote with recent `asOf`; (b) no path routes the bulk universe through the
-router; (c) DB-fallback quotes carry their true (older) `asOf` and are caught by
-the staleness gate.
+hot-set quote with recent `asOf`; (b) the router covers **all three** call sites —
+`strategy.ts:217` (autonomous run), the approval re-quote, and the synthetic-stop
+monitor — so an autonomous Test/delayed-broker entry gets router-stamped freshness;
+(c) no path routes the bulk universe through the router; (d) a delayed-broker
+entitlement falls through to FMP/Twelve Data rather than being trusted; (e)
+DB-fallback quotes carry their true (older) `asOf` and are caught by the staleness
+gate.
 
 ---
 
