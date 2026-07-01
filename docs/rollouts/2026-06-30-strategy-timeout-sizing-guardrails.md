@@ -106,6 +106,24 @@ llm-request, conviction-size-cap, policy, chat-draft-policy, policy-notification
   top of the existing 5% `OPENING_ORDER_HEADROOM`. Exact ask/reference-ratio accounting is deferred
   to avoid over-shrinking wide-spread sizes.
 
+### Round 3 (Codex re-review — chat-draft commit path)
+
+The commit-time policy rejection this PR added to `app/api/proposals/from-draft/route.ts` had two
+regressions (both fixed):
+
+- **Fail-closed on preview-only staleness** — the commit preview runs WITHOUT a market scan, so the
+  staleness gate (which treats a missing quote/scan timestamp as stale) blocked *every* opening chat
+  draft when `maxQuoteAgeSec`/`maxFundamentalsAgeSec` were enabled. The authoritative gate re-runs at
+  approve time against fresh data, so the pre-commit reject now fires only for real, non-staleness
+  reasons (`staleness_gate:`-prefixed reasons are excluded); otherwise the draft is staged and the
+  approval-time gate decides on live data.
+- **Idempotency broken** — the rejection ran before the `chat:${draft_id}` dedupe, so a normal retry
+  of an already-staged draft could return `409` instead of the existing `proposalId`. The dedupe
+  lookup now runs first (returns the existing row with `200 deduped`) before any rejection.
+
+Verification: `npx tsc --noEmit` pass; `chat-draft-policy` 3 tests pass (added a staleness-only
+"stages (201)" case and a "retry returns 200 deduped even when now-blocked" case).
+
 ## Follow-ups
 
 - Consider a per-context timeout knob only if a future queued/background strategy
