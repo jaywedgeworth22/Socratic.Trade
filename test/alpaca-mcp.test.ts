@@ -165,6 +165,40 @@ describe("Alpaca MCP gateway adapter", () => {
     expect(calls[0].params.arguments.qty).toBe("5");
   });
 
+  it("logs alpaca-broker health on a successful REST SDK call", async () => {
+    // No MCP path: fetch 500 forces the REST SDK fallback, where the raw getAccount() call runs.
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { getDb } = await import("../src/lib/db");
+    await getAlpacaGateway("local").getAccounts();
+
+    const rows = getDb()
+      .prepare("SELECT ok, key_source, user_id FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("alpaca-broker") as Array<{ ok: number; key_source: string | null; user_id: string | null }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((row) => row.ok === 1 && row.key_source === "user" && row.user_id === "local")).toBe(true);
+  });
+
+  it("logs an alpaca-broker health failure when the REST SDK call throws", async () => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 500 }));
+
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { getDb } = await import("../src/lib/db");
+    const gateway = getAlpacaGateway("local");
+    // Force the underlying SDK call to reject so the failure branch logs.
+    (gateway as unknown as { alpaca: { getAccount: () => Promise<never> } }).alpaca.getAccount = async () => {
+      throw new Error("boom");
+    };
+
+    await expect(gateway.getAccounts()).rejects.toThrow("boom");
+
+    const rows = getDb()
+      .prepare("SELECT ok, error_text FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("alpaca-broker") as Array<{ ok: number; error_text: string | null }>;
+    expect(rows.some((row) => row.ok === 0 && row.error_text === "boom")).toBe(true);
+  });
+
   it("falls back to REST client when fetch errors or is rejected", async () => {
     vi.stubGlobal("fetch", async () => {
       return new Response(null, { status: 500 }); // Server error

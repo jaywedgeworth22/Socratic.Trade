@@ -17,6 +17,8 @@ import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { getEnrichmentProvider } from "../data-providers";
 import { getMarketSignals } from "../market-signals";
+import { callRobinhoodMcpTool, robinhoodMcpDataEnabled } from "../robinhood";
+import { getMcpAccessToken } from "../mcp-oauth";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
@@ -290,6 +292,60 @@ export function buildProductionDeps(): ToolDeps {
     getReflection(userId) {
       return getUserSetting<string>(userId, "reflection_summary", "");
     },
+    // Robinhood MCP-backed read-only research. Each returns a clear "not connected" result (never a
+    // thrown error) when the adapter is off or the user has no stored token, so chat degrades to a
+    // plain message instead of failing the turn. Purely discovery — none of these can place an order.
+    async getEarningsCalendar(userId, args) {
+      const notConnected = await robinhoodNotConnected(userId);
+      if (notConnected) return notConnected;
+      try {
+        const raw = await callRobinhoodMcpTool(userId, "get_earnings_calendar", {
+          ...(args.start_date ? { start_date: args.start_date } : {}),
+          ...(args.days != null ? { days: args.days } : {}),
+          ...(args.high_market_cap ? { filter: "high_market_cap" } : {})
+        });
+        return { earnings: raw };
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getOptionChain(userId, underlyingSymbol) {
+      const notConnected = await robinhoodNotConnected(userId);
+      if (notConnected) return notConnected;
+      try {
+        const raw = await callRobinhoodMcpTool(userId, "get_option_chains", { underlying_symbol: underlyingSymbol });
+        return { symbol: underlyingSymbol, chains: raw };
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async searchInstrument(userId, args) {
+      const notConnected = await robinhoodNotConnected(userId);
+      if (notConnected) return notConnected;
+      try {
+        const raw = await callRobinhoodMcpTool(userId, "search", {
+          query: args.query,
+          ...(args.asset_type ? { asset_type: args.asset_type } : {}),
+          ...(args.limit != null ? { limit: args.limit } : {})
+        });
+        return { results: raw };
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
     accountLabel: "Test (local)"
   };
+}
+
+// A "not connected" result (not a throw) when Robinhood MCP data is disabled or the user has no
+// stored token — so the research tools return a plain message the model can relay to the user.
+async function robinhoodNotConnected(userId: string): Promise<{ error: string; message: string } | null> {
+  if (!robinhoodMcpDataEnabled()) {
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+  }
+  const token = await getMcpAccessToken(userId);
+  if (!token) {
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+  }
+  return null;
 }

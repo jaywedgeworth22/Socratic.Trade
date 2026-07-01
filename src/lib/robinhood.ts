@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
+import { logApiHealth } from "./db-health";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
@@ -441,8 +442,27 @@ export async function getRobinhoodMcpHealth(userId: string): Promise<RobinhoodMc
 }
 
 export async function callRobinhoodMcpTool(userId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
-  const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
-  return unpackMcpToolResult(result);
+  // Every Robinhood MCP call (trading + reads) funnels through here, so this single wrap
+  // gives the admin connections-health page a "robinhood-broker" signal for whether the
+  // broker gateway is reachable. The token is per-user, so key the lane by userId.
+  // logApiHealth swallows its own errors and is only ever called around the real call, so
+  // health logging can never throw or block the broker call.
+  const start = Date.now();
+  try {
+    const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
+    logApiHealth({ service: "robinhood-broker", ok: true, latencyMs: Date.now() - start, keySource: "user", userId });
+    return unpackMcpToolResult(result);
+  } catch (err) {
+    logApiHealth({
+      service: "robinhood-broker",
+      ok: false,
+      latencyMs: Date.now() - start,
+      errorText: err instanceof Error ? err.message : String(err),
+      keySource: "user",
+      userId
+    });
+    throw err;
+  }
 }
 
 export async function callRobinhoodMcpMethod(userId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -761,17 +781,37 @@ export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
       `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
     );
   }
+  // FRACTIONAL / NOTIONAL ENTRIES ARE MARKET-ONLY ON ROBINHOOD. A fractional order -- a dollar_amount
+  // order OR a sub-whole-share quantity (e.g. 0.5 sh) -- sent as a LIMIT (or in extended hours) is
+  // accepted by the API but never fills: it shows "Placed"/working while the cash is never spent (the
+  // $1 GOOG/AMAT symptom). Robinhood fills fractional/notional orders only as regular-hours MARKET
+  // orders. So coerce a fractional ENTRY to a regular-hours market order and drop the limit modifier.
+  //
+  // Three things we deliberately do NOT coerce:
+  //   - STOPS (stop_market/stop_limit): converting a protective/trailing stop to a market order would
+  //     sell immediately instead of resting until the stop triggers. Robinhood can't place a notional
+  //     stop, so a dollar-sized stop must be caught upstream by policy, never silently reshaped here.
+  //   - EXITS (sell): a limit/take-profit exit must rest at its requested price or be rejected upstream;
+  //     silently turning it into market would liquidate immediately.
+  //   - Whole-share orders (integer quantity >= 1): preserved as-is so marketable-limit entries work.
+  const wholeShare = input.quantity != null && Number.isInteger(input.quantity) && input.quantity >= 1;
+  const fractional =
+    !wholeShare && ((input.dollarAmount != null && input.dollarAmount > 0) || (input.quantity != null && input.quantity > 0));
+  const isStop = input.type === "stop_market" || input.type === "stop_limit";
+  const isOpening = input.side === "buy";
+  const coerceFractional = isOpening && fractional && !isStop;
+
   return {
     account_number: input.accountNumber,
     symbol: normalizeSymbol(input.symbol),
     side: input.side,
-    type: input.type,
+    type: coerceFractional ? "market" : input.type,
     quantity: input.quantity?.toString(),
     dollar_amount: input.dollarAmount?.toFixed(2),
-    limit_price: input.limitPrice?.toFixed(2),
-    stop_price: input.stopPrice?.toFixed(2),
-    time_in_force: input.timeInForce,
-    market_hours: input.marketHours
+    limit_price: coerceFractional ? undefined : input.limitPrice?.toFixed(2),
+    stop_price: coerceFractional ? undefined : input.stopPrice?.toFixed(2),
+    time_in_force: coerceFractional ? "gfd" : input.timeInForce,
+    market_hours: coerceFractional ? "regular_hours" : input.marketHours
   };
 }
 

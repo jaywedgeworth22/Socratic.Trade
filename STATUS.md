@@ -18,6 +18,88 @@ history + free broker quotes; Twelve Data would be redundant, Polygon Developer 
 is delayed). Lever = config + a small hot-set quote-source router + optional
 poll→push exit refactor. No code paths touched; verify trio not run (docs-only).
 See `docs/rollouts/2026-07-01-market-data-freshness-decision-and-plan.md`.
+## 2026-07-01 - Broker capability fan-out (4 parallel Opus agents, merged)
+Branch `claude/affectionate-franklin-a52935`. At the owner's request ("spawn a bunch of
+agents... lots of work"), ran a Workflow with 4 parallel Opus agents (each in an isolated
+git worktree) implementing independent, read-only broker-capability additions from
+`docs/broker-capability-plan.md`'s "cheap, high-value" list, then merged all 4 branches
+(zero conflicts) and re-verified as one integrated change:
+1. **Broker connection health observability** — `logApiHealth()` now wraps every raw
+   Alpaca SDK call (`src/lib/alpaca.ts`, service `alpaca-broker`) and every Robinhood MCP
+   call (`src/lib/robinhood.ts`'s `callRobinhoodMcpTool`, service `robinhood-broker`), so
+   the admin connections-health page can finally show broker-gateway health, not just
+   market-data-enrichment-provider health (the gap identified 2026-06-30).
+2. **Alpaca account insights** — new `src/lib/alpaca-account-insights.ts`: read-only
+   portfolio history, market calendar, market clock, account activities (all free, all
+   previously unused per the capability plan §3).
+3. **Robinhood realized-P&L cross-check** — new `src/lib/robinhood-pnl-crosscheck.ts`:
+   compares this app's own realized P&L against Robinhood's own `get_realized_pnl` figure
+   as an independent sanity check (5% tolerance, documented as approximate).
+4. **Chat assistant read-only research tools** — `get_earnings_calendar`, `get_option_chain`,
+   `search_instrument` added to `src/lib/chat/tools.ts`/`orchestrator.ts`, backed by real
+   Robinhood MCP data. All `readOnly: true`; no order-placement capability added; degrades
+   to a clear "not connected" message rather than throwing when Robinhood isn't linked.
+
+Deliberately excluded from this batch (per the owner's own prior framing — real
+feature/coordination work, not "cheap"): Robinhood options-trading support, and
+eToro/Public.com/IBKR integration (Codex's separate new-broker work is still unpushed —
+`git branch -r` shows no eToro/Public/IBKR branch yet, so no collision risk today, but
+still worth checking before starting that work).
+
+Verification (combined after merging all 4 branches and current `origin/main` through
+the mobile API/PWA merge, plus review fixes): `npm run lint` (0 errors, 258 warnings —
+existing warning class), `npx tsc --noEmit` (clean), `npm test` (172 files / 1671 tests,
+all passing together), `npm run build` (clean). See
+`docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+
+This branch/PR now combines the prior PR #286 stream/fundamentals fixes with this
+read-only broker fan-out. Review follow-up fixed the stream resolver to rank any usable
+connected Alpaca account before legacy keys, even when Test/Robinhood is currently active.
+It also hardened the new read-only diagnostics: Alpaca private account insights now fail
+closed to the requested user's connected Alpaca account and choose paper/live hosts per
+account; account activities page through Alpaca's `page_token`; Robinhood P&L cross-checks
+compare the same span and only equity buckets. Deploying it should stop the 2
+auth-dependent Alpaca streams from using stale legacy credentials and keeps Robinhood
+fundamentals safe to enable only for verified numeric fields.
+
+## 2026-07-01 - Alpaca streams enabled + stale-credential fix; coordination note re: Codex new-broker work
+Branch `claude/affectionate-franklin-a52935`. At the owner's explicit request, enabled the
+3 previously-disabled Alpaca streams in production (`STREAMS_ALPACA_NEWS_ENABLED`,
+`STREAMS_ALPACA_TRADE_UPDATES_ENABLED`, `STREAMS_ALPACA_PRICE_EVENTS_ENABLED`) plus the
+`TRIGGER_ENGINE` prerequisite the price-events stream needs to start at all (broader
+scope than just price events — see rollout note). Found and fixed a real bug while
+verifying: `alpaca-news-stream.ts`/`alpaca-trade-updates-stream.ts` were reading Alpaca
+credentials from a stale legacy `user_api_keys` row (last touched 2026-06-22) instead of
+the actively-used `connected_accounts` record (rotated 2026-06-29) the rest of the app
+reads from — added `resolveAlpacaStreamAccount()` (`db-api-keys.ts`) to fix this, plus
+picking the correct live-vs-paper trade_updates WS host. **Not yet deployed to
+`trading-live`** — the `.env.local` flags are live on the production box now, but the
+credential-resolution code fix is only pushed to this branch/PR, so the 2 auth-dependent
+streams will keep reconnect-looping on `HTTP 401` in production until this merges +
+deploys. Price-events stream IS running correctly but has nothing to watch (`local`'s
+`user_watchlist` is empty) — a content gap, not a bug. See
+`docs/rollouts/2026-07-01-enable-alpaca-streams.md`.
+
+**Coordination**: the owner says Codex has separate, currently-unmerged work (on a dirty
+local worktree) adding new broker integrations (eToro/Public.com/IBKR per the earlier
+capability plan). Not pushed as of this note, so no branch to reference yet — check
+`git branch -r` for new codex/* branches before starting any new-broker work to avoid
+duplicating it. This session's work stayed in the "use Alpaca/Robinhood more fully" lane
+per `docs/broker-capability-plan.md`, not new-broker integration, specifically to avoid
+collision.
+## 2026-07-01 - Mobile API/PWA stale worktree rebase (Codex)
+Branch `codex/mobile-command-api-rebase-20260701`. Re-extracted the old
+`codex/mobile-command-api` worktree onto current `origin/main` rather than
+direct-merging its stale 199-commit-behind branch. The rebase keeps the current
+audited account-deletion lifecycle, adds `mobile_commands` as migration v8,
+preserves current dashboard action semantics, and brings over `/mobile`, mobile
+command APIs/SSE, PWA metadata, SwiftUI starter files, and focused tests.
+Verification so far: `bash scripts/npm-ci-with-shared-deps.sh`;
+`npx vitest run test/mobile-api.test.ts` (5 tests passed);
+`npx tsc --noEmit` (passed); `npm run lint && npx tsc --noEmit && npm test &&
+npm run build` (lint 0 errors / existing warnings, TypeScript pass, 170 test
+files / 1,632 tests pass, build pass with the existing Sentry Edge-runtime
+warning).
 
 ## 2026-06-30 — Full app review, PR review-fixes, and worktree/branch cleanup (Claude)
 Branch `docs/improvement-audit-2026-06-30`. Ran an 11-expert read-only audit across
@@ -195,6 +277,21 @@ green (tsc / 1578 tests / build); scripts ASCII-clean. See
 Round 5 review fix: `scripts/npm-ci-with-shared-deps.sh` now includes `GH_TOKEN`
 in the package-auth fallback chain, matching the script fetch paths used by
 manual/operator preview syncs.
+
+## 2026-07-01 - PR #282 Robinhood fractional routing review fixes
+Branch `fix/robinhood-fractional-market`. Round-3 review tightened the Robinhood
+small-dollar routing fix: entry-drift policy now treats fractional opening
+limits as market-routed for Robinhood, fractional opening coercion forces GFD,
+and sell/exit limits preserve their requested limit semantics instead of being
+converted into immediate market sells. See
+`docs/rollouts/2026-06-30-robinhood-fractional-market-fix.md`.
+
+## 2026-07-01 - PR #282 Robinhood fractional drift scoping
+Branch `fix/robinhood-fractional-market`. Round-4 review narrowed the
+fractional-limit entry-drift special case to `policy.activeBroker ===
+"robinhood"` so brokers that preserve fractional limit orders keep broker-side
+limit-price protection. Verification: `npx vitest run test/robinhood-mcp.test.ts
+test/strategy-hardening.test.ts` (54 tests pass) and `npx tsc --noEmit`.
 
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
@@ -2170,6 +2267,26 @@ Branch: claude/magical-faraday-uce1uy
   tests; `npx tsc --noEmit`, full `npm test` (102 files / 915 tests), and
   `npm run build` passed; local `/api/health` returned OK. See
   `docs/rollouts/2026-06-23-custom-watchlist-errors.md`.
+- 2026-06-23 (`codex/mobile-command-api`): **Shared mobile API, phone PWA, SwiftUI starter, and account deletion reset flow.**
+  Built an isolated mobile worktree from current `origin/main` so it does not
+  touch the other agent lanes. Added `/api/mobile/*` as the shared backend
+  source-of-truth contract for a responsive Next.js/PWA and native SwiftUI
+  iPhone app: snapshot/bootstrap reads, audited/idempotent command queue,
+  server-side command execution, SSE command/status events, and a phone-first
+  `/mobile` PWA. Added SwiftUI starter files under `ios/AgenticTrading/` using
+  the same command/status model. Added a multi-step account deletion procedure
+  that creates a short-lived request, requires exact signed-in email/user-id and
+  exact phrase confirmation, deletes user-scoped app data plus server-stored
+  broker/provider secrets, signs out, and clearly separates backend reset from
+  optional Google/Apple provider-side OAuth grant revocation. Browser visual
+  review covered `/mobile` at 360x740, 390x844, 768x1024, and 1440x900 plus
+  main-dashboard smoke at 390x844 and 1440x900; fixes included mobile alert
+  overflow, danger-zone contrast, deletion confirmation layout, and mobile
+  touch-target sizing. Verification: `npx tsc --noEmit`; focused
+  `npx vitest run test/mobile-api.test.ts --testTimeout=20000`; full `npm test`
+  passed 100 files / 913 tests; `npm run build` passed.
+  See `docs/mobile-api-and-clients.md` and
+  `docs/rollouts/2026-06-23-mobile-pwa-command-api.md`.
 - 2026-06-23 (`codex/multi-user-auth-prod`): **Multi-user auth + account UI production pass.**
   Integrated the Auth.js/Cloudflare Access identity work onto current `origin/main`
   and fixed the account UI issues found during the expert/site pass. Middleware now

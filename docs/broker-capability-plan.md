@@ -46,6 +46,42 @@ recently launched eToro and Public.com ones — change fast.
 All four are covered by new/updated tests; see the rollout note
 `docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md` for the full list.
 
+## 0.5 Follow-up round (2026-07-01) — streams enabled, Robinhood fundamentals verified
+
+At the owner's explicit request ("I don't want those 3 features turned off for alpaca"):
+
+5. **Enabled the 3 disabled Alpaca streams in production** (§9) plus `TRIGGER_ENGINE`
+   (a prerequisite the price-events stream refuses to start without — see §9 for why this
+   has broader scope than just price events). Found and fixed a real bug while verifying:
+   the two auth-dependent streams (`alpaca-news-stream.ts`,
+   `alpaca-trade-updates-stream.ts`) were resolving Alpaca credentials from a **stale
+   legacy `user_api_keys` row** (last touched 2026-06-22) instead of the actively-used
+   `connected_accounts` record (rotated 2026-06-29) the rest of the app reads from — a
+   second, independent credential-drift bug from the one already documented in §1. Added
+   `resolveAlpacaStreamAccount()` in `src/lib/db-api-keys.ts` to fix this, and made the
+   trade-updates stream pick the correct live-vs-paper WebSocket host instead of
+   hardcoding paper. See `docs/rollouts/2026-07-01-enable-alpaca-streams.md`.
+6. **Verified Robinhood fundamentals live, found and fixed a real risk before enabling.**
+   `RobinhoodEnrichmentProvider` ("robinhood-fundamentals") already exists in
+   `data-providers.ts` but is gated behind `ROBINHOOD_ENRICHMENT_ENABLED` — off in
+   production (0 logged calls ever) — because its own code comment flags that field
+   units/shape need verifying first. Called the live Robinhood MCP `get_equity_fundamentals`
+   tool directly (this session happened to have a Robinhood MCP connector attached) and
+   confirmed: the numeric fields (PE ratio, 52-week range, average volume) are clean and
+   parse correctly, but `sector`/`industry` come back in Robinhood's own idiosyncratic
+   taxonomy (e.g. `"Electronic Technology"` / `"Telecommunications Equipment"` for AAPL) —
+   not the GICS-style taxonomy the rest of the app uses. That matters because
+   `SymbolEnrichment.sector` feeds real risk enforcement: `market.ts` merges it into
+   `MarketQuote.sector`, which `policy.ts`'s `sectorForSymbol`/`sectorCapFor` read to
+   enforce `policy.sectorCaps` — so passing Robinhood's raw sector through would silently
+   stop a symbol's sector cap from matching. Fixed `parseRobinhoodFundamentals` to map only
+   the verified-safe numeric fields and drop `sector`/`industry` entirely. **Not yet
+   enabled in production** — the code fix needs to deploy first (same gap as #5 above),
+   then `ROBINHOOD_ENRICHMENT_ENABLED=on` is safe to set.
+7. **Coordination**: Codex has separate, unmerged work adding new broker integrations
+   (per the owner). This round's work deliberately stayed in the "use Alpaca/Robinhood
+   more fully" lane and did not touch new-broker code, to avoid colliding with it.
+
 ## 1. "Alpaca news has never worked" — root cause (confirmed against production data)
 
 The admin page is `app/admin/connections/connections-health-client.tsx` +
@@ -256,6 +292,54 @@ appended to that doc. Restated cleanly here, plus the other four brokers:
    is fully wrapped by the same policy/cap/review/persistence pipeline as REST — it's a
    transport choice, not a safety bypass. This is the scenario relevant to "should we use
    MCP more."
+3. **This app's own in-app chat assistant (`app/api/chat/route.ts`,
+   `src/lib/chat/orchestrator.ts`/`tools.ts`) getting direct MCP tool access to brokers (or
+   other data sources) to answer richer questions.** This is a third, distinct thing from
+   both of the above, and the one raised by "consider for some of the tools that they
+   could be accessible to the chat client to enhance that." Addressed below.
+
+### Scenario 3 — should the in-app chat assistant get MCP tool access?
+
+The chat assistant already has a deliberate, narrow safety model: `buildTools()` in
+`src/lib/chat/tools.ts` exposes a small, explicitly-typed tool registry (`get_quote`,
+`draft_order`, `create_alert`, plus read-only state getters for positions/portfolio/
+watchlist/alerts/proposals/P&L). Every tool's `input_schema` is validated server-side, the
+model's input is treated as untrusted regardless of schema claims (see the comment on
+`draft_order`), and — critically — **there is no execution tool**: `draft_order` returns a
+ticket for a human to confirm; the chat layer can never place a real order by itself. This
+is the same "chat can read/propose, only the gated pipeline executes" boundary the rest of
+this app enforces.
+
+Grafting raw MCP tool access onto this (e.g. registering Robinhood's `place_option_order`,
+`get_option_chains`, `get_realized_pnl`, etc. directly as callable tools for the chat
+model) would either:
+- **Include write tools** (`place_equity_order`, `place_option_order`, `create_scan`,
+  `follow_watchlist`, ...) — this reintroduces exactly the Scenario 1 risk
+  (`docs/alpaca-mcp-vs-api-evaluation.md`): a broker call with none of this app's
+  policy/cap/consent checks, reachable from a chat turn. Not acceptable for anything this
+  app calls "the chat assistant" inside its own gated product.
+- **Filter to read-only tools only** (Alpaca's `ALPACA_TOOLSETS`, or hand-picking
+  Robinhood's `get_*` tools) — safer, but still bypasses this app's OWN input validation,
+  per-user consent/data-pool rules (`hasDataPoolConsent`), caching, and rate-limiting that
+  every existing `ToolDeps` call goes through. A raw MCP passthrough tool has none of that
+  by default; it would need the same wrapping work as option 2 below to be safe, at which
+  point it isn't really "raw MCP access" anymore.
+
+**Recommendation: don't wire raw MCP tool access into the chat assistant. Get the same
+user-facing capability boost by adding new, typed, read-only entries to
+`buildTools()`/`ToolDeps`, backed by real broker calls** — e.g. `get_earnings_calendar`,
+`get_option_chain`, `get_realized_pnl`, `search_instrument` as new tool definitions that
+internally call `fetchRobinhoodFundamentals`-style functions (or new equivalents for
+Alpaca's calendar/corporate-actions/portfolio-history endpoints from §3). This delivers
+exactly what "give the chat client access to these broker capabilities" asks for — the
+model can answer "what's Apple's PE ratio," "when does Tesla report earnings," "how did my
+last 90 days do" — while keeping the same input-validation, consent, caching, and
+never-executes-a-trade boundary every other chat tool already has. It's more upfront work
+than pointing the model at an MCP server's tool list, but it's the same amount of *new
+capability* delivered safely instead of by bypassing the app's own safety model.
+This is a real, scoped feature addition (new tool defs + `ToolDeps` wiring + tests) — not
+started in this round; flagged in §10 as a candidate next increment, pending the owner
+picking which 2-3 tools matter most.
 
 ### Per-broker recommendation
 
@@ -303,40 +387,92 @@ blowing through it with a full index universe), **not an oversight**, so this do
 recommend flipping them on unilaterally — that's a production behavior change with real
 API-tier/cost implications the user should make explicitly. See §10 for how to decide.
 
+## 10.5 Prefer free broker data over paid third-party sources (owner directive, 2026-07-01)
+
+Explicit owner instruction: "robinhood and alpaca already would do lots of what we are
+using other sources for and do so for free... take full advantage of all that these
+brokers provide free and use other services when there is real value add or necessity."
+Concretely, against the current `CascadingEnrichmentProvider` order in
+`getEnrichmentProvider()` (`data-providers.ts`, first-non-null-per-field wins):
+
+1. `AlpacaSnapshotEnrichmentProvider` (free, real-time) — already first. Good.
+2. Congress.Trade cache, Webull-unofficial (both opt-in, off by default) — unaffected.
+3. `RobinhoodEnrichmentProvider` ("robinhood-fundamentals", free) — coded, gated off,
+   **verified and fixed this round (§0.5)**, not yet enabled pending deploy.
+4. `IntrinioEnrichmentProvider`, `TiingoEnrichmentProvider`, `FintechStudiosEnrichmentProvider`
+   (all paid) — positioned *after* the free Robinhood tier, which is correct ordering:
+   once Robinhood enrichment is live, these paid providers are only consulted for fields
+   Robinhood didn't supply.
+5. `FinnhubEnrichmentProvider` — has a usable free tier (production: 268/500 calls
+   succeeded, ~54%) — fine where it sits.
+6. `TwelveDataEnrichmentProvider` — **confirmed 0/297 successes ever in production**
+   (`HTTP 429`, rate-limited free tier). This is calling out to a service that delivers
+   zero value today and costs a network round-trip on every enrichment pass for nothing.
+7. `AlpacaNewsEnrichmentProvider` (free, headlines/sentiment) — positioned *after* several
+   paid providers (Intrinio/Tiingo/FintechStudios/Finnhub/TwelveData) that don't even
+   supply headlines/sentiment, so this ordering doesn't cost anything in practice, but
+   there's no reason it couldn't sit right after the Alpaca snapshot provider for clarity.
+8. `AlphaVantageEnrichmentProvider` — **confirmed 0/500 successes ever in production**
+   (free-tier "25 requests per day" exhausted immediately). Same zero-value-today problem
+   as TwelveData.
+9. `FmpEnrichmentProvider` (paid) — real, working paid provider; keep as-is.
+10. `YahooFinanceEnrichmentProvider` (free, final fallback) — already last-resort by
+    design, correct.
+
+**Reading this against the owner's directive**: the ordering already generally prefers
+free-then-paid where it matters (Robinhood before the paid mid-tier), and the two paid
+providers with the WORST actual value (`alpha-vantage`, `twelvedata` — both 0% success in
+production) are providers the owner is *already paying nothing extra for* in terms of
+architecture cost, but they add latency/noise for zero benefit. This doc does not
+recommend removing them unilaterally (that's a "do we still want this vendor relationship"
+call, not a bug) — flagged again in §10 as a decision point, not auto-actioned.
+
 ## 10. Prioritized recommendations
 
-**Already done this session** (§0): symbol translation, order-confirmation correctness,
-Robinhood order-id bug, connection-status diagnosis.
+**Already done — 2026-06-30 round** (§0): symbol translation, order-confirmation
+correctness, Robinhood order-id bug, connection-status diagnosis.
+
+**Already done — 2026-07-01 round** (§0.5): 3 Alpaca streams + `TRIGGER_ENGINE` enabled in
+production; found+fixed a second independent stale-credential bug blocking 2 of those 3
+streams; verified Robinhood fundamentals live and fixed a real sector/industry
+taxonomy risk before it goes live.
+
+**Blocked only on deploy (code is written, tested, and pushed — not yet on `trading-live`):**
+1. `resolveAlpacaStreamAccount()` fix (§0.5/§9) — needed before the news/trade-updates
+   streams actually succeed in production instead of reconnect-looping on `HTTP 401`.
+2. `parseRobinhoodFundamentals` sector/industry fix (§0.5) — needed before it's safe to
+   set `ROBINHOOD_ENRICHMENT_ENABLED=on`.
+   Both are small, low-risk, already-tested diffs — this is a "when do we want to
+   merge+deploy" decision, not further code work.
 
 **Cheap, high-value, no new broker relationship required:**
-1. Turn on the three disabled Alpaca streams (§9) — or explicitly decide not to and record
-   why in `STATUS.md`. If turned on: `trade_updates` directly improves order-confirmation
-   latency (ties into §0.2's fix — a rejected/canceled order would be known in real time
-   instead of on the next reconciliation poll); `news`/`price-events` improve trigger
-   responsiveness. Watch the 30-symbol IEX cap.
-2. Add `logApiHealth()` calls to the broker gateway paths in `alpaca.ts` and
+3. Add `logApiHealth()` calls to the broker gateway paths in `alpaca.ts` and
    `robinhood.ts` (§1's gap) so the admin connection-status page can actually answer "is my
    broker connection healthy," not just "is an enrichment provider healthy." This is the
    most direct fix for the underlying confusion behind the user's original report.
-3. Pull Alpaca's `GET /v2/account/activities` and Robinhood's `get_realized_pnl` as a
+4. Pull Alpaca's `GET /v2/account/activities` and Robinhood's `get_realized_pnl` as a
    periodic cross-check against this app's own fill/P&L records — cheap, high-confidence
    correctness signal for the exact "can we tell an order was placed" concern.
-4. Add Alpaca portfolio history / calendar / clock — small, self-contained, no new broker
+5. Add Alpaca portfolio history / calendar / clock — small, self-contained, no new broker
    relationship, immediate UI value (real equity curve, market-hours awareness).
+6. Extend the chat assistant's `buildTools()` with 2-3 new read-only tools backed by real
+   broker data (§7 Scenario 3) — e.g. earnings calendar, option chain lookup, realized
+   P&L. Needs the owner to pick which 2-3 matter most before starting.
 
 **Real feature work (needs its own design/plan, not a quick add):**
-5. Robinhood options support — `BrokerGateway` would need an options-order surface
+7. Robinhood options support — `BrokerGateway` would need an options-order surface
    distinct from equities; single-leg only per §4.
-6. eToro / Public.com integration — gated on account access approval (eToro) or a
+8. eToro / Public.com integration — gated on account access approval (eToro) or a
    licensing decision (Public.com's non-commercial clause), so these start with a
-   business decision, not code.
-7. IBKR integration — gated on accepting an ongoing gateway-process operational
+   business decision, not code. **Coordinate with Codex** (§0.5) — separate unmerged work
+   on new-broker integration is already in flight; check for a pushed branch before
+   starting anything here.
+9. IBKR integration — gated on accepting an ongoing gateway-process operational
    commitment; do not start this without deciding who runs/monitors that process.
 
-**Explicitly not recommended:**
-- Chasing `alpha-vantage`/`twelvedata` free-tier rate limits with code changes — either
-  pay for a tier or accept they'll show `never`/`stopped` on the health page; this is a
-  cost decision, not a bug.
-- Using any broker's MCP server as a chat-client-facing trading tool for this app's own
-  automated strategies (scenario 1 in §7) — every existing safety rail
-  (`docs/alpaca-mcp-vs-api-evaluation.md`) still applies.
+**Decision points for the owner (not auto-actioned):**
+- Whether to keep paying for/calling `alpha-vantage` and `twelvedata` — both are
+  confirmed 0% successful in production (§10.5). Not a code bug; a "is this vendor still
+  worth it" call.
+- `congress.trade` shows 0% success too, but that's the separate sibling app being
+  unreachable/slow, not a paid-vendor question.

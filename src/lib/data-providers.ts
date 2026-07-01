@@ -1046,15 +1046,21 @@ export function parseRobinhoodFundamentals(row: Record<string, unknown>): Symbol
   const fiftyTwoWeekHigh = firstNumber(row, ["high_52_weeks", "fiftyTwoWeekHigh", "high52Weeks"]);
   const fiftyTwoWeekLow = firstNumber(row, ["low_52_weeks", "fiftyTwoWeekLow", "low52Weeks"]);
   const volume = firstNumber(row, ["average_volume", "average_volume_2_weeks", "volume"]);
-  const sector = firstString(row, ["sector"]);
-  const industry = firstString(row, ["industry"]);
+  // Deliberately NOT mapping sector/industry: verified live against get_equity_fundamentals
+  // (2026-07-01) that Robinhood returns its own idiosyncratic taxonomy (e.g. "Electronic
+  // Technology" / "Telecommunications Equipment" for AAPL), not the GICS-style taxonomy the
+  // rest of this app uses (Yahoo/Finnhub, and whatever a user configures in
+  // policy.sectorCaps). SymbolEnrichment.sector feeds real sector-cap risk enforcement
+  // (market.ts merges it into MarketQuote.sector, which policy.ts's sectorForSymbol/
+  // sectorCapFor read) — passing Robinhood's raw value through would let it silently win the
+  // cascade for a symbol and make that symbol's sector cap stop matching, with no error.
+  // Numeric fields (PE, 52-week range, volume) were verified to parse correctly and carry no
+  // such taxonomy risk, so only those are mapped.
   return {
     ...(peRatio !== undefined && peRatio > 0 && { peRatio }),
     ...(fiftyTwoWeekHigh !== undefined && fiftyTwoWeekHigh > 0 && { fiftyTwoWeekHigh }),
     ...(fiftyTwoWeekLow !== undefined && fiftyTwoWeekLow > 0 && { fiftyTwoWeekLow }),
-    ...(volume !== undefined && volume > 0 && { volume }),
-    ...(sector !== undefined && { sector }),
-    ...(industry !== undefined && { industry })
+    ...(volume !== undefined && volume > 0 && { volume })
   };
 }
 
