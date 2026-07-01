@@ -293,7 +293,7 @@ export function SymbolDrilldown({
           )}
           {quote.asOf && (
             <div className="pt-2 mt-2 border-t border-line text-faint flex items-center gap-2">
-              <Zap size={12} /> Data as of {new Date(quote.asOf).toLocaleString()}
+              <Zap size={14} /> Data as of {new Date(quote.asOf).toLocaleString()}
             </div>
           )}
         </div>

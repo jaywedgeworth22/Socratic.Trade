@@ -47,7 +47,13 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   : crypto.randomBytes(32); // Fallback to memory-only key if not set (keys will be lost on restart!)
 const ALGORITHM = "aes-256-gcm";
 
-function encryptValue(text: string): string {
+/**
+ * AES-256-GCM encrypt a string to the compact `iv:authTag:ciphertext` (all hex) envelope. Uses the
+ * process `ENCRYPTION_KEY` (or a memory-only key when unset). Exported so other at-rest secrets
+ * (e.g. Robinhood OAuth tokens in mcp-oauth.ts) reuse the SAME field-level encryption + the
+ * legacy-plaintext-tolerant `decryptValue` below, rather than duplicating the crypto.
+ */
+export function encryptValue(text: string): string {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
   let encrypted = cipher.update(text, "utf8", "hex");
@@ -56,7 +62,12 @@ function encryptValue(text: string): string {
   return `${iv.toString("hex")}:${authTag}:${encrypted}`;
 }
 
-function decryptValue(encryptedText: string): string {
+/**
+ * Decrypt a value produced by `encryptValue`. Values that are NOT the 3-part `iv:tag:ct` envelope are
+ * returned unchanged — the legacy-plaintext fallback that lets pre-encryption rows still load. Exported
+ * for reuse by other at-rest secret stores (see encryptValue).
+ */
+export function decryptValue(encryptedText: string): string {
   try {
     const parts = encryptedText.split(":");
     if (parts.length !== 3) return encryptedText; // Legacy unencrypted fallback

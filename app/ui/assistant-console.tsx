@@ -351,7 +351,7 @@ export function AssistantView({
           <div className="grid h-full place-items-center">
             <div className="max-w-xl text-center">
               <EmptyState
-                icon={<Sparkles size={18} />}
+                icon={<Sparkles size={20} />}
                 title="Ask the assistant"
                 hint="Try one of these — orders always come back as a draft you confirm."
               />
@@ -444,7 +444,7 @@ export function AssistantView({
             }}
           />
           <Button onClick={() => void send()} disabled={sending || !input.trim() || noLlmConfigured} size="md">
-            <Send size={15} /> Send
+            <Send size={16} /> Send
           </Button>
         </div>
       </div>
@@ -493,7 +493,7 @@ function DraftOrderCard({
       {state.decision && (
         <div className={cn("mt-2 rounded-md px-2.5 py-1.5 text-xs", blocked ? "bg-down/10 text-down" : "bg-up/10 text-up")}>
           <div className="flex items-center gap-1.5 font-medium">
-            {blocked ? <AlertTriangle size={13} /> : <ShieldCheck size={13} />}
+            {blocked ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
             {blocked ? "Blocked by policy" : "Passes policy"} {state.estimatedNotional != null && <span className="text-muted">· est. {money(state.estimatedNotional)}</span>}
           </div>
           {blocked && state.decision.reasons.length > 0 && (
@@ -510,7 +510,7 @@ function DraftOrderCard({
         {(state.phase === "draft" || state.phase === "checking" || state.phase === "checked") && (
           <>
             <Button size="sm" variant="subtle" onClick={onCheck} disabled={state.phase === "checking"}>
-              {state.phase === "checking" ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Check policy
+              {state.phase === "checking" ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Check policy
             </Button>
             {state.phase === "checked" && !blocked && (
               <Button size="sm" onClick={onSend}>
@@ -518,24 +518,24 @@ function DraftOrderCard({
               </Button>
             )}
             <Button size="sm" variant="ghost" onClick={onDiscard}>
-              <X size={13} /> Discard
+              <X size={14} /> Discard
             </Button>
           </>
         )}
 
         {state.phase === "sending" && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> staging…
+            <Loader2 size={14} className="animate-spin" /> staging…
           </span>
         )}
 
         {state.phase === "proposed" && state.proposalId && (
           <>
             <Button size="sm" variant={dest.live ? "danger" : "primary"} onClick={() => onConfirm(state.proposalId!)}>
-              <Check size={13} /> {dest.live ? `Confirm — places a REAL order against ${draft.symbol}` : "Confirm & place"}
+              <Check size={14} /> {dest.live ? `Confirm — places a REAL order against ${draft.symbol}` : "Confirm & place"}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => onReject(state.proposalId!)}>
-              <X size={13} /> Reject
+              <X size={14} /> Reject
             </Button>
             <span className="text-[11px] text-muted">also in the Decision tab</span>
           </>
@@ -543,13 +543,13 @@ function DraftOrderCard({
 
         {state.phase === "placing" && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> placing…
+            <Loader2 size={14} className="animate-spin" /> placing…
           </span>
         )}
 
         {state.phase === "rejecting" && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> rejecting…
+            <Loader2 size={14} className="animate-spin" /> rejecting…
           </span>
         )}
 

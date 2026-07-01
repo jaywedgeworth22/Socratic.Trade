@@ -16,7 +16,24 @@
 // CONGRESS_TRADE_TOKEN is set AND CONGRESS_SHARE_ENABLED is on. The admin route can trigger a
 // manual run with just the token. The token is a server-only secret — never exposed to the browser.
 
-import { API_PATHS, APP_B_ORIGIN_TAG, type PriceClose, type PriceSeries, type InsiderRow, type ShortVolumeRow, type FundamentalRow, type AnalystRow, SharePayloadSchema } from "@jaywedgeworth22/congress-trading-shared";
+import {
+  API_PATHS,
+  APP_B_ORIGIN_TAG,
+  type PriceClose,
+  type PriceSeries,
+  type InsiderRow,
+  type ShortVolumeRow,
+  type FundamentalRow,
+  type AnalystRow,
+  resolveTickerAlias,
+  SecurityRefInputSchema,
+  PriceSeriesSchema,
+  PriceCloseSchema,
+  InsiderRowSchema,
+  ShortVolumeRowSchema,
+  FundamentalRowSchema,
+  AnalystRowSchema,
+} from "@jaywedgeworth22/congress-trading-shared";
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
@@ -177,6 +194,16 @@ export interface CongressShareResult {
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
 
 /**
+ * Canonicalize a symbol for OUTBOUND rows: normalize (trim+upper) then resolve corporate-action
+ * aliases via the shared map (FB->META, SQ->XYZ, ATVI->MSFT, ...). Applied to the `ticker` field of
+ * every row App B sends to App A so a renamed ticker never fragments into a dead-symbol row on App A's
+ * side. Well-formed non-aliased symbols (incl. share-class hyphens like BRK-B) pass through unchanged.
+ */
+export function canonicalOutboundSymbol(symbol: string): string {
+  return resolveTickerAlias(normalizeSymbol(symbol));
+}
+
+/**
  * Map an app MarketQuote/summary to a (partial) company ref. This app only knows
  * name/sector/industry/market-cap — never CIK, exchange, country, ipoDate, etc. — and every name
  * in the screener universe is an equity, so assetClass defaults to "equity". Undefined fields are
@@ -185,7 +212,7 @@ export interface CongressShareResult {
 export function marketQuoteToRef(
   q: Pick<MarketQuote, "symbol" | "companyName" | "sector" | "industry" | "marketCap">
 ): CongressRef | null {
-  const ticker = normalizeSymbol(q.symbol);
+  const ticker = canonicalOutboundSymbol(q.symbol);
   if (!ticker) return null;
   const ref: CongressRef = { ticker, assetClass: "equity" };
   if (q.companyName) ref.companyName = q.companyName;
@@ -210,7 +237,7 @@ export function marketQuoteToFundamentals(
   q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
   date: string
 ): CongressFundamental | null {
-  const ticker = normalizeSymbol(q.symbol);
+  const ticker = canonicalOutboundSymbol(q.symbol);
   if (!ticker) return null;
   const row: CongressFundamental = { ticker, date };
   const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
@@ -235,7 +262,7 @@ export function marketQuoteToAnalyst(
   q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian">,
   date: string
 ): CongressAnalyst | null {
-  const ticker = normalizeSymbol(q.symbol);
+  const ticker = canonicalOutboundSymbol(q.symbol);
   if (!ticker) return null;
   const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
   let haveCounts = false;
@@ -281,7 +308,7 @@ export function ohlcBarsToCloses(bars: OHLCBar[] | null | undefined): CongressCl
 
 /** Build a per-ticker price entry from OHLC bars. currentPrice/currentPriceDate = most recent close. */
 export function ohlcBarsToPriceEntry(symbol: string, bars: OHLCBar[] | null | undefined): CongressPrice | null {
-  const ticker = normalizeSymbol(symbol);
+  const ticker = canonicalOutboundSymbol(symbol);
   if (!ticker) return null;
   const closes = ohlcBarsToCloses(bars);
   if (closes.length === 0) return null;
@@ -313,7 +340,7 @@ export function buildInsiderImport(): CongressInsider[] {
     const a = agg.get(sym);
     if (!sig || !a) continue;
     out.push({
-      ticker: sym,
+      ticker: canonicalOutboundSymbol(sym),
       date: a.date,
       sentiment: sig.insiderSentiment,
       buyFilings: sig.buyFilings,
@@ -338,7 +365,7 @@ export function buildShortVolumeImport(): CongressShortVol[] {
     if (!sig) continue;
     const date = sig.asOf ?? ds?.asOf;
     if (!date) continue;
-    out.push({ ticker: sym, date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
+    out.push({ ticker: canonicalOutboundSymbol(sym), date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
   }
   return out.slice(0, maxDailyTickers());
 }
@@ -351,20 +378,67 @@ function countCloses(payload: CongressSharePayload): number {
   return n;
 }
 
+/** Minimal shape of a shared Zod row schema (avoids importing `z` just for the parameter type). */
+type RowSchema = { safeParse: (value: unknown) => { success: boolean } };
+
+/**
+ * Validate each dataset's rows against the shared row schemas and DROP any that fail, so malformed
+ * data never reaches App A's import endpoint. Validation is PER-ROW (not whole-payload) so one bad
+ * row never suppresses the valid rows in the same dataset — and it filters, rather than logs-and-sends
+ * as the old code did. Rows that pass are returned verbatim (App A's importer accepts the extra
+ * CongressRef fields the strict schema strips, so we never narrow a valid row's payload).
+ * Returns the filtered payload plus a per-dataset dropped-row count for observability.
+ */
+export function dropInvalidShareRows(
+  payload: CongressSharePayload,
+): { payload: CongressSharePayload; dropped: Record<string, number> } {
+  const dropped: Record<string, number> = {};
+  const filterRows = <T>(rows: T[] | undefined, schema: RowSchema, key: string): T[] | undefined => {
+    if (!rows || rows.length === 0) return rows;
+    const valid: T[] = [];
+    let bad = 0;
+    for (const row of rows) {
+      if (schema.safeParse(row).success) valid.push(row);
+      else bad++;
+    }
+    if (bad > 0) dropped[key] = bad;
+    return valid;
+  };
+  return {
+    payload: {
+      ...payload,
+      refs: filterRows(payload.refs, SecurityRefInputSchema, "refs"),
+      prices: filterRows(payload.prices, PriceSeriesSchema, "prices"),
+      spx: filterRows(payload.spx, PriceCloseSchema, "spx"),
+      insider: filterRows(payload.insider, InsiderRowSchema, "insider"),
+      shortVolume: filterRows(payload.shortVolume, ShortVolumeRowSchema, "shortVolume"),
+      fundamentals: filterRows(payload.fundamentals, FundamentalRowSchema, "fundamentals"),
+      analyst: filterRows(payload.analyst, AnalystRowSchema, "analyst"),
+    },
+    dropped,
+  };
+}
+
 /**
  * POST one payload to App A's import endpoint. Idempotent + safe to resend. Self-guarded: never
  * throws — returns a structured result (skipped when no token; ok:false on transport/HTTP error).
  */
 export async function shareWithCongressTrade(payload: CongressSharePayload): Promise<CongressShareResult> {
+  // Drop schema-invalid rows BEFORE building the payload so malformed data never reaches App A;
+  // `sent` (and the empty check) then reflect only what is actually transmitted.
+  const { payload: clean, dropped } = dropInvalidShareRows(payload);
+  if (Object.keys(dropped).length > 0) {
+    console.warn("[congress-share] dropped schema-invalid rows before send:", dropped);
+  }
   const sent = {
-    refs: payload.refs?.length ?? 0,
-    spx: payload.spx?.length ?? 0,
-    prices: payload.prices?.length ?? 0,
-    closes: countCloses(payload),
-    insider: payload.insider?.length ?? 0,
-    shortVolume: payload.shortVolume?.length ?? 0,
-    fundamentals: payload.fundamentals?.length ?? 0,
-    analyst: payload.analyst?.length ?? 0
+    refs: clean.refs?.length ?? 0,
+    spx: clean.spx?.length ?? 0,
+    prices: clean.prices?.length ?? 0,
+    closes: countCloses(clean),
+    insider: clean.insider?.length ?? 0,
+    shortVolume: clean.shortVolume?.length ?? 0,
+    fundamentals: clean.fundamentals?.length ?? 0,
+    analyst: clean.analyst?.length ?? 0
   };
   const token = congressTradeToken();
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
@@ -373,21 +447,13 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
-  // Validate payload shape before sending (log but don't block — CongressRef uses optional
-  // fields while SecurityRef expects T|null; a mismatch here is expected and non-fatal).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const validation = SharePayloadSchema.safeParse(payload as any);
-  if (!validation.success) {
-    console.warn("[congress-share] payload validation warnings:", validation.error.flatten().fieldErrors);
-  }
-
   const url = `${congressTradeBaseUrl()}${API_PATHS.ADMIN_SECURITIES_IMPORT}`;
   const timeoutMs = Number(process.env.CONGRESS_SHARE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // Stamp our origin so the counterpart never echoes our own rows back to us (no-echo-loop guard).
-    const body = { ...payload, origin: payload.origin ?? APP_B_ORIGIN_TAG };
+    const body = { ...clean, origin: clean.origin ?? APP_B_ORIGIN_TAG };
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },

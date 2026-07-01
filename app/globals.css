@@ -29,6 +29,18 @@
   --ring: rgba(14, 159, 110, 0.45);
   --shadow: 0 12px 32px -8px rgba(15, 23, 34, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.6);
   --shadow-lg: 0 24px 60px -12px rgba(15, 23, 34, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.8);
+  /* ── Named elevation scale (see docs/design/visual-system.md) ──────────────
+     Three tiers pair a shadow with a backdrop-blur so glass depth is consistent
+     instead of ad-hoc. `surface` = resting cards, `raised` = popovers/menus,
+     `overlay` = modals/palette. `--blur-scrim` is the dimmed backdrop behind an
+     overlay (formerly the arbitrary 2px/3px bracket backdrop-blur values). */
+  --elev-surface-shadow: var(--shadow);
+  --elev-surface-blur: 4px;
+  --elev-raised-shadow: var(--shadow);
+  --elev-raised-blur: 12px;
+  --elev-overlay-shadow: var(--shadow-lg);
+  --elev-overlay-blur: 40px;
+  --blur-scrim: 2px;
   color-scheme: light;
 }
 
@@ -196,6 +208,31 @@ body::after {
 
 .boot-strip-glow {
   animation: boot-strip 1.15s ease-in-out infinite;
+}
+
+/* ── Named elevation utilities ─────────────────────────────────────────────
+   Pair a shadow + backdrop-blur per tier so glass surfaces stay consistent.
+   Prefer these over ad-hoc arbitrary-bracket shadow/backdrop-blur combinations.
+   Documented in docs/design/visual-system.md. */
+.elev-surface {
+  box-shadow: var(--elev-surface-shadow);
+  backdrop-filter: blur(var(--elev-surface-blur));
+  -webkit-backdrop-filter: blur(var(--elev-surface-blur));
+}
+.elev-raised {
+  box-shadow: var(--elev-raised-shadow);
+  backdrop-filter: blur(var(--elev-raised-blur));
+  -webkit-backdrop-filter: blur(var(--elev-raised-blur));
+}
+.elev-overlay {
+  box-shadow: var(--elev-overlay-shadow);
+  backdrop-filter: blur(var(--elev-overlay-blur));
+  -webkit-backdrop-filter: blur(var(--elev-overlay-blur));
+}
+/* Dimmed backdrop scrim behind overlays (replaces the 2px/3px bracket blurs). */
+.backdrop-blur-scrim {
+  backdrop-filter: blur(var(--blur-scrim));
+  -webkit-backdrop-filter: blur(var(--blur-scrim));
 }
 
 .skeleton {

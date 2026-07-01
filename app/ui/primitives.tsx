@@ -4,6 +4,16 @@ import { HelpCircle } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "./cn";
 
+/* ── Icon size scale ─────────────────────────────────────────────────────────
+ * Lucide icon `size=` values are collapsed to a 3-step scale so icon weight
+ * stays consistent across the app. Prefer `ICON.sm|md|lg` over raw numbers.
+ * Documented in docs/design/visual-system.md.
+ *   sm (14) — inline/dense: chips, table cells, tight button glyphs
+ *   md (16) — default: buttons, panel-header icons, most controls
+ *   lg (20) — prominent: modal-header icons, empty-state glyphs
+ */
+export const ICON = { sm: 14, md: 16, lg: 20 } as const;
+
 /* ── Button ──────────────────────────────────────────────────────────────── */
 type ButtonVariant = "primary" | "ghost" | "subtle" | "danger" | "accentSoft";
 type ButtonSize = "sm" | "md";
@@ -332,7 +342,7 @@ function HelpTip({
         }}
         className="inline-flex h-6 w-6 touch-manipulation items-center justify-center rounded-md text-faint transition-colors hover:bg-surface-2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] max-sm:h-8 max-sm:w-8"
       >
-        <HelpCircle size={13} aria-hidden="true" />
+        <HelpCircle size={ICON.sm} aria-hidden="true" />
       </button>
       {open && (
         <span
