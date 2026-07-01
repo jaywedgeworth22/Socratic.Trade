@@ -245,8 +245,8 @@ dropping the `confidenceScore` check. If the gate is removed, also drop the
 now-dead `tuning.redTeamConvictionThreshold` policy field and its Settings UI
 slider (`app/dashboard-client.tsx:5296-5298`) — see the cross-file trap in §10.
 
-> **CONFIRM-POINT (flagged for the user):** removing the conviction gate
-> entirely vs. keeping a (default-off) gate. See [§9](#9-open-decisions).
+> **DECIDED (2026-07-01):** remove the conviction gate entirely (run on all
+> openings). See [§9](#9-decisions) O2.
 
 **Latency, not just dollars.** Universal coverage multiplies the number of
 adversary calls per run, and the debate loop is today a **sequential
@@ -600,14 +600,21 @@ under the new hard-independence rule — not silently reused as the Green model
 
 ---
 
-## 9. Open decisions
+## 9. Decisions
 
-| # | Decision | Options | Recommendation |
+> **Only O1 (naming) is genuinely open** — deferred by the owner. **O2, O3, and
+> O4 were decided in discussion (2026-07-01)** and are marked **DECIDED** below;
+> the last column records the agreed answer, not an unresolved choice. The single
+> genuinely-new item is O3's pure-simulator (`test/local`) sub-nuance, which
+> surfaced from the spec review rather than the design discussion and carries a
+> default that the owner can override.
+
+| # | Decision | Options | Resolution |
 |---|----------|---------|----------------|
-| **O1** | **Naming (DEFERRED by the user).** The consolidation makes naming *easier* — there is no second "Red Team" to disambiguate. This spec uses **"Adversary Review"** as a working placeholder consistently across all touch points. | On the table: **"Conviction Check"**, **"Final Sanity Check"**, **"High-Conviction Safeguard"**, **"Second-Opinion Gate"**. | **Do not pick during implementation.** Note the rename scope: the persisted `redTeamLlmModel` field, `redTeamProvider`, `debateProposal`, `RED_TEAM_*` constants, UI labels, and ~15+ call sites across 4 source files + 3 test files — a repo-wide find/replace **plus a DB-value migration** for any saved policy rows if the persisted field is renamed. |
-| **O2** | **Universal vs. conviction-gated coverage (CONFIRM-POINT).** §3.6 recommends removing the conviction gate and running on all openings. | Remove gate entirely; **or** keep a default-off gate. | **Recommend: remove, AND run the openings' adversary calls concurrently** (§3.6) so universal coverage doesn't extend the scheduler-lock hold. Cost (~$0.07/day) and — with concurrency — latency both stay negligible. Confirm before deleting `tuning.redTeamConvictionThreshold` + its UI. |
-| **O3** | **`test/local` on adversary-unavailable.** §3.7. | Route `test/local` through `requiresHumanReview` too (one visibility path); **or** keep auto-filling with a loud flag wired separately into the `fill` notification + proposal row. | **Recommend: route through `requiresHumanReview`** so the §5 badge / flag / persisted-reason path covers all three modes with one code path; the auto-fill+flag option needs duplicate wiring and is easy to leave invisible. |
-| **O4** | **Blank-adversary behavior when no second key exists.** §3.8a. | (a1) treat as unconfigured → fail-closed; **or** reuse same-provider model with a Settings warning only. | **Recommend: (a1) fail-closed**, since the hard rule forbids exact model equality; the same-provider *different-model* case is allowed but warned. |
+| **O1** | **Naming (DEFERRED by the user).** The consolidation makes naming *easier* — there is no second "Red Team" to disambiguate. This spec uses **"Adversary Review"** as a working placeholder consistently across all touch points. | On the table: **"Conviction Check"**, **"Final Sanity Check"**, **"High-Conviction Safeguard"**, **"Second-Opinion Gate"**. | **OPEN — deferred by owner. Do not pick during implementation.** Note the rename scope: the persisted `redTeamLlmModel` field, `redTeamProvider`, `debateProposal`, `RED_TEAM_*` constants, UI labels, and ~15+ call sites across 4 source files + 3 test files — a repo-wide find/replace **plus a DB-value migration** for any saved policy rows if the persisted field is renamed. |
+| **O2** | **Universal vs. conviction-gated coverage (CONFIRM-POINT).** §3.6 recommends removing the conviction gate and running on all openings. | Remove gate entirely; **or** keep a default-off gate. | **DECIDED (2026-07-01): remove the gate — run on all openings**, AND run the openings' adversary calls concurrently (§3.6) so universal coverage doesn't extend the scheduler-lock hold. Cost (~$0.07/day) and — with concurrency — latency both stay negligible. Concurrency was a spec-review addition, not a reopening. Deleting `tuning.redTeamConvictionThreshold` + its UI follows. |
+| **O3** | **`test/local` on adversary-unavailable.** §3.7. | Route `test/local` through `requiresHumanReview` too (one visibility path); **or** keep auto-filling with a loud flag wired separately into the `fill` notification + proposal row. | **DECIDED core (never-silent + fail-closed in broker modes). Sub-nuance is NEW (from spec review) — default: route `test/local` through `requiresHumanReview`** so the §5 badge / flag / persisted-reason path covers all three modes with one code path; the auto-fill+flag option needs duplicate wiring and is easy to leave invisible. Owner may override to keep the pure simulator frictionless. |
+| **O4** | **Blank-adversary behavior when no second key exists.** §3.8a. | (a1) treat as unconfigured → fail-closed; **or** reuse same-provider model with a Settings warning only. | **DECIDED (2026-07-01): (a1) fail-closed** — follows from the agreed independence rule (different model required, different company preferred not forced); the same-provider *different-model* case is allowed but warned. |
 
 ---
 
