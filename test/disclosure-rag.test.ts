@@ -112,6 +112,34 @@ describe("disclosureRagEnabled()", () => {
     const { disclosureRagEnabled } = await import("../src/lib/web-sources/disclosure-rag");
     expect(disclosureRagEnabled()).toBe(true);
   });
+
+  // R6 (2026-07-01 RAG backlog): FIXES the operator trap the previous version of this test
+  // documented. disclosureRagEnabled() previously required the EXACT string "on" — an operator
+  // who reasonably set RAG_EMBED_DISCLOSURES=true got a SILENT no-op, unlike every other RAG flag
+  // in this app (VECTOR_ENABLE_RERANK, HYBRID_RETRIEVAL, VECTOR_ASOF_STRICT), which all accept
+  // "1"/"true"/"on"/"yes". disclosureRagEnabled() now routes through the shared envFlagOn parser,
+  // so it accepts the same vocabulary as every other RAG flag. This is an intentional, SAFE-
+  // DIRECTION behavior change (an operator setting any of these values was already trying to turn
+  // disclosures ON) — noted explicitly in docs/rollouts/2026-07-01-rag-backlog.md because it can
+  // trigger real Voyage/Pinecone embedding cost for an operator who was unknowingly relying on the
+  // old exact-match quirk to silently no-op.
+  it("accepts 'true'/'1'/'yes'/'on' (case/whitespace-insensitive) — the same vocabulary as every other RAG flag", async () => {
+    for (const value of ["true", "1", "yes", "TRUE", "ON", " on ", "YES"]) {
+      process.env.RAG_EMBED_DISCLOSURES = value;
+      vi.resetModules();
+      const { disclosureRagEnabled } = await import("../src/lib/web-sources/disclosure-rag");
+      expect(disclosureRagEnabled(), `RAG_EMBED_DISCLOSURES="${value}" should enable disclosures`).toBe(true);
+    }
+  });
+
+  it("fails closed on garbage/unrecognized values", async () => {
+    for (const value of ["enabled", "please", "2"]) {
+      process.env.RAG_EMBED_DISCLOSURES = value;
+      vi.resetModules();
+      const { disclosureRagEnabled } = await import("../src/lib/web-sources/disclosure-rag");
+      expect(disclosureRagEnabled(), `RAG_EMBED_DISCLOSURES="${value}" should NOT enable disclosures`).toBe(false);
+    }
+  });
 });
 
 describe("embedDisclosures() — flag OFF", () => {

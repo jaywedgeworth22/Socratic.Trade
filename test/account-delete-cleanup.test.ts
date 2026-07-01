@@ -46,4 +46,23 @@ describe("deleteConnectedAccount — FK pragma + cascade cleanup", () => {
     const { deleteConnectedAccount } = await import("../src/lib/db");
     expect(deleteConnectedAccount("does-not-exist", "local")).toBe(false);
   });
+
+  // Codex finding #8: account deletion must purge the account's learning-mutation ledger rows.
+  it("purges the account's learning_mutations ledger rows when the account is deleted", async () => {
+    const db = await import("../src/lib/db");
+    const acct = "LEDGERDEL";
+    const accId = randomUUID();
+    db.upsertConnectedAccount({
+      id: accId, userId: "local", broker: "alpaca", environment: "paper",
+      accountNumber: acct, label: "x", isActive: true
+    });
+    db.insertLearningMutation({
+      userId: "local", connectedAccountId: accId, subsystem: "scoring_weights",
+      beforeState: { scoringWeights: { a: 1 } }, afterState: { scoringWeights: { a: 2 } }
+    });
+    expect(db.listLearningMutations("local", { connectedAccountId: accId }).length).toBe(1);
+
+    expect(db.deleteConnectedAccount(accId, "local")).toBe(true);
+    expect(db.listLearningMutations("local", { connectedAccountId: accId }).length).toBe(0);
+  });
 });

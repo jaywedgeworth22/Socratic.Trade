@@ -18,6 +18,7 @@ const DELETE_TABLES_BY_USER_ID = [
   "user_settings",
   "skipped_candidate_counterfactuals",
   "counterfactual_learning_watermarks",
+  "learning_mutations",
   "market_data_demands",
   "user_watchlist",
   "price_alerts",
