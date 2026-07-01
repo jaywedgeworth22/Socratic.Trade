@@ -381,6 +381,39 @@ The paper/test execution-cost model now also debits EXIT fills booked by `synthe
 `order-replacement.ts` (previously they inserted raw-price exits with no cost), so the learning loop's
 realized edge is net-of-cost on both legs — not just entries.
 
+#### E.5 Unified learning-mutation ledger + admin revert (follow-on P0-4 — ledger ALWAYS-ON, revert admin-only)
+Every autonomous learning mutation now lands in ONE canonical append-only ledger (`learning_mutations`
+table; CRUD in `src/lib/db-learning-ledger.ts`; orchestration in `src/lib/learning-ledger.ts`). Each row
+carries the subsystem (`scoring_weights` today), the before/after full weight vectors, the trigger/run id,
+the OOS/statistical evidence, the authorizing flag, and a timestamp. `applyAutonomousWeightTuning` records
+here (capturing `before` ATOMICALLY, immediately before the `setPolicy` write) and still writes the legacy
+`auto_weight_apply` audit row for dashboard back-compat. `revertLearningMutation` restores the prior vector
+via `setPolicy` ONLY (keeping `account_strategy_state` + the active-profile mirror in sync), scoped by
+`(user, account, subsystem)`, and marks the row reverted (idempotent). This GENERALIZES the #296
+tuning-specific revert — it does not duplicate it. Recording is passive/always-on (audit trail only — it
+changes no trading behavior). The one-click revert route `POST /api/admin/learning-ledger` is `requireAdmin`
+(this repo has prior IDOR history); `GET` lists entries for the caller's active account.
+
+#### E.6 Paired-t significance on the autonomous OOS gate (follow-on P0-2 — DEFAULT no-op)
+The autonomous OOS gate (E.1) is extended with a proper effect-size + PAIRED-t significance test on the
+per-fold IC deltas. Because the candidate and baseline composite ICs are measured on the SAME test fold and
+are highly correlated, the difference's standard error comes from the PAIRED per-date IC-difference series
+(`pairedICDiffStats` in `backtest.ts`, surfaced on `OOSResult.pairedICDiff`), NOT from differencing two
+independent ICIRs. Two default-preserving knobs: `policy.tuning.minOosICImprovement` (default 0 → today's
+env `AUTO_TUNE_MIN_IC_DELTA` margin) raises the IC-delta MARGIN; `policy.tuning.minOosPairedTStat` (default 0
+= paired-t OFF) requires `pairedN ≥ 2 && pairedT ≥ threshold`. Multiplicity control across repeated
+auto-applies (Šidák/Bonferroni, expansion-doc D-1) is explicitly deferred — it earns teeth only once a
+per-account trial counter exists, and with the paired-t defaulting off there is nothing to correct today.
+
+#### E.7 Fail-closed tuning-config invariant guard (follow-on P0-3 — validator ALWAYS-ON, gating autonomous-only)
+A pure always-on validator (`validateTuningInvariants` in `src/lib/tuning-invariants.ts`) checks a small set
+of HARD safety couplings in `policy.tuning`: sample gates > 0; `sizingFloorPct ≤ sizingCeilingPct`;
+`autoApplyWeights ⇒ oosWithholdUnvalidated` (unless the explicit `autoApplyOverrideUnvalidated` escape
+hatch); `calibrationSizing ⇒ a positive per-band sample gate`. The AUTONOMOUS apply path calls it at the TOP
+and fails CLOSED — on any violation it SKIPS the apply, writes an `auto_weight_apply_skipped` audit row, and
+returns without throwing (a throw would wedge the scheduler tick). The MANUAL tune route surfaces the same
+violations as non-blocking `tuningConfigWarnings` for human review.
+
 ## 4. Test Plan
 - **Context/Outcome Fixture:** Seed buy/sell fills and assert that `entryMarketRegime`, `mae`, and `mfe` are accurately captured and calculated.
 - **Post-Mortem Generation:** Test the async reflection LLM prompt to ensure it synthesizes raw outcomes into a concise paragraph.

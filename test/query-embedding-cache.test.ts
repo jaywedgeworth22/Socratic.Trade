@@ -52,7 +52,11 @@ vi.mock("../src/lib/rag-metering", () => ({
   meterPineconeQuery: vi.fn(),
   meterPineconeUpsert: vi.fn(),
   meterRerank: vi.fn(),
-  recordRagUsage: vi.fn()
+  recordRagUsage: vi.fn(),
+  // Merged retrieveContextDetailed → rankPool consults these R5 telemetry helpers; default-off keeps them inert.
+  retrievalTelemetryEnabled: vi.fn(() => false),
+  recordRetrievalQuality: vi.fn(),
+  hashQuery: vi.fn((q: string) => q)
 }));
 
 beforeEach(() => {
@@ -62,8 +66,9 @@ beforeEach(() => {
   process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
   delete process.env.PINECONE_INDEX_NAME;
-  delete process.env.VECTOR_QUERY_EMBED_CACHE;
-  delete process.env.VECTOR_QUERY_EMBED_CACHE_SIZE;
+  delete process.env.RAG_QUERY_EMBED_CACHE;
+  delete process.env.RAG_QUERY_EMBED_CACHE_MAX;
+  delete process.env.RAG_QUERY_EMBED_CACHE_TTL_MS;
   mocks.resolveApiKey.mockImplementation((service: string) => {
     if (service === "pinecone") return process.env.PINECONE_API_KEY;
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
@@ -145,8 +150,8 @@ describe("query-embedding LRU cache (G8b)", () => {
     expect(mocks.embed.mock.calls[1][0]).toMatchObject({ inputType: "query" });
   });
 
-  it("can be disabled via VECTOR_QUERY_EMBED_CACHE=off, restoring one embed call per retrieval", async () => {
-    process.env.VECTOR_QUERY_EMBED_CACHE = "off";
+  it("can be disabled via RAG_QUERY_EMBED_CACHE=off, restoring one embed call per retrieval", async () => {
+    process.env.RAG_QUERY_EMBED_CACHE = "off";
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
 
     await retrieveContextDetailed("AAPL guidance", "AAPL", 2, "local");
@@ -155,8 +160,8 @@ describe("query-embedding LRU cache (G8b)", () => {
     expect(mocks.embed).toHaveBeenCalledTimes(2);
   });
 
-  it("evicts the least-recently-used entry once VECTOR_QUERY_EMBED_CACHE_SIZE is exceeded", async () => {
-    process.env.VECTOR_QUERY_EMBED_CACHE_SIZE = "1";
+  it("evicts the least-recently-used entry once RAG_QUERY_EMBED_CACHE_MAX is exceeded", async () => {
+    process.env.RAG_QUERY_EMBED_CACHE_MAX = "1";
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
 
     await retrieveContextDetailed("query one", "AAPL", 2, "local"); // embed #1, cached
@@ -167,7 +172,7 @@ describe("query-embedding LRU cache (G8b)", () => {
   });
 
   it("normalizeQueryCacheKey lowercases and collapses whitespace", async () => {
-    const { normalizeQueryCacheKey } = await import("../src/lib/vector-db");
+    const { normalizeQueryCacheKey } = await import("../src/lib/rag/query-embed-cache");
     expect(normalizeQueryCacheKey("  AAPL   Guidance ")).toBe("aapl guidance");
     expect(normalizeQueryCacheKey("aapl guidance")).toBe("aapl guidance");
   });

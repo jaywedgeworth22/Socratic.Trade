@@ -55,6 +55,21 @@ filling the missing pieces.
 > `strategy.ts` god-module split and interval-scheduler budget wiring. Verify quartet
 > green locally (1720 tests); see `docs/rollouts/2026-07-01-{ux-ia-aesthetics,
 > security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
+> 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
+> Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
+> (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
+> `db-learning-ledger.ts` CRUD + `learning-ledger.ts` record/revert) that GENERALIZES #296's
+> tuning-specific audited revert into one ledger + one `requireAdmin` revert route
+> (`/api/admin/learning-ledger`); (P0-2) effect-size + PAIRED-t significance on the autonomous
+> OOS gate (pure `pairedICDiffStats` on the shared-fold per-date IC-difference series;
+> `policy.tuning.minOosICImprovement` + `minOosPairedTStat`, both default no-op); (P0-3) a
+> FAIL-CLOSED tuning-config invariant guard (`tuning-invariants.ts`) that skips (never throws)
+> the autonomous apply on a bad config and warns (never blocks) the manual tune route. Ledger
+> RECORDING is passive/always-on (audit trail only); every behavior-changing knob defaults
+> off/no-op. Red-team/inline-Bear untouched. Verify quartet green (tsc / lint 0-err / 1793
+> tests / build). See `docs/rollouts/2026-07-01-learning-loop-followon.md` +
+> `docs/phase-7-strategy.md` §3.E.5–E.7.
+>
 > 2026-07-01 (`claude/competent-elion-c82938`): Workstream C2 — API Usage Monitor
 > integration. Wired App B's usage ledgers (`recordLlmUsage`/`recordRagUsage`) +
 > market-data/broker call paths to push real usage/cost to `usage.jays.services`
@@ -68,6 +83,23 @@ filling the missing pieces.
 > `docs/usage-monitor-integration.md` +
 > `docs/rollouts/2026-07-01-usage-monitor-integration.md`.
 
+> 2026-07-01 (`agent/claude-backlog-c-rag`): RAG expansion backlog, broader pass - implemented
+> all remaining P1/P2 items from `docs/reviews/2026-07-01-rag-knowledge-expansion.md`: **R5**
+> consolidated per-retrieval telemetry (`recordRetrievalQuality()`, hashed query, default off);
+> **R6** shared `envFlagOn` parser (fixes `RAG_EMBED_DISCLOSURES` to accept `true/1/yes`); **R7**
+> index-metric assertion at bootstrap (warn+audit only, never throws); **R9** query-embedding LRU
+> (vector-only, never Pinecone results, default off); **R10** `content_hash` dedup for
+> `storeContexts` (opt-in `dedupKeyPrefix`, wired into 8-K summary + disclosure ingesters);
+> **R11** faithfulness/citation-grounding eval (`scripts/eval/faithfulness.ts`, deterministic +
+> optional off-by-default LLM judge); **R12** centralized default cosine floor
+> (`applyDefaultFloors`); **R13** provenance-complete citations (additive `doc_type`/`section`) +
+> optional advisory `isStale` label, backend/payload only; **R14** near-duplicate suppression
+> (Jaccard-shingle, opt-in); **R15** offline corpus coverage & freshness report
+> (`scripts/eval/corpus-coverage.ts`); **R16** per-run RAG budget ceiling (degrades rerank/hybrid
+> only, never core recall); **R17** fixed train/serve text skew (`VECTOR_EMBED_CLEAN_TEXT`,
+> embeds clean text, stored/cited text unchanged). R3/R8 already shipped (#297/#299), verified not
+> re-implemented. Every item default-off/opt-in, proven byte-identical when unset. Read/
+> retrieval-only, no UI touched. See `docs/rollouts/2026-07-01-rag-backlog.md`.
 > 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
 > Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
 > `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised

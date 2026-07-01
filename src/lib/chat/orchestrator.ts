@@ -12,7 +12,7 @@ import { getBrokerGateway } from "../broker";
 import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
-import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
+import { citationStalenessEnabled, defaultMinScore, isStale, retrieveContextDetailed } from "../vector-db";
 import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { getEnrichmentProvider } from "../data-providers";
@@ -186,7 +186,21 @@ export function buildProductionDeps(): ToolDeps {
       };
       const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, options);
       // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).
-      return chunks.map((c) => ({ chunk_id: c.id, text: c.text, source: c.source ?? "kb", as_of: c.as_of, score: c.score, url: c.url }));
+      // R13 (2026-07-01 RAG backlog): additive doc_type/section/url provenance keys + an optional
+      // advisory isStale label (RAG_CITATION_STALENESS, default off). Backend/payload only — no UI
+      // consumes these yet; a parallel dashboard-redesign thread owns any citation rendering.
+      const staleness = citationStalenessEnabled();
+      return chunks.map((c) => ({
+        chunk_id: c.id,
+        text: c.text,
+        source: c.source ?? "kb",
+        as_of: c.as_of,
+        score: c.score,
+        url: c.url,
+        doc_type: c.doc_type,
+        section: c.section,
+        ...(staleness ? { isStale: isStale(c.as_of, c.doc_type) } : {})
+      }));
     },
     createAlert(userId, input) {
       const result = alertsCreateAlert(userId, input);

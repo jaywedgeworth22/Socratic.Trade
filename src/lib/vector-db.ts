@@ -2,9 +2,13 @@ import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-da
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
-import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { envFlagOn } from "./rag/env-flag";
 import { fuseHybrid } from "./rag/hybrid";
-import { meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank } from "./rag-metering";
+import { dedupeSimilar } from "./rag/dedupe-similar";
+import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
+import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
+import { hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
 import { isOverLlmBudget } from "./llm-budget";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
@@ -124,6 +128,10 @@ function embedRetryDelayMs(): number {
 // default; set VECTOR_ENABLE_RERANK=off to disable. Fails safe to cosine order on any error.
 const DEFAULT_RERANK_MODEL = "rerank-2.5";
 function rerankEnabled(): boolean {
+  // Rerank is opt-OUT (default true), unlike every other RAG flag which is opt-in (default
+  // false) — so this can't route through envFlagOn's truthy-set/default_ shape directly. Keep
+  // its own off-set check, but reuse envFlagOn's accepted vocabulary so "off"/"no"/"false"/"0"
+  // stay consistent across every RAG flag in this file.
   const v = String(process.env.VECTOR_ENABLE_RERANK ?? "true").trim().toLowerCase();
   return !["0", "false", "off", "no"].includes(v);
 }
@@ -138,8 +146,7 @@ function overFetchK(limit: number): number {
 /** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
  *  When OFF, the retrieval path is byte-for-byte the current dense-only flow. */
 function hybridRetrievalEnabled(): boolean {
-  const v = String(process.env.HYBRID_RETRIEVAL ?? "false").trim().toLowerCase();
-  return ["1", "true", "on", "yes"].includes(v);
+  return envFlagOn("HYBRID_RETRIEVAL", false);
 }
 
 /**
@@ -151,8 +158,36 @@ function hybridRetrievalEnabled(): boolean {
  * point-in-time guard active at all) or when this flag is off, so default retrieval is unaffected.
  */
 export function asOfStrictEnabled(): boolean {
-  const v = String(process.env.VECTOR_ASOF_STRICT ?? "false").trim().toLowerCase();
-  return ["1", "true", "on", "yes"].includes(v);
+  return envFlagOn("VECTOR_ASOF_STRICT", false);
+}
+
+/**
+ * R17 (2026-07-01 RAG backlog): fix train/serve text skew. `storeContexts` embeds a literal
+ * `[Published: ...]` prefix (and `storeDocument` bakes a `context_header` into stored text), but
+ * the QUERY embedding is the raw query with none of that boilerplate — a systematic query/document
+ * skew in Voyage's embedding space that dilutes what the cosine floor actually measures.
+ *
+ * When ON, `storeContexts` embeds CLEAN text (provenance boilerplate stripped) while the STORED
+ * metadata text (used for citations/display) is unchanged — `matchToChunk` already reads
+ * `acceptance_datetime`/`timestamp` from metadata directly, so no retrieval-side behavior depends
+ * on the boilerplate being embedded.
+ *
+ * Default OFF: flipping this changes the embedding-space representation of every NEWLY-indexed
+ * vector, so it invalidates direct comparability against vectors indexed before the flag was
+ * enabled (a full reindex is the clean way to move the whole corpus onto one representation —
+ * see the rollout note for the decision on transitional mixed-representation vs scheduled reindex).
+ */
+export function embedCleanTextEnabled(): boolean {
+  return envFlagOn("VECTOR_EMBED_CLEAN_TEXT", false);
+}
+
+/**
+ * Strip the `[Published: YYYY-MM-DD] ` boilerplate prefix `storeContexts` prepends, if present.
+ * Pure string operation — used ONLY to build the text handed to Voyage for embedding when
+ * `VECTOR_EMBED_CLEAN_TEXT` is on; the stored/cited text is never modified by this.
+ */
+export function stripPublishedPrefix(text: string): string {
+  return text.replace(/^\[Published: \d{4}-\d{2}-\d{2}\]\s*/, "");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -196,6 +231,40 @@ function getClients(userId: string = "local") {
   return { pc: clients.pc, voyage: clients.voyage, initCacheKey: `${pineconeKey}:${indexName()}` };
 }
 
+// R7 (2026-07-01 RAG backlog): cache of already-asserted index metrics, keyed the same way as
+// indexInitPromises, so `describeIndex` is called AT MOST ONCE per (key, index) pair for the
+// lifetime of the process — not once per retrieval/store call.
+const indexMetricChecked = new Set<string>();
+
+/**
+ * R7 — index-metric assertion at bootstrap. Every cosine floor (VECTOR_MIN_SCORE, the rerank
+ * relevance floor) is meaningless if the Pinecone index's distance metric isn't actually
+ * 'cosine' — EMBEDDING_DIMENSION is asserted (createIndex specifies it), but the metric never
+ * was. Calls `describeIndex` once (cached via indexMetricChecked) and WARNS (audit + console),
+ * NEVER throws — a legitimate non-cosine index or a transient control-plane failure on this
+ * best-effort check must not take down retrieval/storage.
+ */
+async function assertIndexMetric(pc: Pinecone, initCacheKey: string): Promise<void> {
+  if (indexMetricChecked.has(initCacheKey)) return;
+  indexMetricChecked.add(initCacheKey); // mark first — a failure here must not retry forever
+  try {
+    const model = await pc.describeIndex(indexName());
+    const metric = (model as { metric?: unknown })?.metric;
+    if (metric != null && metric !== "cosine") {
+      console.warn(`[vector-db] Pinecone index "${indexName()}" metric is "${String(metric)}", expected "cosine" — cosine-scale floors (VECTOR_MIN_SCORE, rerank relevance floor) may be meaningless against this index.`);
+      try {
+        audit("vector_index_metric_mismatch", { indexName: indexName(), metric: String(metric) }, "local");
+      } catch {
+        // best-effort audit only
+      }
+    }
+  } catch (err) {
+    // describeIndex itself failing (network, permissions, index not found yet) is NOT the
+    // condition this guard checks for — swallow silently, this is a best-effort sanity check.
+    console.warn(`[vector-db] Could not verify index metric for "${indexName()}":`, err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function ensureIndex(pc: Pinecone, initCacheKey: string): Promise<void> {
   const cached = indexInitPromises.get(initCacheKey);
   if (cached) return cached;
@@ -216,6 +285,13 @@ async function ensureIndex(pc: Pinecone, initCacheKey: string): Promise<void> {
         if (!/already exists|409|conflict/i.test(message)) throw error;
       }
       await sleep(indexReadyWaitMs());
+    }
+    // Fire-and-forget: never await this on the critical path and never let it fail ensureIndex.
+    // assertIndexMetric already never throws, but the extra guard costs nothing and documents intent.
+    try {
+      await assertIndexMetric(pc, initCacheKey);
+    } catch {
+      // assertIndexMetric never throws; this is belt-and-suspenders only.
     }
   })();
 
@@ -333,93 +409,6 @@ async function embedDocumentsWithRetry(
   return embedWithRetry(voyage, input, "document");
 }
 
-// ── Query-embedding LRU cache (G8b) ────────────────────────────────────────
-// Small in-process cache for the single-query embed call in retrieveContextDetailed. Document/
-// upsert embeddings are NEVER cached (only the "query" inputType path below uses this). Keyed by
-// normalized query text so trivial whitespace/casing variants of the same question share a hit.
-// Bounded LRU (default 128 entries) — a Map preserves insertion order, so "touch on hit" is done by
-// delete+re-set, and eviction just deletes the oldest (first) key once over the bound.
-type EmbedResponse = Awaited<ReturnType<VoyageAIClient["embed"]>>;
-
-const DEFAULT_QUERY_EMBED_CACHE_SIZE = 128;
-
-function queryEmbedCacheSize(): number {
-  return Math.floor(numericEnv("VECTOR_QUERY_EMBED_CACHE_SIZE", DEFAULT_QUERY_EMBED_CACHE_SIZE, 0, 10_000));
-}
-
-function queryEmbedCacheEnabled(): boolean {
-  const v = String(process.env.VECTOR_QUERY_EMBED_CACHE ?? "true").trim().toLowerCase();
-  return !["0", "false", "off", "no"].includes(v) && queryEmbedCacheSize() > 0;
-}
-
-/** Normalize query text so "AAPL guidance", " aapl  guidance ", "AAPL GUIDANCE" share a cache entry. */
-export function normalizeQueryCacheKey(query: string): string {
-  return query.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-// One LRU per underlying Voyage client instance so cached embeddings never leak across distinct
-// API keys/tenants (getClients() already memoizes clients per key-pair, so this keys naturally).
-// Map (not WeakMap) so tests can enumerate/clear it deterministically between runs.
-const queryEmbedCaches = new Map<VoyageAIClient, Map<string, EmbedResponse>>();
-
-function cacheFor(voyage: VoyageAIClient): Map<string, EmbedResponse> {
-  let cache = queryEmbedCaches.get(voyage);
-  if (!cache) {
-    cache = new Map();
-    queryEmbedCaches.set(voyage, cache);
-  }
-  return cache;
-}
-
-/** Test-only: drop all cached query embeddings (all clients). */
-export function clearQueryEmbedCache(): void {
-  queryEmbedCaches.clear();
-}
-
-/**
- * Embed a single retrieval QUERY, served from a bounded per-client LRU cache when enabled
- * (default on, 128 entries — set VECTOR_QUERY_EMBED_CACHE=off or VECTOR_QUERY_EMBED_CACHE_SIZE=0 to
- * disable). Only ever called with inputType "query" — document/upsert embeddings always go through
- * embedDocumentsWithRetry uncached.
- *
- * Returns `cached` so the caller can skip usage metering on a hit — a cache hit made NO Voyage
- * request, so metering it would insert phantom rag_usage rows + estimated cost and corrupt the
- * cost dashboards the cache is meant to shrink.
- */
-async function embedQueryCached(
-  voyage: VoyageAIClient,
-  query: string
-): Promise<{ response: EmbedResponse; cached: boolean }> {
-  if (!queryEmbedCacheEnabled()) return { response: await embedWithRetry(voyage, [query], "query"), cached: false };
-
-  const cache = cacheFor(voyage);
-  const key = normalizeQueryCacheKey(query);
-  const hit = cache.get(key);
-  if (hit) {
-    // Touch: move to most-recently-used position.
-    cache.delete(key);
-    cache.set(key, hit);
-    return { response: hit, cached: true };
-  }
-
-  const response = await embedWithRetry(voyage, [query], "query");
-  // Only cache a VALID embedding. A malformed response (wrong dimension / NaN) that the caller's
-  // integrity guard rejects must NOT poison the LRU — otherwise every repeat of this normalized query
-  // serves the bad cached vector and returns no context without ever retrying Voyage, so a transient
-  // bad embed sticks until eviction/restart. On an invalid response, skip caching so the next call
-  // re-hits Voyage; still return it so the caller rejects + audits it exactly as on the uncached path.
-  if (isValidEmbedding(response.data?.[0]?.embedding)) {
-    cache.set(key, response);
-    const maxSize = queryEmbedCacheSize();
-    while (cache.size > maxSize) {
-      const oldestKey = cache.keys().next().value;
-      if (oldestKey === undefined) break;
-      cache.delete(oldestKey);
-    }
-  }
-  return { response, cached: false };
-}
-
 /**
  * Reorder Pinecone matches by Voyage cross-encoder relevance and keep the top `topK`. Pure
  * best-effort: on any error (rate limit, unsupported model, empty docs) returns the input order
@@ -446,6 +435,7 @@ export async function rerankMatches(voyage: VoyageAIClient, query: string, match
       truncation: true
     });
     meterRerank(query, documents, rerankModel(), userId);
+    recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
     const data = resp.data ?? [];
     if (data.length === 0) return matches;
     const reordered: any[] = [];
@@ -483,6 +473,23 @@ export interface StoreContextsOptions {
    * chunk (e.g. a table kept whole by chunkDocument) isn't silently re-truncated here.
    */
   maxChars?: number;
+  /**
+   * R10 (2026-07-01 RAG backlog): opt-in content_hash dedup for THIS storeContexts call. When set,
+   * documents whose trimmed-text SHA-256 (the same `hashContent` helper `chunk.ts`/`storeDocument`
+   * already use for dedup) is already present in `document_chunks` are skipped entirely — no Voyage
+   * embed, no Pinecone upsert. Newly-indexed documents are recorded into `document_chunks` under a
+   * synthetic `source` of `${dedupKeyPrefix}:<doc.metadata.source>` so this call's dedup namespace
+   * never collides with `storeDocument`'s own per-source hashes (the two dedup populations are
+   * intentionally kept in the same table but distinguishable by source prefix, since `document_chunks`
+   * is keyed on content_hash ALONE — a real collision on identical text across sources is the
+   * desired outcome: identical text truly doesn't need re-embedding twice).
+   *
+   * Default omitted/undefined = current behavior (always re-embeds), so `sec8k.ts`'s existing
+   * unconditional refresh cadence and any other unmigrated caller is completely unaffected.
+   * Keys on TEXT content, not accession/id — a genuinely-updated filing (different text) still
+   * re-embeds even if the accession/contextId is stable.
+   */
+  dedupKeyPrefix?: string;
 }
 
 /**
@@ -534,6 +541,43 @@ export async function storeContexts(
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
 
+  // R10 (2026-07-01 RAG backlog): opt-in content_hash dedup for this call, gated on
+  // `dedupKeyPrefix` being set. Reuses the same SHA-256-first-16 `hashContent` helper
+  // `storeDocument`/`chunk.ts` use, and the same `document_chunks` table/CRUD — keyed on the
+  // FINAL (post-trim) text of each document so a repeat call with byte-identical text (e.g. an
+  // unchanged 8-K summary re-embedded on every refresh cycle) is skipped before any Voyage/Pinecone
+  // call. Default (dedupKeyPrefix unset) = current behavior, always re-embeds.
+  const dedupPrefix = options?.dedupKeyPrefix;
+  let dedupHashes: Array<{ content_hash: string; symbol: string; source: string; chunk_id: string }> | undefined;
+  let documentsToStore = validDocuments;
+  let skippedByDedup = 0;
+  if (dedupPrefix) {
+    dedupHashes = validDocuments.map((doc) => ({
+      content_hash: hashContent(doc.text),
+      symbol: doc.metadata?.symbol ?? "",
+      source: `${dedupPrefix}:${doc.metadata?.source ?? ""}`,
+      chunk_id: contextId(doc, 0)
+    }));
+    const newHashes = filterNewDocumentChunks(dedupHashes);
+    const newHashSet = new Set(newHashes.map((h) => h.content_hash));
+    documentsToStore = validDocuments.filter((_doc, i) => newHashSet.has(dedupHashes![i]!.content_hash));
+    skippedByDedup = validDocuments.length - documentsToStore.length;
+    if (skippedByDedup > 0) {
+      console.log(`[vector-db] Content-hash dedup (storeContexts, prefix="${dedupPrefix}"): ${skippedByDedup}/${validDocuments.length} document(s) already indexed, skipping.`);
+    }
+    // Re-key dedupHashes/documentsToStore in lockstep so the later insertDocumentChunks call
+    // below can zip surviving documents back to their hashes without recomputing anything.
+    dedupHashes = documentsToStore.map((doc) => ({
+      content_hash: hashContent(doc.text),
+      symbol: doc.metadata?.symbol ?? "",
+      source: `${dedupPrefix}:${doc.metadata?.source ?? ""}`,
+      chunk_id: contextId(doc, 0)
+    }));
+  }
+  if (documentsToStore.length === 0) {
+    return { attempted: validDocuments.length, indexed: 0, skipped: true };
+  }
+
   const { pc, voyage, initCacheKey } = getClients(userId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
@@ -543,17 +587,27 @@ export async function storeContexts(
 
   let indexed = 0;
   let rejectedInvalidEmbeddings = 0;
+  // R10: content_hash of each document actually upserted (not rejected by the R2 integrity
+  // guard), keyed by identity against `documentsToStore` — only recorded into document_chunks
+  // (via insertDocumentChunks below) when dedup is active for this call.
+  const indexedDocIdentities = new Set<ContextDocument>();
   try {
     await ensureIndex(pc, initCacheKey);
     const index = pc.Index(indexName());
-    const batches = chunks(validDocuments, embedBatchSize());
+    const batches = chunks(documentsToStore, embedBatchSize());
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
       if (!batch) continue;
       if (batchIndex > 0) await sleep(embedBatchDelayMs());
-      const response = await embedDocumentsWithRetry(voyage, batch.map((doc) => doc.text));
-      meterEmbed(batch.map((doc) => doc.text));
+      // R17: embed CLEAN text (boilerplate stripped) when VECTOR_EMBED_CLEAN_TEXT is on — the
+      // STORED metadata text (used for citations/display, set below via cleanMetadata) is always
+      // the original (possibly boilerplate-prefixed) `document.text`, unaffected by this flag.
+      const embedInputs = embedCleanTextEnabled()
+        ? batch.map((doc) => stripPublishedPrefix(doc.text))
+        : batch.map((doc) => doc.text);
+      const response = await embedDocumentsWithRetry(voyage, embedInputs);
+      meterEmbed(embedInputs);
 
       const records: PineconeRecord<RecordMetadata>[] = [];
       response.data?.forEach((item, indexInBatch) => {
@@ -575,6 +629,7 @@ export async function storeContexts(
           values: embedding,
           metadata: cleanMetadata(document.metadata, document.text, vectorUserId)
         });
+        indexedDocIdentities.add(document);
       });
 
       if (records.length > 0) {
@@ -589,6 +644,21 @@ export async function storeContexts(
       audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
     }
     console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected: malformed embedding)` : ""}`);
+
+    // R10: record newly-indexed content hashes so a repeat storeContexts call with the same
+    // dedupKeyPrefix and byte-identical text skips re-embedding next time. Best-effort — a
+    // failure here must not fail the store (the record was already upserted to Pinecone).
+    if (dedupPrefix && dedupHashes && indexedDocIdentities.size > 0) {
+      const toRecord = documentsToStore
+        .map((doc, i) => (indexedDocIdentities.has(doc) ? dedupHashes![i] : undefined))
+        .filter((h): h is { content_hash: string; symbol: string; source: string; chunk_id: string } => h != null);
+      try {
+        insertDocumentChunks(toRecord);
+      } catch (err) {
+        console.warn("[vector-db] insertDocumentChunks failed (non-fatal, storeContexts dedup path):", err instanceof Error ? err.message : String(err));
+      }
+    }
+
     // Persist the outcome so RAG ingestion health is visible in the audit log / dashboard
     // instead of being swallowed to console (the original cause of the silent empty index).
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed });
@@ -734,6 +804,51 @@ export function isWithinAsOf(
   return t <= asOfMs;
 }
 
+/** Returns true when RAG_CITATION_STALENESS is truthy. Default OFF. */
+export function citationStalenessEnabled(): boolean {
+  return envFlagOn("RAG_CITATION_STALENESS", false);
+}
+
+/**
+ * R13 (2026-07-01 RAG backlog) — heuristic, ADVISORY-ONLY staleness horizons per doc_type. These
+ * are deliberately generous, documented, tunable defaults — NOT a validity judgment. A 10-K stays
+ * "fresh" far longer than an 8-K because it's an annual filing; a transcript sits in between.
+ * Override any horizon via env (days): RAG_STALENESS_DAYS_<DOC_TYPE_UPPERCASE_UNDERSCORED>.
+ */
+const DEFAULT_STALENESS_HORIZON_DAYS: Record<string, number> = {
+  "10-k": 400,
+  "10-q": 120,
+  "8-k": 90,
+  transcript: 120,
+  "congress-trade": 60,
+  "insider-filing": 90
+};
+const FALLBACK_STALENESS_HORIZON_DAYS = 180;
+
+function stalenessHorizonDays(docType: string | undefined): number {
+  const key = (docType ?? "").toLowerCase();
+  const envKey = `RAG_STALENESS_DAYS_${key.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+  const override = Number(process.env[envKey]);
+  if (Number.isFinite(override) && override > 0) return override;
+  return DEFAULT_STALENESS_HORIZON_DAYS[key] ?? FALLBACK_STALENESS_HORIZON_DAYS;
+}
+
+/**
+ * Heuristic recency label: true when `asOfIso` is older than the doc_type's staleness horizon.
+ * Returns `undefined` (not `false`) when there's no resolvable `asOfIso` to judge — an unknown
+ * age is NOT the same claim as "known to be fresh". ADVISORY ONLY: never gates retrieval, never
+ * feeds any numeric/sizing path — purely a recency label a future citation UI may choose to
+ * render. Callers must gate on `citationStalenessEnabled()` before calling this (kept as a
+ * separate pure function so it's independently unit-testable).
+ */
+export function isStale(asOfIso: string | undefined, docType: string | undefined): boolean | undefined {
+  if (!asOfIso) return undefined;
+  const t = Date.parse(asOfIso);
+  if (!Number.isFinite(t)) return undefined;
+  const ageDays = (Date.now() - t) / (24 * 60 * 60 * 1000);
+  return ageDays > stalenessHorizonDays(docType);
+}
+
 /**
  * Live Pinecone index stats — used by the reindex/diagnostic route so the operator can
  * confirm `totalVectorCount > 0` after a backfill instead of guessing.
@@ -826,6 +941,26 @@ export interface RetrieveOptions {
    * sets this. Has no effect when reranking is disabled or failed (no relevanceScore to filter on).
    */
   minRelevanceScore?: number;
+  /**
+   * R12 (2026-07-01 RAG backlog): when true (or RAG_APPLY_DEFAULT_FLOORS is truthy) AND `minScore`
+   * was NOT explicitly set, applies `defaultMinScore()` (VECTOR_MIN_SCORE, default 0.30) as the
+   * cosine floor instead of leaving it unset. `defaultMinScore()` has existed since before this
+   * item as a helper that only `strategy.ts`/`orchestrator.ts` remembered to call explicitly — any
+   * OTHER/new caller of `retrieveContextDetailed` silently got NO floor. This option closes that
+   * gap for new callers without changing either existing call site (both already pass `minScore`
+   * explicitly, so `options.minScore == null` is false for them and this option is a no-op).
+   * Floor-only: does NOT change reranking behavior on small pools (a full-pool result set is
+   * returned regardless of cosine ordering, so there was never a meaningful "run rerank on small
+   * pools" half to this item — see the RAG expansion doc R12 for why that half was dropped).
+   */
+  applyDefaultFloors?: boolean;
+  /**
+   * R14 (2026-07-01 RAG backlog): opt-in near-duplicate suppression (0-1 Jaccard-shingle
+   * threshold) applied after reranking/floors but before the final top-`limit` slice. See
+   * `RankPoolOptions.dedupeSimilarity` for the exact pipeline placement. Omitted = current
+   * behavior (no dedup pass, near-identical chunks can all appear in the final context).
+   */
+  dedupeSimilarity?: number;
 }
 
 /**
@@ -862,22 +997,33 @@ export async function retrieveContextDetailed(
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
-  const wantRerank = rerankEnabled();
+  // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
+  // tripped, DEGRADE by skipping rerank/hybrid only — never core dense-cosine recall. A no-op
+  // (always false) when RAG_RUN_BUDGET_ENABLED is off, so default behavior is unaffected.
+  const budgetDegraded = shouldDegradeForBudget();
+  const wantRerank = rerankEnabled() && !budgetDegraded;
+  const wantHybrid = hybridRetrievalEnabled() && !budgetDegraded;
   // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
   // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
   // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
   // limit+1 is never in the pool and the recall gap the flag targets can't be recovered.
-  const fetchK = options?.asOf || wantRerank || hybridRetrievalEnabled() ? overFetchK(limit) : limit;
+  const fetchK = options?.asOf || wantRerank || wantHybrid ? overFetchK(limit) : limit;
   const extraFilter = buildExtraFilters(options);
 
   try {
-    const { response, cached } = await embedQueryCached(voyage, query);
-    // Only meter a real Voyage embed request — a cache hit made no call, so metering it would
-    // record phantom usage/cost and defeat the point of the cache. Book it under the REQUESTING
-    // userId so this retrieval spend counts toward that user's daily LLM/RAG budget (not "local").
-    if (!cached) meterEmbed([query], undefined, userId);
-
-    const embedding = response.data?.[0]?.embedding;
+    // Query-embedding cache (consolidated R9 + G8b): a vector-only LRU keyed on the NORMALIZED
+    // query (lowercase + collapsed whitespace) so trivial casing/spacing variants share a hit —
+    // never Pinecone results (see query-embed-cache.ts for the full safety rationale). Default ON;
+    // disable with RAG_QUERY_EMBED_CACHE=off. A hit skips the Voyage embed and its metering; a miss
+    // embeds, meters under the REQUESTING userId (so retrieval spend counts toward that user's daily
+    // LLM/RAG budget, not "local"), and books the per-run budget op.
+    let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, query);
+    if (embedding == null) {
+      const response = await embedWithRetry(voyage, [query], "query");
+      meterEmbed([query], undefined, userId); // count only on a cache MISS; book under the requesting userId
+      recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
+      embedding = response.data?.[0]?.embedding;
+    }
     // R2 integrity guard applies to the query embedding too: a malformed vector (wrong dimension,
     // NaN) would return garbage matches rather than a clean empty result. Audit so a Voyage
     // model/config drift is observable instead of silently returning bad matches.
@@ -889,6 +1035,8 @@ export async function retrieveContextDetailed(
       }
       return [];
     }
+    // Only cache a validated (finite, correctly-shaped) embedding — never a malformed one.
+    setCachedQueryEmbedding(VOYAGE_MODEL, query, embedding);
 
     if (!(await indexExists(pc))) return [];
 
@@ -956,17 +1104,26 @@ export async function retrieveContextDetailed(
       matches = unique.slice(0, fetchK);
     }
 
+    // R12 (2026-07-01 RAG backlog): apply the default cosine floor for a caller that opted in via
+    // `applyDefaultFloors`/RAG_APPLY_DEFAULT_FLOORS AND did not explicitly set `minScore`. Both
+    // existing callers (strategy.ts, orchestrator.ts) already pass `minScore` explicitly, so
+    // `options?.minScore == null` is false for them — this resolves to their explicit value,
+    // unchanged, regardless of `applyDefaultFloors`.
+    const wantDefaultFloors = Boolean(options?.applyDefaultFloors) || envFlagOn("RAG_APPLY_DEFAULT_FLOORS", false);
+    const effectiveMinScore = options?.minScore ?? (wantDefaultFloors ? defaultMinScore() : undefined);
+
     // Pipeline: cosine recall → score floor → point-in-time guard → hybrid fuse → cross-encoder
     // rerank → post-rerank floor → top-limit. Factored into the pure `rankPool` helper (R4,
     // 2026-07-01 expert-review follow-up) so a network-free regression test can drive the exact
     // same post-recall logic this call site uses, instead of re-implementing it in test code.
     const ordered = await rankPool(matches, query, limit, {
-      minScore: options?.minScore,
+      minScore: effectiveMinScore,
       asOf: options?.asOf,
       minRelevanceScore: options?.minRelevanceScore,
-      hybrid: hybridRetrievalEnabled(),
+      hybrid: wantHybrid,
       rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId) : undefined,
       strictAsOf: asOfStrictEnabled(),
+      dedupeSimilarity: options?.dedupeSimilarity,
       userId
     });
     return ordered
@@ -997,6 +1154,13 @@ export interface RankPoolOptions {
   strictAsOf?: boolean;
   /** userId for the strict-mode drop-count audit record; defaults to "local". */
   userId?: string;
+  /**
+   * R14 (2026-07-01 RAG backlog): opt-in near-duplicate suppression, applied AFTER the
+   * post-rerank relevance floor but BEFORE the final slice-to-limit. A 0-1 Jaccard-shingle
+   * similarity threshold — a candidate >= this similar to an already-kept chunk is dropped and
+   * back-filled from later candidates. Omitted (undefined) = current behavior, no dedup pass.
+   */
+  dedupeSimilarity?: number;
 }
 
 /**
@@ -1006,8 +1170,10 @@ export interface RankPoolOptions {
  * the helper reusable for both the real retrieval call site and network-free regression tests
  * that want to inspect the still-Pinecone-shaped `match[]` output, e.g. `_rerankScore`).
  *
- * The only side effect is a fire-and-forget `audit()` call when strict as-of mode actually drops
- * an undated chunk — never throws, never blocks the returned pool.
+ * Side effects (both fire-and-forget, never throw, never block the returned pool):
+ *  - a `vector_asof_strict_drop` audit when strict as-of mode actually drops an undated chunk.
+ *  - an R5 `recordRetrievalQuality()` distribution-telemetry record, ONLY when
+ *    RAG_RETRIEVAL_TELEMETRY is on (a complete no-op — no hashing, no audit call — when off).
  */
 export async function rankPool(
   matches: any[],
@@ -1015,19 +1181,26 @@ export async function rankPool(
   limit: number,
   options: RankPoolOptions = {}
 ): Promise<any[]> {
+  const candidates = matches.length;
   let pool = matches;
+  let droppedByMinScore = 0;
   if (options.minScore != null) {
+    const before = pool.length;
     pool = pool.filter((match) => (typeof match?.score === "number" ? match.score : 0) >= options.minScore!);
+    droppedByMinScore = before - pool.length;
   }
+  let droppedByAsOf = 0;
   if (options.asOf) {
     const strict = Boolean(options.strictAsOf);
     let droppedUndated = 0;
+    const before = pool.length;
     pool = pool.filter((match) => {
       const md = match?.metadata as Record<string, unknown> | undefined;
       const kept = isWithinAsOf(md, options.asOf, strict);
       if (!kept && strict && resolveAsOfStamp(md) == null) droppedUndated++;
       return kept;
     });
+    droppedByAsOf = before - pool.length;
     // R1 strict-mode drop-count (2026-07-01 expert-review follow-up): observability only, so the
     // ingest-dating gap ("how much of the corpus has no resolvable stamp") is visible to an
     // operator instead of silently shrinking results. Never throws; a logging failure must not
@@ -1044,7 +1217,8 @@ export async function rankPool(
   // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
   // overFetchK or the Pinecone query — purely a post-retrieval reordering step.
   const fusedPool = options.hybrid && pool.length > 1 ? fuseHybrid(query, pool) : pool;
-  const ordered = options.rerank && fusedPool.length > limit ? await options.rerank(query, fusedPool, limit) : fusedPool;
+  const rerankRan = Boolean(options.rerank) && fusedPool.length > limit;
+  const ordered = rerankRan ? await options.rerank!(query, fusedPool, limit) : fusedPool;
   // Post-rerank relevance floor (opt-in via minRelevanceScore), applied AFTER rerank but BEFORE the
   // final slice-to-limit — matches carrying no relevanceScore (rerank off/failed/didn't return one
   // for this item) are FAIL-OPEN kept, never treated as a 0: a transient Voyage 429 (which makes
@@ -1057,7 +1231,39 @@ export async function rankPool(
         return typeof s !== "number" || s >= options.minRelevanceScore!;
       })
     : ordered;
-  return floored;
+
+  // R14 (2026-07-01 RAG backlog): opt-in near-duplicate suppression, applied AFTER the
+  // post-rerank relevance floor but BEFORE the final slice-to-limit (callers `.slice(0, limit)`
+  // the RETURNED pool, so dedup must have already narrowed it here to have any effect). No-op
+  // unless `dedupeSimilarity` is set.
+  const deduped = options.dedupeSimilarity != null ? dedupeSimilar(floored, limit, options.dedupeSimilarity) : floored;
+
+  // R5 consolidated retrieval-quality telemetry (2026-07-01 RAG backlog): default OFF via
+  // RAG_RETRIEVAL_TELEMETRY. The flag check happens BEFORE any work (hashing, score scanning) so
+  // this is a true no-op — not just a suppressed write — when the flag is unset.
+  if (retrievalTelemetryEnabled()) {
+    const topMatch = deduped[0] as { score?: unknown; _rerankScore?: unknown } | undefined;
+    const topCosine = typeof topMatch?.score === "number" ? topMatch.score : undefined;
+    const topRelevanceScore = typeof topMatch?._rerankScore === "number" ? topMatch._rerankScore : undefined;
+    recordRetrievalQuality(
+      {
+        queryHash: hashQuery(query),
+        k: limit,
+        candidates,
+        droppedByMinScore,
+        droppedByAsOf,
+        hybrid: Boolean(options.hybrid),
+        rerankAttempted: Boolean(options.rerank),
+        rerankRan,
+        topCosine,
+        topRelevanceScore,
+        finalCount: deduped.length
+      },
+      options.userId ?? "local"
+    );
+  }
+
+  return deduped;
 }
 
 /** Back-compat string[] view (used by strategy.ts) — thin wrapper over retrieveContextDetailed. */
