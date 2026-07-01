@@ -3,6 +3,7 @@ import {
   computeFactorICs,
   computePerFactorIC,
   computeCompositeIC,
+  pairedICDiffStats,
   deriveWeightsFromICs,
   deriveWeightsFromIC,
   splitWalkForward,
@@ -280,6 +281,100 @@ describe("computeCompositeIC", () => {
     const { meanIC, icIR } = computeCompositeIC(observations, allMomentum);
     expect(meanIC).toBeCloseTo(0, 10); // mean of +1 and −1
     expect(Number.isFinite(icIR)).toBe(true);
+  });
+});
+
+// Panel P0-2: the paired per-date IC-difference significance basis for the autonomous gate.
+describe("pairedICDiffStats", () => {
+  const momentumWeights = (() => {
+    const w = { ...DEFAULT_SCORING_WEIGHTS };
+    for (const f of MARKET_FACTORS) w[f] = f === "momentum" ? 1 : 0;
+    return w;
+  })();
+  const valueWeights = (() => {
+    const w = { ...DEFAULT_SCORING_WEIGHTS };
+    for (const f of MARKET_FACTORS) w[f] = f === "value" ? 1 : 0;
+    return w;
+  })();
+
+  it("returns n=0 stats for empty input", () => {
+    expect(pairedICDiffStats([], momentumWeights, valueWeights)).toEqual({ n: 0, meanDiff: 0, stdDiff: 0, seDiff: 0, tStat: 0 });
+  });
+
+  it("candidate that predicts well vs a baseline that predicts poorly gives a large positive paired-t", () => {
+    // Momentum (candidate) ranks strongly with return (~+1 IC/date); value (baseline) is much weaker or
+    // inverse. Each date's paired diff is a large positive number; a little per-date jitter keeps the SE
+    // finite (a t-stat is undefined at exactly-zero variance) → a large, well-defined positive t-stat.
+    const observations: FactorObservation[] = [];
+    for (let d = 0; d < 6; d++) {
+      const date = `2026-06-${String(10 + d).padStart(2, "0")}`;
+      // momentum ↑ with return (strong), value roughly inverse; symbol C's value rank flips slightly per day
+      // so the baseline IC (and thus the paired diff) varies a touch date-to-date → non-zero SE.
+      observations.push(obs(date, "A", 0.01, { momentum: 10, value: 40 }));
+      observations.push(obs(date, "B", 0.02, { momentum: 20, value: 30 }));
+      observations.push(obs(date, "C", 0.03, { momentum: 30, value: d % 2 === 0 ? 20 : 35 }));
+      observations.push(obs(date, "D", 0.04, { momentum: 40, value: 10 }));
+    }
+    const stats = pairedICDiffStats(observations, momentumWeights, valueWeights);
+    expect(stats.n).toBe(6);
+    expect(stats.meanDiff).toBeGreaterThan(1.5); // candidate clearly beats baseline
+    expect(stats.tStat).toBeGreaterThan(5); // finite SE from per-date jitter → large positive t
+  });
+
+  it("identical candidate and baseline weights give meanDiff 0 and tStat 0 (no significance)", () => {
+    const observations: FactorObservation[] = [
+      obs("2026-06-10", "A", 0.01, { momentum: 10 }),
+      obs("2026-06-10", "B", 0.02, { momentum: 20 }),
+      obs("2026-06-11", "A", 0.03, { momentum: 10 }),
+      obs("2026-06-11", "B", 0.05, { momentum: 20 })
+    ];
+    const stats = pairedICDiffStats(observations, momentumWeights, momentumWeights);
+    expect(stats.meanDiff).toBeCloseTo(0, 12);
+    expect(stats.tStat).toBe(0);
+  });
+
+  it("a single paired date yields tStat 0 (no SE from one point)", () => {
+    const observations: FactorObservation[] = [
+      obs("2026-06-10", "A", 0.01, { momentum: 10, value: 40 }),
+      obs("2026-06-10", "B", 0.04, { momentum: 40, value: 10 })
+    ];
+    const stats = pairedICDiffStats(observations, momentumWeights, valueWeights);
+    expect(stats.n).toBe(1);
+    expect(stats.tStat).toBe(0);
+  });
+
+  // Codex finding #7: a UNIFORM positive diff (candidate perfectly beats an inverse baseline on every date →
+  // per-date diff is a constant +2, variance 0) must be treated as SIGNIFICANT (+Infinity), NOT rejected as 0.
+  it("a uniform positive zero-variance diff yields +Infinity (significant), not 0", () => {
+    const observations: FactorObservation[] = [];
+    for (let d = 0; d < 4; d++) {
+      const date = `2026-06-${String(10 + d).padStart(2, "0")}`;
+      // momentum ↑ with return (+1 IC), value ↓ with return (−1 IC) on EVERY date → diff = +2 every date.
+      observations.push(obs(date, "A", 0.01, { momentum: 10, value: 40 }));
+      observations.push(obs(date, "B", 0.02, { momentum: 20, value: 30 }));
+      observations.push(obs(date, "C", 0.03, { momentum: 30, value: 20 }));
+      observations.push(obs(date, "D", 0.04, { momentum: 40, value: 10 }));
+    }
+    const stats = pairedICDiffStats(observations, momentumWeights, valueWeights);
+    expect(stats.n).toBe(4);
+    expect(stats.meanDiff).toBeCloseTo(2, 8);
+    expect(stats.seDiff).toBe(0);
+    expect(stats.tStat).toBe(Infinity); // a uniformly-better candidate clears ANY finite paired-t threshold
+  });
+
+  it("a uniform NEGATIVE zero-variance diff yields -Infinity (candidate uniformly worse)", () => {
+    const observations: FactorObservation[] = [];
+    for (let d = 0; d < 4; d++) {
+      const date = `2026-06-${String(10 + d).padStart(2, "0")}`;
+      // Swap roles: candidate=momentum tracks INVERSE of return, baseline=value tracks WITH return → diff −2.
+      observations.push(obs(date, "A", 0.04, { momentum: 10, value: 40 }));
+      observations.push(obs(date, "B", 0.03, { momentum: 20, value: 30 }));
+      observations.push(obs(date, "C", 0.02, { momentum: 30, value: 20 }));
+      observations.push(obs(date, "D", 0.01, { momentum: 40, value: 10 }));
+    }
+    const stats = pairedICDiffStats(observations, momentumWeights, valueWeights);
+    expect(stats.meanDiff).toBeCloseTo(-2, 8);
+    expect(stats.tStat).toBe(-Infinity); // uniformly worse → never passes a positive threshold
   });
 });
 
