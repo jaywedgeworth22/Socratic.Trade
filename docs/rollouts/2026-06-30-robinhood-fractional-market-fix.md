@@ -68,10 +68,18 @@ code fix and adds only its rollout note to avoid a duplicate STATUS insert confl
   market sells; they keep their limit semantics and must be blocked upstream if unsupported.
 - **Market TIF fixed:** fractional opening limit coercion now forces `time_in_force: "gfd"`.
 
+## Round 4 (Codex re-review)
+
+- **Broker-scoped fractional drift:** fractional opening limits are drift-guarded only when
+  `policy.activeBroker === "robinhood"`. Brokers that preserve fractional limit orders keep the
+  broker-side limit-price cap and do not need the Robinhood market-routing guard.
+
 ## Verification
 
 - `npx vitest run test/robinhood-mcp.test.ts` — 15 tests pass (6 new + 9 existing).
 - `npx tsc --noEmit` — clean.
+- Round 4: `npx vitest run test/robinhood-mcp.test.ts test/strategy-hardening.test.ts` —
+  54 tests pass; `npx tsc --noEmit` — clean.
 - Full `verify` + `smoke` + `gitleaks` CI gates the merge.
 
 ## Follow-ups
