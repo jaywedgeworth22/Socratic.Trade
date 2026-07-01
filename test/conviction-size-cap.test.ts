@@ -44,6 +44,13 @@ function buyProposal(confidenceScore: number): TradeProposal {
   };
 }
 
+function shortProposal(confidenceScore: number): TradeProposal {
+  return {
+    ...buyProposal(confidenceScore),
+    side: "short"
+  };
+}
+
 /** Policy with a clean notional base: 10000 max, no NAV cap, conservative cap defaults left ON. */
 function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPolicy {
   return {
@@ -197,6 +204,45 @@ describe("conviction-size cap", () => {
 
     expect(notionalFromRationale(sized)).toBe(499);
     expect(sized.rationale).toContain("LLM advised $499; preserved within risk limits.");
+  });
+
+  it("keeps LLM-advised opening sizes below the hard policy cap with execution headroom", async () => {
+    const account = "CAP-LLM-HEADROOM";
+    const sized = applyDeterministicSizing(
+      { ...buyProposal(95), dollarAmount: 5 },
+      { ...policyFor(account), maxOrderNotional: 4.99, maxDailyNotional: 100 },
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(sized.dollarAmount).toBe(4.74);
+    expect(sized.rationale).toContain("risk controls limited it");
+    expect(sized.rationale).toContain("5% execution buffer");
+  });
+
+  it("keeps deterministic shorts below maxShortOrderNotional with execution headroom", async () => {
+    const account = "CAP-SHORT-HEADROOM";
+    const sized = applyDeterministicSizing(
+      { ...shortProposal(95), dollarAmount: 100 },
+      {
+        ...policyFor(account),
+        maxOrderNotional: 1000,
+        maxShortOrderNotional: 100,
+        shortSellingEnabled: true,
+        riskRules: { ...DEFAULT_POLICY.riskRules, shortStopLossPct: 10 }
+      },
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    expect(sized.dollarAmount).toBe(95);
+    expect(sized.rationale).toContain("risk controls limited it");
+    expect(sized.rationale).toContain("max short order limit");
+    expect(sized.rationale).toContain("5% execution buffer");
   });
 
   it("preserves a larger explicit LLM-advised notional when hard caps allow it", async () => {
