@@ -4,6 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - Alpaca account-editor "Custom Endpoint" checkbox bug (base_url/environment drift)
+Branch `claude/affectionate-franklin-a52935`. User reported a newly-added live Alpaca
+account ("Alpaca Standard") failing with `Request failed with status code 401` on the
+readiness check, despite looking normal in the Accounts UI. Root cause: the account's
+`connected_accounts` row had `environment: "live"` (correctly inferred from the live API
+key) but `base_url` still pointing at Alpaca's PAPER endpoint — a live key rejected outright
+against the paper host. Traced to a real UI bug in `app/dashboard-client.tsx`'s account
+editor: checking "Use a Custom Alpaca Endpoint" copied whatever `baseUrl` currently held
+(the paper default, if checked before finishing the account number/API key fields) into
+the "custom" field with nothing typed by the user, and a checked box also disables the
+auto-derivation of `baseUrl` from the inferred paper/live environment as those fields are
+filled — so the stale paper URL got silently locked in and saved. Fixed: checking the box
+now starts the custom field EMPTY (safe — the save handler already falls back to the
+correct default endpoint when the custom field is blank). The user's specific account was
+also corrected directly in production (`base_url` -> `https://api.alpaca.markets`);
+confirmed via `api_health_log` that `alpaca-broker` calls succeed post-fix. No test
+infrastructure exists for `dashboard-client.tsx` (no `.tsx` tests / testing-library in this
+repo) — verified via `tsc` + manual code trace only. See
+`docs/rollouts/2026-07-01-alpaca-custom-endpoint-checkbox-fix.md`.
 ## 2026-07-01 — Learning-loop BROADER BACKLOG (P1 + P2), backend/API/tests only (Claude)
 Branch `agent/claude-backlog-b-learning-b` (off `origin/main` after #300 merged; base = #296 + #300 unified
 ledger / tuning-invariants / `pairedICDiffStats`). Implements the remaining P1 + P2 backlog from

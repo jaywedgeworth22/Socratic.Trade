@@ -242,6 +242,12 @@ function inferAlpacaEnvironment(input: { accountNumber?: string; apiKey?: string
   const accountNumber = input.accountNumber?.trim().toUpperCase() ?? "";
   const apiKey = input.apiKey?.trim().toUpperCase() ?? "";
   if (accountNumber.startsWith("PA") || apiKey.startsWith("PK")) return "paper";
+  // Credential-authoritative once creds are entered: non-PA/PK Alpaca creds are LIVE. This matches
+  // the server, which infers environment purely from the credentials and ignores body.environment —
+  // so the client must not stay stuck on a seeded "paper" (which previously made a live account fall
+  // back to the paper host / baseUrl and 401). Only fall back to the prior/seeded environment when NO
+  // credentials have been entered yet, so a brand-new draft still shows the paper default until typed.
+  if (accountNumber || apiKey) return "live";
   return input.environment === "paper" ? "paper" : "live";
 }
 
@@ -6582,9 +6588,16 @@ function IntegrationsSection({
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setShowCustomEndpoint(checked);
+                        // Start the custom field EMPTY on check, never copy in the current
+                        // (possibly stale/default) baseUrl — that silently locked in the wrong
+                        // endpoint for anyone who checked this before finishing the account
+                        // number/API key fields, since a checked box also stops those fields'
+                        // auto-derivation of baseUrl from the inferred paper/live environment.
+                        // An empty custom value still saves safely: the save handler falls back
+                        // to alpacaDefaultEndpointFor(environment) when baseUrl is blank.
                         setEditing({
                           ...editing,
-                          baseUrl: checked ? (editing.baseUrl || "") : defaultAlpacaEndpoint
+                          baseUrl: checked ? "" : defaultAlpacaEndpoint
                         });
                       }}
                     />
