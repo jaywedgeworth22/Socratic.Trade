@@ -115,6 +115,7 @@ import {
   FEED_TAB_KEY,
   WORKSPACE_TAB_KEY,
   isFeedTab,
+  isNavV2Enabled,
   isWorkspaceTab,
   migrateNavKeysToDestinations,
   type FeedTab,
@@ -4531,6 +4532,9 @@ function SettingsContent({
   const [blockDraft, setBlockDraft] = useState("");
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [settingsTier, setSettingsTier] = useState<SettingsTier>(() => settingsTierForSection(initialSection));
+  // NAV_V2 PR #3: scope-first framing. Off by default (dark launch); the flag-off
+  // modal is byte-identical.
+  const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
   useEffect(() => {
     setSection(initialSection);
     setSettingsTier(settingsTierForSection(initialSection));
@@ -4766,6 +4770,36 @@ function SettingsContent({
               </div>
             );
           })()}
+
+          {navV2 && settingsTier === "user" && (
+            <div className="rounded-lg border border-line/70 bg-bg/35 p-3">
+              <div className="text-sm font-semibold text-fg">Looking for strategy or risk settings?</div>
+              <p className="mt-1 text-[13px] text-muted">
+                Those live with the account. If a setting changes how a trade is decided or placed, it
+                belongs to the account.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setSettingsTier("account"); setSection("strategy"); }}
+                >
+                  Open Strategy ›
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setSettingsTier("account"); setSection("risk"); }}
+                >
+                  Open Guardrails ›
+                </Button>
+              </div>
+              <p className="mt-2 border-t border-line/60 pt-2 text-[11px] text-faint">
+                Rule of thumb: if it changes how a trade is decided or placed → account. Everything else is
+                here in Settings.
+              </p>
+            </div>
+          )}
 
           {settingsTier === "user" && (
             <button
