@@ -77,8 +77,8 @@ describe("resolveSubscription", () => {
 
   it("returns the operator-provisioned env subscription id+token", async () => {
     process.env.CONGRESS_STREAM_SUBSCRIPTION_ID = "sub_env";
-    process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN = "env-secret-0123456789";
-    await expect(resolveSubscription()).resolves.toEqual({ id: "sub_env", token: "env-secret-0123456789" });
+    process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN = "env-tok";
+    await expect(resolveSubscription()).resolves.toEqual({ id: "sub_env", token: "env-tok" });
   });
 
   it("returns null when nothing is configured and auto-subscribe is off (inert)", async () => {
@@ -95,7 +95,7 @@ describe("connectOnce — App A subscription-model SSE (stubbed stream)", () => 
 
   it("connects with ?subscription= + Bearer secret and ingests a pushed trade.new event end-to-end", async () => {
     process.env.CONGRESS_STREAM_SUBSCRIPTION_ID = "sub_test";
-    process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN = "test-secret-0123456789";
+    process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN = "strm-tok";
 
     const tx = { id: `tx-${randomUUID()}`, ticker: "PLTR", memberName: "Stream Tester", chamber: "house", txType: "P", txDate: recent(5), filedDate: recent(2) };
     const frame = `id: 99\nevent: trade.new\ndata: ${JSON.stringify(tx)}\n\n`;
@@ -120,7 +120,7 @@ describe("connectOnce — App A subscription-model SSE (stubbed stream)", () => 
     // The connection honors App A's live contract: subscription in the query, secret as Bearer.
     expect(capturedUrl).toContain("/api/stream");
     expect(capturedUrl).toContain("subscription=sub_test");
-    expect((capturedInit?.headers as Record<string, string>)?.authorization).toBe("Bearer test-secret-0123456789");
+    expect((capturedInit?.headers as Record<string, string>)?.authorization).toBe("Bearer strm-tok");
 
     // …and the pushed raw Transaction was mapped + ingested into App B's congress dataset.
     expect((getCongressDataset()?.trades ?? []).some((t) => t.symbol === "PLTR")).toBe(true);
