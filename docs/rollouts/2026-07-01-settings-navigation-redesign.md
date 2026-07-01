@@ -91,3 +91,38 @@ halted coercion `:284/350/397`; ambient mirror `:486/512/531`; twin TuningCard `
   survive on /mobile" requirement.
 - Seven Open Questions for the owner are listed at the end of Part I (e.g. `marketScan*` per-account
   scoping; whether Fleet STOP hits Paper; vocabulary lock-in: "Preset"/"Results"/"Alerts").
+
+---
+
+## Update 2 (later 2026-07-01) — owner approved; full implementation spec built
+
+Owner approved the design ("love it") and answered all 7 open questions. Ran a second large workflow
+(`wf_598c6d71-77d`: **16 agents, ~1.67M tokens**) to flesh the approved design into a complete
+implementation-ready spec: 4 code-grounding readers → 11 parallel spec authors → a consistency/closure
+editor. Deliverable committed under `docs/settings-navigation-redesign/spec/`:
+- `00-README.md` (index + reading order + owner decisions log + editor's resolutions), `00-reconciliation-report.md`.
+- `01-global-frame` · `02/03` destinations · `04-settings-field-reference` (every field) · `05-scoping-and-safety-model` ·
+  `06-data-model-and-api-changes` · `07-frontend-architecture-and-decomposition` · `08-delivery-plan-prs-and-tests` ·
+  `09-copy-deck` · `10-onboarding-modes-and-first-run` · `11-accessibility-responsive-mobile`.
+- `grounding/` — authoritative code-fact extracts (policy field catalog, client structure, API/schema, onboarding/mobile).
+
+**Owner decisions locked:** marketScan* stays user-global; autonomy-reset-on-restart required + default ON;
+Fleet STOP = Live+Paper (Test excluded); thin `/a/:accountId` + server-side write validation; full
+Preset/Results/Alerts vocabulary; full mobile parity specified; single-account stale-id auto-resolves.
+
+**Editor's reconciliation found (and I resolved via `00-README.md` R1–R8):** the autonomy-reset primitive
+already EXISTS (`scheduler.ts:66-97`, per-user `autoResumeOnBoot`) so the net-new work is scoped to
+default-ON + per-account granularity + `armed_boot_epoch` + chrome (not a from-scratch build); the scheduler
+already fans out per-account (`scheduler.ts:211-310`); wash-sale anchors corrected to `tax.ts:104` (inner) /
+`:115` (wrapper) / `:117` (Test→paper leak), not the design doc's stale `:99`; "max order size" Essentials
+bound to `maxOrderNotional` (position cap stays Exposure→per-symbol %); admin routes kept as shell deep-link
+targets (no deletion); `/how-it-works` redirect gated by `LANDING_PAGE_ENABLED`; Studio modal flag-retained
+one release; localStorage shim runs flag-independently with a one-release read-fallback.
+
+**Forward-looking fields folded in** (owner relay, additive/default-off, no UI dependency): `policy.llmFallbackModels`
+→ Strategy/AI Review (optional Advanced); `policy.tuning.gateOnRationaleCollapse` → Guardrails/Learning
+(optional Advanced); `trade_proposals.prompt_version` → optional provenance chip. See the
+"Forward-looking / optional fields" section in `04-settings-field-reference.md`.
+
+**Still no app code changed** — the spec is docs. Verify trio not required/run. **Next:** build the clickable
+HTML prototype, then start delivery-plan PR #1 (relabels + scope-surfacing) on the owner's word.

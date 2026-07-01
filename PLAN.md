@@ -14,9 +14,12 @@ filling the missing pieces.
 > editable home; money-reality vs authority split into two dials; settings split by scope
 > first; copy-on-bind presets; server-side write-time scope validation. Deliverable
 > `docs/settings-navigation-redesign.md` (+ appendix corpus). Complements — does not replace
-> — the settings-and-universe-overhaul field-completeness program. No roadmap phase changed;
-> Phase 1 (relabel + scope-surfacing) is a safe first PR pending owner approval. See
-> `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
+> — the settings-and-universe-overhaul field-completeness program. No roadmap phase changed.
+> **Owner approved the design + answered all 7 open questions (later 2026-07-01); a second workflow
+> (`wf_598c6d71-77d`, 16 agents) built the full implementation-ready spec under
+> `docs/settings-navigation-redesign/spec/`** (11 sections + grounding + reconciliation; start at
+> `spec/00-README.md`). Still docs-only. Next: clickable prototype, then delivery-plan PR #1 (relabels +
+> scope-surfacing). See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value

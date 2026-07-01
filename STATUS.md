@@ -21,9 +21,16 @@ teams independently): **account = primary object**; nav collapses 7+4 tabs → *
 **money-reality (Test/Paper/Live) and authority (Propose/Decide) are two orthogonal dials**; **settings
 split by scope first**; presets are **copy-on-bind**, scope validated **server-side on every write**.
 Design anchors were re-verified against `HEAD 0f6bf0a` inside the workflow (e.g. wash-sale enforced
-`policy.ts:311`; `test→paper` wash-sale leak `tax.ts:113`; `USER_LEVEL_POLICY_FIELDS`=3). **Next:** owner
-approves direction + the 7 open questions; **Phase 1 (pure relabel + scope-surfacing) is a safe first PR**.
-Complementary to `docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
+`policy.ts:311`; `test→paper` wash-sale leak `tax.ts:113`; `USER_LEVEL_POLICY_FIELDS`=3).
+**UPDATE (later 2026-07-01): owner approved the design and answered all 7 open questions**; a second
+workflow (`wf_598c6d71-77d`: 16 agents) built the full **implementation-ready spec** under
+`docs/settings-navigation-redesign/spec/` (11 sections + grounding + reconciliation; start at
+`spec/00-README.md`). Editor pass corrected key anchors (autonomy-reset primitive already exists at
+`scheduler.ts:66-97`; scheduler already fans out per-account; wash-sale real anchors `tax.ts:104/115/117`)
+and I made the open-item calls in `spec/00-README.md` (R1–R8). 3 forward-looking default-off fields folded
+into `spec/04`. **Still docs-only, no app code.** **Next:** clickable HTML prototype, then delivery-plan
+**PR #1 (relabels + scope-surfacing)** on the owner's word. Complementary to
+`docs/settings-and-universe-overhaul-plan.md` (field completeness), not a replacement.
 See `docs/rollouts/2026-07-01-settings-navigation-redesign.md`.
 
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)

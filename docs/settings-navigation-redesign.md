@@ -1,8 +1,10 @@
 # Settings & Navigation Redesign — Canonical Proposal
 
-**Status:** Design proposal, pre-implementation. Approve the direction (and the Open Questions at the end) before code changes beyond Phase 1.
+**Status:** Direction **owner-approved (2026-07-01)**; all 7 Open Questions resolved. A complete **implementation-ready spec** now lives in [`settings-navigation-redesign/spec/`](./settings-navigation-redesign/spec/) (start at its [`00-README.md`](./settings-navigation-redesign/spec/00-README.md)). This doc remains the canonical design; the spec folder is the buildable detail. Next code step: PR #1 of the delivery plan (relabels + scope-surfacing).
 **Date:** 2026-07-01  ·  **Branch:** `claude/settings-navigation-redesign-a3k1yv`  ·  **Baseline:** `HEAD 0f6bf0a` (working tree clean)
 **Scope:** The whole app frame — primary navigation, the 9-section settings surface, the scattered Strategy surfaces, and the multi-account/scoping model.
+
+> **Open questions → resolved (2026-07-01).** The 7 questions in Part I are answered in the spec's [decisions log](./settings-navigation-redesign/spec/00-README.md#owner-decisions-log-2026-07-01--the-7-open-questions-resolved): market-scan breadth stays user-global; autonomy resets to Propose-only on restart (default ON); Fleet STOP = Live+Paper (Test excluded); thin `/a/:accountId` + server-side write validation; adopt the Preset/Results/Alerts vocabulary in full; full mobile parity specified; single-account stale-id auto-resolves.
 
 ---
 
