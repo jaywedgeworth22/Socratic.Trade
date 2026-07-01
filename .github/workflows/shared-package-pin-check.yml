@@ -9,11 +9,14 @@ name: Shared package pin check
 # (e.g. it tracks a semver range from the registry instead), the check is a
 # no-op: npm/the registry already handles picking up new compatible versions.
 #
-# Uses the existing GH_PACKAGES_TOKEN secret (a PAT with read access to
-# jaywedgeworth22/congress-trading-shared, also used for the registry/git
-# dependency install). The default GITHUB_TOKEN cannot read other private
-# repos, so without this secret the job no-ops with a notice instead of
-# failing.
+# Uses the GH_PACKAGES_TOKEN repo secret: a PAT with read access to the
+# private jaywedgeworth22/congress-trading-shared repo, added specifically
+# to make the drift check below possible. It's distinct from
+# CONGRESS_TRADING_SHARED_DEPLOY_KEY (an SSH deploy key used elsewhere in
+# this repo's workflows for `npm ci`'s git-URL install) — a deploy key can't
+# make GitHub REST API calls, only authenticate git operations. The default
+# GITHUB_TOKEN also cannot read other private repos, so without
+# GH_PACKAGES_TOKEN the job no-ops with a notice instead of failing.
 
 on:
   schedule:
@@ -52,7 +55,10 @@ jobs:
             exit 0
           fi
 
-          LATEST_SHA=$(gh api repos/jaywedgeworth22/congress-trading-shared/commits/main --jq .sha)
+          if ! LATEST_SHA=$(gh api repos/jaywedgeworth22/congress-trading-shared/commits/main --jq .sha 2>&1); then
+            echo "::warning::gh api lookup of congress-trading-shared@main failed (auth/scope/transient error): $LATEST_SHA"
+            exit 0
+          fi
           echo "Pinned:  $PINNED_SHA"
           echo "Latest:  $LATEST_SHA"
 
