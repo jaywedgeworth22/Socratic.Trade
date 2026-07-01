@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - CI hosted-runner migration + concurrency guards
+Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
+`trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
+across every branch, causing long queue waits even for green PRs — observed
+directly while landing PR #280. Added `cancel-in-progress` concurrency
+groups to `ci.yml`/`security.yml`/`e2e.yml` so superseded pushes don't queue
+behind themselves, and moved `verify`, `gitleaks`, and `smoke` to
+`runs-on: ubuntu-latest` (none depend on the production box; `smoke` builds
+and serves its own local `next start`). `deploy.yml`/`sync-previews.yml`
+stay self-hosted — they operate on the live PM2 process and local preview
+lanes directly. Owner is on GitHub Pro and explicitly approved the
+associated Actions-minutes cost. Follow-up: confirm the account's Actions
+spending limit is > $0, or required-check jobs could fail before startup.
+See `docs/rollouts/2026-07-01-ci-hosted-runner-migration.md`.
+
 ## 2026-07-01 - congress-trading-shared drift fixes
 Branch `chore/shared-package-drift-fixes` (PR #280), pushed from
 `~/apps/trading-claude` (the main `~/Code/Agentic Trading` integration
