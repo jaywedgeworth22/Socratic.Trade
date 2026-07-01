@@ -37,6 +37,7 @@ import type {
 } from "@jaywedgeworth22/congress-trading-shared";
 import {
   API_PATHS,
+  MAX_REFS_BATCH,
   TransactionsPageSchema,
 } from "@jaywedgeworth22/congress-trading-shared";
 import type { CongressRef } from "./congress-share";
@@ -46,7 +47,6 @@ import { logApiHealth } from "./db-health";
 
 const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 8_000;
-const MAX_REFS_PER_REQUEST = 500;
 
 export interface AppABundle {
   ref: CongressRef | null;
@@ -162,7 +162,7 @@ export async function getAppARef(ticker: string): Promise<CongressRef | null> {
 
 export async function getAppARefs(tickers: string[]): Promise<CongressRef[]> {
   if (!congressReadsEnabled()) return [];
-  const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean))).slice(0, MAX_REFS_PER_REQUEST);
+  const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean))).slice(0, MAX_REFS_BATCH);
   if (syms.length === 0) return [];
   const json = await getJson<{ refs?: CongressRef[] }>(`${API_PATHS.MARKET_REFS}?tickers=${encodeURIComponent(syms.join(","))}`, readToken());
   return Array.isArray(json?.refs) ? json!.refs : [];

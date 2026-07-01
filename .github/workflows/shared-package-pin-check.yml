@@ -1,0 +1,50 @@
+name: Shared package pin check
+
+# Agentic Trading depends on @jaywedgeworth22/congress-trading-shared via a
+# git-commit-pinned dependency (not the published GitHub Packages registry),
+# so nothing normally tells us when our pin falls behind that repo's main.
+# This workflow checks weekly (and on demand) and posts a warning annotation
+# if we're behind — it never fails the build, it just makes drift visible.
+#
+# Uses the existing GH_PACKAGES_TOKEN secret (a PAT with read access to
+# jaywedgeworth22/congress-trading-shared, also used for the registry/git
+# dependency install). The default GITHUB_TOKEN cannot read other private
+# repos, so without this secret the job no-ops with a notice instead of
+# failing.
+
+on:
+  schedule:
+    - cron: '0 13 * * 1' # Mondays
+  workflow_dispatch:
+
+jobs:
+  check-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare pinned commit to shared repo main
+        env:
+          GH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::notice::GH_PACKAGES_TOKEN is not set — skipping shared-package drift check. It needs read access to jaywedgeworth22/congress-trading-shared to enable it."
+            exit 0
+          fi
+
+          PINNED_SHA=$(node -p "require('./package.json').dependencies['@jaywedgeworth22/congress-trading-shared'].split('#')[1]")
+          if [ -z "$PINNED_SHA" ]; then
+            echo "::warning::Could not extract pinned commit SHA from package.json"
+            exit 0
+          fi
+
+          LATEST_SHA=$(gh api repos/jaywedgeworth22/congress-trading-shared/commits/main --jq .sha)
+          echo "Pinned:  $PINNED_SHA"
+          echo "Latest:  $LATEST_SHA"
+
+          if [ "$PINNED_SHA" = "$LATEST_SHA" ]; then
+            echo "Up to date with congress-trading-shared@main."
+          else
+            BEHIND_COUNT=$(gh api "repos/jaywedgeworth22/congress-trading-shared/compare/${PINNED_SHA}...${LATEST_SHA}" --jq .ahead_by 2>/dev/null || echo "?")
+            echo "::warning::congress-trading-shared pin is $BEHIND_COUNT commit(s) behind main ($PINNED_SHA -> $LATEST_SHA). Review changes and bump package.json if relevant."
+          fi
