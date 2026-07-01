@@ -136,6 +136,19 @@ network calls); the faithfulness half is still open (see R11 in the rollout note
 coverage/freshness UI ("8-K through 2026-06-18; no 10-K on file"); typed second gate on
 **BROKERAGE·LIVE** confirm only (keep paper/test one-click); persistent "what can I ask?" popover.
 
+**Follow-on, 2026-07-01** (`docs/rollouts/2026-07-01-rag-followon.md`): the two items the Workstream
+C rollout note deferred are now DONE — a **retrieval regression net** (R4) pins the as-of/rerank/
+hybrid fail-safes as network-free unit tests (`test/rag-retrieval-regression.test.ts`) driven through
+a newly-exported pure `rankPool(matches, query, limit, options)` helper factored out of
+`retrieveContextDetailed`'s post-recall pipeline; and **`VECTOR_ASOF_STRICT`** (R1 part 2, default
+OFF) now drops undated chunks under an active `asOf` instead of the previous unconditional
+lenient-keep, with a drop-count `audit()` record and a golden as-of tuple test
+(`test/vector-db-asof-strict.test.ts`) proving the on/off/unset-`asOf` behavior end-to-end. Both are
+byte-identical to prior behavior unless explicitly opted in. Remaining open items from the eval
+roadmap (R3 golden-set leakage scorer, R5 telemetry, R6 shared flag parser, R7 index-metric
+assertion, R9 query-embedding cache, R10 `storeContexts` dedup, R11 faithfulness eval, R12–R17) are
+unchanged by this follow-on.
+
 ## 6. User-guidance design ("how to advise users to interact")
 
 Grounded in the existing `AssistantView` — keep its trust framing as the spine ("drafts orders you

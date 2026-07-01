@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
+> Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
+> `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised
+> by 19 network-free tests pinning the as-of/rerank/hybrid fail-safes) and **R1 part 2**
+> (`VECTOR_ASOF_STRICT`, default off - drops undated chunks under an active `asOf` instead of
+> the lenient default, with a drop-count audit; golden as-of tuple proven end-to-end). Both
+> byte-identical to current behavior unless explicitly opted in. See
+> `docs/rollouts/2026-07-01-rag-followon.md`.
 > 2026-07-01 (`agent/claude-workstream-c-rag-v2`): RAG/embedding Workstream C - closed the 3
 > highest-leverage gaps the 2026-06-30 audit found in the RAG pipeline (no retrieval-quality
 > eval, reranker discarding its own relevance score, char-cap/doc_type/salience hygiene
