@@ -20,6 +20,7 @@ import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
+import { recordProviderCall } from "./usage-monitor-push";
 import { fetchDailyOHLC } from "./history";
 
 /**
@@ -197,6 +198,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     try {
       const result = await fn();
       logApiHealth({ service: "alpaca-broker", ok: true, latencyMs: Date.now() - start, keySource: this.keySource, userId: this.userId });
+      recordProviderCall("alpaca", { service: "broker", ok: true });
       return result;
     } catch (err) {
       logApiHealth({
@@ -207,6 +209,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         keySource: this.keySource,
         userId: this.userId
       });
+      recordProviderCall("alpaca", { service: "broker", ok: false });
       throw err;
     }
   }

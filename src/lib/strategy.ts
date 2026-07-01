@@ -62,6 +62,7 @@ import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { checkBudgetAndAlert, evaluateBudgetForRun, notifyBudgetSkip } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
@@ -190,6 +191,33 @@ export async function runStrategyOnce(
       finishStrategyRun(runId, "completed", reason, userId);
       releaseStrategyLock(userId, connectedAccountId);
       return result;
+    }
+
+    // Cost-aware budget feedback loop (API Usage Monitor). Phase 1: alert on over-budget providers
+    // whenever the monitor is configured (fire-and-forget). Phase 2 (default-off USAGE_BUDGET_ENFORCE):
+    // downgrade the LLM/red-team model to a cheaper tier, or skip the cycle, when the LLM provider is
+    // over budget. Fail-open: a monitor outage never blocks a run. Manual runs are never budget-gated.
+    void checkBudgetAndAlert(userId, policy).catch(() => {});
+    if (!manualRun) {
+      const budget = await evaluateBudgetForRun(userId, policy);
+      if (budget.skip) {
+        const reason = `Cost budget exceeded. ${budget.reason ?? ""}`.trim();
+        console.log(`[Strategy] ${reason}`);
+        await notifyBudgetSkip(userId, policy, runId, reason);
+        result = { runId, status: "completed", summary: reason, proposals: [] };
+        finishStrategyRun(runId, "completed", reason, userId);
+        releaseStrategyLock(userId, connectedAccountId);
+        return result;
+      }
+      if (budget.downgraded) {
+        if (budget.llmModel) policy.llmModel = budget.llmModel;
+        if (budget.redTeamLlmModel) policy.redTeamLlmModel = budget.redTeamLlmModel;
+        audit(
+          "run_model_downgraded_budget",
+          { runId, userId, llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel, reason: budget.reason },
+          userId
+        );
+      }
     }
 
     const gateway = getBrokerGateway(policy, userId);

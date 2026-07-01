@@ -20,6 +20,7 @@ import {
 } from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
+import { recordProviderCall } from "./usage-monitor-push";
 import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
@@ -355,6 +356,9 @@ async function fetchWithRetry(
           userId: options.userId,
         });
       }
+      // Call-volume telemetry: one logical market-data call per fetchWithRetry invocation
+      // (no-op unless the usage monitor is configured; never throws).
+      if (options.service) recordProviderCall(options.service, { ok: response.ok });
       return response;
     }
   } catch (err) {
@@ -367,6 +371,7 @@ async function fetchWithRetry(
         keySource: options.keySource,
         userId: options.userId,
       });
+      recordProviderCall(options.service, { ok: false });
     }
     throw err;
   }

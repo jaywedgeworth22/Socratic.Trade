@@ -4,6 +4,30 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — API Usage Monitor integration (Workstream C2) (Claude)
+Branch `claude/competent-elion-c82938`. Wired App B → the API Usage Monitor
+(`usage.jays.services`) per `docs/reviews/2026-07-01-audit-work-split.md` (Cross-repo C2):
+(1) `recordLlmUsage`/`recordRagUsage` now fire-and-forget push usage+cost via new
+`src/lib/usage-monitor-push.ts`; (2) market-data (`fetchWithRetry`) + broker
+(`alpaca.trackHealth`, `robinhood.callRobinhoodMcpTool`) call-volume is counted and flushed
+as aggregated per-provider `requests` events; (3) Anthropic/Voyage/Robinhood become
+push-primary just by tagging `provider` (poll adapters are blind); (4) cost-aware loop — new
+monitor `GET /api/budget-status` (token-gated, combines poll snapshot + pushed MTD cost vs
+`ProviderPlan.monthlyBudgetUsd`) + App B `src/lib/usage-budget.ts` firing `budget_alert`
+notifications (Phase 1) and, behind default-off `USAGE_BUDGET_ENFORCE`, downgrading the
+LLM/red-team model or skipping the cycle when over budget (Phase 2). **Self-sufficient by
+design** (owner requirement): all default-off, fire-and-forget, never-throws, fail-open — a
+monitor outage only shows a `usage-monitor` row on the admin connections-health page, never
+blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
+`congress-trading-shared@1.0.0`, which lacks the `usageTelemetry` export (it's on the shared
+repo's unmerged 1.1.0 branch) and publishing/lockfile-regen isn't possible here — same event
+contract, migration path documented. **Verify (all green, run in-worktree after
+`NODE_AUTH_TOKEN=$(gh auth token) npm ci`):** tsc clean, lint 0 errors/258 warns, `npm test`
+174 files/1684 tests, `npm run build` clean; monitor tsc + build clean. Adversarial multi-agent
+review: 2 fixes applied (providerForModel anthropic-prefix; budget timeout 6s→2.5s), 3 deferred
+follow-ups. Two PRs (App B, monitor). See `docs/usage-monitor-integration.md` +
+`docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
 analysis + sequenced plan: `docs/market-data-freshness-decision.md` +
