@@ -19,7 +19,7 @@
 import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
@@ -244,7 +244,11 @@ export async function revalidatePendingProposals(input: {
       userContent: JSON.stringify(userContent),
       schema: { name: "proposal_revalidation", schema, description: "Reaffirm-or-withdraw verdicts for each pending proposal." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation,
-      reasoningEffort: policy.llmReasoningEffort
+      // Pending-proposal revalidation runs first in a strategy run while the per-user lock is held
+      // (strategy.ts), so it must use the SAME interactive-reasoning clamp as the Green/Bear/debate
+      // steps — otherwise a stored gpt-5.5/high policy sends a high-reasoning call here and can hit
+      // the timeout/run-lock this guardrail prevents. (Review: PR #278 follow-up.)
+      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort)
     }
   );
 
