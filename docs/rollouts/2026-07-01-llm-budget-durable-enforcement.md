@@ -81,6 +81,30 @@ Threaded `userId` through the four meter helpers (`src/lib/rag-metering.ts`, opt
 retrieval call sites + `rerankMatches` (`src/lib/vector-db.ts`). Covered by a new case in
 `test/rag-metering.test.ts` (meters attribute to the requesting user, nothing leaks to `local`).
 
+A further Codex pass on `42f0f23f45` surfaced three more genuine bugs (fixed, not deferred):
+
+4. **Over-budget post-mortem no longer skips non-LLM excursion enrichment.** `generateReflectionSummary`
+   returned at the very top when over budget, which also skipped the unconditional
+   `persistExcursionsBackground(...)` (MAE/MFE enrichment, no OpenAI key) at the end — so an over-budget
+   day stopped updating excursion data. Moved the budget guard *below* `source` computation: when over
+   budget it now runs `persistExcursionsBackground` and returns, skipping only the LLM reflection. A
+   spend cap suppresses LLM spend, not non-LLM maintenance. (`src/lib/post-mortem.ts`; test in
+   `test/post-mortem.test.ts`.)
+5. **Mid-run budget crossing no longer marks the whole run FAILED.** `runStrategyOnce` computed
+   `skipLlmDueToBudget` once, *before* proposal revalidation and the RAG retrieval block — both of which
+   record usage. A run that started just under the ceiling could cross it via that spend, then enter
+   `proposeTrades` on the stale `false` decision; the `withLlmGeneration` backstop threw
+   `LlmBudgetExceededError`, which the outer catch turned into a failed run + failure notification for
+   what is normal budget exhaustion. Added a cheap budget re-read immediately before generation that
+   degrades to a graceful skip. (`src/lib/strategy.ts`; the red-team debate path was already fail-closed,
+   so a crossing *during* generation routes to human review rather than failing.)
+6. **Query-embedding cache no longer poisons on a malformed embed.** `embedQueryCached` cached the
+   Voyage response *before* the caller's integrity guard validated it, so a transient malformed vector
+   (wrong dim / NaN) stuck in the LRU and every repeat of that normalized query returned no context
+   without retrying Voyage. Now only valid embeddings are cached; a bad response is returned (so the
+   caller rejects + audits it) but not stored, so the next call re-hits Voyage. (`src/lib/vector-db.ts`;
+   test in `test/query-embedding-cache.test.ts`.)
+
 ## Follow-ups (deferred future considerations)
 
 - The per-user **concurrent-run reservation** (two same-user account runs both passing the read-based

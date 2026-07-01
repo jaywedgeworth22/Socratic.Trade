@@ -403,12 +403,19 @@ async function embedQueryCached(
   }
 
   const response = await embedWithRetry(voyage, [query], "query");
-  cache.set(key, response);
-  const maxSize = queryEmbedCacheSize();
-  while (cache.size > maxSize) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) break;
-    cache.delete(oldestKey);
+  // Only cache a VALID embedding. A malformed response (wrong dimension / NaN) that the caller's
+  // integrity guard rejects must NOT poison the LRU — otherwise every repeat of this normalized query
+  // serves the bad cached vector and returns no context without ever retrying Voyage, so a transient
+  // bad embed sticks until eviction/restart. On an invalid response, skip caching so the next call
+  // re-hits Voyage; still return it so the caller rejects + audits it exactly as on the uncached path.
+  if (isValidEmbedding(response.data?.[0]?.embedding)) {
+    cache.set(key, response);
+    const maxSize = queryEmbedCacheSize();
+    while (cache.size > maxSize) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey === undefined) break;
+      cache.delete(oldestKey);
+    }
   }
   return { response, cached: false };
 }

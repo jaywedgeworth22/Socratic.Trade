@@ -97,6 +97,20 @@ describe("query-embedding LRU cache (G8b)", () => {
     expect(mocks.meterEmbed).toHaveBeenCalledTimes(1);
   });
 
+  it("does NOT cache a malformed query embedding — a transient bad embed must not poison the LRU", async () => {
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+
+    // First call: Voyage returns a malformed vector (NaN) the integrity guard rejects → returns [].
+    mocks.embed.mockResolvedValueOnce({ data: [{ embedding: [Number.NaN, Number.NaN] }] });
+    const first = await retrieveContextDetailed("AAPL guidance catalysts", "AAPL", 2, "local");
+    expect(first).toEqual([]); // rejected, no context
+
+    // Second identical call MUST re-hit Voyage (the bad response was not cached), and now succeeds.
+    const second = await retrieveContextDetailed("AAPL guidance catalysts", "AAPL", 2, "local");
+    expect(mocks.embed).toHaveBeenCalledTimes(2); // 2, not 1 → malformed response was never cached
+    expect(second.length).toBeGreaterThan(0);
+  });
+
   it("normalizes whitespace/casing so near-identical queries still hit the cache", async () => {
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
 

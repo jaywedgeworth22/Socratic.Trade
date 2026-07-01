@@ -370,7 +370,7 @@ export async function runStrategyOnce(
     // overshoot by up to the in-flight runs' spend (bounded by scheduler concurrency). A true hard cap
     // needs a per-user reservation / run serialization — deferred as a follow-up.
     const budget = checkLlmDailyBudget(userId);
-    const skipLlmDueToBudget = !budget.ok;
+    let skipLlmDueToBudget = !budget.ok;
     if (skipLlmDueToBudget) {
       audit(
         "strategy_run_suppressed_budget",
@@ -503,6 +503,24 @@ export async function runStrategyOnce(
     // LLM proposal generation is skipped when over the daily budget (skipLlmDueToBudget, computed
     // above before revalidation) or when no candidate cleared the score threshold. Non-LLM safety
     // work already ran regardless.
+    // Re-read the budget immediately before generation. The initial check above ran BEFORE revalidation
+    // and the RAG retrieval block, both of which record llm_usage/rag_usage — so a run that STARTED just
+    // under the ceiling can be over it by now. Using the stale skipLlmDueToBudget here would let
+    // proposeTrades call the model and the withLlmGeneration backstop would THROW LlmBudgetExceededError,
+    // which the outer catch turns into a FAILED run + failure notification for what is really normal
+    // budget exhaustion. Re-reading degrades to a graceful skip instead. Cheap DB read; default OFF
+    // (no ceiling) → always ok, so no behavior change when budgets are unset.
+    if (!skipLlmDueToBudget) {
+      const budgetNow = checkLlmDailyBudget(userId);
+      if (!budgetNow.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "strategy_run_suppressed_budget",
+          { runId, userId, reason: budgetNow.reason, tokensToday: budgetNow.tokensToday, costUsdToday: budgetNow.costUsdToday, tokenLimit: budgetNow.tokenLimit, costLimitUsd: budgetNow.costLimitUsd, phase: "pre_generation" },
+          userId
+        );
+      }
+    }
     let llmProposals: TradeProposal[] = [];
     if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
       const proposed = await proposeTrades({

@@ -14,7 +14,12 @@ filling the missing pieces.
 > `meterRerank` in `retrieveContextDetailed`) now book under the requesting `userId` instead of defaulting
 > to `"local"` — otherwise a non-`local` user's retrieval spend was never counted against *their* ceiling,
 > silently defeating (b) for the multi-user case. Covered by `test/llm-budget-enforcement.test.ts` and
-> `test/rag-metering.test.ts`.
+> `test/rag-metering.test.ts`. A later pass added three more **fixed-in-code** items: (d) over-budget
+> `generateReflectionSummary` no longer skips the non-LLM excursion enrichment (budget suppresses only
+> the LLM reflection now); (e) a run that crosses the budget mid-run (revalidation/RAG spend) re-reads
+> the budget before `proposeTrades` and gracefully skips instead of surfacing as a FAILED run; (f)
+> `embedQueryCached` only caches VALID embeddings, so a transient malformed Voyage response no longer
+> poisons the query LRU. Covered by `test/post-mortem.test.ts` and `test/query-embedding-cache.test.ts`.
 >
 > **Future considerations (deferred, not blocking PR #293)** — the durable per-user LLM budget now
 > enforces at the spend primitives and is user-editable in Settings; known limitations left for a

@@ -4,6 +4,17 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Durable budget: Codex round on 42f0f23 (3 more fixes) (Claude)
+On PR #293. Third Codex pass (`42f0f23f45`) — all **fixed in code with tests** (real bugs, not design
+nuances): (4) over-budget `generateReflectionSummary` no longer skips the non-LLM excursion enrichment
+(`persistExcursionsBackground`) — budget guard moved below `source` so it suppresses only the LLM
+reflection; (5) a run that crosses the budget mid-run (via revalidation/RAG spend) no longer surfaces as
+a FAILED run — `runStrategyOnce` re-reads the budget right before `proposeTrades` and gracefully skips
+instead of letting `withLlmGeneration` throw into the outer failure catch (red-team path was already
+fail-closed); (6) `embedQueryCached` no longer caches a malformed query embedding (would poison the LRU
+and return no context until eviction) — only valid embeddings are cached now. Tests: `post-mortem.test.ts`,
+`query-embedding-cache.test.ts`. Verify quartet green: tsc 0, lint 0 errors, **1885 tests**, build ok.
+
 ## 2026-07-01 — Durable budget: follow-up Codex review (3 fixes + 2 docs) (Claude)
 On PR #293. Codex passes on `de66edc` / `1e14e848fb`: **fixed in code** (with tests) — (1) an explicit
 per-user policy budget of `0` now opts OUT of an operator env default (`resolveLimit` only inherits env on
