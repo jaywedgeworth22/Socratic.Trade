@@ -6574,9 +6574,16 @@ function IntegrationsSection({
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setShowCustomEndpoint(checked);
+                        // Start the custom field EMPTY on check, never copy in the current
+                        // (possibly stale/default) baseUrl — that silently locked in the wrong
+                        // endpoint for anyone who checked this before finishing the account
+                        // number/API key fields, since a checked box also stops those fields'
+                        // auto-derivation of baseUrl from the inferred paper/live environment.
+                        // An empty custom value still saves safely: the save handler falls back
+                        // to alpacaDefaultEndpointFor(environment) when baseUrl is blank.
                         setEditing({
                           ...editing,
-                          baseUrl: checked ? (editing.baseUrl || "") : defaultAlpacaEndpoint
+                          baseUrl: checked ? "" : defaultAlpacaEndpoint
                         });
                       }}
                     />

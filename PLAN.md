@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/affectionate-franklin-a52935`): Alpaca account-editor
+> "Custom Endpoint" checkbox fix - a live Alpaca account (`environment: "live"`)
+> ended up with `base_url` stuck on Alpaca's paper endpoint, causing a
+> production 401 on the readiness check. Root cause: checking "Use a Custom
+> Alpaca Endpoint" in `dashboard-client.tsx`'s account editor copied the
+> current (possibly-stale-default) `baseUrl` into the custom field with
+> nothing typed, and also disabled the auto-derivation that keeps `baseUrl` in
+> sync with the inferred paper/live environment as the account
+> number/API key are filled in. Fixed to start the custom field empty on
+> check. No roadmap change; see
+> `docs/rollouts/2026-07-01-alpaca-custom-endpoint-checkbox-fix.md`.
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value
