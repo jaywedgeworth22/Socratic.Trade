@@ -64,6 +64,124 @@ windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envel
 disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
 MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
 (monolithic-snapshot whole-tree re-render refactor, audit §6.1).
+## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
+Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
+merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three
+guardrail items on top of #296's autonomous factor-weight tuning:
+- **P0-4 — Unified learning-mutation ledger + admin revert.** New `learning_mutations` table (`db.ts`
+  `migrate()`), CRUD in new `src/lib/db-learning-ledger.ts`, orchestration in new
+  `src/lib/learning-ledger.ts` (`recordLearningMutation` / `revertLearningMutation`, subsystem
+  `scoring_weights`). One canonical append-only row per gated mutation (before/after full weight vectors,
+  subsystem, trigger, OOS evidence, flag, timestamp). Recording is passive/always-on. GENERALIZES #296's
+  tuning-specific audited revert — `applyAutonomousWeightTuning` now records here (still writes the legacy
+  `auto_weight_apply` audit row for dashboard back-compat), and `revertAutonomousWeightTuning` delegates to
+  the unified ledger (falls back to the legacy audit row for pre-ledger applies). Admin-only revert route
+  `app/api/admin/learning-ledger/route.ts` (`requireAdmin`; GET lists, POST reverts). `before` is captured
+  ATOMICALLY (re-read policy immediately before `setPolicy`).
+- **P0-2 — Effect-size + paired-t significance on the OOS gate.** New pure `pairedICDiffStats()` in
+  `backtest.ts` computes the PAIRED per-date candidate−baseline IC-difference series (correct SE source: the
+  two ICs share the same fold) and a t-stat; threaded onto `OOSResult.pairedICDiff` when both weight vectors
+  are supplied. Autonomous gate extended with `policy.tuning.minOosICImprovement` (default 0 = today's margin
+  via env `AUTO_TUNE_MIN_IC_DELTA`) and `policy.tuning.minOosPairedTStat` (default 0 = paired-t OFF / no-op).
+  Multiplicity (D-1) explicitly deferred (documented; no teeth until a per-account trial counter exists).
+- **P0-3 — Fail-closed tuning-config invariant guard.** New pure `src/lib/tuning-invariants.ts`
+  (`validateTuningInvariants`) checks a small hard-coupling set (positive sample gates,
+  `sizingFloorPct ≤ sizingCeilingPct`, `autoApplyWeights ⇒ oosWithholdUnvalidated` unless the new
+  `autoApplyOverrideUnvalidated` escape hatch, calibration ⇒ band gate). The AUTONOMOUS apply path calls it
+  at the TOP and fails CLOSED (skip + `auto_weight_apply_skipped` audit row, NEVER throws). The manual tune
+  route surfaces the same violations as non-blocking `tuningConfigWarnings`.
+
+All behavior-changing knobs default OFF/no-op; the ledger RECORDING is passive/always-on (audit trail only,
+no trading behavior change). Did NOT touch `red-team.ts` / inline-Bear (separate session). Verify quartet
+green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 265 grandfathered warnings) →
+`npm test` (182 files / 1793 tests) → `npm run build` (see rollout note). See
+`docs/rollouts/2026-07-01-learning-loop-followon.md` and `docs/phase-7-strategy.md` §3.E.5–E.7.
+## 2026-07-01 — RAG expansion backlog, broader pass (Claude)
+Branch `agent/claude-backlog-c-rag`, based on `origin/main` after #297 (Workstream C) and #299
+(follow-on: `rankPool` helper, R1 `published_at` fallback + `VECTOR_ASOF_STRICT`, R2 embedding-
+integrity guard, R8 first-valid-ticker) merged. Implements the full remaining backlog from
+`docs/reviews/2026-07-01-rag-knowledge-expansion.md` — all P1 (R5, R6, R7, R9, R10, R11) and all
+P2 (R12, R13, R14, R15, R16, R17) items. R3 (golden-set anti-leakage lint) and R8 (salience
+first-valid-ticker) were already shipped in earlier passes and are verified, not re-implemented.
+Read/retrieval-only — no order/execution-path code touched, no `app/` UI component edited (R13 is
+backend/payload-only per the redesign-thread constraint).
+
+- **R5** `recordRetrievalQuality()` in `rag-metering.ts` — one consolidated per-retrieval
+  distribution-telemetry record (hashed query via SHA-256-first-16, never raw; k/candidates/
+  dropped-by-minScore/dropped-by-asOf/hybrid/rerank-attempted/rerank-ran/top-cosine/top-relevance/
+  final-count), fire-and-forget try/catch, default off via `RAG_RETRIEVAL_TELEMETRY`.
+- **R6** new `src/lib/rag/env-flag.ts` (`envFlagOn(name, default)`), routed through by rerank/
+  hybrid/as-of-strict/disclosure flags. `RAG_EMBED_DISCLOSURES` now accepts `true/1/yes` (was
+  exact-`'on'`-only) — an intentional safe-direction change, called out because it can trigger
+  real embedding cost for an operator relying on the old quirk.
+- **R7** `assertIndexMetric()` — `describeIndex` called once per index-init cache key (cached),
+  `console.warn` + `audit("vector_index_metric_mismatch", ...)` if the metric isn't `cosine`,
+  NEVER throws.
+- **R9** query-embedding LRU (`src/lib/rag/query-embed-cache.ts`), keyed on
+  `${VOYAGE_MODEL}:${query.trim()}` (no userId), caches ONLY the 1024-dim vector never Pinecone
+  results, `meterEmbed` only on miss, default off via `RAG_QUERY_EMBED_CACHE`.
+- **R10** `storeContexts` gained opt-in `dedupKeyPrefix` (hashes trimmed text via the existing
+  `hashContent` SHA-256 helper, reuses `document_chunks`/`filterNewDocumentChunks`/
+  `insertDocumentChunks`); wired into `sec8k.ts`'s summary ingest and `disclosure-rag.ts` behind
+  new `VECTOR_STORECONTEXTS_DEDUP` (default off).
+- **R11** `scripts/eval/faithfulness.ts` (+ `run-faithfulness.ts`, `test/rag-faithfulness-eval.test.ts`,
+  `test/fixtures/rag-faithfulness-fixture.ts`) — deterministic citation-grounding (cited chunk_id
+  present in retrieval?) + numeric-claim substring-support checks, plus an optional LLM judge
+  (default off, no-ops without `OPENAI_API_KEY`, kept out of the required CI test run).
+- **R12** `RetrieveOptions.applyDefaultFloors` / `RAG_APPLY_DEFAULT_FLOORS` (default off) applies
+  `defaultMinScore()` when a NEW caller omits `minScore`; both existing callers (`strategy.ts`,
+  `orchestrator.ts`) already pass it explicitly and are proven byte-identical.
+- **R13** `KbChunk` gained additive `doc_type`/`isStale` fields; `orchestrator.searchKnowledge`
+  forwards `doc_type`/`section` always, and `isStale` (heuristic per-doc_type staleness horizon,
+  advisory only) only when `RAG_CITATION_STALENESS` is on. Backend/payload only — no UI renders
+  these yet (owned by the parallel dashboard-redesign thread).
+- **R14** `src/lib/rag/dedupe-similar.ts` — greedy Jaccard-shingle near-duplicate suppression with
+  back-fill, opt-in via `RetrieveOptions.dedupeSimilarity`, applied after the relevance floor and
+  before the final slice-to-limit.
+- **R15** `scripts/eval/corpus-coverage.ts` (npm run `eval:corpus-coverage`) — offline report from
+  `ingested_accessions`/`document_chunks` (doc_type breakdown, per-symbol chunk counts, watchlist
+  symbols with zero coverage), optional live `describeIndexStats` cross-check. Related but
+  separate from the existing live `/api/admin/rag-coverage` + `app/admin/rag-coverage/` UI (not
+  touched by this pass).
+- **R16** `src/lib/rag/run-budget.ts` — default-off, very-high-ceiling rolling-window operation
+  counter (`RAG_RUN_BUDGET_ENABLED`); on trip, degrades by skipping rerank/hybrid ONLY (never core
+  dense-cosine recall), emits exactly one `rag_run_budget_tripped` audit row per process lifetime.
+- **R17** `VECTOR_EMBED_CLEAN_TEXT` (default off) — `storeContexts` embeds boilerplate-stripped
+  text (`stripPublishedPrefix`) while the stored/cited metadata text is unchanged; confirmed no
+  consumer parses the `[Published:]` prefix out of chunk text (only test fixtures reference it).
+
+Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276
+warnings, pre-existing grandfathered class) → `npm test` (193 files / 1918 tests, up from 183/1797)
+→ `npm run build` (clean). See `docs/rollouts/2026-07-01-rag-backlog.md` for full detail, the
+updated `test/disclosure-rag.test.ts` `RAG_EMBED_DISCLOSURES` behavior-change note, and the two new
+`scripts/eval/*` diagnostics (`eval:faithfulness`, `eval:corpus-coverage`) smoke-tested against a
+real (empty) dev DB with no keys configured.
+
+## 2026-07-01 — API Usage Monitor integration (Workstream C2) (Claude)
+Branch `claude/competent-elion-c82938`. Wired App B → the API Usage Monitor
+(`usage.jays.services`) per `docs/reviews/2026-07-01-audit-work-split.md` (Cross-repo C2):
+(1) `recordLlmUsage`/`recordRagUsage` now fire-and-forget push usage+cost via new
+`src/lib/usage-monitor-push.ts`; (2) market-data (`fetchWithRetry`) + broker
+(`alpaca.trackHealth`, `robinhood.callRobinhoodMcpTool`) call-volume is counted and flushed
+as aggregated per-provider `requests` events; (3) Anthropic/Voyage/Robinhood become
+push-primary just by tagging `provider` (poll adapters are blind); (4) cost-aware loop — new
+monitor `GET /api/budget-status` (token-gated, combines poll snapshot + pushed MTD cost vs
+`ProviderPlan.monthlyBudgetUsd`) + App B `src/lib/usage-budget.ts` firing `budget_alert`
+notifications (**Phase 1, wired**). **Phase 2** (model-downgrade / cycle-skip enforcement) is
+implemented + tested as a building block but **DEFERRED** — the Codex PR review showed a naive
+strategy-loop wiring is unsafe (must skip only the LLM step, not risk exits/reconcile; must not
+persist a temp downgrade via `setPolicy`; must thread the override into `debateProposal`). **Self-
+sufficient by design** (owner requirement): all default-off, fire-and-forget, never-throws,
+fail-open — a monitor outage only shows a `usage-monitor` row on the admin connections-health page,
+never blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
+`congress-trading-shared@1.0.0`, which lacks the `usageTelemetry` export (it's on the shared
+repo's unmerged 1.1.0 branch) and publishing/lockfile-regen isn't possible here — same event
+contract, migration path documented. **Monitor DEPLOYED to prod (Render, `usage.jays.services`,
+PR #6 merged); App B deploy pending PR #294 merge → `trading-publish.sh`.** Verify (in-worktree
+after `NODE_AUTH_TOKEN=$(gh auth token) npm ci`): tsc clean, lint 0 errors, full suite green
+(+16 tests), build clean; monitor tsc + build clean. Reviews: pre-merge multi-agent (2 fixes) +
+Codex PR review (5 fixes + Phase-2 deferral). See `docs/usage-monitor-integration.md` +
+`docs/rollouts/2026-07-01-usage-monitor-integration.md`.
 ## 2026-07-01 — RAG follow-on: retrieval regression net + R1 strict as-of mode (Claude)
 Branch `agent/claude-followon-c-rag`, based on `origin/main` after Workstream C (PR #297,
 below) merged. Focused follow-on implementing the two items PR #297 explicitly deferred:

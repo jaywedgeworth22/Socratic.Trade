@@ -9,6 +9,7 @@
 import crypto from "crypto";
 import { getDb } from "./db";
 import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, type LlmKeySource } from "./db-api-keys";
+import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
 export interface LlmUsageEntry {
@@ -126,6 +127,19 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
         cost ?? null,
         new Date().toISOString()
       );
+    // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
+    pushLlmUsage({
+      provider: entry.provider,
+      model: entry.model,
+      context: entry.context,
+      userId: entry.userId,
+      keySource: entry.keySource,
+      keyRef: entry.keyRef,
+      promptTokens: entry.promptTokens,
+      completionTokens: entry.completionTokens,
+      totalTokens: total,
+      costUsd: cost,
+    });
   } catch {
     /* ledger is best-effort; never break the caller */
   }

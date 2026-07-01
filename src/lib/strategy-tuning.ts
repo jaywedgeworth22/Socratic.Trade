@@ -5,6 +5,7 @@ import {
   getActiveConnectedAccount,
   latestAuditByKind,
   listFillEvents,
+  listLearningMutations,
   listStrategyRuns,
   normalizeScoringWeights,
   setPolicy
@@ -21,6 +22,8 @@ import { withLlmGeneration } from "./observability";
 import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import { runWalkForwardOOS, buildSpyReturnToNowMap } from "./backtest";
+import { validateTuningInvariants } from "./tuning-invariants";
+import { recordLearningMutation, revertLearningMutation, LEARNING_SUBSYSTEM_SCORING_WEIGHTS } from "./learning-ledger";
 import type {
   FillEvent,
   MarketFactor,
@@ -862,16 +865,29 @@ export const AUTO_WEIGHT_APPLY_AUDIT_KIND = "auto_weight_apply";
  * baseline (not a razor-thin edge), a POSITIVE absolute candidate IC, a minimum ICIR (signal stability),
  * and a minimum test-date count. All env-tunable for operators who want to loosen/tighten.
  */
-export function autonomousOosThresholds(): { minICDelta: number; minCandidateIC: number; minICIR: number; minTestDates: number } {
+export function autonomousOosThresholds(
+  tuning?: TradingPolicy["tuning"]
+): { minICDelta: number; minCandidateIC: number; minICIR: number; minTestDates: number; minPairedTStat: number } {
   const num = (name: string, dflt: number) => {
     const v = Number(process.env[name]);
     return Number.isFinite(v) && v >= 0 ? v : dflt;
   };
+  // Panel P0-2: the policy-level `minOosICImprovement` (default 0) raises the IC-delta MARGIN above the env
+  // floor; `minOosPairedTStat` (default 0 = no-op) adds a proper paired-t significance requirement on the
+  // per-date IC-difference series. Both default to preserving current behavior.
+  const envMargin = num("AUTO_TUNE_MIN_IC_DELTA", 0.005);
+  const policyMargin = typeof tuning?.minOosICImprovement === "number" && tuning.minOosICImprovement >= 0
+    ? tuning.minOosICImprovement
+    : 0;
+  const minPairedTStat = typeof tuning?.minOosPairedTStat === "number" && tuning.minOosPairedTStat >= 0
+    ? tuning.minOosPairedTStat
+    : 0;
   return {
-    minICDelta: num("AUTO_TUNE_MIN_IC_DELTA", 0.005),
+    minICDelta: Math.max(envMargin, policyMargin),
     minCandidateIC: num("AUTO_TUNE_MIN_CANDIDATE_IC", 0.0),
     minICIR: num("AUTO_TUNE_MIN_ICIR", 0.2),
-    minTestDates: num("AUTO_TUNE_MIN_TEST_DATES", 4)
+    minTestDates: num("AUTO_TUNE_MIN_TEST_DATES", 4),
+    minPairedTStat
   };
 }
 
@@ -897,6 +913,23 @@ export async function applyAutonomousWeightTuning(userId: string = "local", mode
   const policy = getPolicy(userId);
   if (!policy.tuning?.autoApplyWeights) return { applied: false, reason: "autoApplyWeights_off" };
 
+  // P0-3 FAIL-CLOSED CONFIG GUARD: validate the tuning invariants at the TOP of the autonomous path. On any
+  // violation, SKIP the apply and write an audited "skipped: invariant violation" row — never throw (a throw
+  // would wedge the scheduler tick that calls this). The pure validator never throws.
+  const invariants = validateTuningInvariants(policy.tuning);
+  if (!invariants.ok) {
+    audit("auto_weight_apply_skipped", {
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      reason: "invariant_violation",
+      violations: invariants.violations
+    }, userId, policy.connectedAccountId);
+    return {
+      applied: false,
+      reason: `invariant_violation (${invariants.violations.map((v) => v.code).join(",")})`
+    };
+  }
+
   const proposal = await proposeStrategyTuning(userId, modelOverride);
   // WRITE-SCOPE SAFETY (panel B1): scoringWeights ONLY — never the patch's policy/prompt sub-fields.
   const proposedWeights = proposal.proposedPatch.scoringWeights;
@@ -916,8 +949,9 @@ export async function applyAutonomousWeightTuning(userId: string = "local", mode
   }
   const newWeights = normalizeScoringWeights(clampedToPrev);
 
-  // STRICTER autonomous OOS re-validation on the ACTUAL vector we would persist.
-  const th = autonomousOosThresholds();
+  // STRICTER autonomous OOS re-validation on the ACTUAL vector we would persist. Thresholds are policy-driven
+  // (P0-2: minOosICImprovement raises the margin, minOosPairedTStat adds a paired-t significance gate).
+  const th = autonomousOosThresholds(policy.tuning);
   let oos;
   try {
     oos = await runWalkForwardOOS(userId, { candidateWeights: newWeights, baselineWeights: previousWeights });
@@ -928,35 +962,79 @@ export async function applyAutonomousWeightTuning(userId: string = "local", mode
   const candidateIC = oos.oosICCandidate;
   const baselineIC = oos.oosICBaseline;
   if (candidateIC == null || baselineIC == null) return { applied: false, reason: "oos_no_composite_ic", cautions: proposal.cautions };
+  // P0-2 PAIRED SIGNIFICANCE: the two composite ICs are measured on the SAME test fold and are correlated, so
+  // the difference's SE must come from the PAIRED per-date IC-difference series (oos.pairedICDiff), not from
+  // differencing independent ICIRs. Require the paired t-stat to clear minPairedTStat. Default 0 = no-op.
+  // Multiplicity (D-1): a single-shot Šidák/Bonferroni correction is deferred — it only earns teeth once a
+  // per-account trial counter exists; with minPairedTStat defaulting to 0 today there is no multiplicity to
+  // correct. Documented here rather than trivially bolted on.
+  const pairedT = oos.pairedICDiff?.tStat ?? 0;
+  const pairedN = oos.pairedICDiff?.n ?? 0;
+  const passesPairedT = th.minPairedTStat <= 0 || (pairedN >= 2 && pairedT >= th.minPairedTStat);
   const passesAutonomousGate =
     candidateIC - baselineIC >= th.minICDelta &&
     candidateIC > th.minCandidateIC &&
     oos.oosICIR >= th.minICIR &&
-    oos.testDates >= th.minTestDates;
+    oos.testDates >= th.minTestDates &&
+    passesPairedT;
   if (!passesAutonomousGate) {
     return {
       applied: false,
-      reason: `autonomous_oos_gate_failed (ΔIC=${(candidateIC - baselineIC).toFixed(4)}, IC=${candidateIC.toFixed(4)}, ICIR=${oos.oosICIR.toFixed(2)}, testDates=${oos.testDates})`,
+      reason: `autonomous_oos_gate_failed (ΔIC=${(candidateIC - baselineIC).toFixed(4)}, IC=${candidateIC.toFixed(4)}, ICIR=${oos.oosICIR.toFixed(2)}, testDates=${oos.testDates}, pairedT=${pairedT.toFixed(2)}, pairedN=${pairedN})`,
       cautions: proposal.cautions
     };
   }
 
-  setPolicy({ ...policy, scoringWeights: newWeights }, userId, policy.connectedAccountId);
+  // P0-4: capture `before` ATOMICALLY — re-read effective policy immediately before the setPolicy write so a
+  // concurrent multi-agent weight write doesn't cause a stale baseline to be recorded/reverted-to.
+  const beforePolicy = getPolicy(userId, policy.connectedAccountId);
+  const beforeWeights = normalizeScoringWeights({ ...beforePolicy.scoringWeights });
+  setPolicy({ ...beforePolicy, scoringWeights: newWeights }, userId, policy.connectedAccountId);
 
+  const evidence = {
+    candidateIC,
+    baselineIC,
+    icDelta: candidateIC - baselineIC,
+    icir: oos.oosICIR,
+    testDates: oos.testDates,
+    pairedTStat: pairedT,
+    pairedN,
+    pairedMeanDiff: oos.pairedICDiff?.meanDiff,
+    thresholds: th,
+    changedFactors: Object.keys(proposedWeights),
+    confidenceScore: proposal.confidenceScore,
+    generatedBy: proposal.generatedBy,
+    cautions: proposal.cautions
+  };
+
+  // P0-4: record ONE canonical ledger row (before/after full vectors, subsystem, trigger, evidence, flag).
+  recordLearningMutation({
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    userId,
+    connectedAccountId: policy.connectedAccountId,
+    trigger: AUTO_WEIGHT_APPLY_AUDIT_KIND,
+    flag: "autoApplyWeights",
+    before: { scoringWeights: beforeWeights },
+    after: { scoringWeights: newWeights },
+    evidence
+  });
+
+  // Keep the existing audit row for backward-compat (dashboard + prior tests read `auto_weight_apply`); the
+  // unified ledger is now the source of truth for revert.
   audit(AUTO_WEIGHT_APPLY_AUDIT_KIND, {
     userId,
     connectedAccountId: policy.connectedAccountId,
-    previousWeights,
+    previousWeights: beforeWeights,
     newWeights,
     changedFactors: Object.keys(proposedWeights),
-    oos: { candidateIC, baselineIC, icDelta: candidateIC - baselineIC, icir: oos.oosICIR, testDates: oos.testDates },
+    oos: { candidateIC, baselineIC, icDelta: candidateIC - baselineIC, icir: oos.oosICIR, testDates: oos.testDates, pairedTStat: pairedT, pairedN },
     thresholds: th,
     confidenceScore: proposal.confidenceScore,
     generatedBy: proposal.generatedBy,
     cautions: proposal.cautions
   }, userId);
 
-  return { applied: true, previousWeights, newWeights, cautions: proposal.cautions };
+  return { applied: true, previousWeights: beforeWeights, newWeights, cautions: proposal.cautions };
 }
 
 export interface AutonomousWeightRevertResult {
@@ -966,12 +1044,40 @@ export interface AutonomousWeightRevertResult {
 }
 
 /**
- * Item 1: revert the most recent autonomous weight application, restoring the prior vector snapshotted in
- * the latest `auto_weight_apply` audit row. Returns `{ reverted: false }` when no such row exists. Writes an
- * `auto_weight_revert` audit row for traceability.
+ * Item 1 (P0-4-unified): revert the most recent autonomous weight application. Prefers the UNIFIED learning-
+ * mutation ledger (`revertLearningMutation`, subsystem `scoring_weights`) so there is ONE revert path that
+ * restores via `setPolicy` (keeping account_strategy_state + the active-profile mirror in sync). For pre-
+ * ledger applies (only the legacy `auto_weight_apply` audit row exists), falls back to that snapshot. Returns
+ * `{ reverted: false }` when nothing is revertible. Writes an `auto_weight_revert` audit row for traceability.
  */
 export function revertAutonomousWeightTuning(userId: string = "local"): AutonomousWeightRevertResult {
   const policy = getPolicy(userId);
+
+  // Preferred path: the unified ledger (the source of truth for applies made after P0-4 landed).
+  const ledgerResult = revertLearningMutation({
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    userId,
+    connectedAccountId: policy.connectedAccountId,
+    revertedBy: "revertAutonomousWeightTuning"
+  });
+  if (ledgerResult.reverted && ledgerResult.restoredWeights) {
+    audit("auto_weight_revert", { userId, connectedAccountId: policy.connectedAccountId, restoredWeights: ledgerResult.restoredWeights, via: "ledger", entryId: ledgerResult.entryId }, userId);
+    return { reverted: true, restoredWeights: ledgerResult.restoredWeights };
+  }
+
+  // Back-compat fallback: ONLY for a genuine PRE-LEDGER apply — i.e. NO learning-mutation ledger row exists
+  // for this (user, account, scoring_weights) at all. If a ledger row DOES exist (even one already reverted),
+  // the ledger is authoritative and the legacy `auto_weight_apply` audit snapshot is STALE — using it on a
+  // 2nd revert would restore old previousWeights and clobber any manual weight change made since (finding #2).
+  const anyLedgerRow = listLearningMutations(userId, {
+    connectedAccountId: policy.connectedAccountId,
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    limit: 1
+  }).length > 0;
+  if (anyLedgerRow) {
+    return { reverted: false, reason: "no_unreverted_ledger_mutation" };
+  }
+
   const last = (policy.connectedAccountId
     ? latestAuditByKind(AUTO_WEIGHT_APPLY_AUDIT_KIND, userId, policy.connectedAccountId)
     : latestAuditByKind(AUTO_WEIGHT_APPLY_AUDIT_KIND, userId))?.payload as { previousWeights?: Partial<ScoringWeights> } | undefined;
@@ -980,6 +1086,6 @@ export function revertAutonomousWeightTuning(userId: string = "local"): Autonomo
   }
   const restoredWeights = normalizeScoringWeights({ ...policy.scoringWeights, ...last.previousWeights });
   setPolicy({ ...policy, scoringWeights: restoredWeights }, userId, policy.connectedAccountId);
-  audit("auto_weight_revert", { userId, connectedAccountId: policy.connectedAccountId, restoredWeights }, userId);
+  audit("auto_weight_revert", { userId, connectedAccountId: policy.connectedAccountId, restoredWeights, via: "legacy_audit" }, userId);
   return { reverted: true, restoredWeights };
 }

@@ -20,6 +20,7 @@ import {
 } from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
+import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
 import { getStreamedHeadlines } from "./streams/news-store";
@@ -377,6 +378,9 @@ async function fetchWithRetry(
           userId: options.userId,
         });
       }
+      // Call-volume telemetry: one logical market-data call per fetchWithRetry invocation
+      // (no-op unless the usage monitor is configured; never throws).
+      if (options.service) recordProviderCall(options.service, { ok: response.ok, keySource: options.keySource, userId: options.userId });
       return response;
     }
   } catch (err) {
@@ -389,6 +393,7 @@ async function fetchWithRetry(
         keySource: options.keySource,
         userId: options.userId,
       });
+      recordProviderCall(options.service, { ok: false, keySource: options.keySource, userId: options.userId });
     }
     throw err;
   }

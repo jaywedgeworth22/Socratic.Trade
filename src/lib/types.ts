@@ -36,7 +36,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "price_alert",
   "proposal_withdrawn",
   "limit_order_stale",
-  "provider_degraded"
+  "provider_degraded",
+  "budget_alert"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -240,6 +241,31 @@ export interface TuningSettings {
    * behavior is byte-identical. Never applies weights when the OOS gate strips them.
    */
   autoApplyWeights?: boolean;
+  /**
+   * OPT-IN (DEFAULT 0 = current strict `>` behavior, panel P0-2): minimum OOS composite IC improvement
+   * (candidate − baseline) the autonomous apply path requires BEFORE the paired-t significance test. A
+   * flat margin alone is the floor; the paired-t (computed from the per-date IC-difference series) is the
+   * correct form and is ALSO required. 0 keeps today's behavior (the existing env `AUTO_TUNE_MIN_IC_DELTA`
+   * still supplies a small default margin); a positive value tightens the margin. Surfaced as an audited
+   * no-op when it silently blocks autonomy.
+   */
+  minOosICImprovement?: number;
+  /**
+   * OPT-IN (DEFAULT 0 = paired-t OFF, panel P0-2): minimum PAIRED t-statistic on the per-date
+   * candidate-vs-baseline IC-difference series that the autonomous apply path requires. 0 disables the
+   * significance test entirely (byte-identical to pre-P0-2 autonomy); a positive value (e.g. 1.5–2.0)
+   * requires the candidate's OOS edge to be statistically distinguishable from the baseline on the shared
+   * fold, not merely a point-estimate margin. Defaults to a no-op so nothing changes unless an operator
+   * opts in.
+   */
+  minOosPairedTStat?: number;
+  /**
+   * ESCAPE HATCH (DEFAULT false, panel P0-3): explicitly allow `autoApplyWeights` to run even when
+   * `oosWithholdUnvalidated` is false. Without this override the fail-closed invariant guard SKIPS the
+   * autonomous apply (it must not run while unvalidated weight moves are kept). Set this only if you
+   * deliberately want autonomy under a permissive OOS-withhold posture.
+   */
+  autoApplyOverrideUnvalidated?: boolean;
   /**
    * OPT-IN (DEFAULT false): when true, the scan composite gates the congressional contribution on
    * the congress-score-eval go/no-go verdict — a "no-go" signal (below the eval's t-stat / marginal-IC

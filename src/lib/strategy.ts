@@ -68,6 +68,7 @@ import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { checkBudgetAndAlert } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
@@ -237,6 +238,13 @@ export async function runStrategyOnce(
       releaseStrategyLock(userId, connectedAccountId);
       return result;
     }
+
+    // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
+    // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
+    // Phase 2 (model-downgrade / cycle-skip enforcement) is DEFERRED to a follow-up PR: it must skip
+    // only the LLM proposal step — never the broker reconciliation or the risk-reducing exits below —
+    // and must not persist a temporary downgrade; see docs/usage-monitor-integration.md.
+    void checkBudgetAndAlert(userId, policy).catch(() => {});
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
