@@ -60,6 +60,20 @@ Verification: `npx tsc --noEmit` passes. Follow-up: confirm
 `GH_PACKAGES_TOKEN`'s scope is sufficient once the workflow can actually be
 dispatched (requires landing on `main` first). See
 `docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
+## 2026-07-01 - PR #279 shared-dep GitHub Packages - Codex round-4 fixes
+Branch `codex/agentic-shared-registry-semver-20260630`. Two remaining open Codex
+review threads addressed: (1) `scripts/npm-ci-with-shared-deps.sh` now also
+`export`s `NODE_AUTH_TOKEN` from the resolved token so the higher-precedence
+committed project `.npmrc` (`_authToken=${NODE_AUTH_TOKEN}`) authenticates when a
+caller only set `GITHUB_TOKEN`; (2) `scripts/sync-preview-lanes.sh` strips
+`GH_TOKEN` too (`env -u GH_TOKEN`) from the `pm2 restart --update-env` so the
+`GH_TOKEN` fetch path can't leak a repo token into preview processes. Verify trio
+green (tsc / 1578 tests / build); scripts ASCII-clean. See
+`docs/rollouts/2026-06-30-shared-dep-github-packages.md` (Round 4).
+
+Round 5 review fix: `scripts/npm-ci-with-shared-deps.sh` now includes `GH_TOKEN`
+in the package-auth fallback chain, matching the script fetch paths used by
+manual/operator preview syncs.
 
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
@@ -92,6 +106,34 @@ keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
 redirects to `/login`, `/api/health` returns `ok:true`, and
 `https://trading.jays.services/` returns a 307 to `/login`.
 See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+## 2026-06-30 - Strategy timeout and sizing guardrails
+Branch `codex/strategy-timeout-sizing-guardrails-20260630`. Follow-up to the
+Green Team timeout and the Roth IRA AAPL approval block. The timed-out run took
+about 73.5s wall-clock from run start to failure, while the LLM HTTP call itself
+hit the existing 60s timeout; the fix keeps the interactive timeout bounded
+instead of extending it. `gpt-5.5` with `high` reasoning is now rejected in
+Settings for interactive strategy runs, and stale stored `gpt-5.5`/high configs
+are runtime-clamped to medium effort before building Green/Red request bodies.
+
+Opening proposal sizing and the policy gate now reserve a 5% execution buffer
+below the effective per-order policy cap (`maxOrderNotional` / `% NAV`). A
+`$4.99` max therefore produces a preferred opening cap of `$4.74`, while the
+hard max remains the final fail-safe. The strategy prompt exposes both
+`limits.maxOrderNotional` and `limits.preferredMaxOrderNotional`. Chat/Assistant
+draft promotion now refuses to stage an already blocked dry-run decision, so a
+policy-blocked draft cannot become a pending approval row and then fail only
+after confirmation. Focused verification:
+`npx vitest run test/llm-request.test.ts test/policy.test.ts test/conviction-size-cap.test.ts test/policy-notification-events.test.ts test/chat-draft-policy.test.ts`
+passed (68 tests). Full verification passed: `npm run lint` (0 errors, 254
+existing warnings), `npx tsc --noEmit`, `npm test` (166 files / 1582 tests),
+and `npm run build`; the first post-merge webpack build retry hit host
+`ENOSPC`, then passed after deleting this worktree's generated `.next`. See
+`docs/rollouts/2026-06-30-strategy-timeout-sizing-guardrails.md`.
+
+Round 5 review fix: deterministic opening sizing now includes
+`maxShortOrderNotional` in the 5% headroom path, and chat-draft policy previews
+pass `userId` so wash-sale lockouts block before staging.
+
 ## 2026-06-30 - Policy route export build fix
 Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270
 failed during `npm run build` because Next 16 route validation rejected
@@ -384,6 +426,15 @@ a Dependabot secret so trusted Dependabot PRs can run the required verify gate.
 Companion shared-package PR:
 jaywedgeworth22/congress-trading-shared#1. See
 `docs/rollouts/2026-06-30-congress-trading-shared.md`.
+
+**UPDATE — PR #279 (`codex/agentic-shared-registry-semver-20260630`):** the shared
+dependency now installs from the private **GitHub Packages** registry
+(`https://npm.pkg.github.com`, `@jaywedgeworth22/congress-trading-shared`) via a
+semver range, **superseding** the git+`220677a`-pin + `CONGRESS_TRADING_SHARED_DEPLOY_KEY`
+model above. `scripts/npm-ci-with-shared-deps.sh` authenticates with
+`NODE_AUTH_TOKEN` (falling back to `GITHUB_TOKEN`); CI/e2e/deploy/preview-sync jobs
+carry `packages: read`. The legacy SSH deploy-key path remains only as a fallback for
+older lockfiles. See `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
 
 ## 2026-06-29 — Sticky top bar, slide-over layout offsets & verification
 Branch `agent/antigravity`. Made the dashboard header/top bar sticky so it always stays at the top of the viewport. Offset the `SlideOver` component dynamically from the top of the viewport using a measured `--header-height` CSS variable so drawer panels (like the Activity Log) render cleanly below the top bar instead of overlapping/sliding behind it. Verified `npx tsc --noEmit`, `npm run lint`, `npm test` (1,516 tests), and `npm run build` are all green. See `docs/rollouts/2026-06-29-sticky-top-bar-and-slideover-offsets.md`.

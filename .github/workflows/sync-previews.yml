@@ -14,6 +14,9 @@ jobs:
     runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
+      # Lets the job GITHUB_TOKEN authenticate the private @jaywedgeworth22/congress-trading-shared
+      # install when the lockfile changed (npm-ci-with-shared-deps.sh falls back to it). (Review: PR #279.)
+      packages: read
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
