@@ -24,11 +24,12 @@ filling the missing pieces.
 > **Future considerations (deferred, not blocking PR #293)** — the durable per-user LLM budget now
 > enforces at the spend primitives and is user-editable in Settings; known limitations left for a
 > follow-up:
-> 1. **Concurrent-run budget reservation.** The daily ceiling is a read-of-the-ledger admission
->    check, not a reservation. Two of the same user's account runs launched concurrently by the
->    scheduler can each start just under the limit and both spend, so the cap can be exceeded by up to
->    the in-flight runs' spend (bounded by the scheduler's concurrency cap). A truly hard cap needs a
->    per-user token reservation / run serialization — an architecturally-significant concurrency change.
+> 1. ~~**Concurrent-run budget reservation.**~~ **DONE (2026-07-01).** A per-USER LLM budget
+>    **reservation** now closes this: `reserveLlmBudget`/`reserveLlmRunBudget`/`releaseLlmReservation` in
+>    `src/lib/llm-budget.ts`, CAS'd in the `settings` KV row like `acquireStrategyLock` (no migration,
+>    5-min TTL, fail-closed → skip LLM, default-OFF). `runStrategyOnce` reserves its worst-case estimate
+>    at the budget gate and releases in the `finally`, so a concurrent same-user run sees the hold and
+>    skips LLM instead of both overshooting. See `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`.
 > 2. **Chat-path spend coverage.** `/api/chat` LLM spend does not route through `withLlmGeneration`, so
 >    it is outside the budget gate. If a *total* per-user/day ceiling (strategy + chat) is desired,
 >    wire the chat LLM path through the same `assertWithinLlmBudget(userId)` guard.
