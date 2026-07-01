@@ -36,6 +36,60 @@ no trading behavior change). Did NOT touch `red-team.ts` / inline-Bear (separate
 green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 265 grandfathered warnings) →
 `npm test` (182 files / 1793 tests) → `npm run build` (see rollout note). See
 `docs/rollouts/2026-07-01-learning-loop-followon.md` and `docs/phase-7-strategy.md` §3.E.5–E.7.
+## 2026-07-01 — API Usage Monitor integration (Workstream C2) (Claude)
+Branch `claude/competent-elion-c82938`. Wired App B → the API Usage Monitor
+(`usage.jays.services`) per `docs/reviews/2026-07-01-audit-work-split.md` (Cross-repo C2):
+(1) `recordLlmUsage`/`recordRagUsage` now fire-and-forget push usage+cost via new
+`src/lib/usage-monitor-push.ts`; (2) market-data (`fetchWithRetry`) + broker
+(`alpaca.trackHealth`, `robinhood.callRobinhoodMcpTool`) call-volume is counted and flushed
+as aggregated per-provider `requests` events; (3) Anthropic/Voyage/Robinhood become
+push-primary just by tagging `provider` (poll adapters are blind); (4) cost-aware loop — new
+monitor `GET /api/budget-status` (token-gated, combines poll snapshot + pushed MTD cost vs
+`ProviderPlan.monthlyBudgetUsd`) + App B `src/lib/usage-budget.ts` firing `budget_alert`
+notifications (**Phase 1, wired**). **Phase 2** (model-downgrade / cycle-skip enforcement) is
+implemented + tested as a building block but **DEFERRED** — the Codex PR review showed a naive
+strategy-loop wiring is unsafe (must skip only the LLM step, not risk exits/reconcile; must not
+persist a temp downgrade via `setPolicy`; must thread the override into `debateProposal`). **Self-
+sufficient by design** (owner requirement): all default-off, fire-and-forget, never-throws,
+fail-open — a monitor outage only shows a `usage-monitor` row on the admin connections-health page,
+never blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
+`congress-trading-shared@1.0.0`, which lacks the `usageTelemetry` export (it's on the shared
+repo's unmerged 1.1.0 branch) and publishing/lockfile-regen isn't possible here — same event
+contract, migration path documented. **Monitor DEPLOYED to prod (Render, `usage.jays.services`,
+PR #6 merged); App B deploy pending PR #294 merge → `trading-publish.sh`.** Verify (in-worktree
+after `NODE_AUTH_TOKEN=$(gh auth token) npm ci`): tsc clean, lint 0 errors, full suite green
+(+16 tests), build clean; monitor tsc + build clean. Reviews: pre-merge multi-agent (2 fixes) +
+Codex PR review (5 fixes + Phase-2 deferral). See `docs/usage-monitor-integration.md` +
+`docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+## 2026-07-01 — RAG follow-on: retrieval regression net + R1 strict as-of mode (Claude)
+Branch `agent/claude-followon-c-rag`, based on `origin/main` after Workstream C (PR #297,
+below) merged. Focused follow-on implementing the two items PR #297 explicitly deferred:
+**R4** (retrieval regression net) and **R1 part 2** (`VECTOR_ASOF_STRICT`). Read/retrieval-only
+— no order/execution-path code touched; every behavior change is default-off/opt-in and
+byte-identical to the pre-change pipeline unless a new flag/option is explicitly set.
+
+- **R4:** factored a pure `rankPool(matches, query, limit, options)` helper out of
+  `retrieveContextDetailed`'s inline post-recall pipeline (score floor → as-of guard → hybrid
+  fuse → rerank → post-rerank floor) — no such helper existed after #297 (verified by grep).
+  New `test/rag-retrieval-regression.test.ts` (19 tests, network-free) pins: a chunk dated
+  after `asOf` is dropped / an undated chunk kept (lenient) or dropped (strict); `rerankMatches`
+  preserves length+identity when the real Voyage client throws or returns empty data
+  (fail-open); `fuseHybrid` returns input unchanged on `<=1` match or malformed input; hybrid
+  on-vs-off reorders the pool but never drops a candidate. Includes an explicit `fetch` spy
+  assertion proving no live network is reachable from the file.
+- **R1 part 2:** new `VECTOR_ASOF_STRICT` flag (default OFF). `isWithinAsOf` gained an optional
+  third `strict` parameter (default `false`, byte-identical for every existing caller). When
+  strict is on **and** `options.asOf` is set, chunks with no resolvable date stamp are now
+  DROPPED instead of kept, with a fire-and-forget `audit("vector_asof_strict_drop", {
+  droppedUndated, asOf }, userId)` record. New `test/vector-db-asof-strict.test.ts` (5 tests)
+  proves the golden as-of tuple (undated excluded under strict / included without) through the
+  real `retrieveContextDetailed` pipeline (mocked Pinecone/Voyage).
+- Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 274
+  warnings, pre-existing grandfathered class, unchanged in kind) → `npm test` (183 files / 1797
+  tests, up from 181/1778) → `npm run build` (clean). `tsc --noEmit` re-checked clean after the
+  build regenerated `.next/types`. See `docs/rollouts/2026-07-01-rag-followon.md` for full
+  detail and remaining backlog (R3/R5-R17 still unimplemented, per PR #297's own deferral list —
+  out of scope for this focused pass).
 
 ## 2026-07-01 — RAG eval harness, rerank scoring, char-cap/doc_type/salience fixes — Workstream C (Claude)
 Branch `agent/claude-workstream-c-rag-v2`. Implements all 7 items from

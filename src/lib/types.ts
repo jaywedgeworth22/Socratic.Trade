@@ -36,7 +36,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "price_alert",
   "proposal_withdrawn",
   "limit_order_stale",
-  "provider_degraded"
+  "provider_degraded",
+  "budget_alert"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
