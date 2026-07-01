@@ -358,7 +358,7 @@ async function fetchWithRetry(
       }
       // Call-volume telemetry: one logical market-data call per fetchWithRetry invocation
       // (no-op unless the usage monitor is configured; never throws).
-      if (options.service) recordProviderCall(options.service, { ok: response.ok });
+      if (options.service) recordProviderCall(options.service, { ok: response.ok, keySource: options.keySource, userId: options.userId });
       return response;
     }
   } catch (err) {
@@ -371,7 +371,7 @@ async function fetchWithRetry(
         keySource: options.keySource,
         userId: options.userId,
       });
-      recordProviderCall(options.service, { ok: false });
+      recordProviderCall(options.service, { ok: false, keySource: options.keySource, userId: options.userId });
     }
     throw err;
   }

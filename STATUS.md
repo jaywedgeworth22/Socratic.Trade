@@ -14,18 +14,20 @@ as aggregated per-provider `requests` events; (3) Anthropic/Voyage/Robinhood bec
 push-primary just by tagging `provider` (poll adapters are blind); (4) cost-aware loop — new
 monitor `GET /api/budget-status` (token-gated, combines poll snapshot + pushed MTD cost vs
 `ProviderPlan.monthlyBudgetUsd`) + App B `src/lib/usage-budget.ts` firing `budget_alert`
-notifications (Phase 1) and, behind default-off `USAGE_BUDGET_ENFORCE`, downgrading the
-LLM/red-team model or skipping the cycle when over budget (Phase 2). **Self-sufficient by
-design** (owner requirement): all default-off, fire-and-forget, never-throws, fail-open — a
-monitor outage only shows a `usage-monitor` row on the admin connections-health page, never
-blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
+notifications (**Phase 1, wired**). **Phase 2** (model-downgrade / cycle-skip enforcement) is
+implemented + tested as a building block but **DEFERRED** — the Codex PR review showed a naive
+strategy-loop wiring is unsafe (must skip only the LLM step, not risk exits/reconcile; must not
+persist a temp downgrade via `setPolicy`; must thread the override into `debateProposal`). **Self-
+sufficient by design** (owner requirement): all default-off, fire-and-forget, never-throws,
+fail-open — a monitor outage only shows a `usage-monitor` row on the admin connections-health page,
+never blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
 `congress-trading-shared@1.0.0`, which lacks the `usageTelemetry` export (it's on the shared
 repo's unmerged 1.1.0 branch) and publishing/lockfile-regen isn't possible here — same event
-contract, migration path documented. **Verify (all green, run in-worktree after
-`NODE_AUTH_TOKEN=$(gh auth token) npm ci`):** tsc clean, lint 0 errors/258 warns, `npm test`
-174 files/1684 tests, `npm run build` clean; monitor tsc + build clean. Adversarial multi-agent
-review: 2 fixes applied (providerForModel anthropic-prefix; budget timeout 6s→2.5s), 3 deferred
-follow-ups. Two PRs (App B, monitor). See `docs/usage-monitor-integration.md` +
+contract, migration path documented. **Monitor DEPLOYED to prod (Render, `usage.jays.services`,
+PR #6 merged); App B deploy pending PR #294 merge → `trading-publish.sh`.** Verify (in-worktree
+after `NODE_AUTH_TOKEN=$(gh auth token) npm ci`): tsc clean, lint 0 errors, full suite green
+(+16 tests), build clean; monitor tsc + build clean. Reviews: pre-merge multi-agent (2 fixes) +
+Codex PR review (5 fixes + Phase-2 deferral). See `docs/usage-monitor-integration.md` +
 `docs/rollouts/2026-07-01-usage-monitor-integration.md`.
 ## 2026-07-01 — RAG follow-on: retrieval regression net + R1 strict as-of mode (Claude)
 Branch `agent/claude-followon-c-rag`, based on `origin/main` after Workstream C (PR #297,

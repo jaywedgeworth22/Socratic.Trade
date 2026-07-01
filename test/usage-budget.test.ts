@@ -90,6 +90,28 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.downgraded).toBe(false);
   });
 
+  it("still skips when green is cheapest even if the red model could be downgraded (F6)", async () => {
+    const decision = await budget.evaluateBudgetForRun(
+      "local",
+      { llmModel: "gpt-4o-mini", redTeamLlmModel: "claude-opus-4-8" },
+      { status: status([{ name: "openai", status: "exceeded" }]) }
+    );
+    expect(decision.skip).toBe(true);
+    expect(decision.downgraded).toBe(false);
+  });
+
+  it("enforces the effective default model when policy.llmModel is unset (F1)", async () => {
+    // No llmModel → resolves to the OpenAI default (gpt-5.4-mini), which HAS a cheaper tier.
+    const decision = await budget.evaluateBudgetForRun(
+      "local",
+      {},
+      { status: status([{ name: "openai", status: "exceeded" }]) }
+    );
+    expect(decision.skip).toBe(false);
+    expect(decision.downgraded).toBe(true);
+    expect(decision.llmModel).toBeTruthy();
+  });
+
   it("does nothing when the LLM provider is under budget", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",

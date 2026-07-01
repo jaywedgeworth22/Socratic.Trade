@@ -1,6 +1,11 @@
 // Cost-aware feedback loop: read budget status from the API Usage Monitor and (Phase 1) alert on
-// over-budget providers, (Phase 2, default-off) force cheaper models / skip a cycle when the LLM
-// provider is over budget.
+// over-budget providers.
+//
+// PHASE 2 (force cheaper models / skip a cycle when over budget) is IMPLEMENTED here as a tested
+// building block (`evaluateBudgetForRun`, `cheaperModel`) but is NOT yet wired into `runStrategyOnce`
+// — the strategy-loop integration is deferred to a follow-up so it can be done safely (skip only the
+// LLM proposal step, never the risk-reducing exits; never persist a temporary downgrade; thread the
+// override into `debateProposal`). Only Phase 1 (alerts) is active in this build.
 //
 // SAFETY / SELF-SUFFICIENCY:
 //   - Reads are gated on the same config as the push (USAGE_MONITOR_BASE_URL + USAGE_INGEST_TOKEN);
@@ -16,6 +21,7 @@ import { logApiHealth } from "./db-health";
 import { sendNotification } from "./notifications";
 import { audit } from "./db";
 import type { TradingPolicy } from "./types";
+import { resolveOpenAiModel } from "./llm-request";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
 
 // ── Contract (subset of the monitor's GET /api/budget-status response) ──────────
@@ -60,6 +66,15 @@ function numEnv(name: string, fallback: number): number {
 /** Phase 2 enforcement (model downgrade / cycle skip). Default OFF. */
 export function usageBudgetEnforceEnabled(): boolean {
   return flagOn(process.env.USAGE_BUDGET_ENFORCE);
+}
+
+/**
+ * Token for the budget-status GET. The monitor accepts a dedicated `USAGE_READ_TOKEN` when set,
+ * else the ingest token — mirror that here so a separate read token doesn't 401 every budget read.
+ */
+function budgetReadToken(): string | undefined {
+  const read = (process.env.USAGE_READ_TOKEN ?? "").trim();
+  return read.length > 0 ? read : usageMonitorToken();
 }
 
 function ttlMs(): number {
@@ -129,7 +144,7 @@ function parseBudgetStatus(json: unknown): BudgetStatus | null {
 
 async function fetchBudgetStatus(fetchImpl: typeof fetch = fetch): Promise<BudgetStatus | null> {
   const baseUrl = usageMonitorBaseUrl();
-  const token = usageMonitorToken();
+  const token = budgetReadToken();
   if (!baseUrl || !token) return null;
   const url = `${baseUrl}/api/budget-status`;
   const controller = new AbortController();
@@ -254,7 +269,7 @@ const CHEAPER_MODEL: Record<string, string> = {
   "gpt-4.1": "gpt-4.1-mini",
   "o1": "o1-mini",
   "o1-preview": "o1-mini",
-  "o3-mini": "o4-mini",
+  // (no o3-mini → o4-mini: identically priced in MODEL_PRICE_PER_M, so it saves nothing)
   // Anthropic
   "claude-fable-5": "claude-sonnet-4-6",
   "claude-opus-4-8": "claude-sonnet-4-6",
@@ -306,6 +321,12 @@ const NO_DECISION: BudgetRunDecision = { skip: false, downgraded: false };
  * Decide whether to skip a strategy cycle or downgrade its models given current budget status.
  * Only active when USAGE_BUDGET_ENFORCE is on AND the monitor is configured. Returns a no-op
  * decision otherwise (and on any monitor failure — fail-open).
+ *
+ * NOTE: this building block is fully implemented + tested but NOT yet wired into `runStrategyOnce`
+ * (Phase 2 is deferred — see the module header). When wiring it, the caller MUST skip only the LLM
+ * proposal step (never the broker reconciliation or risk-reducing exits), apply the model downgrade
+ * to a CLONE of the policy (never the object that `setPolicy` may persist), and thread the override
+ * into `debateProposal` (which re-loads the persisted policy).
  */
 export async function evaluateBudgetForRun(
   userId: string,
@@ -317,33 +338,42 @@ export async function evaluateBudgetForRun(
     const status = deps.status ?? (await getBudgetStatusCached({ fetchImpl: deps.fetchImpl }));
     if (!status) return NO_DECISION; // unknown → fail-open
 
+    // Resolve the models that will ACTUALLY serve this run, matching resolveLlmEndpoint: the green
+    // model falls back to OPENAI_MODEL/the default when policy.llmModel is unset, and the red model
+    // falls back to the green model. Enforcing on the raw (possibly undefined) policy fields would
+    // silently no-op the common default-model case.
+    const greenModel = resolveOpenAiModel(policy);
+    const redModel = (policy.redTeamLlmModel && policy.redTeamLlmModel.trim()) || greenModel;
+
     const statusByProvider = new Map(status.providers.map((p) => [p.name.toLowerCase(), p.status]));
-    const primaryProvider = providerForModel(policy.llmModel);
+    const primaryProvider = providerForModel(greenModel);
     const primaryStatus = statusByProvider.get(primaryProvider) ?? "ok";
 
     if (primaryStatus !== "exceeded" && primaryStatus !== "warning") return NO_DECISION;
 
-    const cheaperLlm = cheaperModel(policy.llmModel);
-    const cheaperRed = policy.redTeamLlmModel ? cheaperModel(policy.redTeamLlmModel) : undefined;
-    const llmChanged = !!cheaperLlm && cheaperLlm !== policy.llmModel;
-    const redChanged = !!cheaperRed && cheaperRed !== policy.redTeamLlmModel;
+    const cheaperGreen = cheaperModel(greenModel);
+    const greenChanged = !!cheaperGreen && cheaperGreen !== greenModel;
 
-    if (llmChanged || redChanged) {
-      return {
-        skip: false,
-        downgraded: true,
-        llmModel: llmChanged ? cheaperLlm : undefined,
-        redTeamLlmModel: redChanged ? cheaperRed : undefined,
-        reason: `LLM provider "${primaryProvider}" is ${primaryStatus}; downgraded to cheaper model tier.`,
-      };
-    }
-
-    // No cheaper option and the provider is fully over budget → skip the cycle.
-    if (primaryStatus === "exceeded") {
+    // Skip the cycle only when the GREEN (primary) provider is fully over budget AND its model has no
+    // cheaper tier — the green call is the dominant cost and can't be reduced. Red having a cheaper
+    // tier does NOT rescue an over-budget green (that was the earlier bug: it kept running green).
+    if (primaryStatus === "exceeded" && !greenChanged) {
       return {
         skip: true,
         downgraded: false,
-        reason: `LLM provider "${primaryProvider}" over budget and "${policy.llmModel}" is already the cheapest tier.`,
+        reason: `LLM provider "${primaryProvider}" over budget and "${greenModel}" is already the cheapest tier.`,
+      };
+    }
+
+    const cheaperRed = cheaperModel(redModel);
+    const redChanged = !!cheaperRed && cheaperRed !== redModel;
+    if (greenChanged || redChanged) {
+      return {
+        skip: false,
+        downgraded: true,
+        llmModel: greenChanged ? cheaperGreen : undefined,
+        redTeamLlmModel: redChanged ? cheaperRed : undefined,
+        reason: `LLM provider "${primaryProvider}" is ${primaryStatus}; downgraded to a cheaper model tier.`,
       };
     }
 

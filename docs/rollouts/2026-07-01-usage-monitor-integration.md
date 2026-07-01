@@ -17,10 +17,37 @@ Wired Agentic Trading (App B) to the API Usage Monitor (`usage.jays.services`):
    1–2 tag `provider` correctly so those (poll-blind) providers land in `ExternalUsageEvent`.
 4. **Cost-aware feedback loop** — new monitor endpoint `GET /api/budget-status` (token-gated,
    combines poll snapshot + pushed month-to-date cost vs `ProviderPlan.monthlyBudgetUsd`).
-   App B client `src/lib/usage-budget.ts`: Phase 1 fires `budget_alert` notifications on
-   over-budget providers; Phase 2 (default-off `USAGE_BUDGET_ENFORCE`) downgrades the
-   LLM/red-team model to a cheaper tier — or skips the cycle if already cheapest — at the
-   `runStrategyOnce` entry.
+   App B client `src/lib/usage-budget.ts`: **Phase 1** fires `budget_alert` notifications on
+   over-budget providers (wired at `runStrategyOnce` entry). **Phase 2** (model-downgrade /
+   cycle-skip enforcement) is implemented + tested as a building block but **deferred** — see
+   "Post-merge Codex review" below.
+
+## Post-merge Codex review (2026-07-01) — fixes applied + Phase 2 deferred
+
+The Codex PR reviewer surfaced real issues beyond the pre-merge adversarial review. Fixes landed
+in this PR:
+
+- **Pinecone RAG volume mislabeled as tokens** → `pushRagUsage` now tags Pinecone query/upsert
+  volume `unit:"row"` (only Voyage embed/rerank stays `"token"`).
+- **Budget read-token** → the App B budget client now uses `USAGE_READ_TOKEN` (falling back to the
+  ingest token), matching the monitor's `/api/budget-status` auth, so a separate read token doesn't
+  401 every budget read.
+- **`budget_alert` unusable** → added to the Settings notification checkbox list (it was hardcoded
+  without it) so users can enable it; it's in `DEFAULT_POLICY.enabledEvents`.
+- **Call-volume key-lane conflation** → `recordProviderCall` now scopes counts by
+  `keySource`/`userId` (threaded from `fetchWithRetry`) so a user's own market-data key isn't merged
+  into shared/operator quota.
+- **Enforcement building block hardened** (for the deferred wiring): `evaluateBudgetForRun` resolves
+  the *effective* served model (so the default-model case is enforceable), skips (not downgrades)
+  when the green model is already cheapest even if red could shrink, and dropped the same-price
+  `o3-mini→o4-mini` mapping.
+
+**Phase 2 enforcement deferred to a follow-up PR.** The review showed a naive strategy-loop wiring
+is unsafe: a budget cycle-skip must skip only the LLM proposal step (never broker reconciliation or
+the drawdown/volatility/stop exits), the downgrade must not mutate the policy object that `setPolicy`
+persists on a breaker trip, and it must be threaded into `debateProposal` (which re-loads persisted
+policy). So the strategy-loop enforcement block was removed; only Phase 1 (alerts) is wired. The
+tested `evaluateBudgetForRun`/`cheaperModel` building blocks remain for the follow-up.
 
 ## Why
 
@@ -51,9 +78,10 @@ App B (`/Users/jay/Code/Agentic Trading`):
 - `src/lib/usage-monitor-push.ts` (new) — forwarder: queue + per-provider call-volume aggregate, debounced batched flush, health logging.
 - `src/lib/usage-budget.ts` (new) — budget-status client (TTL cache), Phase-1 alerts, Phase-2 enforcement + `cheaperModel`/`providerForModel`.
 - `src/lib/llm-usage.ts`, `src/lib/rag-metering.ts` — call the forwarder after the local ledger write (inside the existing never-throws try).
-- `src/lib/data-providers.ts` (`fetchWithRetry`), `src/lib/alpaca.ts` (`trackHealth`), `src/lib/robinhood.ts` (`callRobinhoodMcpTool`) — `recordProviderCall(...)`.
-- `src/lib/strategy.ts` — budget alert + enforce block at `runStrategyOnce` entry.
+- `src/lib/data-providers.ts` (`fetchWithRetry`), `src/lib/alpaca.ts` (`trackHealth`), `src/lib/robinhood.ts` (`callRobinhoodMcpTool`) — `recordProviderCall(...)` (key-lane scoped).
+- `src/lib/strategy.ts` — Phase-1 budget alert (`checkBudgetAndAlert`) at `runStrategyOnce` entry (Phase-2 enforce block removed — deferred).
 - `src/lib/types.ts` — new `budget_alert` notification event type.
+- `app/dashboard-client.tsx` — `budget_alert` added to the Settings notification checkbox list.
 - `.env.example` — `USAGE_MONITOR_BASE_URL`, `USAGE_INGEST_TOKEN`, `USAGE_MONITOR_ENV`, `USAGE_BUDGET_ENFORCE` (+ optional tuning vars).
 - `test/usage-monitor-push.test.ts`, `test/usage-budget.test.ts` (new).
 - `docs/usage-monitor-integration.md` (new).
@@ -67,12 +95,14 @@ Monitor (`/Users/jay/Code/API-usage-monitor`):
 
 - **App B** (in-worktree; `node_modules` installed via `NODE_AUTH_TOKEN=$(gh auth token) npm ci`):
   - `npx tsc --noEmit` — clean (pre-existing `alternative-data.test.ts` mockFetcher error only).
-  - `npm run lint` — 0 errors, 258 warnings (unchanged grandfathered baseline).
-  - `npm test` — 174 files / 1684 tests pass (prior baseline + 13 new).
+  - `npm run lint` — 0 errors (unchanged grandfathered warning baseline).
+  - `npm test` — full suite green (adds 16 tests across `test/usage-monitor-push.test.ts` +
+    `test/usage-budget.test.ts`).
   - `npm run build` — clean.
 - **Monitor:** `npx tsc --noEmit` — clean; `npm run build` — clean (`/api/budget-status` in route manifest).
-- **Adversarial review** (multi-agent workflow, 5 dimensions × verify): 2 confirmed fixes applied
-  (`providerForModel` anthropic-prefix; budget fetch timeout 6s→2.5s); 3 documented as follow-ups.
+- **Adversarial review** (multi-agent workflow, 5 dimensions × verify): 2 fixes applied
+  (`providerForModel` anthropic-prefix; budget fetch timeout 6s→2.5s).
+- **Codex PR review:** 5 fixes applied + Phase 2 enforcement deferred (see section above).
 
 ## Follow-ups / deferred
 

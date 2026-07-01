@@ -106,13 +106,24 @@ cost even if App B also pushes some events for them. Budget alerts reuse
   run entry, `checkBudgetAndAlert` fires a `budget_alert` notification (through the
   existing `sendNotification` pipe) for any provider at `warning`/`exceeded`,
   throttled per (user, provider, level).
-- **Phase 2 — enforcement (default-off, `USAGE_BUDGET_ENFORCE`).**
-  `evaluateBudgetForRun` reads the (TTL-cached) budget status; if the provider that
-  serves `policy.llmModel` is over/near budget it downgrades `llmModel` /
-  `redTeamLlmModel` to a cheaper tier (`CHEAPER_MODEL` map), or — if already the
-  cheapest tier — **skips the cycle** (audited `run_skipped_over_budget`,
-  notified). The downgrade mutates only the run-local policy copy (never persisted)
-  so `resolveLlmEndpoint` picks up the cheaper model for that run.
+- **Phase 2 — enforcement (default-off, `USAGE_BUDGET_ENFORCE`) — DEFERRED to a
+  follow-up.** `evaluateBudgetForRun` + `cheaperModel` are implemented and tested in
+  `usage-budget.ts` (given the effective served model — resolving `policy.llmModel`
+  through the same default as `resolveLlmEndpoint` — it downgrades the LLM/red model
+  to a cheaper tier, or skips when the green model is already cheapest), but they are
+  **not yet wired into `runStrategyOnce`**. The strategy-loop integration is deferred
+  so it can be done safely, because a naive wiring is dangerous:
+  - the cycle-skip must skip **only the LLM proposal step** — never the broker
+    reconciliation (`reconcilePendingFills`/`flagStalePlacingIntents`) or the
+    risk-reducing exits (drawdown breaker, volatility brake, protective stops);
+  - the downgrade must apply to a **clone** of the policy, never the object
+    `setPolicy` may persist on a breaker trip (else a temporary downgrade becomes
+    permanent);
+  - the override must be threaded into `debateProposal`, which re-loads the
+    persisted policy.
+
+  These requirements came out of the 2026-07-01 Codex PR review (see the rollout
+  note). Phase 1 (alerts) is what's live in this build.
 
 ## Migration to the shared client
 

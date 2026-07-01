@@ -127,6 +127,26 @@ describe("usage-monitor-push", () => {
     expect((vol!.metadata as Record<string, unknown>).failures).toBe(1);
   });
 
+  it("tags Pinecone RAG volume as rows (not tokens) and scopes call-volume by key lane", async () => {
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(makeFetchStub(captured));
+    push.pushRagUsage({ provider: "pinecone", operation: "query", userId: "local", tokensOut: 5 });
+    push.recordProviderCall("finnhub", { ok: true, keySource: "user", userId: "u_abc" });
+    push.recordProviderCall("finnhub", { ok: true, keySource: "operator" });
+    await push.flushUsageMonitor();
+
+    const events = captured[0]!.body.events;
+    const pine = events.find((e) => e.provider === "pinecone");
+    expect(pine!.unit).toBe("row");
+
+    // Two different credential lanes → two separate finnhub events, not one merged count.
+    const finnhub = events.filter((e) => e.provider === "finnhub");
+    expect(finnhub).toHaveLength(2);
+    const userLane = finnhub.find((e) => (e.metadata as Record<string, unknown>).keySource === "user");
+    expect(userLane).toBeDefined();
+    expect((userLane!.metadata as Record<string, unknown>).userId).toBe("u_abc");
+  });
+
   it("flush swallows push failures and recordLlmUsage still records + never throws", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured, { throwErr: true }));

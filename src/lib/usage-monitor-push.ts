@@ -101,6 +101,8 @@ function timeoutMs(): number {
 interface CallVolumeEntry {
   provider: string;
   service?: string;
+  keySource?: string;
+  userId?: string;
   requests: number;
   successes: number;
   failures: number;
@@ -188,6 +190,10 @@ export function pushRagUsage(entry: {
   try {
     const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
     const quantity = (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
+    // Voyage embed/rerank quantities are token estimates; Pinecone query/upsert quantities are
+    // record counts (tokensOut = recordCount) — reporting those as "token" would corrupt the
+    // monitor's token aggregates, so tag Pinecone volume as rows.
+    const unit: UsageUnit = entry.provider === "pinecone" ? "row" : "token";
     enqueue({
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
@@ -198,7 +204,7 @@ export function pushRagUsage(entry: {
       billingMode: "estimated",
       metricType: hasCost ? "cost" : "usage",
       quantity: quantity > 0 ? quantity : undefined,
-      unit: "token",
+      unit,
       costUsd: hasCost ? entry.costUsd : undefined,
       requests: 1,
       confidence: "estimated",
@@ -223,15 +229,20 @@ export function pushRagUsage(entry: {
  * on a hot path, so it only mutates an in-memory per-provider counter — the counts are flushed as a
  * single aggregated `requests`-count event per provider per window (never one POST per call).
  */
-export function recordProviderCall(provider: string, opts: { service?: string; ok?: boolean } = {}): void {
+export function recordProviderCall(
+  provider: string,
+  opts: { service?: string; ok?: boolean; keySource?: string; userId?: string } = {}
+): void {
   if (!usageMonitorEnabled()) return;
   // Never re-count the telemetry channel's own health calls (would loop).
   if (provider === HEALTH_SERVICE) return;
   try {
-    const key = opts.service ? `${provider}|${opts.service}` : provider;
+    // Key by credential lane too, so a user's own market-data key isn't conflated with shared/
+    // operator quota in the monitor.
+    const key = [provider, opts.service ?? "", opts.keySource ?? "", opts.userId ?? ""].join("|");
     const entry =
       state.callVolume.get(key) ??
-      { provider, service: opts.service, requests: 0, successes: 0, failures: 0 };
+      { provider, service: opts.service, keySource: opts.keySource, userId: opts.userId, requests: 0, successes: 0, failures: 0 };
     entry.requests += 1;
     if (opts.ok === true) entry.successes += 1;
     else if (opts.ok === false) entry.failures += 1;
@@ -275,7 +286,12 @@ function drainCallVolume(now: string): UsageMonitorEvent[] {
       requests: entry.requests,
       confidence: "actual",
       occurredAt: now,
-      metadata: cleanMetadata({ successes: entry.successes, failures: entry.failures }),
+      metadata: cleanMetadata({
+        successes: entry.successes,
+        failures: entry.failures,
+        keySource: entry.keySource ?? null,
+        userId: entry.userId ?? null,
+      }),
     });
   }
   state.callVolume.clear();
