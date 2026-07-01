@@ -444,6 +444,14 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
   const total = sent.refs + sent.spx + sent.prices + sent.insider + sent.shortVolume + sent.fundamentals + sent.analyst;
   if (total === 0) {
+    // Distinguish a genuinely-empty input (nothing to send → a legitimate skip) from a payload whose
+    // rows were ALL rejected by the shared schema. The latter is a real failure: counting it as a skip
+    // would let the daily-run marker advance and silently swallow a schema/API drift until the next
+    // day. Returning skipped:false makes runCongressDailyShare count it in failedPosts, so `ok` stays
+    // false, the marker does not advance, and the run retries.
+    if (Object.keys(dropped).length > 0) {
+      return { ok: false, skipped: false, reason: "all-rows-dropped", sent };
+    }
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 

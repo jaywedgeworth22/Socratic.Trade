@@ -82,8 +82,12 @@ jobs:
           fi
           echo "Peer spec  (${PEER_REPO}/${PEER_PACKAGE_JSON_PATH}): $PEER_SPEC"
 
-          LOCAL_V=$(norm "$LOCAL_SPEC")
-          PEER_V=$(norm "$PEER_SPEC")
+          # Compare the RAW specs (whitespace-trimmed only), NOT range-stripped lower bounds: this
+          # workflow is the exact-pin drift detector, so a range like '^1.0.0' must NOT be treated as
+          # equal to the exact pin '1.0.0' — npm can resolve different installed versions from the two,
+          # which is exactly the divergence this check exists to catch.
+          LOCAL_V=$(printf '%s' "$LOCAL_SPEC" | tr -d '[:space:]')
+          PEER_V=$(printf '%s' "$PEER_SPEC" | tr -d '[:space:]')
           if [ "$LOCAL_V" = "$PEER_V" ]; then
             echo "OK: both consumers pin ${PKG}@${LOCAL_V}."
           else
