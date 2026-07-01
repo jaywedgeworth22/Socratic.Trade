@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { audit } from "@/lib/db";
 import { applyCongressEvent, applyCongressEvents, type CongressEvent } from "@/lib/congress-trade-events";
 import { verifyCongressWebhookSecret } from "@/lib/congress-webhook-auth";
+import { logApiHealth } from "@/lib/db-health";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,9 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Freshness signal for the admin Connections page: an authenticated webhook
+    // was received from App A over the push channel.
+    logApiHealth({ service: "congress.trade:webhook", ok: true });
     const rec = body && typeof body === "object" ? (body as { events?: unknown }) : null;
     if (rec && Array.isArray(rec.events)) {
       const results = applyCongressEvents(rec.events);
@@ -32,6 +36,11 @@ export async function POST(req: Request) {
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   } catch (error) {
     audit("congress_webhook_error", { error: error instanceof Error ? error.message : "unknown" });
+    logApiHealth({
+      service: "congress.trade:webhook",
+      ok: false,
+      errorText: error instanceof Error ? error.message : "ingest failed",
+    });
     return NextResponse.json({ ok: false, error: "ingest failed" }, { status: 500 });
   }
 }

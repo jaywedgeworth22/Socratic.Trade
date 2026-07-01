@@ -41,12 +41,27 @@ depend on App A shipping a matching change first, App B now accepts all shapes
 webhook shape, the `trade.new` alias, the flattened SSE frame, the canonical
 envelope, and the typeless-reject case.
 
+## Connection monitoring (admin visibility)
+
+So the App A → App B link is observable to admins on both sides, the inbound
+channels now log to `api_health_log`, which the existing **admin Connections
+Health** page (`app/admin/connections`) surfaces automatically:
+
+- `src/lib/congress-stream.ts` — logs `congress.trade:sse` ok on each (re)connect
+  (with connect latency) and ok:false with the error on connection failure.
+- `app/api/webhooks/congress/route.ts` — logs `congress.trade:webhook` ok on each
+  authenticated receipt, ok:false on an ingest error.
+
+The App A side surfaces the outbound half: a "Cross-App Trade Delivery" card in
+Congress.Trade's `/api/admin/diagnostics` (24h delivered/failed/pending +
+dead-lettered counts) — Congress.Trade PR #123.
+
 ## Cross-app note
 
-The counterpart App A change (emit the canonical `congress.trade` on SSE) is in
-Congress.Trade PR #123; App A's **webhook** (`webhook.ts`) still emits
-`event: "trade.new"` and would benefit from the same alignment, but this change
-makes App B robust regardless.
+The counterpart App A change — emit the canonical `congress.trade` on **SSE and
+the webhook** — is in Congress.Trade PR #123 (the webhook now sends a superset
+payload with `type`/`id`/`data.trades` alongside the legacy fields). This App B
+change makes ingestion robust regardless of App A's deploy timing.
 
 ## Verification (run in the worktree)
 
