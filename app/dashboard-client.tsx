@@ -3629,6 +3629,8 @@ function StrategyView({
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
                <OptionalNumberField label="Max avg correlation" value={policy.maxAvgCorrelation} placeholder="blank disables" step={0.05} onCommit={(v) => updatePolicy({ maxAvgCorrelation: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
+               <OptionalNumberField label="Max quote age (sec)" value={policy.maxQuoteAgeSec} placeholder="blank disables" step={15} onCommit={(v) => updatePolicy({ maxQuoteAgeSec: v })} />
+               <OptionalNumberField label="Max fundamentals age (sec)" value={policy.maxFundamentalsAgeSec} placeholder="blank disables" step={60} onCommit={(v) => updatePolicy({ maxFundamentalsAgeSec: v })} />
              </div>
              <div title="When a run's intended buys exceed buying power, optionally raise cash by trimming holdings (largest losers first, never the buy targets).">
                <span className="mb-1.5 block text-xs font-medium text-muted">Sell to fund buys</span>
