@@ -12,7 +12,8 @@
 // ENFORCEMENT: `checkLlmDailyBudget` is the ledger read; `isOverLlmBudget` / `assertWithinLlmBudget`
 // are the guards the spend primitives call, so EVERY current and future LLM/RAG spend site is covered
 // by one check rather than per-call-site gates.
-import { DAILY_RESET_TIME_ZONE, getPolicy, startOfDayInTimeZone } from "./db";
+import { randomUUID } from "crypto";
+import { DAILY_RESET_TIME_ZONE, getDb, getPolicy, startOfDayInTimeZone } from "./db";
 import { getLlmUsageSummary } from "./llm-usage";
 import { getRagUsageSummary } from "./rag-metering";
 import type { TradingPolicy } from "./types";
@@ -86,6 +87,172 @@ export function checkLlmDailyBudget(userId: string, now: Date = new Date(), conn
     return { ok: false, reason: "cost_budget", tokensToday, costUsdToday, tokenLimit, costLimitUsd: costLimit };
   }
   return { ok: true, tokensToday, costUsdToday, tokenLimit, costLimitUsd: costLimit };
+}
+
+// ── Concurrency reservation (TOCTOU fix for concurrent same-user account runs) ────────────────────
+//
+// checkLlmDailyBudget above is a ledger READ, not a reservation: the scheduler runs up to
+// MAX_CONCURRENCY same-user account runs at once, and each can read "under budget" before any records
+// its spend, overshooting the ceiling. A per-USER reservation (keyed by userId, since the ledger
+// ceiling is per-user) is the missing admission control: a run reserves its worst-case estimate before
+// spending; a concurrent run's reserve sees that hold and skips LLM instead of double-committing.
+// Stored in the `settings` KV row (no migration), CAS'd inside a transaction().immediate() exactly like
+// acquireStrategyLock. Crash-safe-ish: a run that dies without releasing frees its hold after the TTL.
+
+interface LlmReservation { id: string; tokens: number; costUsd: number; reservedAt: string; expiresAt: string }
+
+// Pin to the strategy lock's staleMs — a run can't outlive its own strategy lock, so a live run's
+// reservation never expires mid-run.
+const RESERVATION_TTL_MS = 5 * 60_000;
+
+const reservationKey = (userId: string): string => `llm_budget_reservation:${userId}`;
+
+/** Resolve the per-user daily token/cost limits (env fallback) for the targeted account. */
+function resolveLlmLimits(userId: string, connectedAccountId?: string): { tokenLimit: number; costLimit: number } {
+  let tuning: TradingPolicy["tuning"];
+  try {
+    tuning = getPolicy(userId, connectedAccountId).tuning;
+  } catch {
+    tuning = undefined;
+  }
+  return {
+    tokenLimit: resolveLimit(tuning?.llmDailyTokenBudget, "TRIGGER_LLM_DAILY_TOKEN_BUDGET"),
+    costLimit: resolveLimit(tuning?.llmDailyCostBudgetUsd, "TRIGGER_LLM_DAILY_COST_BUDGET_USD"),
+  };
+}
+
+/** Today's committed LLM+RAG ledger usage for `userId` (the same sum checkLlmDailyBudget uses). */
+function sumLedgerUsage(userId: string, sinceIso: string): { tokens: number; costUsd: number } {
+  const llmRows = getLlmUsageSummary({ sinceIso }).filter((r) => r.userId === userId);
+  let tokens = llmRows.reduce((sum, r) => sum + (r.totalTokens ?? 0), 0);
+  let costUsd = llmRows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+  const ragRows = getRagUsageSummary({ sinceIso }).filter((r) => r.userId === userId);
+  tokens += ragRows.reduce((sum, r) => sum + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
+  costUsd += ragRows.reduce((sum, r) => sum + (r.costEstUsd ?? 0), 0);
+  return { tokens, costUsd };
+}
+
+/** Conservative worst-case per-run estimate (env-tunable). It's a ceiling GUARD, not exact accounting —
+ *  the ledger stays truth; too-high wastes headroom, too-low re-opens overshoot. */
+function runReservationEstimate(): { tokens: number; costUsd: number } {
+  return { tokens: envNum("LLM_RUN_RESERVATION_TOKENS", 80_000), costUsd: envNum("LLM_RUN_RESERVATION_COST_USD", 1) };
+}
+
+/**
+ * Atomically reserve `estTokens`/`estCostUsd` of today's LLM+RAG headroom for `userId`. Returns
+ * `{ok:false}` when today's ledger usage + live reservations + this estimate would meet/exceed a finite
+ * limit — that's the serialization point: a second concurrent same-user run's reserve fails because the
+ * first's reservation already consumed the headroom. No ceiling configured → `{ok:true}` with no
+ * reservation (default-OFF preserved). Fail-closed on DB error to `{ok:false}` — the CALLER must treat
+ * that as "skip LLM", never as a failed run.
+ */
+export function reserveLlmBudget(
+  userId: string,
+  estTokens: number,
+  estCostUsd: number,
+  now: Date = new Date(),
+  connectedAccountId?: string
+): { ok: boolean; reservationId?: string; reason?: "token_budget" | "cost_budget" } {
+  const { tokenLimit, costLimit } = resolveLlmLimits(userId, connectedAccountId);
+  if (!Number.isFinite(tokenLimit) && !Number.isFinite(costLimit)) return { ok: true }; // no ceiling → no reservation
+  try {
+    const db = getDb();
+    const key = reservationKey(userId);
+    const nowMs = now.getTime();
+    const sinceIso = startOfDayInTimeZone(now, DAILY_RESET_TIME_ZONE).toISOString();
+    const tx = db.transaction(() => {
+      const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+      let reservations: LlmReservation[] = [];
+      if (row) {
+        try {
+          reservations = ((JSON.parse(row.value) as { reservations?: LlmReservation[] }).reservations ?? []);
+        } catch {
+          reservations = []; // malformed → reclaim (mirrors acquireStrategyLock)
+        }
+      }
+      reservations = reservations.filter((r) => new Date(r.expiresAt).getTime() > nowMs); // drop expired (crash-safe TTL)
+      const ledger = sumLedgerUsage(userId, sinceIso);
+      const reservedTokens = reservations.reduce((s, r) => s + (r.tokens ?? 0), 0);
+      const reservedCost = reservations.reduce((s, r) => s + (r.costUsd ?? 0), 0);
+      if (Number.isFinite(tokenLimit) && ledger.tokens + reservedTokens + estTokens >= tokenLimit) {
+        return { ok: false as const, reason: "token_budget" as const };
+      }
+      if (Number.isFinite(costLimit) && ledger.costUsd + reservedCost + estCostUsd >= costLimit) {
+        return { ok: false as const, reason: "cost_budget" as const };
+      }
+      const id = randomUUID();
+      reservations.push({ id, tokens: estTokens, costUsd: estCostUsd, reservedAt: now.toISOString(), expiresAt: new Date(nowMs + RESERVATION_TTL_MS).toISOString() });
+      db.prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      ).run(key, JSON.stringify({ reservations }), now.toISOString());
+      return { ok: true as const, reservationId: id };
+    });
+    return tx.immediate() as { ok: boolean; reservationId?: string; reason?: "token_budget" | "cost_budget" };
+  } catch {
+    return { ok: false }; // fail-closed for the reservation; caller degrades to "skip LLM", never a failed run
+  }
+}
+
+/** Convenience: reserve a strategy run's worst-case estimate. */
+export function reserveLlmRunBudget(
+  userId: string,
+  connectedAccountId?: string,
+  now: Date = new Date()
+): { ok: boolean; reservationId?: string; reason?: "token_budget" | "cost_budget" } {
+  const est = runReservationEstimate();
+  return reserveLlmBudget(userId, est.tokens, est.costUsd, now, connectedAccountId);
+}
+
+/** Release a reservation (and drop any expired ones). Runs in a `finally`; never throws. */
+export function releaseLlmReservation(userId: string, reservationId: string, now: Date = new Date()): void {
+  try {
+    const db = getDb();
+    const key = reservationKey(userId);
+    const nowMs = now.getTime();
+    db.transaction(() => {
+      const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+      if (!row) return;
+      let reservations: LlmReservation[] = [];
+      try {
+        reservations = ((JSON.parse(row.value) as { reservations?: LlmReservation[] }).reservations ?? []);
+      } catch {
+        reservations = [];
+      }
+      const remaining = reservations.filter((r) => r.id !== reservationId && new Date(r.expiresAt).getTime() > nowMs);
+      if (remaining.length === 0) {
+        db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+      } else {
+        db.prepare(
+          "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+        ).run(key, JSON.stringify({ reservations: remaining }), now.toISOString());
+      }
+    })();
+  } catch {
+    // release must never throw — it runs in a finally block
+  }
+}
+
+/** Sum of a user's live (non-expired) reservations. Exposed for tests / diagnostics. */
+export function reservedLlmSpend(userId: string, now: Date = new Date()): { tokens: number; costUsd: number } {
+  try {
+    const db = getDb();
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(reservationKey(userId)) as { value: string } | undefined;
+    if (!row) return { tokens: 0, costUsd: 0 };
+    let reservations: LlmReservation[] = [];
+    try {
+      reservations = ((JSON.parse(row.value) as { reservations?: LlmReservation[] }).reservations ?? []);
+    } catch {
+      return { tokens: 0, costUsd: 0 };
+    }
+    const nowMs = now.getTime();
+    const live = reservations.filter((r) => new Date(r.expiresAt).getTime() > nowMs);
+    return {
+      tokens: live.reduce((s, r) => s + (r.tokens ?? 0), 0),
+      costUsd: live.reduce((s, r) => s + (r.costUsd ?? 0), 0),
+    };
+  } catch {
+    return { tokens: 0, costUsd: 0 };
+  }
 }
 
 /** True when `userId` is at/over their daily LLM budget. Cheap wrapper used by the spend primitives. */

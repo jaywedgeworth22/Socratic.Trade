@@ -71,7 +71,7 @@ import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { checkLlmDailyBudget } from "./llm-budget";
+import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
@@ -222,6 +222,10 @@ export async function runStrategyOnce(
   insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   let llmSteps: StrategyLlmStep[] = [];
+  // Per-USER LLM budget reservation id (set at the budget gate below, released in the finally). Held
+  // for the run so a CONCURRENT same-user account run's reserve sees this hold and skips LLM instead of
+  // both reading "under budget" and overshooting the ceiling (the TOCTOU the ledger read can't close).
+  let llmReservationId: string | undefined;
   const manualRun = Boolean(options.manual);
 
   try {
@@ -365,13 +369,28 @@ export async function runStrategyOnce(
     // for EVERY run entry (event trigger, interval scheduler, manual "Run once" API, mobile command,
     // future). Default OFF unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
     //
-    // Known limitation (bounded, documented — docs/rollouts/2026-07-01-fg-codex-review-fixes.md): a
-    // read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account runs can
-    // overshoot by up to the in-flight runs' spend (bounded by scheduler concurrency). A true hard cap
-    // needs a per-user reservation / run serialization — deferred as a follow-up.
+    // Two-part admission control. (1) checkLlmDailyBudget is the ledger READ — already over budget?
+    // Then (2) reserveLlmRunBudget is the reservation that closes the TOCTOU the read can't: it CAS-holds
+    // this run's worst-case estimate against today's ledger + other live reservations, so a concurrent
+    // same-user account run's reserve fails and skips LLM rather than both overshooting the ceiling.
+    // A reservation failure (over budget OR fail-closed DB error) degrades to "skip LLM", never a failed
+    // run. No ceiling configured → reserve returns ok with no id (default OFF preserved). See
+    // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
-    if (skipLlmDueToBudget) {
+    if (!skipLlmDueToBudget) {
+      const reservation = reserveLlmRunBudget(userId, connectedAccountId);
+      llmReservationId = reservation.reservationId;
+      if (!reservation.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "strategy_run_suppressed_budget_reservation",
+          { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
+          userId
+        );
+      }
+    }
+    if (skipLlmDueToBudget && budget.ok === false) {
       audit(
         "strategy_run_suppressed_budget",
         { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
@@ -1078,6 +1097,9 @@ export async function runStrategyOnce(
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
+    // Release the per-user LLM reservation first so a queued same-user run can reclaim the headroom
+    // immediately; both calls are idempotent no-throw and the TTL frees a leaked hold anyway.
+    if (llmReservationId) releaseLlmReservation(userId, llmReservationId);
     releaseStrategyLock(userId, connectedAccountId);
   }
 

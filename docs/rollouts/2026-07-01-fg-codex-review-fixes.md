@@ -100,14 +100,18 @@ audit; `getBrokerGateway` blocks a broker/live order when `ALLOW_LIVE_TRADING` i
     position. Fix: the `getBrokerGateway` Proxy now also guards `cancelEquityOrder`, so cancel-then-
     place flows fail BEFORE the cancel — no side effects. (`src/lib/broker.ts`; test asserts the live
     cancel is blocked.)
-13. **P2 — budget reservation across concurrent same-user runs (DOCUMENTED, not built).** The daily
-    ceiling is a read-of-the-ledger admission check at run entry, not a reservation. When one user has
-    multiple accounts due, the scheduler can launch their runs concurrently; two runs just under the
-    limit can both pass and then both spend, overshooting by up to the in-flight runs' spend (bounded
-    by the scheduler's concurrency cap of 3). A true hard cap needs a per-user token reservation / run
-    serialization — an architecturally-significant concurrency change disproportionate to a bounded
-    cost-cap overshoot, so it is DEFERRED and documented (comment at the `runStrategyOnce` check +
-    here). The wording elsewhere is softened from "hard ceiling" to "per-run-entry ceiling."
+13. **P2 — budget reservation across concurrent same-user runs (~~DOCUMENTED, not built~~ → NOW BUILT,
+    2026-07-01).** The daily ceiling was a read-of-the-ledger admission check at run entry, not a
+    reservation. When one user has multiple accounts due, the scheduler can launch their runs
+    concurrently; two runs just under the limit could both pass and then both spend, overshooting by up
+    to the in-flight runs' spend (bounded by the scheduler's concurrency cap of 3). **Resolved:** added a
+    per-USER LLM budget **reservation** (`reserveLlmBudget`/`reserveLlmRunBudget`/`releaseLlmReservation`/
+    `reservedLlmSpend` in `src/lib/llm-budget.ts`), CAS'd in the `settings` KV row exactly like
+    `acquireStrategyLock` (no migration). Each run reserves its worst-case estimate at the budget gate in
+    `runStrategyOnce` and releases it in the `finally`; a concurrent same-user run's reserve sees the hold
+    and skips LLM instead of double-committing. Fail-closed (DB error → skip LLM, never a failed run),
+    TTL-reclaimed (a crashed run's hold frees after 5 min), default-OFF (no ceiling → no reservation).
+    See `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`.
 
 ## Round 5 (commit after 8e895d3) — 2 findings, both CORRECTING earlier rounds
 
@@ -163,6 +167,7 @@ real package.)
   (trigger, scheduler, manual API, mobile) via the `runStrategyOnce` choke point (gated after the
   non-LLM risk breakers); the live pre-flight guard covers ALL real-order PLACEMENTS via the
   `getBrokerGateway` wrapper, with cancel-then-place workflows guarded before their own cancel phase.
-- Deferred: a per-user LLM-budget **reservation / run serialization** so the daily ceiling is truly
-  hard under concurrent multi-account scheduling (today's bounded overshoot is documented at the
-  `runStrategyOnce` check, item 13).
+- ~~Deferred: a per-user LLM-budget **reservation / run serialization**~~ **DONE (2026-07-01).** The
+  per-user reservation now closes the concurrent-multi-account overshoot (item 13 above); the ceiling is
+  hard under concurrent scheduling within the estimate granularity. See
+  `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`.
