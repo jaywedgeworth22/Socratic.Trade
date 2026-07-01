@@ -217,8 +217,20 @@ export function migrateLocalRobinhoodToken(): boolean {
  * stays plaintext for debuggability. `decryptValue` tolerates legacy plaintext (its 3-part
  * `iv:tag:ct` check returns non-envelope values unchanged), so tokens stored before this change still
  * load without a migration.
+ *
+ * Encryption is applied ONLY when a stable `ENCRYPTION_KEY` is configured. Without it, db-api-keys
+ * falls back to a random in-memory key that is lost on restart — encrypting with it would give no
+ * real at-rest protection AND silently brick a token after the next restart (it would decrypt to
+ * garbage). So when no key is set we keep the tokens as plaintext, exactly as before this change:
+ * encryption is a strict upgrade for deployments that set `ENCRYPTION_KEY`, never a regression for
+ * those that don't.
  */
+function encryptionKeyConfigured(): boolean {
+  return Boolean(process.env.ENCRYPTION_KEY);
+}
+
 function encryptStoredTokens(tokens: McpOAuthTokens): McpOAuthTokens {
+  if (!encryptionKeyConfigured()) return tokens; // no stable key → store plaintext (survives restart)
   return {
     ...tokens,
     accessToken: tokens.accessToken ? encryptValue(tokens.accessToken) : tokens.accessToken,
@@ -237,7 +249,12 @@ function decryptStoredTokens(tokens: McpOAuthTokens): McpOAuthTokens {
 export function getStoredMcpOAuthTokens(userId: string): McpOAuthTokens | undefined {
   const stored = getInternalSetting<McpOAuthTokens>(tokenSettingKey(userId));
   if (!stored) return undefined;
-  return decryptStoredTokens(stored);
+  const decrypted = decryptStoredTokens(stored);
+  // A stored token always has a non-empty accessToken. An empty one here means decryption FAILED
+  // (e.g. a row encrypted under a since-lost ephemeral key). Treat it as MISSING so the env-token
+  // migration / OAuth re-auth path runs instead of surfacing a dead token as if it were valid.
+  if (!decrypted.accessToken) return undefined;
+  return decrypted;
 }
 
 export function clearMcpOAuthTokens(userId: string): void {

@@ -66,6 +66,40 @@ describe("G3: checkAdmin token path (timing-safe)", () => {
   });
 });
 
+describe("G3: requireTokenInProd hard gate (reindex routes)", () => {
+  it("in production, a verified admin EMAIL alone is NOT enough — the token is required", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "boss@example.com");
+    vi.stubEnv("ADMIN_REINDEX_TOKEN", "the-token");
+    // A matching admin email would normally grant (default gate), but with requireTokenInProd it must
+    // be rejected — this is the injected/synthetic-primary-email bypass the reindex routes close.
+    const emailOnly = checkAdmin(req({ email: "boss@example.com" }), { requireTokenInProd: true });
+    expect(emailOnly.ok).toBe(false);
+    expect(emailOnly.reason).toBe("forbidden-token-required");
+    // The same email DOES grant under the default gate (proves the option is what changed behavior).
+    expect(checkAdmin(req({ email: "boss@example.com" })).ok).toBe(true);
+    // Token still works with the hard gate.
+    expect(checkAdmin(req({ token: "the-token" }), { requireTokenInProd: true }).ok).toBe(true);
+  });
+
+  it("outside production, requireTokenInProd still allows the dev/ops open path", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ADMIN_USER_EMAILS", "");
+    vi.stubEnv("ADMIN_REINDEX_TOKEN", "the-token");
+    expect(checkAdmin(req({}), { requireTokenInProd: true }).ok).toBe(true); // non-prod bypass intact
+  });
+
+  it("reindex-10k GET denies a valid admin email without the token in production (403)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "boss@example.com");
+    vi.stubEnv("ADMIN_REINDEX_TOKEN", "reindex-secret");
+    vi.resetModules();
+    const { GET } = await import("../app/api/admin/reindex-10k/route");
+    const denied = await GET(req({ email: "boss@example.com" })); // email only, no token
+    expect(denied.status).toBe(403);
+  });
+});
+
 describe("G3: reindex routes use the shared requireAdmin gate", () => {
   it("reindex-10k GET denies in production without email/token (403), allows with correct token", async () => {
     vi.stubEnv("NODE_ENV", "production");

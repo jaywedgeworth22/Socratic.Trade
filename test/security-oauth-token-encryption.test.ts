@@ -72,4 +72,39 @@ describe("G2: Robinhood OAuth token encryption at rest", () => {
     expect(loaded?.accessToken).toBe(ACCESS);
     expect(loaded?.refreshToken).toBeUndefined();
   });
+
+  it("stores PLAINTEXT (survives restart) when no stable ENCRYPTION_KEY is configured", async () => {
+    // Without a stable key, db-api-keys uses a random memory-only key that is lost on restart —
+    // encrypting with it would brick the token. So we keep plaintext, exactly as before this feature.
+    delete process.env.ENCRYPTION_KEY;
+    const { setMcpOAuthTokens, getStoredMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const { getInternalSetting } = await import("../src/lib/db");
+
+    setMcpOAuthTokens("local", { accessToken: ACCESS, tokenType: "Bearer" });
+    const raw = getInternalSetting<Record<string, unknown>>("robinhood_mcp_oauth_token:local");
+    // Plaintext at rest (no ephemeral-key encryption that couldn't survive a restart).
+    expect(String((raw as { accessToken?: string }).accessToken)).toBe(ACCESS);
+    // And it still round-trips (a restart with no key would still load it).
+    expect(getStoredMcpOAuthTokens("local")?.accessToken).toBe(ACCESS);
+  });
+
+  it("treats an undecryptable stored token as MISSING so the env-token migration reseeds", async () => {
+    // Simulate a row encrypted under a since-lost ephemeral key: a well-formed iv:tag:ct envelope
+    // that cannot decrypt under the current key → decryptValue returns "" → treated as missing.
+    const { getStoredMcpOAuthTokens, migrateLocalRobinhoodToken } = await import("../src/lib/mcp-oauth");
+    const { setInternalSetting } = await import("../src/lib/db");
+    setInternalSetting("robinhood_mcp_oauth_token:local", {
+      accessToken: "000000000000000000000000:00000000000000000000000000000000:00",
+      tokenType: "Bearer"
+    });
+
+    // Undecryptable → surfaced as absent (not a dead empty token).
+    expect(getStoredMcpOAuthTokens("local")).toBeUndefined();
+
+    // …so the boot migration reseeds from the still-present env token instead of skipping.
+    process.env.ROBINHOOD_MCP_AUTH_TOKEN = "env-seeded-token-123";
+    expect(migrateLocalRobinhoodToken()).toBe(true);
+    expect(getStoredMcpOAuthTokens("local")?.accessToken).toBe("env-seeded-token-123");
+    delete process.env.ROBINHOOD_MCP_AUTH_TOKEN;
+  });
 });

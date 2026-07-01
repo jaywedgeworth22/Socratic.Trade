@@ -1714,6 +1714,30 @@ export async function executeProposal(
       return { status: "paper" };
     }
 
+    // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
+    // loop). No-op in paper/test (that branch already returned above); on broker/live it refuses
+    // unless the run is genuinely out of paper mode AND live trading is explicitly enabled
+    // (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending proposal
+    // must clear the same live invariant as an autonomous one before reaching the broker.
+    try {
+      assertLivePreflight({
+        mode: executionState.mode,
+        usesLocalSimulation: executionState.usesLocalSimulation,
+        paperMode: policy.paperMode,
+        symbol: proposal.symbol,
+        side: proposal.side
+      });
+    } catch (guardError) {
+      const message = guardError instanceof Error ? guardError.message : String(guardError);
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message);
+      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId);
+      await sendNotification(
+        { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message } },
+        { policy, userId }
+      );
+      return { status: "blocked", reasons: [message] };
+    }
+
     // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
     // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
     // lost broker response can't leave an untracked real order.

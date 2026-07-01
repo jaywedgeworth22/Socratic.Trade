@@ -16,7 +16,7 @@ import { deriveExecutionState } from "./execution-mode";
 import { reconcilePendingFills, runStrategyOnce } from "./strategy";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
-import { triggerEngineEnabled, triggerMode } from "./triggers";
+import { checkLlmDailyBudget, triggerEngineEnabled, triggerMode } from "./triggers";
 import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
@@ -314,6 +314,19 @@ async function tick(): Promise<void> {
     const executing = new Set<Promise<unknown>>();
 
     for (const { userId, accountId } of dueRuns) {
+      // Hard per-user/day LLM budget ceiling on the fixed-interval lane too (parity with the
+      // event-trigger fire() path). Default OFF (no ceiling) so behavior is unchanged unless an
+      // operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD — in which case a normal
+      // interval run must respect the same daily cap instead of spending past it.
+      const budget = checkLlmDailyBudget(userId);
+      if (!budget.ok) {
+        audit(
+          "trigger_suppressed_budget",
+          { userId, reason: budget.reason, path: "scheduler", tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+          userId
+        );
+        continue;
+      }
       const p = runStrategyOnce(userId, { connectedAccountId: accountId })
         .catch((err) => {
           console.error(`[scheduler] error running strategy for ${userId}/${accountId}:`, err);

@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — F/G PR #293 Codex-review fixes (Claude)
+Follow-up on PR #293 addressing 5 verified Codex findings (2×P1, 3×P2): (P1) reindex routes now
+require the `x-admin-token` in production via a new `requireTokenInProd` option on `checkAdmin` — a
+synthetic/injected admin email from an auth-unconfigured deploy can no longer trigger the paid Voyage
+backfill; (P1) `assertLivePreflight` now also guards the `approveProposal` (human-approval) placement
+path, not just the autonomous loop; (P2) cached query embeds no longer metered as real Voyage calls
+(`embedQueryCached` returns hit/miss; meter only on miss); (P2) the daily LLM-budget ceiling is now
+enforced on the fixed-interval scheduler lane too, not only the event-trigger path; (P2) OAuth tokens
+only encrypt when a stable `ENCRYPTION_KEY` is set (else plaintext, as before — no ephemeral-key
+brick), and an undecryptable stored token is treated as missing so env-token reseed runs. Verify
+quartet green (1726 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+
 ## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
 Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G
 (security/risk/testing/ops) from `docs/reviews/2026-07-01-audit-work-split.md` via four parallel

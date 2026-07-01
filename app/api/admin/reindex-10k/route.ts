@@ -13,7 +13,9 @@ export const dynamic = "force-dynamic";
 // Returns { indexed, skipped, errors } so the operator can confirm a successful backfill.
 
 export async function GET(request: Request) {
-  const denied = requireAdmin(request);
+  // requireTokenInProd: in production the x-admin-token is mandatory — a synthetic/injected admin
+  // email (app auth unconfigured) must not be able to trigger this paid Voyage backfill.
+  const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
   const recent = listIngestedAccessions(50);
   const stats = await getVectorStoreStats();
@@ -21,7 +23,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = requireAdmin(request);
+  // requireTokenInProd: in production the x-admin-token is mandatory — a synthetic/injected admin
+  // email (app auth unconfigured) must not be able to trigger this paid Voyage backfill.
+  const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
 
   let symbols: string[] = [];

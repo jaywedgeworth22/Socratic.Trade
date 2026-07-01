@@ -61,6 +61,15 @@ export interface RequireAdminOptions {
    * `allowNonProd: false`. Default kept `true` to avoid breaking the running dashboard's dev/ops flows.
    */
   allowNonProd?: boolean;
+  /**
+   * When true, a verified admin EMAIL alone is NOT sufficient in production — the `x-admin-token`
+   * must also match. Restores the legacy per-route production token gate for cost/side-effecting
+   * operator routes (the SEC reindex backfills). Rationale: when app auth is unconfigured,
+   * `middleware.ts` injects the primary-operator email for EVERY request as a dev/local fallback,
+   * which would otherwise satisfy the email path here and let an unauthenticated caller trigger a
+   * paid Voyage backfill in a production misconfiguration. Non-production still honors `allowNonProd`.
+   */
+  requireTokenInProd?: boolean;
 }
 
 export interface AdminCheck {
@@ -79,21 +88,27 @@ export interface AdminCheck {
  * Otherwise denied → callers should return 403.
  */
 export function checkAdmin(request: Request, options: RequireAdminOptions = {}): AdminCheck {
-  const { allowToken = true, allowNonProd = true } = options;
+  const { allowToken = true, allowNonProd = true, requireTokenInProd = false } = options;
+  const inProd = process.env.NODE_ENV === "production";
+
+  // Constant-time compare so a wrong token can't be recovered byte-by-byte via response timing.
+  // timingSafeEqualStr denies when either side is empty/undefined (no configured token → no match).
+  const tokenMatches =
+    allowToken && timingSafeEqualStr(process.env.ADMIN_REINDEX_TOKEN, request.headers.get("x-admin-token"));
+
+  // Hard token gate for cost/side-effecting routes in production: a synthetic/injected admin email
+  // (app auth unconfigured) or the non-prod bypass must NOT grant — only a real token match does.
+  if (requireTokenInProd && inProd) {
+    if (tokenMatches) return { ok: true, reason: "admin-token", email: null };
+    return { ok: false, reason: "forbidden-token-required", email: null };
+  }
 
   const email = request.headers.get(AUTHENTICATED_EMAIL_HEADER);
   if (isAdminEmail(email)) return { ok: true, reason: "admin-email", email: (email || "").trim().toLowerCase() };
 
-  if (allowToken) {
-    const token = process.env.ADMIN_REINDEX_TOKEN;
-    // Constant-time compare so a wrong token can't be recovered byte-by-byte via response timing.
-    // timingSafeEqualStr denies when either side is empty/undefined (no configured token → no match).
-    if (timingSafeEqualStr(token, request.headers.get("x-admin-token"))) {
-      return { ok: true, reason: "admin-token", email: null };
-    }
-  }
+  if (tokenMatches) return { ok: true, reason: "admin-token", email: null };
 
-  if (allowNonProd && process.env.NODE_ENV !== "production") {
+  if (allowNonProd && !inProd) {
     return { ok: true, reason: "non-prod", email: null };
   }
 

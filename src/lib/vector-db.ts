@@ -332,9 +332,16 @@ export function clearQueryEmbedCache(): void {
  * (default on, 128 entries — set VECTOR_QUERY_EMBED_CACHE=off or VECTOR_QUERY_EMBED_CACHE_SIZE=0 to
  * disable). Only ever called with inputType "query" — document/upsert embeddings always go through
  * embedDocumentsWithRetry uncached.
+ *
+ * Returns `cached` so the caller can skip usage metering on a hit — a cache hit made NO Voyage
+ * request, so metering it would insert phantom rag_usage rows + estimated cost and corrupt the
+ * cost dashboards the cache is meant to shrink.
  */
-async function embedQueryCached(voyage: VoyageAIClient, query: string): Promise<EmbedResponse> {
-  if (!queryEmbedCacheEnabled()) return embedWithRetry(voyage, [query], "query");
+async function embedQueryCached(
+  voyage: VoyageAIClient,
+  query: string
+): Promise<{ response: EmbedResponse; cached: boolean }> {
+  if (!queryEmbedCacheEnabled()) return { response: await embedWithRetry(voyage, [query], "query"), cached: false };
 
   const cache = cacheFor(voyage);
   const key = normalizeQueryCacheKey(query);
@@ -343,7 +350,7 @@ async function embedQueryCached(voyage: VoyageAIClient, query: string): Promise<
     // Touch: move to most-recently-used position.
     cache.delete(key);
     cache.set(key, hit);
-    return hit;
+    return { response: hit, cached: true };
   }
 
   const response = await embedWithRetry(voyage, [query], "query");
@@ -354,7 +361,7 @@ async function embedQueryCached(voyage: VoyageAIClient, query: string): Promise<
     if (oldestKey === undefined) break;
     cache.delete(oldestKey);
   }
-  return response;
+  return { response, cached: false };
 }
 
 /**
@@ -702,8 +709,10 @@ export async function retrieveContextDetailed(
   const extraFilter = buildExtraFilters(options);
 
   try {
-    const response = await embedQueryCached(voyage, query);
-    meterEmbed([query]);
+    const { response, cached } = await embedQueryCached(voyage, query);
+    // Only meter a real Voyage embed request — a cache hit made no call, so metering it would
+    // record phantom usage/cost and defeat the point of the cache.
+    if (!cached) meterEmbed([query]);
 
     const embedding = response.data?.[0]?.embedding;
     if (!embedding) return [];

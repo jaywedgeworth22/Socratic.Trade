@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => {
     listIndexes: vi.fn(),
     createIndex: vi.fn(),
     embed: vi.fn(),
-    resolveApiKey: vi.fn()
+    resolveApiKey: vi.fn(),
+    meterEmbed: vi.fn()
   };
 });
 
@@ -37,6 +38,15 @@ vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: vi.fn(),
   setInternalSetting: vi.fn()
+}));
+
+// Spy on the usage metering so we can assert a cache HIT is not metered as a real Voyage call.
+vi.mock("../src/lib/rag-metering", () => ({
+  meterEmbed: mocks.meterEmbed,
+  meterPineconeQuery: vi.fn(),
+  meterPineconeUpsert: vi.fn(),
+  meterRerank: vi.fn(),
+  recordRagUsage: vi.fn()
 }));
 
 beforeEach(() => {
@@ -68,6 +78,17 @@ describe("query-embedding LRU cache (G8b)", () => {
     expect(mocks.embed).toHaveBeenCalledTimes(1);
     // Pinecone is still queried each time — only the embed call is cached.
     expect(mocks.query).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT meter a cache hit as a Voyage embed call (usage/cost integrity)", async () => {
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+
+    await retrieveContextDetailed("AAPL guidance catalysts", "AAPL", 2, "local"); // miss → embed + meter
+    await retrieveContextDetailed("AAPL guidance catalysts", "AAPL", 2, "local"); // hit → no embed, no meter
+
+    expect(mocks.embed).toHaveBeenCalledTimes(1);
+    // The cache hit must NOT record a phantom embed usage row — meter count tracks real calls only.
+    expect(mocks.meterEmbed).toHaveBeenCalledTimes(1);
   });
 
   it("normalizes whitespace/casing so near-identical queries still hit the cache", async () => {
