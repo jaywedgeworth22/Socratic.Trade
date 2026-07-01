@@ -121,6 +121,7 @@ import {
   type FeedTab,
   type WorkspaceTab
 } from "./nav-destinations";
+import { GLOSSARY_RULE_OF_THUMB, SETTINGS_GLOSSARY } from "./settings-search";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
@@ -6844,6 +6845,8 @@ function CongressionalTradesHelpLine({ sources }: { sources: string[] }) {
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
   type Section = "overview" | "guardrails" | "settings" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
+  // NAV_V2 PR #4: show the old→new Settings Glossary table for returning users.
+  const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const congressionalSources = snapshot.webSources?.congress?.sources ?? [];
@@ -6922,6 +6925,32 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           <p>
             Settings are split by scope. <strong>User Settings</strong> (tagged <strong>ALL ACCOUNTS</strong>) cover provider keys, appearance, alert delivery, and shared data preferences. <strong>Account Settings</strong> (tagged <strong>THIS ACCOUNT</strong>) cover the selected account&apos;s strategy, universe, safety, tax treatment, and tuning behavior.
           </p>
+          {navV2 && (
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-2 font-semibold text-fg">Renamed &amp; relocated — old name → new home</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="text-faint">
+                    <tr>
+                      <th className="py-1 pr-3 font-medium">You used to call it…</th>
+                      <th className="py-1 pr-3 font-medium">It&apos;s now…</th>
+                      <th className="py-1 font-medium">What changed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SETTINGS_GLOSSARY.map((entry) => (
+                      <tr key={entry.oldName} className="border-t border-line/60 align-top">
+                        <td className="py-1.5 pr-3 text-muted">{entry.oldName}</td>
+                        <td className="py-1.5 pr-3 font-medium text-fg">{entry.newHome}</td>
+                        <td className="py-1.5 text-muted">{entry.whatChanged}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 border-t border-line/60 pt-2 text-[11px] text-faint">{GLOSSARY_RULE_OF_THUMB}</p>
+            </div>
+          )}
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">
               <div className="mb-1 font-semibold text-fg">Strategy Studio</div>

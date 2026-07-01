@@ -279,6 +279,58 @@ export function scopeMatchesLegacyTier(field: SettingsFieldDef): boolean {
   return tier === field.scope;
 }
 
+// ── Legacy section → new home (NAV_V2 PR #4) ──────────────────────────────────
+// Where each legacy modal section relocates in the redesign. One structured
+// source so the Help glossary table and (later) the openSettings call-site
+// rewrites cannot drift. Total over the SettingsSection union.
+export const LEGACY_SECTION_RELOCATION: Record<SettingsSection, string> = {
+  strategy: "Strategy",
+  operate: "Guardrails → Execution / Autonomy (+ Strategy → Signals)",
+  risk: "Guardrails → Risk",
+  connections: "Settings → Connections (+ Keys & Models)",
+  display: "Settings → Appearance",
+  tax: "Results → Tax (+ Guardrails → Tax rules)",
+  tuning: "Results → Tuning (+ Guardrails → Learning params)",
+  notifications: "Settings → Alert delivery",
+  data: "Settings → Data & Privacy"
+};
+
+export function relocationForSection(section: SettingsSection): string {
+  return LEGACY_SECTION_RELOCATION[section];
+}
+
+// ── Help "Settings Glossary" old→new mapping (copy deck §11) ───────────────────
+// A returning user who knew the old names finds the new home. Rendered under
+// Help → Settings Glossary when NAV_V2 is on.
+export interface GlossaryEntry {
+  oldName: string;
+  newHome: string;
+  whatChanged: string;
+}
+
+export const SETTINGS_GLOSSARY: GlossaryEntry[] = [
+  { oldName: "Strategy Profile", newHome: "Preset", whatChanged: "Same thing, clearer name — a reusable, copyable template of strategy settings." },
+  { oldName: "Strategy (Settings section)", newHome: "Strategy (destination)", whatChanged: "The read-only mirror is gone; Strategy is one editable home on the top nav." },
+  { oldName: "Strategy Studio", newHome: "Strategy (destination)", whatChanged: "The pop-up editor folded inline into the Strategy destination." },
+  { oldName: "Operate", newHome: "Guardrails → Execution / Autonomy (+ Strategy → Signals)", whatChanged: "The vague “Operate” section was dissolved: order types/hours/cadence → Guardrails; universe/scan → Strategy." },
+  { oldName: "Safety", newHome: "Guardrails → Risk", whatChanged: "Renamed. Stops, take-profit, and trailing live here; the five most-used surface as Essentials." },
+  { oldName: "Tuning", newHome: "Results → Tuning (+ Guardrails → Learning params)", whatChanged: "The AI's proposed changes are reviewed in Results; the learning knobs live in Guardrails." },
+  { oldName: "Tax (tab / section)", newHome: "Results → Tax (+ Guardrails → Tax rules)", whatChanged: "Split by intent: realized tax outcomes vs the decision-time tax rules." },
+  { oldName: "Review (destination)", newHome: "Results", whatChanged: "Renamed. “Review” is now a verb for approving and tuning, not a place." },
+  { oldName: "Notifications (feed tab)", newHome: "Results → Alert history", whatChanged: "The alerts log moved under Results." },
+  { oldName: "Notifications (Settings section)", newHome: "Settings → Alert delivery", whatChanged: "Renamed. This is delivery rules only (channels/routing)." },
+  { oldName: "Notifications (the dropdown)", newHome: "🔔 Alerts", whatChanged: "The live stream is now called Alerts." },
+  { oldName: "Display", newHome: "Settings → Appearance", whatChanged: "Renamed. Adds “default landing account” (non-Live only)." },
+  { oldName: "Data", newHome: "Settings → Data & Privacy", whatChanged: "Renamed. Houses web-source toggles and the two scan-breadth knobs (all accounts)." },
+  { oldName: "Halt & Flatten", newHome: "STOP (+ a separate Flatten)", whatChanged: "STOP halts new activity in one click and never sells. Selling is a separate, deliberate action." },
+  { oldName: "Connections", newHome: "Settings → Connections (+ Keys & Models)", whatChanged: "Keys split into their own section; broker links stay in Connections." },
+  { oldName: "/admin/* (four pages)", newHome: "Settings → Admin", whatChanged: "The four admin pages consolidated into one role-gated section." },
+  { oldName: "/strategy (public page)", newHome: "/how-it-works", whatChanged: "The marketing explainer was renamed; linked from the editor footer and Help." }
+];
+
+export const GLOSSARY_RULE_OF_THUMB =
+  "Rule of thumb: if a setting changes how a trade is decided or placed, it lives with the account (Strategy or Guardrails). Everything else is in Settings.";
+
 // Search the catalog by label, synonyms, destination/group, scope word, or
 // backing field. Case/whitespace-insensitive substring match; results ranked
 // with label-prefix hits first, then label hits, then synonym/other hits.
