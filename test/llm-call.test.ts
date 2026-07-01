@@ -50,7 +50,8 @@ describe("buildLlmRequestBody", () => {
       { model: "claude-opus-4-8", systemPrompt: "sys", userContent: "{\"a\":1}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(body.model).toBe("claude-opus-4-8");
-    expect(body.system).toBe("sys");
+    // Prompt caching (Chat A item 3): system is a single ephemeral cache block, not a bare string.
+    expect(body.system).toEqual([{ type: "text", text: "sys", cache_control: { type: "ephemeral" } }]);
     expect(body.messages).toEqual([{ role: "user", content: "{\"a\":1}" }]);
     expect(body.tools).toEqual([{ name: "trade_proposals", description: "proposals", input_schema: SCHEMA.schema }]);
     expect(body.tool_choice).toEqual({ type: "tool", name: "trade_proposals" });
@@ -59,6 +60,17 @@ describe("buildLlmRequestBody", () => {
     expect(body.response_format).toBeUndefined();
     expect(body.max_completion_tokens).toBeUndefined();
     expect(body.max_output_tokens).toBeUndefined();
+  });
+
+  it("Anthropic auth headers include the prompt-caching beta; OpenAI-compatible unchanged (item 3)", () => {
+    const anthropic = llmAuthHeaders({ provider: "anthropic", key: "sk-ant" });
+    expect(anthropic["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
+    expect(anthropic["x-api-key"]).toBe("sk-ant");
+    expect(anthropic["anthropic-version"]).toBe("2023-06-01");
+    // OpenAI-compatible transport is untouched: Bearer auth, no anthropic beta header.
+    const openai = llmAuthHeaders({ provider: "openai", key: "sk" });
+    expect(openai["anthropic-beta"]).toBeUndefined();
+    expect(openai.authorization).toBe("Bearer sk");
   });
 
   it("openAiJsonObject keeps OpenAI on json_object but Anthropic still uses the forced tool", () => {

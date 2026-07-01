@@ -51,7 +51,9 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">):
     return {
       "content-type": "application/json",
       "x-api-key": endpoint.key ?? "",
-      "anthropic-version": "2023-06-01"
+      "anthropic-version": "2023-06-01",
+      // Honour cache_control blocks on the system prompt (prompt caching). (Chat A item 3.)
+      "anthropic-beta": "prompt-caching-2024-07-31"
     };
   }
   return {
@@ -72,7 +74,12 @@ export function buildLlmRequestBody(
   if (transport === "anthropic-messages") {
     const base: Record<string, unknown> = {
       model: spec.model,
-      system: systemPrompt,
+      // Prompt-caching: send the (stable) system prompt as a single ephemeral cache block so
+      // Anthropic reuses the cached KV across repeated strategy/red-team calls. The per-run dynamic
+      // data lives in the user message, not here, so the whole system prefix is cacheable. The
+      // caching beta header is added in llmAuthHeaders. (Chat A item 3; finer-grained prefix/suffix
+      // splitting can follow if a dynamic tail is ever moved into the system prompt.)
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userContent }]
     };
     if (schema) {
