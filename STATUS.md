@@ -171,6 +171,19 @@ All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quart
 1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
 `docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
 
+## 2026-07-01 — NAV_V2 PR #8: wash-sale provenance + Test-account filter (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`, **stacked on PR #7 in PR #310**. Phase 5;
+**touches the authoritative wash-sale gate — real-money tax safety.** `src/lib/tax.ts`: added per-symbol
+**provenance** (`WashSaleLock {account, clearDate}` + `getWashSaleLockProvenance` /
+`getUserWashSaleLockProvenance`; clearDate = binding loss exit + 30d) and **excluded Test/sim accounts** from
+contribution (`filter(a => a.broker !== "test")`) so a simulated loss can never lock a real taxable account.
+**Chose the parallel-accessor option:** the Set-returning functions are now projections of the provenance map
+(`new Set(map.keys())`) — one source of truth, and the enforcement gate (`policy.ts` `.has`) + `strategy.ts`
+consumers stay **byte-identical (gate never weakened)**. Tests: `washsale-test-account-excluded`,
+`washsale-provenance`; updated `chat-draft-policy` to source the loss from a real account (Test excluded) while
+keeping the 409 block. **Verify:** tsc clean · lint 0 · 212 files / 2090 tests · build ok. See
+`docs/rollouts/2026-07-01-nav-v2-pr8-washsale-provenance.md`.
+
 ## 2026-07-01 — NAV_V2 PR #7 (⛔ gate): view/execution decouple + write-time validation (Claude)
 Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (own PR, after #305 merges). The delivery plan's
 real-money **gate** — **not flag-gated**. **⚠️ real-money code changed without browser QA — preview-QA before

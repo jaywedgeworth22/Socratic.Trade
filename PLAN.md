@@ -90,6 +90,13 @@ filling the missing pieces.
 > config-only (`copyPolicyConfigToActiveAccount` preserves run-state), explicit
 > `assertConnectedAccountOwnedByUser` write guard. Not flag-gated; real-money — preview-QA before merge.
 > tsc/lint/test(2032)/build green. See `docs/rollouts/2026-07-01-nav-v2-pr7-execution-gate.md`.
+> **PR #8 built (2026-07-01, stacked on #7 in PR #310): wash-sale provenance + Test-account filter.**
+> `tax.ts` adds per-symbol provenance (`WashSaleLock {account, clearDate}`) and excludes Test/sim accounts
+> from contribution (a simulated loss can no longer lock a real taxable account). Chose the parallel-accessor
+> option: Set-returning helpers are projections of the provenance map, so the authoritative enforcement gate
+> (`policy.ts` `.has`) stays byte-identical. Tests: washsale-test-account-excluded, washsale-provenance;
+> chat-draft updated. Real-money tax safety. tsc/lint/test(2090)/build green. See
+> `docs/rollouts/2026-07-01-nav-v2-pr8-washsale-provenance.md`.
 > 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
 > Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
 > (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
