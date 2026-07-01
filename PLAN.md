@@ -76,6 +76,13 @@ filling the missing pieces.
 > `THIS ACCOUNT`/`ALL ACCOUNTS` scope tags. No flag, no data path. New `app/settings-scope.ts` (shared
 > scope-tag SSOT) + `test/scope-tag-render.test.ts`. tsc/lint/test/build green. Next: PR #2 (`DestinationTab`
 > mapping + localStorage shim behind `NAV_V2`). See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+> **PRs #2–#6 landed (2026-07-01, PR #305, same branch restarted from main):** DestinationTab mapping +
+> localStorage shim (`app/nav-destinations.ts`); settings field catalog + search index + Essentials + scope
+> (`app/settings-search.ts`); Settings Glossary old→new table + relocation map; `/strategy`→`/how-it-works`
+> gated redirect; TuningCard de-dup behind `STRATEGY_CONSOLIDATION`. All behind `NAV_V2`/sub-flags or safe
+> structural changes — flags off ⇒ prod byte-identical. The physical settings/Strategy modal teardown is
+> staged to the shell (PR #9). Stopped before PR #7 (real-money execution gate) pending go-ahead.
+> tsc/lint/test(2020)/build green. See `docs/rollouts/2026-07-01-nav-v2-pr2-6-batch.md`.
 > 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
 > Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
 > (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +

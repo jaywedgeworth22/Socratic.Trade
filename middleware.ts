@@ -40,7 +40,7 @@ const ALLOWED = (process.env.ALLOWED_EMAILS || "")
   .filter(Boolean);
 
 // Paths that never require a user identity.
-const PUBLIC_PREFIXES = ["/api/health", "/api/ops", "/api/webhooks", "/access-denied", "/login", "/logout", "/welcome", "/strategy"];
+const PUBLIC_PREFIXES = ["/api/health", "/api/ops", "/api/webhooks", "/access-denied", "/login", "/logout", "/welcome", "/strategy", "/how-it-works"];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
   "/api/auth/error",

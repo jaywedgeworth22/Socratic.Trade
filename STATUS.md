@@ -171,6 +171,29 @@ All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quart
 1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
 `docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
 
+## 2026-07-01 — NAV_V2 PRs #2–#6: mapping, settings search, glossary, /how-it-works, TuningCard (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (restarted from `origin/main` after PR #1/#303
+merged), **PR #305**. Stacked the flag-gated middle of the delivery plan; **everything behind `NAV_V2`
+(+ `STRATEGY_CONSOLIDATION`) or a safe structural change — flags off ⇒ production byte-identical.**
+- **PR #2:** `app/nav-destinations.ts` — destination vocab mapped over `WorkspaceTab`/`FeedTab`, the `NAV_V2`
+  flag reader, and an additive/idempotent one-time localStorage shim (runs on mount, flag-independent,
+  legacy keys retained).
+- **PR #3:** `app/settings-search.ts` — one field catalog as the SSOT for the **search index**, the **five
+  Guardrails Essentials**, and the **scope classification** (gap #4: `Max order size (per trade)` →
+  `maxOrderNotional`, never "position"); + Scope-A signpost in Settings (NAV_V2).
+- **PR #4:** `LEGACY_SECTION_RELOCATION` + `SETTINGS_GLOSSARY` (§11 old→new, 17 rows); Help renders the
+  old→new table under NAV_V2.
+- **PR #5:** `/strategy` → **`/how-it-works`** with a gated redirect (gap #2: both 404 when
+  `LANDING_PAGE_ENABLED` off); `middleware` + welcome links updated.
+- **PR #6:** twin `TuningCard` de-dup behind `STRATEGY_CONSOLIDATION` (precondition verified structurally;
+  flag-off keeps both sites).
+- **Consolidation note:** the physical teardown of the ~1000-line settings/Strategy modal (8-node tree, live
+  Essentials/Advanced, Studio→inline, `openSettings` rewrites, `/admin` shims) is **staged to the shell
+  (PR #9)** — done once, QA'd live; the tested logic/data layers, flags, copy, and routes are in now.
+- **Verify (branch tip):** `tsc` clean · `lint` 0 errors · `npm test` 203 files / 2020 tests · `build` ok.
+- **Stopped before PR #7** (⛔ real-money execution gate — not flag-conditional) pending explicit go-ahead.
+See `docs/rollouts/2026-07-01-nav-v2-pr2-6-batch.md`.
+
 ## 2026-07-01 — NAV_V2 PR #1: vocabulary relabels + scope-surfacing (first app code) (Claude)
 Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`. **First app-code step** of the redesign —
 executes PR #1 of `docs/settings-navigation-redesign/spec/08-delivery-plan-prs-and-tests.md`. **No flag**

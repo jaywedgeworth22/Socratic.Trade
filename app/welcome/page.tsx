@@ -125,7 +125,7 @@ export default function WelcomePage() {
               <a href={ACCESS_HREF} className={buttonClass({ variant: "primary", size: "md" })}>
                 Request access
               </a>
-              <a href="/strategy" className={buttonClass({ variant: "ghost", size: "md" })}>
+              <a href="/how-it-works" className={buttonClass({ variant: "ghost", size: "md" })}>
                 How the strategy works
               </a>
             </div>
@@ -176,7 +176,7 @@ export default function WelcomePage() {
               idea survives that argument do hard-coded safety rules let a small order through &mdash; and the
               system keeps score so it can improve. We are upfront about where it is weak or unproven.
             </p>
-            <a href="/strategy" className={buttonClass({ variant: "ghost", size: "sm" })}>
+            <a href="/how-it-works" className={buttonClass({ variant: "ghost", size: "sm" })}>
               Read the full strategy overview
             </a>
           </section>
