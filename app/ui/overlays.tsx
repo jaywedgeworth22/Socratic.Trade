@@ -97,7 +97,7 @@ export function Modal({
         >
           {/* Backdrop — click to close */}
           <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+            className="absolute inset-0 bg-black/40 backdrop-blur-scrim"
             onClick={onClose}
           />
           <motion.div
@@ -144,7 +144,7 @@ export function Modal({
                   aria-label="Close dialog"
                   className="cursor-pointer inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
                 >
-                  <X size={18} />
+                  <X size={20} />
                 </button>
               </div>
             </div>
@@ -189,7 +189,7 @@ export function SlideOver({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-scrim" onClick={onClose} />
           <motion.aside
             ref={ref}
             role="dialog"
@@ -220,7 +220,7 @@ export function SlideOver({
                   aria-label="Close panel"
                   className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 touch-manipulation items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
                 >
-                  <X size={18} />
+                  <X size={20} />
                 </button>
               </div>
             </div>

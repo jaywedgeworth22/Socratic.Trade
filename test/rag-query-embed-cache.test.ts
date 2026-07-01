@@ -25,11 +25,12 @@ describe("query-embed-cache", () => {
     delete process.env.RAG_QUERY_EMBED_CACHE_TTL_MS;
   });
 
-  it("is disabled by default", () => {
-    expect(queryEmbedCacheEnabled()).toBe(false);
+  it("is enabled by default (consolidated G8b)", () => {
+    expect(queryEmbedCacheEnabled()).toBe(true);
   });
 
-  it("is a complete no-op when disabled: get always undefined, set never grows the cache", () => {
+  it("is a complete no-op when explicitly disabled: get always undefined, set never grows the cache", () => {
+    process.env.RAG_QUERY_EMBED_CACHE = "off";
     setCachedQueryEmbedding("voyage-finance-2", "what is AAPL's PE ratio", [0.1, 0.2, 0.3]);
     expect(queryEmbedCacheSize()).toBe(0);
     expect(getCachedQueryEmbedding("voyage-finance-2", "what is AAPL's PE ratio")).toBeUndefined();
@@ -57,10 +58,15 @@ describe("query-embed-cache", () => {
       expect(getCachedQueryEmbedding("voyage-finance-2", "AAPL risk")).toEqual([0.5]);
     });
 
-    it("the cache key omits userId and any per-user/filter context — only model+query", () => {
+    it("the cache key omits userId and any per-user/filter context — only model+normalized query", () => {
       const key = queryEmbedCacheKey("voyage-finance-2", "AAPL risk");
-      expect(key).toBe("voyage-finance-2:AAPL risk");
+      expect(key).toBe("voyage-finance-2:aapl risk"); // normalized: lowercased + whitespace-collapsed
       expect(key).not.toMatch(/user/i);
+    });
+
+    it("normalizes casing and internal whitespace so trivial variants share a cache entry", () => {
+      setCachedQueryEmbedding("voyage-finance-2", "AAPL   Guidance", [0.7]);
+      expect(getCachedQueryEmbedding("voyage-finance-2", "  aapl guidance  ")).toEqual([0.7]);
     });
 
     it("expires an entry after the configured TTL", async () => {

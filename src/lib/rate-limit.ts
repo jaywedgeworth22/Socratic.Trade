@@ -75,7 +75,13 @@ export const RATE_LIMITS = {
   /** OAuth start/callback: a handful per minute is plenty for an interactive login dance. */
   oauth: { limit: 10, windowMs: 60_000 },
   /** Order placement / approval: cap bursts; protects the broker path and the human-approval gate. */
-  orders: { limit: 20, windowMs: 60_000 }
+  orders: { limit: 20, windowMs: 60_000 },
+  /** LLM chat: each request can spend operator-funded tokens, so cap per-user bursts. 30/min is
+   *  generous for an interactive chat while containing a runaway loop or a scripted abuse spike. */
+  chat: { limit: 30, windowMs: 60_000 },
+  /** Market scan: read-only but fans out to several data providers (Yahoo, Massive, broker quotes),
+   *  so a tight-loop refresh can hammer upstreams. 30/min covers manual refreshes with headroom. */
+  scan: { limit: 30, windowMs: 60_000 }
 } as const satisfies Record<string, RateLimitOptions>;
 
 /**

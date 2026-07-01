@@ -9,6 +9,7 @@ import { dedupeSimilar } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
+import { isOverLlmBudget } from "./llm-budget";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -418,7 +419,7 @@ async function embedDocumentsWithRetry(
  * plain field on a shallow copy of the match, so callers that only read `.score`/`.metadata` are
  * unaffected. `matchToChunk` reads `_rerankScore` into `RetrievedChunk.relevanceScore`.
  */
-export async function rerankMatches(voyage: VoyageAIClient, query: string, matches: any[], topK: number): Promise<any[]> {
+export async function rerankMatches(voyage: VoyageAIClient, query: string, matches: any[], topK: number, userId?: string): Promise<any[]> {
   if (matches.length <= 1) return matches;
   const documents = matches.map((m) => {
     const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
@@ -433,7 +434,7 @@ export async function rerankMatches(voyage: VoyageAIClient, query: string, match
       topK: Math.min(topK, matches.length),
       truncation: true
     });
-    meterRerank(query, documents, rerankModel());
+    meterRerank(query, documents, rerankModel(), userId);
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
     const data = resp.data ?? [];
     if (data.length === 0) return matches;
@@ -925,6 +926,9 @@ export function matchToChunk(match: any): RetrievedChunk {
 export interface RetrieveOptions {
   /** Point-in-time guard: drop chunks whose acceptance_datetime is after this ISO date. */
   asOf?: string;
+  /** The account being run, so the RAG budget guard resolves THAT account's ceiling (not the active
+   *  account's) in a multi-account scheduler run. Omit for the active-account default (unchanged). */
+  connectedAccountId?: string;
   /** Restrict to these document types (metadata.doc_type), e.g. ["10-k","10-q"]. */
   docType?: string[];
   /** Restrict to a specific filing section (metadata.section). */
@@ -989,6 +993,10 @@ export async function retrieveContextDetailed(
   userId: string = "local",
   options?: RetrieveOptions
 ): Promise<RetrievedChunk[]> {
+  // Budget guard (durable spend primitive): when the user is over their daily LLM/RAG budget, skip
+  // retrieval entirely — no Voyage embed, no Pinecone query, no metered spend. Returns empty like the
+  // no-client case, so every caller degrades gracefully. Default OFF (no ceiling) → no-op.
+  if (isOverLlmBudget(userId, options?.connectedAccountId)) return [];
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];
@@ -1006,14 +1014,16 @@ export async function retrieveContextDetailed(
   const extraFilter = buildExtraFilters(options);
 
   try {
-    // R9 (2026-07-01 RAG backlog): query-embedding LRU, keyed on `${VOYAGE_MODEL}:${query.trim()}`
-    // — vector-only, never Pinecone results (see query-embed-cache.ts for the full safety
-    // rationale). Default OFF via RAG_QUERY_EMBED_CACHE; getCachedQueryEmbedding always returns
-    // undefined when the flag is off, so the fresh-embed path below is unchanged by default.
+    // Query-embedding cache (consolidated R9 + G8b): a vector-only LRU keyed on the NORMALIZED
+    // query (lowercase + collapsed whitespace) so trivial casing/spacing variants share a hit —
+    // never Pinecone results (see query-embed-cache.ts for the full safety rationale). Default ON;
+    // disable with RAG_QUERY_EMBED_CACHE=off. A hit skips the Voyage embed and its metering; a miss
+    // embeds, meters under the REQUESTING userId (so retrieval spend counts toward that user's daily
+    // LLM/RAG budget, not "local"), and books the per-run budget op.
     let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, query);
     if (embedding == null) {
       const response = await embedWithRetry(voyage, [query], "query");
-      meterEmbed([query]); // count only on a cache MISS — a hit must not double-count embed cost.
+      meterEmbed([query], undefined, userId); // count only on a cache MISS; book under the requesting userId
       recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
       embedding = response.data?.[0]?.embedding;
     }
@@ -1057,7 +1067,7 @@ export async function retrieveContextDetailed(
         includeMetadata: true,
       });
       matches = results.matches || [];
-      meterPineconeQuery(fetchK);
+      meterPineconeQuery(fetchK, userId);
     } else {
       const [userResults, localResults] = await Promise.all([
         index.query({
@@ -1077,7 +1087,7 @@ export async function retrieveContextDetailed(
           includeMetadata: true,
         })
       ]);
-      meterPineconeQuery(fetchK * 2);
+      meterPineconeQuery(fetchK * 2, userId);
 
       const combined = [...(userResults.matches || []), ...(localResults.matches || [])];
       combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
@@ -1114,7 +1124,7 @@ export async function retrieveContextDetailed(
       asOf: options?.asOf,
       minRelevanceScore: options?.minRelevanceScore,
       hybrid: wantHybrid,
-      rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k) : undefined,
+      rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId) : undefined,
       strictAsOf: asOfStrictEnabled(),
       dedupeSimilarity: options?.dedupeSimilarity,
       userId
