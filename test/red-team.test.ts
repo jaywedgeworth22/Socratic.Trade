@@ -110,6 +110,12 @@ describe("debateProposal LLM request bounds", () => {
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.redTeamDebate);
     expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
     expect(bodies[0].max_output_tokens).toBeUndefined();
+    // Item 6: OpenAI-compatible providers request STRICT json_schema (not a bare json_object), so the
+    // verdict is schema-enforced rather than regex/prose-parsed.
+    expect(bodies[0].response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "red_team_verdict", strict: true, schema: expect.any(Object) }
+    });
   });
 });
 

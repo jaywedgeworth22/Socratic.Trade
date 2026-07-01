@@ -107,9 +107,11 @@ Respond with a JSON object containing:
   }
   if (!llmKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured." };
 
-  // OpenAI-compatible providers keep the historical bare-`json_object` request (the verdict shape is
-  // described in the prompt); when the resolved Red model is Claude, the same schema is enforced as a
-  // forced Anthropic tool so the verdict still comes back as clean, parseable JSON.
+  // OpenAI-compatible providers now request STRICT `json_schema` (the {rejected, reason} verdict
+  // shape) so the response is schema-enforced instead of relying on prose + a bare `json_object`.
+  // Providers with their own enforcement keep it: DeepSeek (which rejects strict json_schema) falls
+  // back to `json_object` inside buildLlmRequestBody, and a Claude Red model enforces the same schema
+  // as a forced Anthropic tool. This is the fix for the gemini-3.5-flash unparseable-format incident.
   const body = buildLlmRequestBody(
     { provider, transport },
     {
@@ -117,7 +119,6 @@ Respond with a JSON object containing:
       systemPrompt,
       userContent,
       schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's accept/reject verdict." },
-      openAiJsonObject: true,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.redTeamDebate,
       // Route the required Red Team debate through the SAME interactive-reasoning clamp as the
       // Green/Bear proposal steps (strategy.ts). Without this, a stored gpt-5.5/high config sends
