@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`ci/hosted-runner-and-concurrency`): CI runner-bottleneck fix -
+> added cancel-in-progress concurrency groups to `ci.yml`/`security.yml`/
+> `e2e.yml` and moved `verify`/`gitleaks`/`smoke` to `ubuntu-latest`, since
+> the single self-hosted `trading-live-mac` runner was serializing all CI
+> and queueing PRs behind unrelated branches. `deploy.yml`/
+> `sync-previews.yml` stay self-hosted (they touch the production box
+> directly). No roadmap change; see
+> `docs/rollouts/2026-07-01-ci-hosted-runner-migration.md`.
 > 2026-07-01 (`chore/shared-package-drift-fixes`, PR #280): cross-app
 > dependency hygiene - `congress-trade-client.ts` now imports the shared
 > `MAX_REFS_BATCH` constant instead of a hardcoded `500`; removed the unused,
