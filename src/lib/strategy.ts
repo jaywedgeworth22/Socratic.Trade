@@ -369,7 +369,7 @@ export async function runStrategyOnce(
     // read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account runs can
     // overshoot by up to the in-flight runs' spend (bounded by scheduler concurrency). A true hard cap
     // needs a per-user reservation / run serialization — deferred as a follow-up.
-    const budget = checkLlmDailyBudget(userId);
+    const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
     if (skipLlmDueToBudget) {
       audit(
@@ -511,7 +511,7 @@ export async function runStrategyOnce(
     // budget exhaustion. Re-reading degrades to a graceful skip instead. Cheap DB read; default OFF
     // (no ceiling) → always ok, so no behavior change when budgets are unset.
     if (!skipLlmDueToBudget) {
-      const budgetNow = checkLlmDailyBudget(userId);
+      const budgetNow = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
       if (!budgetNow.ok) {
         skipLlmDueToBudget = true;
         audit(
@@ -2360,6 +2360,7 @@ async function proposeTrades(input: {
         name: "trading.strategy.bull",
         model,
         userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
         metadata: {
           endpoint: url,
@@ -2579,6 +2580,7 @@ async function proposeTrades(input: {
         name: "trading.strategy.bear",
         model: bearModel,
         userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
         input: summarizeOpenAiRequest(bearBody),
         metadata: {
           endpoint: bearUrl,

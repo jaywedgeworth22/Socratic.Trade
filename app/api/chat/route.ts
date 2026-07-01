@@ -12,6 +12,7 @@ import {
 } from "@/lib/chat/llm";
 import { resolveLlmCredential } from "@/lib/db";
 import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { isOverLlmBudget } from "@/lib/llm-budget";
 import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { DEFAULT_OPENAI_MODEL } from "@/lib/llm-request";
 import { NextResponse } from "next/server";
@@ -86,6 +87,15 @@ export async function POST(request: Request) {
     const provider = resolveChatProvider(modelHint, providerHint);
     if (!resolveLlmCredential(provider, userId).key) {
       return NextResponse.json({ error: "llm_credential_required", message: LLM_REQUIRED_CHAT_MESSAGE }, { status: 412 });
+    }
+    // Enforce the daily LLM/RAG budget ceiling on chat too (default OFF → no-op when no limit is set).
+    // Without this, once a user is over budget the strategy/revalidation/reflection paths are blocked
+    // but dashboard chat keeps spending — chat is a real LLM (and RAG) spender and must count too.
+    if (isOverLlmBudget(userId)) {
+      return NextResponse.json(
+        { error: "llm_budget_exceeded", message: "Daily LLM budget ceiling reached — chat is paused until the next daily reset." },
+        { status: 429 }
+      );
     }
   }
 

@@ -5,6 +5,8 @@ type LlmGenerationOptions<T> = {
   name: string;
   model: string;
   userId?: string;
+  /** The targeted account, so the budget backstop resolves THAT account's ceiling (not the active one). */
+  connectedAccountId?: string;
   sessionId?: string;
   input?: unknown;
   metadata?: Record<string, unknown>;
@@ -78,7 +80,7 @@ export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run
   // daily budget guarantees no model spend slips past the ceiling — even from a call site that forgot
   // its own gate. No-op when no ceiling is configured (default). Runs BEFORE the Langfuse short-circuit
   // so it applies whether or not tracing is enabled.
-  if (options.userId) assertWithinLlmBudget(options.userId);
+  if (options.userId) assertWithinLlmBudget(options.userId, options.connectedAccountId);
   if (!langfuseConfigured()) return run();
 
   let attemptedRun = false;

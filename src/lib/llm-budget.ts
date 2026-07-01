@@ -50,13 +50,16 @@ export interface LlmBudgetDecision {
  * every provider/context/key. Default OFF: with no policy value AND no env limit, the limits are
  * +Infinity and this always returns ok. Pure + DB-read-only so it can be unit-tested directly.
  */
-export function checkLlmDailyBudget(userId: string, now: Date = new Date()): LlmBudgetDecision {
+export function checkLlmDailyBudget(userId: string, now: Date = new Date(), connectedAccountId?: string): LlmBudgetDecision {
   // Resilient policy read: the budget check is called from spend primitives (withLlmGeneration,
   // retrieveContextDetailed) in many contexts. If the per-user policy can't be read, degrade to the
   // env-only limit rather than throwing — never let budget bookkeeping break an LLM/RAG call.
+  // Resolve the policy for the TARGETED account (a multi-account scheduler run passes its
+  // connectedAccountId) so the ceiling reflects that account's tuning, not the active account's; the
+  // usage ledger is still summed per-user below. Omitting it resolves the active account (unchanged).
   let tuning: TradingPolicy["tuning"];
   try {
-    tuning = getPolicy(userId).tuning;
+    tuning = getPolicy(userId, connectedAccountId).tuning;
   } catch {
     tuning = undefined;
   }
@@ -86,8 +89,8 @@ export function checkLlmDailyBudget(userId: string, now: Date = new Date()): Llm
 }
 
 /** True when `userId` is at/over their daily LLM budget. Cheap wrapper used by the spend primitives. */
-export function isOverLlmBudget(userId: string): boolean {
-  return !checkLlmDailyBudget(userId).ok;
+export function isOverLlmBudget(userId: string, connectedAccountId?: string): boolean {
+  return !checkLlmDailyBudget(userId, new Date(), connectedAccountId).ok;
 }
 
 /** Thrown by `assertWithinLlmBudget` — a distinct type so callers can recognize a budget stop vs. a
@@ -109,7 +112,7 @@ export class LlmBudgetExceededError extends Error {
 /** Throw `LlmBudgetExceededError` when `userId` is over budget — the durable enforcement primitive
  *  the LLM generation wrapper calls so no model spend slips past the ceiling. No-op (returns) when
  *  under budget or no ceiling is configured. */
-export function assertWithinLlmBudget(userId: string): void {
-  const decision = checkLlmDailyBudget(userId);
+export function assertWithinLlmBudget(userId: string, connectedAccountId?: string): void {
+  const decision = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
   if (!decision.ok) throw new LlmBudgetExceededError(decision);
 }
