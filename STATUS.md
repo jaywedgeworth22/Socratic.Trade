@@ -4,6 +4,49 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Broker reliability + capability audit (order confirmation, Alpaca news root cause, 5-broker plan)
+Branch `claude/affectionate-franklin-a52935` (same branch/PR as the share-class fix
+below). Three code fixes plus a diagnosis plus a research-backed plan, from a user
+request to make order-placement confirmation broker-agnostic and audit broker
+capability usage:
+1. Extended the share-class symbol fix (`BRK-B` -> `BRK.B`) beyond the trading
+   gateway into `data-providers.ts`'s Alpaca snapshot/news enrichment providers and
+   the news-streaming store, which had the identical bug independently. Confirmed
+   via a read-only production DB query that this was the actual cause of
+   `alpaca-snapshot` still failing ~97% of the time (`HTTP 400`) after an unrelated
+   credential issue self-resolved on 2026-06-30 ~10:01 UTC.
+2. `alpaca-news` "has never worked" per the user report: confirmed via production
+   `api_health_log` that it was a real credential problem that self-resolved at the
+   same 10:01 UTC cutover — not a code bug, and should now show healthy on the
+   admin connection-status page (reload if it still shows red).
+3. Broker-agnostic order-placement confirmation: `executeProposal`/the run-loop in
+   `strategy.ts` used to record a proposal `"placed"` any time the broker call
+   didn't throw, even though Alpaca/Robinhood can both return a synchronous
+   rejected/canceled state without throwing. Added
+   `isRejectedOrCanceledState()` (`broker-side.ts`) and check it before marking
+   "placed"; a decline now records `"rejected_by_broker"` with its own
+   notification.
+4. Robinhood `placeEquityOrder` no longer fabricates the order id string
+   `"undefined"` when the MCP response is malformed — throws instead, routing into
+   the existing placement-uncertain path.
+5. `docs/broker-capability-plan.md` (new): full capability audit of Alpaca,
+   Robinhood, eToro, Public.com, and IBKR (trading, market data, streaming, MCP,
+   non-trading uses, order-status monitoring), including a live enumeration of the
+   43-tool Robinhood MCP surface (34 unused, incl. options trading, fundamentals,
+   historicals, earnings calendar, realized P&L, native scanner) since a live
+   Robinhood MCP connector happened to be attached to this session. MCP evaluation
+   per broker in §7. Prioritized roadmap in §10 — nothing there has been
+   implemented yet (e.g. the 3 disabled Alpaca streams `STREAMS_ALPACA_NEWS_ENABLED`
+   / `STREAMS_ALPACA_TRADE_UPDATES_ENABLED` / `STREAMS_ALPACA_PRICE_EVENTS_ENABLED`
+   remain off in production — flipping them is a deliberate follow-up decision, not
+   done here).
+Verification: `npm run lint` (0 errors, 254 pre-existing warnings), `npx tsc
+--noEmit`, `npm test` (full suite green; two new `executeProposal`-driving tests
+padded to 30s after confirming a timeout was a full-suite-parallel-load artifact,
+not a logic bug — this repo has a documented history of this exact flake class,
+see `approval-lock.test.ts`). `npm run build` — run before landing. See
+`docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md`.
+
 ## 2026-06-30 - Alpaca share-class symbol mapping fix
 Branch `claude/affectionate-franklin-a52935`. Fixed live orders for share-class
 tickers (e.g. `BRK-B`) failing with `Alpaca order failed: HTTP 422 — asset

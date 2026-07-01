@@ -16,7 +16,7 @@ import type {
   BrokerGateway,
   EquityOrderInput
 } from "./types";
-import { normalizeSymbol } from "./money";
+import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { fetchDailyOHLC } from "./history";
@@ -52,19 +52,10 @@ export function getAlpacaGateway(userId: string = "local", connectedAccountId?: 
   return new AlpacaBrokerGateway(userId, connectedAccountId);
 }
 
-// Our canonical symbol format uses a hyphen for share classes (e.g. "BRK-B", the Robinhood
-// convention — see sp500.ts). Alpaca's asset/order/quote APIs reject that and require a dot
-// ("BRK.B"), returning HTTP 422 "asset not found" otherwise. Convert at the Alpaca boundary only —
-// internal state stays hyphenated.
-export function toAlpacaSymbol(symbol: string): string {
-  return normalizeSymbol(symbol).replace(/-/g, ".");
-}
-
-// Inverse of toAlpacaSymbol — normalize symbols coming back from Alpaca (orders, positions,
-// quotes) to our canonical hyphenated format so they match watchlist/proposal symbols elsewhere.
-export function fromAlpacaSymbol(symbol: string): string {
-  return normalizeSymbol(symbol).replace(/\./g, "-");
-}
+// Re-exported for existing callers/tests that import symbol conversion from this module — the
+// canonical definitions now live in ./money alongside normalizeSymbol so data-providers.ts and
+// the Alpaca stream workers can share them without importing this (much heavier) gateway module.
+export { toAlpacaSymbol, fromAlpacaSymbol };
 
 export function classifyAlpacaAccountType(account: Record<string, unknown>): AccountCapabilities["accountType"] {
   const rawType = String(account.account_type ?? account.accountType ?? "").toLowerCase();
