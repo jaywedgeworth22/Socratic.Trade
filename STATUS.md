@@ -4,6 +4,26 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - Single-adversary consolidation design spec (design only)
+Branch `claude/wonderful-bell-32958a`. Added
+`docs/single-adversary-consolidation.md` — a verified, adversarially-reviewed
+spec to collapse the strategy engine's two adversarial LLM passes (in-flow Bear
+in `proposeTrades` + standalone `debateProposal`) into one hardened "Adversary
+Review". Motivated by a `gemini-3.5-flash (fallback)` tooltip that traced to three
+problems: the two adversaries run the identical model twice (both read
+`policy.redTeamLlmModel`); the adversary parse path bare-`JSON.parse`s with no
+fence-stripping/retries so Gemini's fenced JSON silently failed the review; and an
+adversary-unavailable proposal is indistinguishable in the UI from a routine
+manual-approval one. Spec decides: one post-sizing adversary
+(approve/approve-at-half/reject, down-only, placeability-checked), net-exposure
+gating (never blocks a risk-reducing trade), never-fail-silent (fail closed in
+broker modes), enforced model independence (kill the hidden `RED_TEAM_LLM_PROVIDER`
+env override), reliability fixes (shared fence-stripping, strict schema, bounded
+retry/failover, fail-closed on unknown verdict), and visibility fixes (badge +
+un-overwritten notification title + persisted `decision.reasons`). **No code
+changed.** Blocked on user decisions O1-O4 (spec §9) before implementation; a
+separate fill-confirmation/reconciliation design pass is still owed. See
+`docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
 ## 2026-07-01 — Account deletion: block while a mobile command is in flight (Claude)
 On PR #293 (branch HEAD `e4ff311`). Codex P2 on my workstream-G change: `mobile_commands` was added to
 the deletion sweep but `getAccountDeletionBlockers()` didn't count in-flight commands, so a `running`
