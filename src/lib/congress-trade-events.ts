@@ -65,24 +65,49 @@ function asRecord(v: unknown): Record<string, unknown> | null {
  */
 export function applyCongressEvent(event: CongressEvent | null | undefined): ApplyResult {
   try {
-    if (!event || typeof event !== "object" || typeof event.type !== "string") {
-      return { ok: false, applied: 0, reason: "invalid-event" };
-    }
-    // Validate event shape before processing.
-    const validated = parseSafe(CongressEventSchema, event);
+    const raw = asRecord(event);
+    if (!raw) return { ok: false, applied: 0, reason: "invalid-event" };
+
+    // Resolve the event type, tolerating App A's wire variants (Postel's law —
+    // App B must ingest whatever App A actually sends across the rollout window):
+    //  - the canonical contract `type` field,
+    //  - the legacy `event` field (App A's webhook posts { event: 'trade.new', transaction }
+    //    and its pre-fix SSE emitted `event: trade.new`), and
+    //  - `trade.new` is treated as an alias of the canonical `congress.trade`.
+    const rawType =
+      typeof raw.type === "string" && raw.type
+        ? raw.type
+        : typeof raw.event === "string" && raw.event
+          ? raw.event
+          : "";
+    if (!rawType) return { ok: false, applied: 0, reason: "invalid-event" };
+    const type = rawType === "trade.new" ? "congress.trade" : rawType;
+
+    // Best-effort shape validation (non-blocking): normalize the type first so a
+    // legacy `event`-keyed envelope still passes the schema.
+    const validated = parseSafe(CongressEventSchema, { ...raw, type });
     if (!validated) {
       console.warn("[congress-events] event validation failed, using raw event");
     }
-    const ev = validated ?? event;
-    const type = ev.type;
-    if (typeof event.id === "string" && event.id && !markSeen(event.id)) {
+    const id = typeof raw.id === "string" ? raw.id : undefined;
+    if (id && !markSeen(id)) {
       return { ok: true, type, applied: 0, duplicate: true };
     }
-    const data = asRecord(ev.data);
+    const data = asRecord(raw.data);
 
     if (type === "congress.trade") {
-      const rawTrades = Array.isArray(data?.trades) ? (data!.trades as unknown[]) : [];
-      const trades = rawTrades.map(coerceCongressTrade).filter((t): t is CongressTrade => t !== null);
+      // Collect trade rows from every shape App A may send on either channel:
+      //  - contract envelope:   data.trades: [...]
+      //  - flattened SSE frame: top-level trades: [...] (the `data:` line is the payload)
+      //  - single-tx webhook:   top-level transaction / data.transaction
+      //  - last resort:         the envelope itself is one trade (legacy bare-tx SSE)
+      const candidates: unknown[] = [];
+      if (Array.isArray(data?.trades)) candidates.push(...(data!.trades as unknown[]));
+      if (Array.isArray(raw.trades)) candidates.push(...(raw.trades as unknown[]));
+      const single = raw.transaction ?? data?.transaction;
+      if (single) candidates.push(single);
+      if (candidates.length === 0) candidates.push(raw);
+      const trades = candidates.map(coerceCongressTrade).filter((t): t is CongressTrade => t !== null);
       if (trades.length === 0) return { ok: true, type, applied: 0, reason: "no-trades" };
       const { added } = upsertCongressTrades(trades);
       return { ok: true, type, applied: added };
