@@ -4,6 +4,45 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - Broker capability fan-out (4 parallel Opus agents, merged)
+Branch `claude/affectionate-franklin-a52935`. At the owner's request ("spawn a bunch of
+agents... lots of work"), ran a Workflow with 4 parallel Opus agents (each in an isolated
+git worktree) implementing independent, read-only broker-capability additions from
+`docs/broker-capability-plan.md`'s "cheap, high-value" list, then merged all 4 branches
+(zero conflicts) and re-verified as one integrated change:
+1. **Broker connection health observability** — `logApiHealth()` now wraps every raw
+   Alpaca SDK call (`src/lib/alpaca.ts`, service `alpaca-broker`) and every Robinhood MCP
+   call (`src/lib/robinhood.ts`'s `callRobinhoodMcpTool`, service `robinhood-broker`), so
+   the admin connections-health page can finally show broker-gateway health, not just
+   market-data-enrichment-provider health (the gap identified 2026-06-30).
+2. **Alpaca account insights** — new `src/lib/alpaca-account-insights.ts`: read-only
+   portfolio history, market calendar, market clock, account activities (all free, all
+   previously unused per the capability plan §3).
+3. **Robinhood realized-P&L cross-check** — new `src/lib/robinhood-pnl-crosscheck.ts`:
+   compares this app's own realized P&L against Robinhood's own `get_realized_pnl` figure
+   as an independent sanity check (5% tolerance, documented as approximate).
+4. **Chat assistant read-only research tools** — `get_earnings_calendar`, `get_option_chain`,
+   `search_instrument` added to `src/lib/chat/tools.ts`/`orchestrator.ts`, backed by real
+   Robinhood MCP data. All `readOnly: true`; no order-placement capability added; degrades
+   to a clear "not connected" message rather than throwing when Robinhood isn't linked.
+
+Deliberately excluded from this batch (per the owner's own prior framing — real
+feature/coordination work, not "cheap"): Robinhood options-trading support, and
+eToro/Public.com/IBKR integration (Codex's separate new-broker work is still unpushed —
+`git branch -r` shows no eToro/Public/IBKR branch yet, so no collision risk today, but
+still worth checking before starting that work).
+
+Verification (combined, after merging all 4 branches): `npm run lint` (0 errors, 256
+warnings — 2 new, from the untyped Alpaca SDK's pre-existing `any` convention), `npx tsc
+--noEmit` (clean), `npm test` (171 files / 1663 tests, all passing together), `npm run
+build` (clean). See `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+
+**Still open from the prior round**: PR #286 (share-class fix in `data-providers.ts`,
+stream credential fix, Robinhood-fundamentals sector-taxonomy fix) has green CI and is
+ready to merge; the 2 auth-dependent Alpaca streams keep reconnect-looping on `HTTP 401`
+in production until it merges + deploys. Owner has not yet said go/no-go on expediting
+that deploy.
+
 ## 2026-07-01 - Alpaca streams enabled + stale-credential fix; coordination note re: Codex new-broker work
 Branch `claude/affectionate-franklin-a52935`. At the owner's explicit request, enabled the
 3 previously-disabled Alpaca streams in production (`STREAMS_ALPACA_NEWS_ENABLED`,
